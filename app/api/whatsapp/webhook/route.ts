@@ -4,7 +4,7 @@ const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'lycos_webhook_token_2
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
 
-import { fetchConversacion, upsertConversacion } from '@/lib/supabase';
+import { fetchConversacion, upsertConversacion, checkMensajeDuplicado, saveMensaje } from '@/lib/supabase';
 
 // GET: Webhook verification
 export async function GET(request: NextRequest) {
@@ -44,8 +44,20 @@ export async function POST(request: NextRequest) {
 
     for (const message of value.messages) {
       const from = message.from;
-      // const messageId = message.id;      // No utilizado
-      // const timestamp = message.timestamp; // No utilizado
+      const wa_message_id = message.id;
+
+      // 0. Deduplication Check
+      if (wa_message_id) {
+        try {
+          const isDuplicate = await checkMensajeDuplicado(wa_message_id);
+          if (isDuplicate) {
+            console.log(`⏭️ Mensaje duplicado detectado (${wa_message_id}), ignorando.`);
+            continue;
+          }
+        } catch (e) {
+          console.error('Error checking for duplicate message:', e);
+        }
+      }
 
       let messageBody = '';
       if (message.type === 'text') {
@@ -64,7 +76,20 @@ export async function POST(request: NextRequest) {
       if (messageBody && WHATSAPP_TOKEN && WHATSAPP_PHONE_ID) {
         console.log('🔄 Procesando respuesta...');
         
-        // 1. Conversation State Management
+        // 1. Save incoming message
+        try {
+          await saveMensaje({
+            from_number: from,
+            to_number: 'system',
+            body: messageBody,
+            tipo: 'entrante',
+            wa_message_id: wa_message_id
+          });
+        } catch (e) {
+          console.error('Error saving incoming message:', e);
+        }
+
+        // 2. Conversation State Management
         let isNewSession = true;
         try {
           const conv = await fetchConversacion(from);
@@ -268,7 +293,22 @@ async function sendWhatsAppMessage(to: string, text: string): Promise<void> {
     }
 
     const data = await response.json();
-    console.log(`✅ Mensaje enviado exitosamente. ID: ${data.messages?.[0]?.id}`);
+    const wa_message_id = data.messages?.[0]?.id;
+    console.log(`✅ Mensaje enviado exitosamente. ID: ${wa_message_id}`);
+
+    // Save outgoing message to DB
+    try {
+      await saveMensaje({
+        from_number: 'system',
+        to_number: to,
+        body: text,
+        tipo: 'saliente',
+        wa_message_id: wa_message_id,
+        es_ia: true
+      });
+    } catch (e) {
+      console.error('Error saving outgoing message:', e);
+    }
   } catch (error) {
     console.error('❌ Error en sendWhatsAppMessage:', error);
   }

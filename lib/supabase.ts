@@ -101,6 +101,18 @@ export async function fetchMensajes(telefono: string) {
   return data;
 }
 
+export async function checkMensajeDuplicado(wa_message_id: string) {
+  if (!supabase) return false;
+  const { data, error } = await supabase
+    .from('mensajes_whatsapp')
+    .select('id')
+    .eq('wa_message_id', wa_message_id)
+    .single();
+  
+  if (error && error.code !== 'PGRST116') throw error;
+  return !!data;
+}
+
 export async function saveMensaje(mensaje: {
   from_number: string; to_number: string; body: string;
   tipo: 'entrante' | 'saliente'; es_ia?: boolean;
