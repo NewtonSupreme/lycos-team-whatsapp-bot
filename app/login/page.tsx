@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('admin@lycosteam.com');
-  const [password, setPassword] = useState('lycos2024');
+  const [password, setPassword] = useState('lycos2026');
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -120,7 +120,7 @@ export default function LoginPage() {
             <p className="text-[10px] font-medium text-muted-foreground mb-1.5">Credenciales de demostración:</p>
             <div className="space-y-0.5">
               <p className="text-[11px] text-foreground/80">📧 admin@lycosteam.com</p>
-              <p className="text-[11px] text-foreground/80">🔒 lycos2024</p>
+              <p className="text-[11px] text-foreground/80">🔒 lycos2026</p>
             </div>
           </div>
         </div>

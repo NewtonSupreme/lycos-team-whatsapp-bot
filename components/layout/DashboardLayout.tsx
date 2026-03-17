@@ -22,7 +22,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </main>
         <footer className="px-6 py-3 border-t border-border/20 text-[10px] text-muted-foreground flex items-center justify-between">
-          <span>© 2024 Lycos Team · Desarrollado por Leandro Márquez</span>
+          <span>© 2026 Lycos Team · Desarrollado por Leandro Márquez</span>
           <span className="flex items-center gap-1">Sistema v1.0 · <span className="text-green-400">● Online</span></span>
         </footer>
       </div>

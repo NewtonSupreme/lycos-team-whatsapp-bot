@@ -1,6 +1,6 @@
 'use client';
 import React, { useState } from 'react';
-import { Car, Plus, Search, Gauge, Edit, Trash2, Eye, Wrench } from 'lucide-react';
+import { Car, Plus, Search, Edit, Trash2, Eye, Wrench } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,7 +37,7 @@ export default function VehiculosPage() {
     if (editVehiculo) {
       setVehiculos(prev => prev.map(v => v.id === editVehiculo.id ? { ...v, ...form, anio: Number(form.anio), kilometraje: Number(form.kilometraje) } as Vehiculo : v));
     } else {
-      const nuevo: Vehiculo = { id: Date.now().toString(), ...form, anio: Number(form.anio), kilometraje: Number(form.kilometraje), estado: form.estado as any, created_at: new Date().toISOString() };
+      const nuevo: Vehiculo = { id: Date.now().toString(), ...form, anio: Number(form.anio), kilometraje: Number(form.kilometraje), estado: form.estado as Vehiculo['estado'], created_at: new Date().toISOString() };
       setVehiculos(prev => [nuevo, ...prev]);
     }
     setShowModal(false);
@@ -187,7 +187,7 @@ export default function VehiculosPage() {
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">Año *</label>
-              <Input type="number" value={form.anio} onChange={e => setForm(p => ({ ...p, anio: e.target.value }))} placeholder="2020" min="1990" max="2025" />
+              <Input type="number" value={form.anio} onChange={e => setForm(p => ({ ...p, anio: e.target.value }))} placeholder="2020" min="1990" max="2026" />
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">Placa *</label>

@@ -35,7 +35,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGci...
 GEMINI_API_KEY=AIzaSy...
 WHATSAPP_TOKEN=EAAG...
 WHATSAPP_PHONE_ID=1234567890
-WHATSAPP_VERIFY_TOKEN=lycos_webhook_token_2024
+WHATSAPP_VERIFY_TOKEN=lycos_webhook_token_2026
 ```
 
 ## Deploy Vercel
@@ -48,6 +48,6 @@ WHATSAPP_VERIFY_TOKEN=lycos_webhook_token_2024
 ## WhatsApp Webhook
 
 URL: https://tu-dominio.vercel.app/api/whatsapp/webhook
-Verify Token: lycos_webhook_token_2024
+Verify Token: lycos_webhook_token_2026
 
-© 2024 Lycos Team · Desarrollado por Leandro Márquez
+© 2026 Lycos Team · Desarrollado por Leandro Márquez
