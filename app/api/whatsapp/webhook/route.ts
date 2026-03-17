@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'lycos_webhook_token_2024';
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
+import { saveMensaje, fetchUltimoMensaje } from '@/lib/supabase';
 
 // GET: Webhook verification
 export async function GET(request: NextRequest) {
@@ -58,10 +59,35 @@ export async function POST(request: NextRequest) {
 
       console.log(`📩 Mensaje de ${from}: ${messageBody}`);
 
+      // Save incoming message to DB
+      await saveMensaje({
+        from_number: from,
+        to_number: 'lycos_team',
+        body: messageBody,
+        tipo: 'entrante',
+        wa_message_id: message.id
+      });
+
       // Auto-reply with IA
       if (messageBody && WHATSAPP_TOKEN && WHATSAPP_PHONE_ID) {
         console.log('🔄 Procesando respuesta...');
         
+        // Check session for greeting logic
+        const lastMsg = await fetchUltimoMensaje(from);
+        let shouldSkipGreeting = false;
+        if (lastMsg) {
+          const lastTime = new Date(lastMsg.created_at).getTime();
+          const nowTime = new Date().getTime();
+          const diffMinutes = (nowTime - lastTime) / (1000 * 60);
+          if (diffMinutes < 30) {
+            shouldSkipGreeting = true;
+          }
+        }
+        
+        // Get current date/time in Venezuela (GMT-4)
+        const vzlaDate = new Date().toLocaleString("es-VE", { timeZone: "America/Caracas" });
+        const [currDate, currTime] = vzlaDate.split(', ');
+
         // Detect location keywords for specific dual-message response
         const lowerBody = messageBody.toLowerCase();
         const isLocationRequest = lowerBody.includes('ubicacion') || 
@@ -74,12 +100,25 @@ export async function POST(request: NextRequest) {
 
         if (isLocationRequest) {
           console.log('📍 Solicitud de ubicación detectada. Enviando mensajes específicos...');
-          await sendWhatsAppMessage(from, "📍 *Nuestra ubicación:* Altos Mirandinos, Miranda, Venezuela. Estamos ubicados estratégicamente para atender a clientes de Los Teques, San Antonio de los Altos y Carrizal.");
-          await sendWhatsAppMessage(from, "🚗 *GPS Google Maps:* https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA");
+          const textMsg = "📍 *Nuestra ubicación:* Altos Mirandinos, Miranda, Venezuela. Estamos ubicados estratégicamente para atender a clientes de Los Teques, San Antonio de los Altos y Carrizal.";
+          const gpsMsg = "https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA";
+          
+          await sendWhatsAppMessage(from, textMsg);
+          await saveMensaje({ from_number: 'lycos_team', to_number: from, body: textMsg, tipo: 'saliente', es_ia: false });
+          
+          await sendWhatsAppMessage(from, gpsMsg);
+          await saveMensaje({ from_number: 'lycos_team', to_number: from, body: gpsMsg, tipo: 'saliente', es_ia: false });
         } else {
-          const aiResponse = await getAIResponse(messageBody);
+          const aiResponse = await getAIResponse(messageBody, shouldSkipGreeting, currDate, currTime);
           if (aiResponse) {
             await sendWhatsAppMessage(from, aiResponse);
+            await saveMensaje({ 
+              from_number: 'lycos_team', 
+              to_number: from, 
+              body: aiResponse, 
+              tipo: 'saliente', 
+              es_ia: true 
+            });
           } else {
             console.error('❌ No se pudo generar respuesta de IA');
           }
@@ -100,7 +139,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function getAIResponse(userMessage: string): Promise<string | null> {
+async function getAIResponse(userMessage: string, skipGreeting: boolean, vzlaDate: string, vzlaTime: string): Promise<string | null> {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
@@ -108,7 +147,7 @@ async function getAIResponse(userMessage: string): Promise<string | null> {
       return null;
     }
 
-    console.log(`🤖 Consultando Gemini para: "${userMessage.substring(0, 50)}..."`);
+    console.log(`🤖 Consultando Gemini para: "${userMessage.substring(0, 50)}..." (SkipGreeting: ${skipGreeting})`);
 
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`,
@@ -118,35 +157,32 @@ async function getAIResponse(userMessage: string): Promise<string | null> {
         body: JSON.stringify({
           system_instruction: {
             parts: [{
-              text: `Eres el asistente virtual oficial de Lycos Team, el taller automotriz líder en los Altos Mirandinos, Venezuela. 
-              TU MISIÓN: Brindar atención técnica excepcional, profesional y rápida a través de WhatsApp como si fueras un asesor experto de Lycos Team.
+              text: `Eres el asesor oficial de Lycos Team.
+              
+DATOS DEL SISTEMA:
+- Fecha en Venezuela: ${vzlaDate}
+- Hora en Venezuela: ${vzlaTime}
 
-IDENTIDAD Y VALORES:
-- Expertos en soluciones automotrices de alta complejidad.
-- Atención personalizada con tecnología de vanguardia.
-- Transparencia total en diagnósticos y presupuestos.
+INSTRUCCIONES DE COMPORTAMIENTO:
+${skipGreeting ? '- ⚠️ ESTO ES UNA CONTINUACIÓN DE CONVERSACIÓN: NO saludes con "Hola", "Buenas tardes" ni frases similares. Ve directo al grano o responde a la pregunta de forma natural.' : '- Es el primer mensaje del cliente o ha pasado tiempo: Saluda cordialmente.'}
 
-SERVICIOS ESPECIALIZADOS:
-- 🔧 Mecánica General Avanzada: Tren delantero, frenos (ABS/Electrónicos), suspensión, cambios de aceite y fluidos con marcas premium.
-- ⚡ Electrónica Automotriz: Reparación de computadoras (ECU), módulos, cableados y sistemas eléctricos complejos.
-- 🔑 Cerrajería Automotriz Pro: Programación de llaves con chip, duplicados, reparación de switchs y sistemas de seguridad.
-- 💻 Diagnóstico Computarizado: Escaneo completo con equipos de nivel concesionario (lectura y borrado de fallas, programación de módulos).
-- ⚙️ Reparación de Motores: Overhaul completo, reconstrucción y optimización de rendimiento.
-- 🚨 Asistencia de Emergencia 24/7: Auxilio vial y diagnóstico en sitio en los Altos Mirandinos.
+IDENTIDAD Y SERVICIOS:
+- Lycos Team: Líder en mecánica, electrónica y cerrajería automotriz en Altos Mirandinos.
+- Servicios: Mecánica pro, Electrónica (ECU), Cerrajería (llaves chip), Diagnóstico Computarizado, Motores y Emergencias 24/7.
 
-INFORMACIÓN DE CONTACTO:
-- 📱 WhatsApp/Teléfono: +58 412-334-3519
-- 📧 Email: lycosteam7@gmail.com
-- 📍 Ubicación: Altos Mirandinos, Miranda, Venezuela (Cerca de Los Teques, San Antonio y Carrizal).
-- 📅 Horario: Lunes a Viernes 8:00 AM - 6:00 PM, Sábados 8:00 AM - 2:00 PM.
+GESTIÓN DE CITAS:
+- Si el cliente quiere agendar una cita, DEBES SOLICITAR:
+  1. Nombre completo.
+  2. Vehículo (Marca, Modelo, Año y Placa).
+  3. Servicio requerido.
+  4. Fecha y hora preferida (teniendo en cuenta que estamos a ${vzlaDate} y son las ${vzlaTime}).
 
-INSTRUCCIONES CLAVE:
-1. Responde SIEMPRE en español de Venezuela (amigable pero muy profesional).
-2. Usa emojis estratégicamente para resaltar puntos clave (🔧, 🚗, ⚡, 📍).
-3. Ofrece SIEMPRE una revisión o diagnóstico cuando el cliente presente una falla.
-4. Si preguntan por la ubicación, menciónales que estamos en los Altos Mirandinos (el sistema enviará el enlace GPS automáticamente).
-5. Mantén las respuestas potentes y directas (máximo 4 líneas por mensaje).
-6. Prioriza la seguridad y la confianza del cliente en cada recomendación.`
+UBICACIÓN:
+- Estamos en Altos Mirandinos. Menciona la zona si preguntan (el sistema enviará el link GPS por separado).
+
+ESTILO:
+- Español de Venezuela, profesional, potente y corto (máximo 4 líneas).
+- Usa emojis estratégicos (🔧, 🚗, ⚡).`
             }]
           },
           contents: [{ role: 'user', parts: [{ text: userMessage }] }],
