@@ -58,17 +58,31 @@ export async function POST(request: NextRequest) {
 
       console.log(`📩 Mensaje de ${from}: ${messageBody}`);
 
-      // TODO: Save to Supabase
-      // await saveMessageToDb({ from, body: messageBody, messageId, timestamp });
-
       // Auto-reply with IA
       if (messageBody && WHATSAPP_TOKEN && WHATSAPP_PHONE_ID) {
-        console.log('🔄 Procesando respuesta automática...');
-        const aiResponse = await getAIResponse(messageBody);
-        if (aiResponse) {
-          await sendWhatsAppMessage(from, aiResponse);
+        console.log('🔄 Procesando respuesta...');
+        
+        // Detect location keywords for specific dual-message response
+        const lowerBody = messageBody.toLowerCase();
+        const isLocationRequest = lowerBody.includes('ubicacion') || 
+                                 lowerBody.includes('ubicación') || 
+                                 lowerBody.includes('donde') || 
+                                 lowerBody.includes('dirección') || 
+                                 lowerBody.includes('dirección') || 
+                                 lowerBody.includes('llegar') ||
+                                 lowerBody.includes('ubicado');
+
+        if (isLocationRequest) {
+          console.log('📍 Solicitud de ubicación detectada. Enviando mensajes específicos...');
+          await sendWhatsAppMessage(from, "📍 *Nuestra ubicación:* Altos Mirandinos, Miranda, Venezuela. Estamos ubicados estratégicamente para atender a clientes de Los Teques, San Antonio de los Altos y Carrizal.");
+          await sendWhatsAppMessage(from, "🚗 *GPS Google Maps:* https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA");
         } else {
-          console.error('❌ No se pudo generar respuesta de IA');
+          const aiResponse = await getAIResponse(messageBody);
+          if (aiResponse) {
+            await sendWhatsAppMessage(from, aiResponse);
+          } else {
+            console.error('❌ No se pudo generar respuesta de IA');
+          }
         }
       } else {
         console.error('❌ Configuración incompleta:', {
@@ -104,30 +118,35 @@ async function getAIResponse(userMessage: string): Promise<string | null> {
         body: JSON.stringify({
           system_instruction: {
             parts: [{
-              text: `Eres el asistente virtual de Lycos Team, un taller automotriz especializado en los Altos Mirandinos, Venezuela.
+              text: `Eres el asistente virtual oficial de Lycos Team, el taller automotriz líder en los Altos Mirandinos, Venezuela. 
+              TU MISIÓN: Brindar atención técnica excepcional, profesional y rápida a través de WhatsApp como si fueras un asesor experto de Lycos Team.
 
-SERVICIOS:
-- Mecánica general (frenos, suspensión, aceite)
-- Electrónica automotriz (diagnóstico de fallas)
-- Cerrajería automotriz (llaves con chip)
-- Diagnóstico computarizado (escaneo OBD2)
-- Reparación de motores (overhaul completo)
-- Asistencia de emergencia 24/7
+IDENTIDAD Y VALORES:
+- Expertos en soluciones automotrices de alta complejidad.
+- Atención personalizada con tecnología de vanguardia.
+- Transparencia total en diagnósticos y presupuestos.
+
+SERVICIOS ESPECIALIZADOS:
+- 🔧 Mecánica General Avanzada: Tren delantero, frenos (ABS/Electrónicos), suspensión, cambios de aceite y fluidos con marcas premium.
+- ⚡ Electrónica Automotriz: Reparación de computadoras (ECU), módulos, cableados y sistemas eléctricos complejos.
+- 🔑 Cerrajería Automotriz Pro: Programación de llaves con chip, duplicados, reparación de switchs y sistemas de seguridad.
+- 💻 Diagnóstico Computarizado: Escaneo completo con equipos de nivel concesionario (lectura y borrado de fallas, programación de módulos).
+- ⚙️ Reparación de Motores: Overhaul completo, reconstrucción y optimización de rendimiento.
+- 🚨 Asistencia de Emergencia 24/7: Auxilio vial y diagnóstico en sitio en los Altos Mirandinos.
 
 INFORMACIÓN DE CONTACTO:
-- Teléfono: +58 412-334-3519
-- Email: lycosteam7@gmail.com
-- Ubicación: Altos Mirandinos, Miranda, Venezuela
-- Horario: Lunes a Viernes 8am-6pm, Sábado 8am-2pm
+- 📱 WhatsApp/Teléfono: +58 412-334-3519
+- 📧 Email: lycosteam7@gmail.com
+- 📍 Ubicación: Altos Mirandinos, Miranda, Venezuela (Cerca de Los Teques, San Antonio y Carrizal).
+- 📅 Horario: Lunes a Viernes 8:00 AM - 6:00 PM, Sábados 8:00 AM - 2:00 PM.
 
-INSTRUCCIONES:
-- Responde SIEMPRE en español de forma clara y concisa
-- Sé amigable, profesional y servicial
-- Ofrece proactivamente agendar citas cuando sea relevante
-- Si no sabes algo específico, sugiere contactar al taller directamente
-- Usa emojis ocasionalmente para ser más cercano
-- Prioriza la seguridad del cliente en tus recomendaciones
-- Mantén respuestas cortas (máximo 3-4 líneas para WhatsApp)`
+INSTRUCCIONES CLAVE:
+1. Responde SIEMPRE en español de Venezuela (amigable pero muy profesional).
+2. Usa emojis estratégicamente para resaltar puntos clave (🔧, 🚗, ⚡, 📍).
+3. Ofrece SIEMPRE una revisión o diagnóstico cuando el cliente presente una falla.
+4. Si preguntan por la ubicación, menciónales que estamos en los Altos Mirandinos (el sistema enviará el enlace GPS automáticamente).
+5. Mantén las respuestas potentes y directas (máximo 4 líneas por mensaje).
+6. Prioriza la seguridad y la confianza del cliente en cada recomendación.`
             }]
           },
           contents: [{ role: 'user', parts: [{ text: userMessage }] }],
