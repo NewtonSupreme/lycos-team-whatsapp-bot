@@ -1,12 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+// Current time in Venezuela (UTC-4)
+const vzlaTime = new Intl.DateTimeFormat('es-VE', {
+  timeZone: 'America/Caracas',
+  dateStyle: 'full',
+  timeStyle: 'short'
+}).format(new Date());
+
 const SYSTEM_PROMPT = `Eres el asistente virtual oficial de Lycos Team, el taller automotriz líder en los Altos Mirandinos, Venezuela. 
 TU MISIÓN: Brindar asesoría técnica experta, profesional y eficiente.
+
+CONTEXTO TEMPORAL ACTUAL:
+- Fecha y Hora en Venezuela: ${vzlaTime}
+- IMPORTANTE: Usa esta fecha para ser preciso con las citas y el día de hoy.
 
 SOBRE LYCOS TEAM:
 - Especialidades: Mecánica General Avanzada, Electrónica Automotriz (ECU/Módulos), Cerrajería Automotriz con chip, Diagnóstico Computarizado nivel concesionario, Reparación integral de motores y Asistencia de Emergencia 24/7.
 - Identidad: Somos sinónimo de tecnología avanzada, precisión y atención personalizada de alta calidad.
-- Ubicación: Altos Mirandinos, Miranda, Venezuela. (GPS: https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA)
+- Ubicación: Altos Mirandinos, Miranda, Venezuela.
+- Link GPS: https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA
 - Horario: Lunes a Viernes 8:00 AM - 6:00 PM, Sábados 8:00 AM - 2:00 PM.
 - Contacto: +58 412-334-3519 | lycosteam7@gmail.com
 
@@ -16,7 +28,9 @@ PERSONALIDAD:
 - Usa emojis de forma profesional (🔧, ⚡, 🚗).
 - Ofrece proactivamente diagnósticos y citas.
 - Prioriza la seguridad del vehículo y del cliente.
-- Responde siempre en español de forma estructurada y clara.`;
+
+CITAS:
+- Al agendar, solicita: Nombre, Vehículo (Marca/Modelo/Año), Servicio/Falla y Fecha/Hora preferida.`;
 
 export async function POST(request: NextRequest) {
   try {
@@ -105,7 +119,7 @@ function generateFallbackResponse(userMsg: string): string {
   }
 
   if (lower.includes('ubicacion') || lower.includes('ubicación') || lower.includes('donde') || lower.includes('dirección') || lower.includes('llegar')) {
-    return '📍 **Nuestra ubicación:**\n\nAltos Mirandinos, Miranda, Venezuela. Estamos ubicados estratégicamente para atender a Los Teques, San Antonio y Carrizal.\n\n🚗 **GPS Google Maps:** https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA\n\n¿Necesita indicaciones adicionales?';
+    return '📍 **Nuestra ubicación:**\n\nAltos Mirandinos, Miranda, Venezuela.\n\nhttps://maps.app.goo.gl/7H6RGrbpXkxeqG2KA';
   }
 
   return '¡Hola! Soy el asistente de **Lycos Team** 🔧\n\nEstoy aquí para ayudarle con:\n• 📋 Información sobre servicios\n• 💰 Precios y presupuestos\n• 📅 Agendar citas\n• ⏰ Horarios de atención\n• 🚨 Asistencia de emergencia\n\n¿En qué puedo ayudarle hoy?\n\n📞 También puede llamarnos: **+58 412-334-3519**';

@@ -90,21 +90,14 @@ export async function fetchCitas() {
 }
 
 // ─── Mensajes WhatsApp ──────────────────────────────────────────────────────
-
-export async function fetchUltimoMensaje(telefono: string): Promise<any | null> {
+export async function fetchMensajes(telefono: string) {
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('mensajes_whatsapp')
-    .select('created_at')
+    .select('*')
     .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single();
-  
-  if (error && error.code !== 'PGRST116') { // PGRST116 is "no rows found"
-    console.error('Error fetching last message:', error);
-    return null;
-  }
+    .order('created_at', { ascending: true });
+  if (error) throw error;
   return data;
 }
 
@@ -116,6 +109,36 @@ export async function saveMensaje(mensaje: {
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('mensajes_whatsapp').insert(mensaje).select().single();
+  if (error) throw error;
+  return data;
+}
+
+// ─── Conversaciones ──────────────────────────────────────────────────────────
+export async function fetchConversacion(telefono: string) {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('conversaciones')
+    .select('*')
+    .eq('telefono', telefono)
+    .single();
+  
+  if (error && error.code !== 'PGRST116') throw error; // PGRST116 is code for 'no rows found'
+  return data;
+}
+
+export async function upsertConversacion(conv: {
+  telefono: string;
+  ultimo_mensaje?: string;
+  ultimo_mensaje_at?: string;
+  estado?: 'activa' | 'cerrada' | 'bot' | 'humano';
+  mensajes_sin_leer?: number;
+}) {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('conversaciones')
+    .upsert(conv, { onConflict: 'telefono' })
+    .select()
+    .single();
   if (error) throw error;
   return data;
 }
