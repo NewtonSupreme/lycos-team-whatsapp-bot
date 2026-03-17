@@ -1,7 +1,7 @@
 'use client';
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Zap, Eye, EyeOff, Lock, Mail, ArrowRight, Shield, Bot, MessageSquare } from 'lucide-react';
+import { Eye, EyeOff, Lock, Mail, ArrowRight, Shield, Bot, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
@@ -36,8 +36,12 @@ export default function LoginPage() {
       <div className="w-full max-w-sm relative z-10">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="inline-flex w-14 h-14 rounded-2xl bg-primary/15 border border-primary/20 items-center justify-center mb-4 shadow-[0_0_30px_rgba(249,115,22,0.15)]">
-            <Zap className="w-7 h-7 text-primary" fill="currentColor" />
+          <div className="inline-flex w-16 h-16 rounded-2xl bg-white/5 border border-white/10 items-center justify-center mb-4 shadow-[0_0_30px_rgba(255,255,255,0.05)] overflow-hidden">
+            <img 
+              src="/Icono lycos team blanco.png" 
+              alt="Lycos Team Logo" 
+              className="w-12 h-12 object-contain truck-anim"
+            />
           </div>
           <h1 className="text-2xl font-bold tracking-tight" style={{ fontFamily: 'Syne, sans-serif' }}>
             LYCOS TEAM

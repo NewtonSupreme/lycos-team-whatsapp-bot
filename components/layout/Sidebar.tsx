@@ -4,8 +4,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Users, Car, Wrench, Calendar, MessageSquare,
-  Bot, FileText, Settings, ChevronLeft, ChevronRight, Zap,
-  Bell, LogOut, Shield, Activity
+  Bot, FileText, Settings, ChevronLeft, ChevronRight,
+  Activity
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -51,10 +51,16 @@ export default function Sidebar() {
           sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         )}
       >
-        {/* Logo */}
         <div className={cn('flex items-center gap-3 p-4 border-b border-border/30', !sidebarOpen && 'justify-center px-2')}>
-          <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-primary flex items-center justify-center glow-sm">
-            <Zap className="w-4 h-4 text-primary-foreground" fill="currentColor" />
+          <div className={cn(
+            "flex-shrink-0 w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center overflow-hidden",
+            !sidebarOpen && "w-9 h-9"
+          )}>
+            <img 
+              src="/Icono lycos team blanco.png" 
+              alt="Logo" 
+              className="w-8 h-8 object-contain truck-anim"
+            />
           </div>
           {sidebarOpen && (
             <div className="flex flex-col min-w-0">

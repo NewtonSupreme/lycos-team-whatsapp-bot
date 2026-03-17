@@ -57,3 +57,14 @@
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes slideIn { from { transform: translateX(-100%); } to { transform: translateX(0); } }
 @keyframes pulse-glow { 0%,100% { box-shadow: 0 0 8px rgba(249,115,22,0.2); } 50% { box-shadow: 0 0 20px rgba(249,115,22,0.4); } }
+@keyframes truck-move {
+  0% { transform: translateX(-2px) translateY(0); }
+  25% { transform: translateX(2px) translateY(-1px); }
+  50% { transform: translateX(-1px) translateY(0); }
+  75% { transform: translateX(1px) translateY(-0.5px); }
+  100% { transform: translateX(-2px) translateY(0); }
+}
+.truck-anim {
+  animation: truck-move 0.4s ease-in-out infinite;
+  display: inline-block;
+}
