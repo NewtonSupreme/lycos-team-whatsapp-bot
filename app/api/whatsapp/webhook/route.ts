@@ -158,17 +158,20 @@ export async function POST(request: NextRequest) {
 
       // 1. Save incoming message (non-blocking)
       if (db) {
-        db.from('mensajes_whatsapp').insert({
-          from_number: from,
-          to_number: 'system',
-          body: messageBody,
-          tipo: 'entrante',
-          wa_message_id: wa_message_id,
-        }).then(() => {
-          console.log('💾 Mensaje entrante guardado');
-        }).catch((e: unknown) => {
-          console.error('Error guardando mensaje entrante:', e);
-        });
+        void (async () => {
+          try {
+            await db.from('mensajes_whatsapp').insert({
+              from_number: from,
+              to_number: 'system',
+              body: messageBody,
+              tipo: 'entrante',
+              wa_message_id: wa_message_id,
+            });
+            console.log('💾 Mensaje entrante guardado');
+          } catch (e) {
+            console.error('Error guardando mensaje entrante:', e);
+          }
+        })();
       }
 
       if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) {
@@ -277,16 +280,19 @@ export async function POST(request: NextRequest) {
       // 7. Update conversation state (non-blocking)
       if (db) {
         const extractedData = extractClientData(messageBody);
-        db.from('conversaciones').upsert({
-          telefono: from,
-          ultimo_mensaje: messageBody.substring(0, 100),
-          ultimo_mensaje_at: new Date().toISOString(),
-          ...(Object.keys(extractedData).length > 0 ? { datos_cliente: extractedData } : {}),
-        }, { onConflict: 'telefono' }).then(() => {
-          console.log('💾 Conversación actualizada');
-        }).catch((e: unknown) => {
-          console.error('Error actualizando conversación:', e);
-        });
+        void (async () => {
+          try {
+            await db.from('conversaciones').upsert({
+              telefono: from,
+              ultimo_mensaje: messageBody.substring(0, 100),
+              ultimo_mensaje_at: new Date().toISOString(),
+              ...(Object.keys(extractedData).length > 0 ? { datos_cliente: extractedData } : {}),
+            }, { onConflict: 'telefono' });
+            console.log('💾 Conversación actualizada');
+          } catch (e) {
+            console.error('Error actualizando conversación:', e);
+          }
+        })();
       }
     }
 
@@ -433,16 +439,20 @@ async function sendWhatsAppMessage(
     // Save outgoing (non-blocking)
     const db = getSupabase();
     if (db) {
-      db.from('mensajes_whatsapp').insert({
-        from_number: 'system',
-        to_number: to,
-        body: text,
-        tipo: 'saliente',
-        wa_message_id: wa_message_id,
-        es_ia: true,
-      }).catch((e: unknown) => {
-        console.error('Error guardando mensaje saliente:', e);
-      });
+      void (async () => {
+        try {
+          await db.from('mensajes_whatsapp').insert({
+            from_number: 'system',
+            to_number: to,
+            body: text,
+            tipo: 'saliente',
+            wa_message_id: wa_message_id,
+            es_ia: true,
+          });
+        } catch (e) {
+          console.error('Error guardando mensaje saliente:', e);
+        }
+      })();
     }
   } catch (error) {
     console.error('❌ Error en sendWhatsAppMessage:', error);
