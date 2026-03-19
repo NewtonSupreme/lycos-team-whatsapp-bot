@@ -1,244 +1,55 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
 
 const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'lycos_webhook_token_2026';
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const LYCOS_ADVISOR_PHONE = '584123343519'; // +58 412-334-3519
+const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
+const ASESOR_PHONE = '584123343519'; // Lycos Team asesor WhatsApp
 
-function getDB(): SupabaseClient | null {
+function getDb() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
   if (!url || !key) return null;
   return createClient(url, key);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DATABASE HELPERS
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function getOrCreateCliente(db: SupabaseClient, telefono: string) {
-  // Normalize: remove non-digits
-  const tel = telefono.replace(/\D/g, '');
-  const { data } = await db.from('clientes').select('*').ilike('telefono', `%${tel}`).limit(1);
-  if (data && data.length > 0) return data[0];
-  // Create a placeholder client (name will be updated when bot learns it)
-  const { data: created } = await db.from('clientes').insert({
-    nombre: 'Cliente',
-    apellido: 'WhatsApp',
-    telefono: `+${tel}`,
-  }).select().single();
-  return created;
-}
-
-async function getClienteVehiculos(db: SupabaseClient, clienteId: string) {
-  const { data } = await db.from('vehiculos').select('*').eq('cliente_id', clienteId);
-  return data || [];
-}
-
-async function getClienteCitas(db: SupabaseClient, clienteId: string) {
-  const { data } = await db
-    .from('citas')
-    .select('*')
-    .eq('cliente_id', clienteId)
-    .order('fecha', { ascending: true });
-  return data || [];
-}
-
-async function getRecentMessages(db: SupabaseClient, telefono: string, limit = 14) {
-  const tel = telefono.replace(/\D/g, '');
-  const { data } = await db
-    .from('mensajes_whatsapp')
-    .select('body, tipo, created_at')
-    .or(`from_number.ilike.%${tel},to_number.ilike.%${tel}`)
-    .order('created_at', { ascending: false })
-    .limit(limit);
-  return (data || []).reverse();
-}
-
-async function checkCitaAvailability(
-  db: SupabaseClient,
-  fecha: string,
-  hora: string,
-  duracionMin = 60
-): Promise<{ available: boolean; conflicto?: string }> {
-  // Convert requested slot to timestamps for conflict window
-  const requestedStart = new Date(`${fecha}T${hora}`);
-  const requestedEnd = new Date(requestedStart.getTime() + duracionMin * 60000);
-
-  const { data: citas } = await db
-    .from('citas')
-    .select('fecha, hora, duracion_minutos, descripcion')
-    .eq('fecha', fecha)
-    .neq('estado', 'cancelada');
-
-  if (!citas || citas.length === 0) return { available: true };
-
-  for (const cita of citas) {
-    const existingStart = new Date(`${cita.fecha}T${cita.hora}`);
-    const existingDuration = cita.duracion_minutos || 60;
-    const existingEnd = new Date(existingStart.getTime() + existingDuration * 60000);
-
-    // Check overlap: new start < existing end AND new end > existing start
-    if (requestedStart < existingEnd && requestedEnd > existingStart) {
-      return {
-        available: false,
-        conflicto: `Hay una cita ocupando ese horario desde las ${cita.hora.slice(0, 5)}`
-      };
-    }
-  }
-
-  return { available: true };
-}
-
-async function getNextAvailableSlots(db: SupabaseClient, fecha: string): Promise<string[]> {
-  const { data: citas } = await db
-    .from('citas')
-    .select('hora, duracion_minutos')
-    .eq('fecha', fecha)
-    .neq('estado', 'cancelada')
-    .order('hora', { ascending: true });
-
-  const slots: string[] = [];
-  const workStart = 8 * 60; // 8:00 AM in minutes
-  const workEnd = 17 * 60;   // 5:00 PM
-
-  const busySlots = (citas || []).map(c => {
-    const [h, m] = c.hora.split(':').map(Number);
-    const start = h * 60 + m;
-    const end = start + (c.duracion_minutos || 60);
-    return { start, end };
-  });
-
-  for (let t = workStart; t < workEnd; t += 60) {
-    const end = t + 60;
-    const busy = busySlots.some(b => t < b.end && end > b.start);
-    if (!busy) {
-      const hh = String(Math.floor(t / 60)).padStart(2, '0');
-      const mm = String(t % 60).padStart(2, '0');
-      slots.push(`${hh}:${mm}`);
-    }
-  }
-  return slots.slice(0, 4); // Return up to 4 available slots
-}
-
-async function createCita(
-  db: SupabaseClient,
-  clienteId: string,
-  vehiculoId: string,
-  fecha: string,
-  hora: string,
-  tipoServicio: string,
-  descripcion: string,
-  duracionMin = 60
-) {
-  const { data } = await db.from('citas').insert({
-    cliente_id: clienteId,
-    vehiculo_id: vehiculoId,
-    fecha,
-    hora,
-    tipo_servicio: tipoServicio,
-    descripcion,
-    duracion_minutos: duracionMin,
-    estado: 'pendiente',
-  }).select().single();
-  return data;
-}
-
-async function getInventarioByCategoria(db: SupabaseClient, categoria?: string) {
-  let query = db.from('inventario').select('*').eq('activo', true);
-  if (categoria) query = query.eq('categoria', categoria);
-  const { data } = await query;
-  return data || [];
-}
-
-async function getSilenciadorForVehiculo(db: SupabaseClient, cilindraje: number) {
-  const { data } = await db
-    .from('inventario')
-    .select('*')
-    .eq('categoria', 'silenciador')
-    .lte('cilindraje_min', cilindraje)
-    .gte('cilindraje_max', cilindraje)
-    .eq('activo', true);
-  return data || [];
-}
-
-async function updateClienteInfo(db: SupabaseClient, clienteId: string, updates: Record<string, string>) {
-  if (!updates || Object.keys(updates).length === 0) return;
-  await db.from('clientes').update(updates).eq('id', clienteId);
-}
-
-async function createOrUpdateVehiculo(
-  db: SupabaseClient,
-  clienteId: string,
-  vehiculoData: { marca: string; modelo: string; anio: number; placa?: string }
-) {
-  // Check if this vehicle already exists for client
-  const { data: existing } = await db
-    .from('vehiculos')
-    .select('id')
-    .eq('cliente_id', clienteId)
-    .ilike('modelo', vehiculoData.modelo)
-    .limit(1);
-
-  if (existing && existing.length > 0) return existing[0];
-
-  const placa = vehiculoData.placa || `WA-${Date.now().toString(36).toUpperCase()}`;
-  const { data } = await db.from('vehiculos').insert({
-    cliente_id: clienteId,
-    marca: vehiculoData.marca,
-    modelo: vehiculoData.modelo,
-    anio: vehiculoData.anio,
-    placa: placa,
-  }).select().single();
-  return data;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LYCOS TEAM KNOWLEDGE BASE
-// ─────────────────────────────────────────────────────────────────────────────
-
-const LYCOS_STATIC_KNOWLEDGE = `
+// ─── KNOWLEDGE BASE ───────────────────────────────────────────────────────────
+const LYCOS_KNOWLEDGE = `
 IDENTIDAD:
-Eres el asistente virtual de Lycos Team. NUNCA digas que eres IA, bot, ChatGPT o robot.
-Si preguntan qué eres, di "soy el asistente de Lycos Team".
-Si necesitas transferir a un asesor humano, di "voy a comunicarte con uno de nuestros asesores" y da: +58 412-334-3519
+Eres el asistente virtual de Lycos Team, un taller automotriz profesional en San Antonio de los Altos, Miranda, Venezuela.
+NUNCA digas que eres una IA, bot, ChatGPT o robot. Si preguntan, eres el asistente del taller.
+Si el cliente necesita un asesor humano: "te comunico con uno de nuestros asesores" → envía wa.me/584123343519
 
-HORARIO: Lunes a Sábado, 8:00 AM a 5:00 PM. DOMINGOS: CERRADO. No hay emergencias dominicales.
+HORARIO: Lunes a Sábado 8:00 AM – 5:00 PM.
+DOMINGOS: Cerrado. Sin excepciones, sin emergencias.
 
-UBICACIÓN: San Antonio de los Altos, Altos Mirandinos, Miranda, Venezuela.
-Al dar ubicación, incluye SIEMPRE la invitación a seguir en Instagram @lycos.team.
-
-REDES SOCIALES: Instagram: @lycos.team | TikTok: @lycos.team
+UBICACIÓN: San Antonio de los Altos, Altos Mirandinos, Miranda.
+REDES SOCIALES: Instagram y TikTok: @lycos.team
 
 SERVICIOS (por categoría):
-🔧 Mecánica y Frenos: mecánica ligera, frenos completos (pastillas, liga, cilindros, freno de mano, rectificación de discos/tambores), alineación, balanceo, rotación, monturas/reparación de cauchos, limpieza de inyectores.
-🚗 Sistemas: A/C, frenos, refrigeración, dirección, motor, luces, escape, suspensión, transmisión, autotronica.
-🏎️ Escape y Silenciadores: precios en USD con instalación incluida (consulta el stock en tiempo real).
-🚿 Estética: autolavado, pulitura de faros, latonería y pintura, papel ahumado, cámaras 360.
-🔌 Electrónica: elevavidrios manuales/electrónicos. OBD II: escáner asignado según disponibilidad al confirmar cita.
-🚛 Otros: grúa (contactar asesor), inventario de repuestos, renovación RCV.
+🔧 Mecánica y Frenos: Mecánica ligera, frenos (pastillas, liga, cilindros, freno de mano, rectificación disco/tambores), alineación, balanceo, rotación y monturas de cauchos, limpieza de inyectores.
+🚗 Sistemas: Aire acondicionado, frenos, refrigeración, dirección, motor, luces, escape, suspensión, transmisión, autotronica.
+🏎️ Silenciadores y Escape (con instalación, en divisas): CL27/CL30 hasta 1.3L $40 | CL40 hasta 1.5L $50 | CLH40 1.6-3.7L $60 | CL60 3.8L+ $90 | CLC60 camión $90 | CLCP60 platanero $90 | Resonador $40 | Flexibles $40. Presupuestos válidos 2 días.
+🚿 Estética: Autolavado, pulitura de faros, latonería y pintura, papel ahumado, cámaras 360.
+🔌 Electrónica: Elevavidrios manuales/electrónicos. OBD II: escáner según disponibilidad en la cita.
+🚛 Otros: Grúa (consultar al asesor), inventario de repuestos, renovación de RCV.
 
-💳 CASHEA: cobra IVA 16% adicional. PRIMERO pregunta el nivel:
-  Nivel 1→60% inicial | Nivel 2→50% | Niveles 3-6→40%. Resto en 3 cuotas cada 14 días.
-Para datos de pago: "te atendemos en caja o escríbenos al asesor".
+💳 CASHEA: IVA 16% adicional. Pide nivel PRIMERO → Nivel 1: 60% inicial | Nivel 2: 50% | Niveles 3-6: 40%. 3 cuotas c/14 días. Datos de pago → caja.
 
-📅 CITAS: solicitar siempre: nombre, vehículo (marca/modelo/año), servicio, fecha y hora (L-S 8AM-5PM).
-IMPORTANTE: Antes de confirmar una cita, el sistema verificará disponibilidad automáticamente.
+📞 CONTACTO / ASESOR: Si piden número de contacto, envía el enlace wa.me/584123343519 (se ve como tarjeta de WhatsApp).
+
+📅 CITAS: Solicitar nombre completo, vehículo (marca/modelo/año), servicio, día y hora (L-S, 8AM-5PM). El sistema revisa disponibilidad automáticamente.
 
 COMPORTAMIENTO:
-- Español venezolano, cálido y profesional.
-- Máximo 4-5 líneas por respuesta, usa emojis con moderación.
-- Presupuestos de silenciadores válidos 2 días. No improvises precios.
-- Si no sabes algo, di "déjame consultarlo" y da el número del asesor.
-- Un cliente puede tener MÚLTIPLES vehículos. Siempre pregunta "¿para cuál vehículo?"
+- Español venezolano, amigable y profesional.
+- Máximo 4-5 líneas por respuesta.
+- No improvises precios no listados.
+- Si no sabes algo: "déjame consultarlo con el equipo" y da el número.
 `;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET: Webhook verification
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ─── GET: Webhook verification ────────────────────────────────────────────────
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const mode = searchParams.get('hub.mode');
@@ -252,10 +63,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST: Receive messages
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ─── POST: Receive messages ───────────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -269,10 +77,10 @@ export async function POST(request: NextRequest) {
     }
 
     for (const message of value.messages) {
-      const from = message.from;
-      const wa_message_id = message.id;
+      const from: string = message.from;
+      const wa_message_id: string = message.id;
 
-      const db = getDB();
+      const db = getDb();
 
       // 0. Deduplication
       if (db && wa_message_id) {
@@ -280,26 +88,27 @@ export async function POST(request: NextRequest) {
           const { data: rows } = await db
             .from('mensajes_whatsapp').select('id').eq('wa_message_id', wa_message_id).limit(1);
           if (rows && rows.length > 0) {
-            console.log(`⏭️ Duplicado (${wa_message_id}), ignorando.`);
+            console.log(`⏭️ Duplicado (${wa_message_id})`);
             continue;
           }
-        } catch { /* continue even if dedup fails */ }
+        } catch { /* continue on error */ }
       }
 
-      // 1. Parse message
+      // Parse message body
       let messageBody = '';
       if (message.type === 'text') messageBody = message.text?.body || '';
-      else if (message.type === 'image') messageBody = '[El cliente envió una imagen]';
-      else if (message.type === 'audio') messageBody = '[El cliente envió un audio]';
-      else if (message.type === 'document') messageBody = '[El cliente envió un documento]';
+      else if (message.type === 'image') messageBody = '[Cliente envió imagen]';
+      else if (message.type === 'audio') messageBody = '[Cliente envió audio]';
+      else if (message.type === 'document') messageBody = '[Cliente envió documento]';
       else if (message.type === 'location') {
-        messageBody = `[El cliente compartió su ubicación: lat ${message.location?.latitude}, lng ${message.location?.longitude}]`;
+        const loc = message.location;
+        messageBody = `[Cliente compartió ubicación: ${loc?.latitude}, ${loc?.longitude}]`;
       }
-
       if (!messageBody) continue;
-      console.log(`📩 De ${from}: ${messageBody.substring(0, 80)}`);
 
-      // 2. Save incoming message (non-blocking)
+      console.log(`📩 [${from}]: ${messageBody.substring(0, 80)}`);
+
+      // 1. Save incoming (non-blocking)
       if (db) {
         void (async () => {
           try {
@@ -313,187 +122,47 @@ export async function POST(request: NextRequest) {
 
       if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) continue;
 
-      // 3. Load client context from DB
-      let clienteId: string | null = null;
-      let clienteNombre = '';
-      let vehiculosInfo = '';
-      let citasInfo = '';
-      let inventarioContext = '';
+      // 2. Load full context for this phone number
+      const ctx = await loadConversationContext(db, from, messageBody);
 
-      if (db) {
-        try {
-          const cliente = await getOrCreateCliente(db, from);
-          if (cliente) {
-            clienteId = cliente.id;
-            clienteNombre = `${cliente.nombre} ${cliente.apellido}`.trim();
-            if (clienteNombre === 'Cliente WhatsApp') clienteNombre = '';
+      // 3. Detect intent-based special responses first
+      const lowerBody = messageBody.toLowerCase();
 
-            const vehiculos = await getClienteVehiculos(db, cliente.id);
-            if (vehiculos.length > 0) {
-              vehiculosInfo = `VEHÍCULOS REGISTRADOS DEL CLIENTE:\n${vehiculos.map(
-                (v: { marca: string; modelo: string; anio: number; placa: string }, i: number) => `  ${i + 1}. ${v.marca} ${v.modelo} ${v.anio} (Placa: ${v.placa})`
-              ).join('\n')}`;
-            }
-
-            const citas = await getClienteCitas(db, cliente.id);
-            const now = new Date();
-            const vzNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/Caracas' }));
-
-            if (citas.length > 0) {
-              const futureCitas = citas.filter((c: { fecha: string }) => new Date(c.fecha) >= vzNow);
-              const pastCitas = citas.filter((c: { fecha: string }) => new Date(c.fecha) < vzNow);
-              citasInfo = 'HISTORIAL DE CITAS:';
-              if (pastCitas.length > 0) {
-                citasInfo += `\n  ANTERIORES: ${pastCitas.slice(-3).map(
-                  (c: { fecha: string; hora: string; descripcion: string; estado: string }) => `${c.fecha} ${c.hora} - ${c.descripcion} [${c.estado}]`
-                ).join(' | ')}`;
-              }
-              if (futureCitas.length > 0) {
-                citasInfo += `\n  PRÓXIMAS: ${futureCitas.slice(0, 3).map(
-                  (c: { fecha: string; hora: string; descripcion: string; estado: string }) => `${c.fecha} ${c.hora} - ${c.descripcion} [${c.estado}]`
-                ).join(' | ')}`;
-              }
-            }
-          }
-
-          // Inventory context (always load silenciadores + general)
-          const silenciadores = await getInventarioByCategoria(db, 'silenciador');
-          if (silenciadores.length > 0) {
-            inventarioContext = `INVENTARIO SILENCIADORES EN STOCK:\n${silenciadores.map(
-              (s: { nombre: string; precio_usd: number; stock: number; cilindraje_min: number; cilindraje_max: number }) =>
-                `  ${s.nombre}: $${s.precio_usd} | Stock: ${s.stock} unidades | Cilindraje: ${s.cilindraje_min}-${s.cilindraje_max}L`
-            ).join('\n')}`;
-          }
-        } catch (e) {
-          console.error('Error cargando contexto del cliente:', e);
-        }
-      }
-
-      // 4. Load recent conversation history
-      let conversationHistory: { role: string; parts: { text: string }[] }[] = [];
-      if (db) {
-        try {
-          const msgs = await getRecentMessages(db, from, 14);
-          conversationHistory = msgs
-            .filter(m => m.body !== messageBody)
-            .slice(-12)
-            .map(m => ({
-              role: m.tipo === 'entrante' ? 'user' : 'model',
-              parts: [{ text: m.body }],
-            }));
-          console.log(`🧠 Historial: ${conversationHistory.length} mensajes`);
-        } catch (e) { console.error('Error cargando historial:', e); }
-      }
-
-      // 5. Session freshness
-      let isNewSession = true;
-      if (db) {
-        try {
-          const { data: convRows } = await db
-            .from('conversaciones').select('ultimo_mensaje_at').eq('telefono', from).limit(1);
-          if (convRows?.[0]?.ultimo_mensaje_at) {
-            const hrs = (Date.now() - new Date(convRows[0].ultimo_mensaje_at).getTime()) / 3600000;
-            if (hrs < 12) isNewSession = false;
-          }
-        } catch { /* ok */ }
-      }
-
-      // 6. Location request detection
-      const lower = messageBody.toLowerCase();
-      const isLocationReq = ['ubicacion', 'ubicación', 'donde', 'dirección', 'llegar', 'gps', 'mapa', 'ubicado'].some(k => lower.includes(k));
-      const isContactReq = ['numero', 'número', 'contacto', 'asesor', 'whatsapp', 'llamar', 'teléfono', 'telefono', 'comunicar'].some(k => lower.includes(k));
-
-      if (isLocationReq) {
-        await sendText(from, '📍 *Estamos en San Antonio de los Altos, Miranda.*\nTe mando el mapa y cómo llegar 👇');
+      // Location request
+      if (isLocationRequest(lowerBody)) {
+        await sendMsg(from, '📍 *Estamos en San Antonio de los Altos, Miranda.* Te mando el mapa y el video de cómo llegar 👇');
+        await delay(700);
+        await sendMsg(from, 'https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
         await delay(600);
-        await sendText(from, 'https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
+        await sendMsg(from, 'https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
         await delay(500);
-        await sendText(from, 'https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
-        await delay(400);
-        await sendText(from, '¡Y síguenos en Instagram @lycos.team para tips y novedades! 📸');
-      } else if (isContactReq) {
-        // Send WhatsApp contact card for advisor
-        await sendContactCard(from);
-        await delay(500);
-        await sendText(from, 'Te envié el contacto de nuestro asesor. También puedes escribir directamente a ese número por WhatsApp 📲');
-      } else {
-        // 7. Build full AI prompt with all context
-        const vzlaTime = new Intl.DateTimeFormat('es-VE', {
-          timeZone: 'America/Caracas', dateStyle: 'full', timeStyle: 'short'
-        }).format(new Date());
-
-        const clienteContext = [
-          clienteNombre ? `NOMBRE CONOCIDO DEL CLIENTE: ${clienteNombre}` : 'CLIENTE: nombre desconocido aún',
-          vehiculosInfo || 'VEHÍCULOS: ninguno registrado aún',
-          citasInfo || 'CITAS: ninguna registrada',
-          inventarioContext,
-        ].filter(Boolean).join('\n\n');
-
-        const systemPrompt = `${LYCOS_STATIC_KNOWLEDGE}
-
-=== DATOS EN TIEMPO REAL ===
-FECHA/HORA EN VENEZUELA: ${vzlaTime}
-SESIÓN: ${isNewSession ? 'NUEVA — puedes saludar brevemente' : 'CONTINUA — no repitas saludos, ve al tema'}
-NÚMERO DE TELÉFONO DEL CLIENTE: ${from}
-
-${clienteContext}
-
-=== INSTRUCCIONES CRÍTICAS ===
-1. Usa el nombre del cliente si lo conoces, sino pregúntalo naturalmente.
-2. Si el cliente menciona un vehículo nuevo, úsalo en la respuesta. El sistema lo registrará.
-3. Para AGENDAMIENTO DE CITAS: el sistema verificará disponibilidad. Si piden cita, confirma todos los datos primero.
-4. El cliente puede tener más de un vehículo. Siempre pregunta "¿para cuál vehículo?" si no especifica.
-5. Para silenciadores: verifica el stock mostrado arriba antes de confirmar disponibilidad.
-6. Si el cliente pregunta si su cita ya pasó o está próxima, usa el historial de citas arriba.
-7. Las citas del historial marcadas como futuras aún están pendientes. Infórmale con exactitud.
-8. Para consultar número de contacto o asesor: el sistema ya le enviará una tarjeta de WhatsApp.
-9. Siempre responde en español venezolano. Máximo 5 líneas.`;
-
-        const contents = [
-          ...conversationHistory,
-          { role: 'user', parts: [{ text: messageBody }] }
-        ];
-
-        const aiResponse = await getAIResponse(systemPrompt, contents);
-
-        if (aiResponse) {
-          const hasUrl = /https?:\/\//.test(aiResponse);
-          await sendText(from, aiResponse, hasUrl);
-
-          // 8. Extract and save client data from conversation
-          if (db && clienteId) {
-            void (async () => {
-              try {
-                const extracted = extractStructuredData(messageBody);
-                if (extracted.nombre && clienteNombre === '') {
-                  await updateClienteInfo(db, clienteId!, { nombre: extracted.nombre.split(' ')[0], apellido: extracted.nombre.split(' ').slice(1).join(' ') || 'WA' });
-                }
-                if (extracted.vehiculo && clienteId) {
-                  await createOrUpdateVehiculo(db, clienteId!, {
-                    marca: extracted.vehiculo.marca,
-                    modelo: extracted.vehiculo.modelo,
-                    anio: extracted.vehiculo.anio || new Date().getFullYear(),
-                  });
-                }
-              } catch (e) { console.error('Error guardando datos extraídos:', e); }
-            })();
-          }
-        }
+        await sendMsg(from, '¡Síguenos en Instagram @lycos.team! 📸');
+        await updateConversation(db, from, messageBody, ctx.memoria);
+        continue;
       }
 
-      // 9. Update conversation state (non-blocking)
-      if (db) {
-        void (async () => {
-          try {
-            await db.from('conversaciones').upsert({
-              telefono: from,
-              cliente_id: clienteId,
-              ultimo_mensaje: messageBody.substring(0, 100),
-              ultimo_mensaje_at: new Date().toISOString(),
-            }, { onConflict: 'telefono' });
-          } catch (e) { console.error('Error actualizando conversación:', e); }
-        })();
+      // Contact/asesor request
+      if (isContactRequest(lowerBody)) {
+        await sendMsg(from, '📱 Aquí te dejo el contacto de nuestro asesor para que puedas chatear directamente:');
+        await delay(600);
+        await sendMsg(from, `https://wa.me/${ASESOR_PHONE}`, true);
+        await updateConversation(db, from, messageBody, ctx.memoria);
+        continue;
       }
+
+      // 4. Get AI response with full context
+      const aiResponse = await getAIResponse(messageBody, ctx);
+
+      if (aiResponse) {
+        const hasUrl = /https?:\/\//.test(aiResponse);
+        await sendMsg(from, aiResponse, hasUrl);
+
+        // 5. Post-response: extract intents and persist to DB
+        void processIntents(db, from, messageBody, aiResponse, ctx);
+      }
+
+      // 6. Update conversation state
+      await updateConversation(db, from, messageBody, ctx.memoria);
     }
 
     return NextResponse.json({ status: 'ok' });
@@ -503,25 +172,177 @@ ${clienteContext}
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// AI RESPONSE
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Context Loading ──────────────────────────────────────────────────────────
+interface Memoria {
+  nombre?: string;
+  vehiculos?: { marca: string; modelo: string; anio?: string; placa?: string }[];
+  ultima_consulta?: string;
+  notas?: string;
+  cliente_id?: string;
+}
 
+interface ConversationContext {
+  historia: { role: string; parts: { text: string }[] }[];
+  memoria: Memoria;
+  citasInfo: string;
+  inventarioInfo: string;
+  isNewSession: boolean;
+}
+
+async function loadConversationContext(
+  db: ReturnType<typeof getDb>,
+  from: string,
+  currentMessage: string
+): Promise<ConversationContext> {
+  const vzlaTime = new Intl.DateTimeFormat('es-VE', {
+    timeZone: 'America/Caracas', dateStyle: 'full', timeStyle: 'short',
+  }).format(new Date());
+
+  let historia: { role: string; parts: { text: string }[] }[] = [];
+  let memoria: Memoria = {};
+  let citasInfo = '';
+  let inventarioInfo = '';
+  let isNewSession = true;
+
+  if (!db) return { historia, memoria, citasInfo, inventarioInfo, isNewSession };
+
+  // Load conversation history (last 14 messages)
+  try {
+    const { data: msgs } = await db
+      .from('mensajes_whatsapp')
+      .select('body, tipo, created_at')
+      .or(`from_number.eq.${from},to_number.eq.${from}`)
+      .order('created_at', { ascending: false })
+      .limit(14);
+
+    if (msgs && msgs.length > 0) {
+      const filtered = msgs
+        .filter(m => !(m.body === currentMessage && m.tipo === 'entrante'))
+        .slice(0, 12)
+        .reverse();
+      historia = filtered.map(m => ({
+        role: m.tipo === 'entrante' ? 'user' : 'model',
+        parts: [{ text: m.body }],
+      }));
+
+      // Session check
+      const latest = msgs[0];
+      if (latest?.created_at) {
+        const diff = (Date.now() - new Date(latest.created_at).getTime()) / 3600000;
+        if (diff < 12) isNewSession = false;
+      }
+    }
+  } catch (e) { console.error('Error loading history:', e); }
+
+  // Load conversation memoria JSONB
+  try {
+    const { data: convRows } = await db
+      .from('conversaciones')
+      .select('memoria')
+      .eq('telefono', from)
+      .limit(1);
+    if (convRows?.[0]?.memoria) {
+      memoria = convRows[0].memoria as Memoria;
+    }
+  } catch (e) { console.error('Error loading memoria:', e); }
+
+  // Load upcoming and past appointments for this phone
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const { data: citas } = await db
+      .from('citas')
+      .select('fecha, hora, tipo_servicio, descripcion, estado')
+      .eq('telefono', from)
+      .order('fecha', { ascending: true })
+      .limit(5);
+
+    if (citas && citas.length > 0) {
+      const citasList = citas.map(c => {
+        const citaDate = new Date(`${c.fecha}T${c.hora}`);
+        const isPast = c.fecha < today;
+        const status = isPast ? '(PASADA)' : '(PRÓXIMA)';
+        return `- ${c.fecha} a las ${c.hora} | ${c.tipo_servicio} | ${c.descripcion || ''} | ${c.estado} ${status}`;
+      }).join('\n');
+      citasInfo = `\nCITAS REGISTRADAS PARA ESTE CLIENTE:\n${citasList}`;
+    }
+  } catch (e) { console.error('Error loading citas:', e); }
+
+  // Load inventory if message mentions products
+  const lower = currentMessage.toLowerCase();
+  if (lower.includes('silenciador') || lower.includes('cl') || lower.includes('resonador') ||
+      lower.includes('flexible') || lower.includes('stock') || lower.includes('inventario') ||
+      lower.includes('disponible') || lower.includes('hay') || lower.includes('precio')) {
+    try {
+      const { data: items } = await db
+        .from('inventario')
+        .select('nombre, codigo, precio_usd, stock, notas')
+        .eq('activo', true)
+        .order('categoria');
+      if (items && items.length > 0) {
+        const list = items.map(i =>
+          `  • ${i.nombre} (${i.codigo}): $${i.precio_usd} — Stock: ${i.stock > 0 ? i.stock + ' unidades' : '⚠️ SIN STOCK'}`
+        ).join('\n');
+        inventarioInfo = `\nINVENTARIO ACTUAL (stock en tiempo real):\n${list}`;
+      }
+    } catch (e) { console.error('Error loading inventory:', e); }
+  }
+
+  console.log(`🧠 Contexto cargado: ${historia.length} msgs hist, memoria: ${JSON.stringify(memoria).substring(0, 80)}`);
+
+  return { historia, memoria, citasInfo, inventarioInfo, isNewSession };
+}
+
+// ─── AI Response ──────────────────────────────────────────────────────────────
 async function getAIResponse(
-  systemPrompt: string,
-  contents: { role: string; parts: { text: string }[] }[]
+  userMessage: string,
+  ctx: ConversationContext
 ): Promise<string | null> {
   if (!GEMINI_API_KEY) return null;
+
+  const vzlaTime = new Intl.DateTimeFormat('es-VE', {
+    timeZone: 'America/Caracas', dateStyle: 'full', timeStyle: 'short',
+  }).format(new Date());
+
+  const memoriaStr = Object.keys(ctx.memoria).length > 0
+    ? `\nMEMORIA DEL CLIENTE (recuerda esta info, no vuelvas a preguntar):
+- Nombre: ${ctx.memoria.nombre || 'no registrado'}
+- Vehículos: ${ctx.memoria.vehiculos?.map(v => `${v.marca} ${v.modelo} ${v.anio || ''}`).join(', ') || 'no registrado'}
+- Notas: ${ctx.memoria.notas || 'ninguna'}`
+    : '';
+
+  const systemPrompt = `${LYCOS_KNOWLEDGE}
+
+FECHA/HORA VENEZUELA: ${vzlaTime}
+SESIÓN: ${ctx.isNewSession ? 'NUEVA - puedes saludar brevemente si el mensaje lo amerita' : 'CONTINUA - ve al tema, no repitas saludos'}
+${memoriaStr}
+${ctx.citasInfo}
+${ctx.inventarioInfo}
+
+REGLAS CRÍTICAS:
+- Si el cliente pregunta por stock/disponibilidad, usa el INVENTARIO ACTUAL mostrado arriba.
+- Si hay CITAS REGISTRADAS, úsalas: indica si ya pasaron o si están próximas.
+- Si el cliente menciona querer agendar, solicita los datos y di que confirmaremos la disponibilidad.
+- Si piden el contacto del asesor, di que les enviarás el contacto de WhatsApp.
+- Recuerda que un cliente puede tener VARIOS vehículos. Identifica de cuál está hablando.
+- Analiza el historial completo antes de responder. No repitas preguntas ya respondidas.`;
+
+  const contents = [
+    ...ctx.historia,
+    { role: 'user', parts: [{ text: userMessage }] },
+  ];
+
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           system_instruction: { parts: [{ text: systemPrompt }] },
           contents,
-          generationConfig: { temperature: 0.72, maxOutputTokens: 650, topK: 40, topP: 0.95 },
+          generationConfig: {
+            temperature: 0.75, maxOutputTokens: 700, topK: 40, topP: 0.95,
+          },
           safetySettings: [
             { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
             { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
@@ -529,106 +350,271 @@ async function getAIResponse(
         }),
       }
     );
-    if (!res.ok) {
-      console.error('❌ Gemini error:', res.status, await res.text().then(t => t.substring(0, 200)));
+
+    if (!resp.ok) {
+      const err = await resp.text();
+      console.error(`❌ Gemini error ${resp.status}:`, err.substring(0, 300));
       return null;
     }
-    const data = await res.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+
+    const data = await resp.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+    if (text) console.log(`✅ Gemini: "${text.substring(0, 70)}..."`);
+    return text;
   } catch (e) {
-    console.error('❌ getAIResponse error:', e);
+    console.error('❌ Error getAIResponse:', e);
     return null;
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// WHATSAPP SENDERS
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Intent Processing → DB writes ───────────────────────────────────────────
+async function processIntents(
+  db: ReturnType<typeof getDb>,
+  from: string,
+  userMsg: string,
+  aiMsg: string,
+  ctx: ConversationContext
+): Promise<void> {
+  if (!db) return;
 
-async function sendText(to: string, text: string, previewUrl = false): Promise<void> {
-  if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
+  const newMemoria: Memoria = { ...ctx.memoria };
+  let memChanged = false;
+
+  // Extract client name
+  const nameMatch = userMsg.match(
+    /(?:soy|me llamo|mi nombre es|llaman?)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ\s]{1,30})/i
+  );
+  if (nameMatch && !newMemoria.nombre) {
+    newMemoria.nombre = nameMatch[1].trim();
+    memChanged = true;
+    console.log(`👤 Nombre detectado: ${newMemoria.nombre}`);
+  }
+
+  // Extract vehicle info (supports multiple vehicles)
+  const vehicleMatch = userMsg.match(
+    /\b(toyota|ford|chevrolet|hyundai|kia|honda|nissan|mazda|volkswagen|corsa|aveo|spark|cruze|sail|captiva|tucson|sportage|yaris|hilux|ranger|f-150|sentra|tiida|versa|frontier|x-trail|cx-5|cx30|rio|accent|elantra|sonata|civic|fit|hrv|crv|gol|bora|jetta|passat|polo|peugeot|renault|mitsubishi|suzuki|isuzu)[^\n,]{0,25}/i
+  );
+  const yearMatch = userMsg.match(/\b(19[8-9]\d|20[0-2]\d)\b/);
+  if (vehicleMatch) {
+    const vehiculo = {
+      marca: vehicleMatch[0].split(' ')[0],
+      modelo: vehicleMatch[0].split(' ').slice(1).join(' ') || vehicleMatch[0],
+      anio: yearMatch?.[1],
+    };
+    if (!newMemoria.vehiculos) newMemoria.vehiculos = [];
+    const exists = newMemoria.vehiculos.some(
+      v => v.marca.toLowerCase() === vehiculo.marca.toLowerCase() &&
+           v.modelo.toLowerCase() === vehiculo.modelo.toLowerCase()
+    );
+    if (!exists) {
+      newMemoria.vehiculos.push(vehiculo);
+      memChanged = true;
+      console.log(`🚗 Vehículo añadido: ${vehiculo.marca} ${vehiculo.modelo}`);
+    }
+  }
+
+  // Detect appointment booking intent
+  const bookingKeywords = ['cita', 'agendar', 'reservar', 'cuando puedo', 'disponibilidad', 'quiero ir'];
+  const hasBookingIntent = bookingKeywords.some(k => userMsg.toLowerCase().includes(k));
+
+  if (hasBookingIntent) {
+    await tryBookAppointment(db, from, userMsg, newMemoria);
+  }
+
+  // Save updated memoria
+  if (memChanged) {
+    try {
+      await db.from('conversaciones').upsert(
+        { telefono: from, memoria: newMemoria },
+        { onConflict: 'telefono' }
+      );
+      console.log('💾 Memoria actualizada');
+    } catch (e) { console.error('Error saving memoria:', e); }
+  }
+
+  // Upsert client in clientes table if we have name + phone
+  if (newMemoria.nombre && memChanged) {
+    try {
+      const { data: existing } = await db
+        .from('clientes')
+        .select('id')
+        .eq('telefono', from)
+        .limit(1);
+
+      if (!existing || existing.length === 0) {
+        const nameParts = newMemoria.nombre.split(' ');
+        await db.from('clientes').insert({
+          nombre: nameParts[0] || newMemoria.nombre,
+          apellido: nameParts.slice(1).join(' ') || 'WhatsApp',
+          telefono: from,
+        });
+        console.log(`✅ Cliente creado: ${newMemoria.nombre}`);
+      }
+    } catch (e) { console.error('Error upserting cliente:', e); }
+  }
+}
+
+// ─── Appointment Booking with Conflict Detection ──────────────────────────────
+async function tryBookAppointment(
+  db: ReturnType<typeof getDb>,
+  from: string,
+  userMsg: string,
+  memoria: Memoria
+): Promise<void> {
+  if (!db) return;
+
+  // Extract date/time patterns
+  const dateMatch = userMsg.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
+  const timeMatch = userMsg.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|AM|PM)/);
+
+  if (!dateMatch && !timeMatch) return; // Not enough info to book
+
+  const now = new Date();
+  let fecha = '';
+  let hora = '08:00';
+
+  if (dateMatch) {
+    const day = dateMatch[1].padStart(2, '0');
+    const month = dateMatch[2].padStart(2, '0');
+    const year = dateMatch[3] ? (dateMatch[3].length === 2 ? '20' + dateMatch[3] : dateMatch[3]) : now.getFullYear().toString();
+    fecha = `${year}-${month}-${day}`;
+  }
+
+  if (timeMatch) {
+    let h = parseInt(timeMatch[1]);
+    const m = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+    const meridian = timeMatch[3]?.toLowerCase();
+    if (meridian === 'pm' && h < 12) h += 12;
+    if (meridian === 'am' && h === 12) h = 0;
+    hora = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+  }
+
+  if (!fecha) return;
+
+  // Check for conflicts: any appointment within ±60 minutes of requested time
   try {
-    const res = await fetch(`https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp', recipient_type: 'individual',
-        to: to.replace(/\D/g, ''), type: 'text',
-        text: { preview_url: previewUrl, body: text },
-      }),
+    const requestedDateTime = new Date(`${fecha}T${hora}:00`);
+    const windowStart = new Date(requestedDateTime.getTime() - 60 * 60 * 1000);
+    const windowEnd = new Date(requestedDateTime.getTime() + 60 * 60 * 1000);
+
+    const startTime = `${windowStart.getHours().toString().padStart(2,'0')}:${windowStart.getMinutes().toString().padStart(2,'0')}`;
+    const endTime = `${windowEnd.getHours().toString().padStart(2,'0')}:${windowEnd.getMinutes().toString().padStart(2,'0')}`;
+
+    const { data: conflicts } = await db
+      .from('citas')
+      .select('hora, descripcion')
+      .eq('fecha', fecha)
+      .neq('estado', 'cancelada')
+      .gte('hora', startTime)
+      .lte('hora', endTime);
+
+    if (conflicts && conflicts.length > 0) {
+      console.log(`⚠️ Conflicto de cita detectado para ${fecha} ${hora}`);
+      // Don't book automatically — AI has already been informed via citasInfo context
+      return;
+    }
+
+    // No conflict → create the appointment
+    const servicioMatch = userMsg.match(
+      /(?:por|para|quiero|necesito|servicio de?)\s+([a-záéíóúñA-ZÁÉÍÓÚÑ\s]{3,40})/i
+    );
+
+    await db.from('citas').insert({
+      fecha,
+      hora,
+      telefono: from,
+      tipo_servicio: 'otro',
+      descripcion: servicioMatch?.[1]?.trim() || 'Servicio solicitado por WhatsApp',
+      estado: 'pendiente',
+      duracion_minutos: 60,
     });
-    if (!res.ok) { console.error('❌ WA send error:', await res.json()); return; }
-    const data = await res.json();
+
+    console.log(`📅 Cita creada: ${fecha} ${hora} para ${from}`);
+  } catch (e) {
+    console.error('Error booking appointment:', e);
+  }
+}
+
+// ─── Update conversation row ──────────────────────────────────────────────────
+async function updateConversation(
+  db: ReturnType<typeof getDb>,
+  from: string,
+  lastMessage: string,
+  memoria: Memoria
+): Promise<void> {
+  if (!db) return;
+  void (async () => {
+    try {
+      await db.from('conversaciones').upsert({
+        telefono: from,
+        ultimo_mensaje: lastMessage.substring(0, 100),
+        ultimo_mensaje_at: new Date().toISOString(),
+        memoria,
+      }, { onConflict: 'telefono' });
+    } catch (e) { console.error('Error updating conversacion:', e); }
+  })();
+}
+
+// ─── Send WhatsApp Message ────────────────────────────────────────────────────
+async function sendMsg(to: string, text: string, previewUrl = false): Promise<void> {
+  if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
+
+  try {
+    const resp = await fetch(
+      `https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: to.replace(/[^0-9]/g, ''),
+          type: 'text',
+          text: { preview_url: previewUrl, body: text },
+        }),
+      }
+    );
+
+    if (!resp.ok) {
+      console.error('❌ WhatsApp send error:', await resp.text());
+      return;
+    }
+
+    const data = await resp.json();
     const wa_id = data.messages?.[0]?.id;
-    console.log(`✅ Mensaje enviado. ID: ${wa_id}`);
+    console.log(`📤 Enviado a ${to}. ID: ${wa_id}`);
 
     // Save outgoing (non-blocking)
-    const db = getDB();
+    const db = getDb();
     if (db) {
       void (async () => {
         try {
           await db.from('mensajes_whatsapp').insert({
             from_number: 'system', to_number: to,
-            body: text, tipo: 'saliente', wa_message_id: wa_id, es_ia: true,
+            body: text, tipo: 'saliente',
+            wa_message_id: wa_id, es_ia: true,
           });
-        } catch (e) { console.error('Error guardando saliente:', e); }
+        } catch (e) { console.error('Error saving saliente:', e); }
       })();
     }
-  } catch (e) { console.error('❌ sendText error:', e); }
-}
-
-async function sendContactCard(to: string): Promise<void> {
-  if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
-  try {
-    const res = await fetch(`https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp', recipient_type: 'individual',
-        to: to.replace(/\D/g, ''), type: 'contacts',
-        contacts: [{
-          name: { formatted_name: 'Lycos Team - Asesor', first_name: 'Lycos Team', last_name: 'Asesor' },
-          org: { company: 'Lycos Team', department: 'Atención al Cliente' },
-          phones: [{ phone: '+58 412-334-3519', type: 'WORK', wa_id: LYCOS_ADVISOR_PHONE }],
-          urls: [{ url: 'https://www.instagram.com/lycos.team', type: 'WORK' }],
-        }],
-      }),
-    });
-    if (!res.ok) { console.error('❌ WA contact error:', await res.json()); }
-    else console.log('✅ Tarjeta de contacto enviada');
-  } catch (e) { console.error('❌ sendContactCard error:', e); }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DATA EXTRACTION HELPERS
-// ─────────────────────────────────────────────────────────────────────────────
-
-function extractStructuredData(message: string) {
-  const result: {
-    nombre?: string;
-    vehiculo?: { marca: string; modelo: string; anio: number };
-  } = {};
-
-  const nameMatch = message.match(/(?:soy|me llamo|mi nombre es)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ\s]{1,30})/i);
-  if (nameMatch) result.nombre = nameMatch[1].trim();
-
-  // Detect common Venezuelan car brands + model
-  const carMatch = message.match(/(?:tengo|mi carro es|mi carro|mi coche|mi vehículo es|mi vehiculo (?:es)?)\s+(?:un|una)?\s*([A-Za-z]+)\s+([A-Za-z0-9]+)/i);
-  if (carMatch) {
-    const yearMatch = message.match(/\b(19[5-9]\d|20[0-2]\d)\b/);
-    result.vehiculo = {
-      marca: carMatch[1],
-      modelo: carMatch[2],
-      anio: yearMatch ? parseInt(yearMatch[1]) : new Date().getFullYear(),
-    };
+  } catch (e) {
+    console.error('❌ sendMsg error:', e);
   }
+}
 
-  return result;
+// ─── Intent Detection Helpers ─────────────────────────────────────────────────
+function isLocationRequest(lower: string): boolean {
+  return ['ubicacion', 'ubicación', 'donde', 'dirección', 'llegar', 'ubicado', 'gps', 'mapa', 'dirección']
+    .some(k => lower.includes(k));
+}
+
+function isContactRequest(lower: string): boolean {
+  return ['numero del asesor', 'número del asesor', 'contacto del asesor', 'hablar con alguien',
+    'numero de whatsapp', 'número de whatsapp', 'comunicarme', 'contacto directo', 'hablar con una persona',
+    'número de contacto', 'numero de contacto', 'whatsapp del taller']
+    .some(k => lower.includes(k));
 }
 
 function delay(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
-
-// Export for use by other API routes
-export { checkCitaAvailability, getNextAvailableSlots, createCita };
