@@ -6,7 +6,8 @@ const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
-const ASESOR_PHONE = '584123343519'; // Lycos Team asesor WhatsApp
+const ASESOR_PHONE = '584123343519';
+const ASESOR_NAME = 'Lycos Team - Asesor';
 
 function getDb() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -20,10 +21,12 @@ const LYCOS_KNOWLEDGE = `
 IDENTIDAD:
 Eres el asistente virtual de Lycos Team, un taller automotriz profesional en San Antonio de los Altos, Miranda, Venezuela.
 NUNCA digas que eres una IA, bot, ChatGPT o robot. Si preguntan, eres el asistente del taller.
-Si el cliente necesita un asesor humano: "te comunico con uno de nuestros asesores" → envía wa.me/584123343519
+Si el cliente pide hablar con una persona o asesor: responde "con gusto te comunico con uno de nuestros asesores" y en el siguiente mensaje se le enviará su contacto (ya lo gestiona el sistema, no lo menciones tú).
 
 HORARIO: Lunes a Sábado 8:00 AM – 5:00 PM.
-DOMINGOS: Cerrado. Sin excepciones, sin emergencias.
+DOMINGOS: CERRADO. Sin excepciones. Si alguien escribe un domingo, indícales que el taller está cerrado y que pueden dejar su consulta para el lunes.
+
+FECHA/DÍA: Usa SIEMPRE la fecha/hora real de Venezuela provista en el contexto. Cuando el cliente diga "mañana", "el lunes", "esta semana", calcula la fecha exacta basándote en el día actual. Si el día calculado cae domingo, avisa que no se trabaja y propón el lunes siguiente.
 
 UBICACIÓN: San Antonio de los Altos, Altos Mirandinos, Miranda.
 REDES SOCIALES: Instagram y TikTok: @lycos.team
@@ -36,17 +39,16 @@ SERVICIOS (por categoría):
 🔌 Electrónica: Elevavidrios manuales/electrónicos. OBD II: escáner según disponibilidad en la cita.
 🚛 Otros: Grúa (consultar al asesor), inventario de repuestos, renovación de RCV.
 
-💳 CASHEA: IVA 16% adicional. Pide nivel PRIMERO → Nivel 1: 60% inicial | Nivel 2: 50% | Niveles 3-6: 40%. 3 cuotas c/14 días. Datos de pago → caja.
+💳 CASHEA: IVA 16% adicional. Pide nivel PRIMERO → Nivel 1: 60% inicial | Nivel 2: 50% | Niveles 3-6: 40%. 3 cuotas c/14 días. Datos de pago → caja en persona.
 
-📞 CONTACTO / ASESOR: Si piden número de contacto, envía el enlace wa.me/584123343519 (se ve como tarjeta de WhatsApp).
-
-📅 CITAS: Solicitar nombre completo, vehículo (marca/modelo/año), servicio, día y hora (L-S, 8AM-5PM). El sistema revisa disponibilidad automáticamente.
+📅 CITAS: Solicitar nombre completo, vehículo (marca/modelo/año), servicio, día y hora (L-S, 8AM-5PM). Calcula si el día que pide es válido (no domingo, dentro de horario). El sistema registra la disponibilidad.
 
 COMPORTAMIENTO:
 - Español venezolano, amigable y profesional.
 - Máximo 4-5 líneas por respuesta.
 - No improvises precios no listados.
-- Si no sabes algo: "déjame consultarlo con el equipo" y da el número.
+- Si no sabes algo: "déjame consultarlo con el equipo".
+- Solo menciona al asesor cuando el cliente lo pida directamente o cuando realmente sea necesario escalar. No lo menciones en cada respuesta.
 `;
 
 // ─── GET: Webhook verification ────────────────────────────────────────────────
@@ -141,11 +143,11 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // Contact/asesor request
+      // Contact/asesor request — send native contact card
       if (isContactRequest(lowerBody)) {
-        await sendMsg(from, '📱 Aquí te dejo el contacto de nuestro asesor para que puedas chatear directamente:');
+        await sendMsg(from, 'Con gusto 😊 Te comparto el contacto directo de nuestro asesor:');
         await delay(600);
-        await sendMsg(from, `https://wa.me/${ASESOR_PHONE}`, true);
+        await sendContactCard(from);
         await updateConversation(db, from, messageBody, ctx.memoria);
         continue;
       }
@@ -312,19 +314,23 @@ async function getAIResponse(
 
   const systemPrompt = `${LYCOS_KNOWLEDGE}
 
-FECHA/HORA VENEZUELA: ${vzlaTime}
-SESIÓN: ${ctx.isNewSession ? 'NUEVA - puedes saludar brevemente si el mensaje lo amerita' : 'CONTINUA - ve al tema, no repitas saludos'}
+FECHA Y HORA EXACTA EN VENEZUELA AHORA MISMO: ${vzlaTime}
+DÍA ACTUAL COMPLETO: ${vzlaDate}
+FECHA ISO HOY: ${todayDateISO}
+${isSunday ? '⚠️ HOY ES DOMINGO: El taller está CERRADO. Informa al cliente y sugiere escribir mañana lunes.' : ''}
+SESIÓN: ${ctx.isNewSession ? 'NUEVA - saluda brevemente si el mensaje lo amerita' : 'CONTINUA - ve al tema, sin repetir saludos'}
 ${memoriaStr}
 ${ctx.citasInfo}
 ${ctx.inventarioInfo}
 
 REGLAS CRÍTICAS:
-- Si el cliente pregunta por stock/disponibilidad, usa el INVENTARIO ACTUAL mostrado arriba.
-- Si hay CITAS REGISTRADAS, úsalas: indica si ya pasaron o si están próximas.
-- Si el cliente menciona querer agendar, solicita los datos y di que confirmaremos la disponibilidad.
-- Si piden el contacto del asesor, di que les enviarás el contacto de WhatsApp.
-- Recuerda que un cliente puede tener VARIOS vehículos. Identifica de cuál está hablando.
-- Analiza el historial completo antes de responder. No repitas preguntas ya respondidas.`;
+- Usa la fecha y día de hoy para calcular fechas relativas ("mañana" = ${todayDateISO} + 1 día, "el lunes" = el próximo lunes calculado exacto, etc.).
+- Si el día calculado para una cita cae domingo, avisa que no laboramos y propón el lunes siguiente.
+- Si hay CITAS REGISTRADAS, úsalas: di si ya pasaron o están próximas con la fecha exacta.
+- Si el cliente pregunta stock/disponibilidad, usa el INVENTARIO ACTUAL arriba.
+- Un cliente puede tener VARIOS vehículos. Identifica de cuál habla.
+- Solo menciona o sugiere hablar con un asesor cuando el cliente lo pida o sea realmente necesario escalar. No lo uses como respuesta genérica.
+- Analiza el historial antes de responder. No repitas preguntas ya contestadas.`;
 
   const contents = [
     ...ctx.historia,
