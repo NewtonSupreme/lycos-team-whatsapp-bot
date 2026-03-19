@@ -6,6 +6,34 @@
 
 @layer base {
   :root {
+    --background: 0 0% 98%;
+    --foreground: 220 10% 8%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 10% 8%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 10% 8%;
+    --primary: 24 95% 53%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 10% 95%;
+    --secondary-foreground: 220 10% 8%;
+    --muted: 220 10% 95%;
+    --muted-foreground: 220 10% 40%;
+    --accent: 220 10% 95%;
+    --accent-foreground: 220 10% 8%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 220 10% 90%;
+    --input: 220 10% 90%;
+    --ring: 24 95% 53%;
+    --radius: 0.625rem;
+    --font-display: 'Syne', sans-serif;
+    --glass-bg: rgba(255, 255, 255, 0.3);
+    --glass-border: rgba(0, 0, 0, 0.06);
+    --chart-grid: rgba(0, 0, 0, 0.05);
+    --logo-filter: brightness(0.1);
+  }
+
+  .dark {
     --background: 20 14% 4%;
     --foreground: 30 10% 95%;
     --card: 20 14% 6%;
@@ -25,8 +53,10 @@
     --border: 20 14% 14%;
     --input: 20 14% 14%;
     --ring: 24 95% 53%;
-    --radius: 0.625rem;
-    --font-display: 'Syne', sans-serif;
+    --glass-bg: rgba(255, 255, 255, 0.03);
+    --glass-border: rgba(255, 255, 255, 0.06);
+    --chart-grid: rgba(255, 255, 255, 0.05);
+    --logo-filter: none;
   }
   * { @apply border-border; }
   body { @apply bg-background text-foreground antialiased; font-family: 'DM Sans', system-ui, sans-serif; }
@@ -38,20 +68,21 @@
 }
 
 @layer utilities {
-  .glass { background: rgba(255,255,255,0.03); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.06); }
-  .glass-card { background: rgba(255,255,255,0.02); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.05); }
+  .glass { background: var(--glass-bg); backdrop-filter: blur(12px); border: 1px solid var(--glass-border); }
+  .glass-card { background: var(--glass-bg); backdrop-filter: blur(16px); border: 1px solid var(--glass-border); }
   .glow { box-shadow: 0 0 20px rgba(249,115,22,0.15); }
   .glow-sm { box-shadow: 0 0 10px rgba(249,115,22,0.1); }
   .text-gradient { background: linear-gradient(135deg,#f97316,#fb923c,#fdba74); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-  .sidebar-item { @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer; }
-  .sidebar-item:hover { @apply bg-white/5 text-foreground; }
+  .sidebar-item { @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer text-muted-foreground; }
+  .sidebar-item:hover { @apply bg-secondary text-foreground; }
   .sidebar-item.active { @apply bg-primary/10 text-primary; box-shadow: inset 0 0 0 1px rgba(249,115,22,0.2); }
   .stat-card { @apply relative overflow-hidden rounded-xl border border-border/50 p-5 bg-card/50 transition-all duration-300; }
   .stat-card:hover { @apply border-primary/20; transform: translateY(-1px); }
   .chat-bubble-in { @apply bg-card border border-border/50 rounded-2xl rounded-bl-sm px-4 py-2.5 max-w-xs; }
-  .chat-bubble-out { @apply bg-primary/15 border border-primary/20 rounded-2xl rounded-br-sm px-4 py-2.5 max-w-xs; }
-  .dot-pattern { background-image: radial-gradient(circle, rgba(255,255,255,0.04) 1px, transparent 1px); background-size: 24px 24px; }
-  .page-enter { animation: fadeIn 0.35s ease-out forwards; }
+  .chat-bubble-out { @apply bg-primary/10 border border-primary/20 rounded-2xl rounded-br-sm px-4 py-2.5 max-w-xs; }
+  .dot-pattern { position: relative; }
+  .dot-pattern::before { content: ''; position: absolute; inset: 0; background-image: radial-gradient(circle, var(--border) 1.5px, transparent 1.5px); background-size: 24px 24px; opacity: 0.4; pointer-events: none; z-index: 0; }
+  .page-enter { animation: fadeIn 0.35s ease-out forwards; position: relative; z-index: 1; }
 }
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }

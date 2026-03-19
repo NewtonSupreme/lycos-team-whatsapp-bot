@@ -7,15 +7,15 @@ export default function LoadingScreen() {
   const [fading, setFading] = useState(false);
 
   useEffect(() => {
-    // Start fading out after 2.5 seconds
+    // Start fading out after 1 second
     const fadeTimer = setTimeout(() => {
       setFading(true);
-    }, 2500);
+    }, 1000);
 
-    // Unmount after animation finishes (3.3 seconds total)
+    // Unmount after animation finishes (1.8 seconds total)
     const unmountTimer = setTimeout(() => {
       setMounted(false);
-    }, 3300);
+    }, 1800);
 
     return () => {
       clearTimeout(fadeTimer);
@@ -26,14 +26,15 @@ export default function LoadingScreen() {
   if (!mounted) return null;
 
   return (
-    <div className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-[#0a0a0a] ${fading ? 'animate-fade-out' : ''}`}>
+    <div className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-background/90 backdrop-blur-sm transition-all duration-700 ${fading ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
       <div className="relative flex flex-col items-center gap-8">
         {/* Transparent Logo */}
         <div className="w-48 h-48 md:w-64 md:h-64 animate-logo-pulse">
           <img 
             src="/Logo lycos team trans.png" 
             alt="Lycos Team" 
-            className="w-full h-full object-contain"
+            className="w-full h-full object-contain dark:invert-0 light:invert"
+            style={{ filter: 'var(--logo-filter)' }}
           />
         </div>
 
@@ -47,10 +48,10 @@ export default function LoadingScreen() {
 
         {/* Text */}
         <div className="flex flex-col items-center gap-1">
-          <p className="text-sm font-bold tracking-[0.3em] text-white/50 animate-pulse uppercase" style={{ fontFamily: 'Syne, sans-serif' }}>
+          <p className="text-sm font-bold tracking-[0.3em] text-foreground/50 animate-pulse uppercase" style={{ fontFamily: 'Syne, sans-serif' }}>
             Cargando Sistema
           </p>
-          <div className="w-32 h-[1px] bg-white/10" />
+          <div className="w-32 h-[1px] bg-foreground/10" />
         </div>
       </div>
 

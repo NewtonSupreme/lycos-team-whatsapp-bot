@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { cn, formatRelativeTime, getInitials } from '@/lib/utils';
+import { ThemeToggle } from './ThemeToggle';
 
 export default function Header() {
   const { user, sidebarOpen, toggleSidebar, notifications, unreadCount, markAllRead } = useAppStore();
@@ -41,21 +42,24 @@ export default function Header() {
         <span className="text-[10px] text-green-400 font-medium">Bot activo</span>
       </div>
 
-      {/* Notifications */}
-      <div className="relative">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="relative"
-          onClick={() => { setShowNotifs(!showNotifs); if (!showNotifs) markAllRead(); }}
-        >
-          <Bell className="w-4 h-4" />
-          {unreadCount > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 w-4 h-4 flex items-center justify-center rounded-full bg-primary text-[9px] text-primary-foreground font-bold">
-              {unreadCount}
-            </span>
-          )}
-        </Button>
+      {/* Theme Toggle & Notifications */}
+      <div className="flex items-center gap-1">
+        <ThemeToggle />
+        
+        <div className="relative">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="relative"
+            onClick={() => { setShowNotifs(!showNotifs); if (!showNotifs) markAllRead(); }}
+          >
+            <Bell className="w-4 h-4" />
+            {unreadCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 w-4 h-4 flex items-center justify-center rounded-full bg-primary text-[9px] text-primary-foreground font-bold">
+                {unreadCount}
+              </span>
+            )}
+          </Button>
 
         {showNotifs && (
           <div className="absolute right-0 top-10 w-80 rounded-xl border border-border bg-card shadow-2xl z-50 overflow-hidden">
@@ -89,7 +93,7 @@ export default function Header() {
             </div>
           </div>
         )}
-      </div>
+      </div></div>
 
       {/* User */}
       <div className="flex items-center gap-2 pl-2 border-l border-border/30">

@@ -53,7 +53,7 @@ export default function Sidebar() {
       >
         <div className={cn('flex items-center gap-3 p-4 border-b border-border/30', !sidebarOpen && 'justify-center px-2')}>
           <div className={cn(
-            "flex-shrink-0 w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center overflow-hidden",
+            "flex-shrink-0 w-10 h-10 rounded-lg bg-secondary flex items-center justify-center overflow-hidden",
             !sidebarOpen && "w-9 h-9"
           )}>
             <img 

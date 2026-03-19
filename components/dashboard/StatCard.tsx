@@ -15,12 +15,12 @@ interface StatCardProps {
 }
 
 const colorMap = {
-  orange: { bg: 'bg-orange-500/10', text: 'text-orange-400', border: 'border-orange-500/20', glow: 'hover:shadow-[0_0_20px_rgba(249,115,22,0.1)]' },
-  blue: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20', glow: 'hover:shadow-[0_0_20px_rgba(59,130,246,0.1)]' },
-  green: { bg: 'bg-green-500/10', text: 'text-green-400', border: 'border-green-500/20', glow: 'hover:shadow-[0_0_20px_rgba(34,197,94,0.1)]' },
-  purple: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20', glow: 'hover:shadow-[0_0_20px_rgba(168,85,247,0.1)]' },
-  red: { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20', glow: 'hover:shadow-[0_0_20px_rgba(239,68,68,0.1)]' },
-  cyan: { bg: 'bg-cyan-500/10', text: 'text-cyan-400', border: 'border-cyan-500/20', glow: 'hover:shadow-[0_0_20px_rgba(6,182,212,0.1)]' },
+  orange: { bg: 'bg-orange-500/10', text: 'text-orange-600 dark:text-orange-400', border: 'border-orange-500/20', glow: 'hover:shadow-[0_0_20px_rgba(249,115,22,0.1)]' },
+  blue: { bg: 'bg-blue-500/10', text: 'text-blue-600 dark:text-blue-400', border: 'border-blue-500/20', glow: 'hover:shadow-[0_0_20px_rgba(59,130,246,0.1)]' },
+  green: { bg: 'bg-green-500/10', text: 'text-green-600 dark:text-green-400', border: 'border-green-500/20', glow: 'hover:shadow-[0_0_20px_rgba(34,197,94,0.1)]' },
+  purple: { bg: 'bg-purple-500/10', text: 'text-purple-600 dark:text-purple-400', border: 'border-purple-500/20', glow: 'hover:shadow-[0_0_20px_rgba(168,85,247,0.1)]' },
+  red: { bg: 'bg-red-500/10', text: 'text-red-600 dark:text-red-400', border: 'border-red-500/20', glow: 'hover:shadow-[0_0_20px_rgba(239,68,68,0.1)]' },
+  cyan: { bg: 'bg-cyan-500/10', text: 'text-cyan-600 dark:text-cyan-400', border: 'border-cyan-500/20', glow: 'hover:shadow-[0_0_20px_rgba(6,182,212,0.1)]' },
 };
 
 export default function StatCard({ title, value, subtitle, icon: Icon, trend, trendLabel, color = 'orange', delay = 0 }: StatCardProps) {
@@ -44,7 +44,7 @@ export default function StatCard({ title, value, subtitle, icon: Icon, trend, tr
           {(subtitle || trend !== undefined) && (
             <div className="flex items-center gap-2 mt-1.5">
               {trend !== undefined && (
-                <div className={cn('flex items-center gap-0.5 text-xs font-medium', isPositive ? 'text-green-400' : 'text-red-400')}>
+                <div className={cn('flex items-center gap-0.5 text-xs font-semibold', isPositive ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
                   {isPositive ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                   <span>{Math.abs(trend)}%</span>
                 </div>

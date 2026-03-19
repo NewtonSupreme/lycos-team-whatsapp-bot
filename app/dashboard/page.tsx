@@ -105,9 +105,9 @@ export default function DashboardPage() {
                     <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                <XAxis dataKey="mes" tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: '#6b7280' }} axisLine={false} tickLine={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+                <XAxis dataKey="mes" tick={{ fontSize: 11, fill: 'currentColor' }} axisLine={false} tickLine={false} className="text-muted-foreground" />
+                <YAxis tick={{ fontSize: 10, fill: 'currentColor' }} axisLine={false} tickLine={false} className="text-muted-foreground" />
                 <Tooltip content={<CustomTooltip />} />
                 <Area type="monotone" dataKey="ingresos" name="Ingresos" stroke="#f97316" strokeWidth={2} fill="url(#colorIngresos)" />
                 <Area type="monotone" dataKey="gastos" name="Gastos" stroke="#3b82f6" strokeWidth={2} fill="url(#colorGastos)" />
@@ -130,7 +130,7 @@ export default function DashboardPage() {
                     <Cell key={index} fill={PIE_COLORS[index % PIE_COLORS.length]} opacity={0.85} />
                   ))}
                 </Pie>
-                <Tooltip formatter={(val) => [`${val}%`, '']} contentStyle={{ background: 'hsl(20 14% 6%)', border: '1px solid hsl(20 14% 14%)', borderRadius: '12px', fontSize: 11 }} />
+                <Tooltip formatter={(val) => [`${val}%`, '']} contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '12px', fontSize: 11, color: 'hsl(var(--foreground))' }} />
               </PieChart>
             </ResponsiveContainer>
             <div className="grid grid-cols-2 gap-1 mt-2">
@@ -155,10 +155,10 @@ export default function DashboardPage() {
         <CardContent className="pt-4">
           <ResponsiveContainer width="100%" height={160}>
             <BarChart data={chartDataServicios} margin={{ top: 0, right: 5, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-              <XAxis dataKey="mes" tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 10, fill: '#6b7280' }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={{ background: 'hsl(20 14% 6%)', border: '1px solid hsl(20 14% 14%)', borderRadius: '12px', fontSize: 11 }} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+              <XAxis dataKey="mes" tick={{ fontSize: 11, fill: 'currentColor' }} axisLine={false} tickLine={false} className="text-muted-foreground" />
+              <YAxis tick={{ fontSize: 10, fill: 'currentColor' }} axisLine={false} tickLine={false} className="text-muted-foreground" />
+              <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '12px', fontSize: 11, color: 'hsl(var(--foreground))' }} />
               <Bar dataKey="mecanica" name="Mecánica" fill="#f97316" radius={[3,3,0,0]} opacity={0.85} />
               <Bar dataKey="electronica" name="Electrónica" fill="#3b82f6" radius={[3,3,0,0]} opacity={0.85} />
               <Bar dataKey="cerrajeria" name="Cerrajería" fill="#8b5cf6" radius={[3,3,0,0]} opacity={0.85} />
