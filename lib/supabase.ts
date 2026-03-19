@@ -134,7 +134,19 @@ export async function fetchConversacion(telefono: string) {
     .eq('telefono', telefono)
     .single();
   
-  if (error && error.code !== 'PGRST116') throw error; // PGRST116 is code for 'no rows found'
+  if (error && error.code !== 'PGRST116') throw error;
+  return data;
+}
+
+export async function fetchConversacionHistory(telefono: string, limit = 20) {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('mensajes_whatsapp')
+    .select('*')
+    .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
+    .order('created_at', { ascending: true })
+    .limit(limit);
+  if (error) throw error;
   return data;
 }
 
@@ -144,6 +156,7 @@ export async function upsertConversacion(conv: {
   ultimo_mensaje_at?: string;
   estado?: 'activa' | 'cerrada' | 'bot' | 'humano';
   mensajes_sin_leer?: number;
+  datos_cliente?: Record<string, string>;
 }) {
   if (!supabase) return null;
   const { data, error } = await supabase

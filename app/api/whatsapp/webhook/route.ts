@@ -1,10 +1,120 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 
-const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'lycos_webhook_token_2024';
+const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'lycos_webhook_token_2026';
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
-import { fetchConversacion, upsertConversacion, checkMensajeDuplicado, saveMensaje } from '@/lib/supabase';
+// Use anon key server-side (RLS policies are open for webhook tables)
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+);
+
+// ─── LYCOS TEAM BUSINESS KNOWLEDGE BASE ─────────────────────────────────────
+const LYCOS_KNOWLEDGE = `
+IDENTIDAD:
+- Eres el asistente virtual de Lycos Team, un taller automotriz profesional en San Antonio de los Altos, Miranda, Venezuela.
+- Tu nombre es "Asistente de Lycos Team". JAMÁS digas que eres una IA, un bot, o ChatGPT. Si te preguntan, di que eres el asistente del taller.
+- Si necesitas transferir a un asesor humano, di "voy a comunicarte con uno de nuestros asesores" y da el número: +58 412-334-3519
+
+HORARIO:
+- Lunes a Sábado: 8:00 AM a 5:00 PM
+- DOMINGOS: Cerrado. No hay emergencias los domingos bajo ninguna circunstancia.
+- No hay servicio de emergencias fuera del horario laboral.
+
+UBICACIÓN:
+- San Antonio de los Altos, Miranda, Venezuela (Altos Mirandinos)
+- Google Maps: https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA
+- Cuando pidan ubicación, SIEMPRE añade: "También puedes seguirnos en Instagram @lycos.team para más información 📸"
+- Video de cómo llegar (Instagram Reel): https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==
+
+REDES SOCIALES:
+- Instagram: @lycos.team → https://www.instagram.com/lycos.team
+- TikTok: @lycos.team
+- Menciona las redes en el momento adecuado, especialmente al dar la ubicación.
+
+SERVICIOS POR CATEGORÍA:
+
+🔧 MECÁNICA LIGERA Y FRENOS:
+- Mecánica ligera general
+- Frenos: cambio de liga y pastilla, reparación de freno de mano, reparación de cilindro, rectificación de disco y tambores
+- Balanceo, rotación y monturas de cauchos
+- Reparación de cauchos
+- Alineación
+- Limpieza de inyectores
+
+🚗 SISTEMAS DEL VEHÍCULO:
+- Sistema de aire acondicionado
+- Sistema de frenos completo
+- Sistema de refrigeración
+- Sistema de dirección
+- Sistemas del motor
+- Sistema de luces
+- Sistema de escape
+- Sistema de suspensión
+- Sistema de transmisión
+- Autotronica (sistema electrónico automotriz)
+
+🏎️ SILENCIADORES Y ESCAPE (precios en divisas con instalación incluida):
+- CL27: hasta 1.3L → $40
+- CL30: hasta 1.3L → $40
+- CL40: hasta 1.5L → $50
+- CLH40: desde 1.6L hasta 3.7L → $60
+- CL60: desde 3.8L en adelante → $90
+- CLC60: silenciador para camión → $90
+- CLCP60: silenciador platanero → $90
+- Resonador → $40
+- Flexibles → $40
+- Colas cromadas para silenciadores (disponibles)
+Cuando pregunten por silenciador, pide marca, modelo y año del vehículo para recomendar el modelo correcto.
+Los presupuestos de silenciadores son válidos por 2 días.
+
+🚿 ESTÉTICA Y CARROCERÍA:
+- Autolavado
+- Pulitura de faros
+- Latonería y pintura
+- Papel ahumado
+- Sistema de cámaras 360
+
+🔌 ELECTRÓNICA Y TECNOLOGÍA:
+- Reparación y mantenimiento de elevavidrios manuales y electrónicos
+- Diagnóstico OBD II (el escáner se asigna según disponibilidad al momento de la cita)
+
+🚛 OTROS SERVICIOS:
+- Servicio de grúa: comunicarse al número del taller
+- Inventario de repuestos
+- Renovación de RCV (seguro)
+
+💳 MÉTODO DE PAGO - CASHEA:
+- Lycos Team acepta Cashea (fintech de pago en cuotas)
+- Con Cashea pagas un porcentaje inicial y el resto en 3 cuotas cada 14 días
+- Niveles y porcentaje de inicial:
+  * Nivel 1 → paga el 60% de inicial
+  * Nivel 2 → paga el 50% de inicial
+  * Niveles 3, 4, 5 y 6 → pagan el 40% de inicial
+- IMPORTANTE: Al usar Cashea se cobra el IVA adicional del 16%
+- Cuando alguien pregunte por Cashea, PRIMERO pregunta su nivel de Cashea
+- Cuando alguien pida datos bancarios o formas de pago, dile: "Para más información sobre métodos de pago y datos, te atendemos directamente en caja"
+
+📅 AGENDAR CITAS:
+Para agendar, solicita siempre:
+1. Nombre completo del cliente
+2. Vehículo (marca, modelo, año, cilindraje si aplica)
+3. Servicio que requiere
+4. Día y hora preferida (dentro del horario: L-S, 8AM-5PM)
+Los datos van a nuestro equipo para confirmar disponibilidad.
+
+REGLAS DE COMPORTAMIENTO:
+- Habla siempre en español venezolano, amigable y profesional
+- Usa emojis con moderación (🔧🚗💳📍)
+- Máximo 4-5 líneas por mensaje, sé conciso
+- Nunca improvises precios que no están en este documento
+- Si no sabes algo, di "déjame consultar con nuestro equipo" y da el número de contacto
+- Nunca trabajes domingos ni emergencias nocturnas
+- Los presupuestos son orientativos, la revisión in situ puede variar el precio
+`;
 
 // GET: Webhook verification
 export async function GET(request: NextRequest) {
@@ -17,8 +127,6 @@ export async function GET(request: NextRequest) {
     console.log('✅ WhatsApp webhook verified successfully');
     return new NextResponse(challenge, { status: 200 });
   }
-
-  console.error('❌ Webhook verification failed:', { mode, token, expectedToken: VERIFY_TOKEN });
   return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 }
 
@@ -26,10 +134,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    console.log('📥 Webhook recibido:', JSON.stringify(body, null, 2));
 
     if (body.object !== 'whatsapp_business_account') {
-      console.log('⚠️ Objeto no es whatsapp_business_account, ignorando');
       return NextResponse.json({ status: 'ignored' });
     }
 
@@ -38,7 +144,6 @@ export async function POST(request: NextRequest) {
     const value = change?.value;
 
     if (!value?.messages?.length) {
-      console.log('⚠️ No hay mensajes en el webhook');
       return NextResponse.json({ status: 'no_messages' });
     }
 
@@ -46,105 +151,156 @@ export async function POST(request: NextRequest) {
       const from = message.from;
       const wa_message_id = message.id;
 
-      // 0. Deduplication Check
+      // 0. Deduplication check
       if (wa_message_id) {
         try {
-          const isDuplicate = await checkMensajeDuplicado(wa_message_id);
-          if (isDuplicate) {
-            console.log(`⏭️ Mensaje duplicado detectado (${wa_message_id}), ignorando.`);
+          const { data: existing } = await supabase
+            .from('mensajes_whatsapp')
+            .select('id')
+            .eq('wa_message_id', wa_message_id)
+            .single();
+          if (existing) {
+            console.log(`⏭️ Duplicate message (${wa_message_id}), skipping.`);
             continue;
           }
-        } catch (e) {
-          console.error('Error checking for duplicate message:', e);
-        }
+        } catch { /* ignore */ }
       }
 
       let messageBody = '';
       if (message.type === 'text') {
         messageBody = message.text?.body || '';
       } else if (message.type === 'image') {
-        messageBody = '[Imagen recibida]';
+        messageBody = '[El cliente envió una imagen]';
       } else if (message.type === 'audio') {
-        messageBody = '[Audio recibido]';
+        messageBody = '[El cliente envió un audio]';
       } else if (message.type === 'document') {
-        messageBody = '[Documento recibido]';
+        messageBody = '[El cliente envió un documento]';
+      } else if (message.type === 'location') {
+        const loc = message.location;
+        messageBody = `[El cliente compartió su ubicación: ${loc?.latitude}, ${loc?.longitude}]`;
       }
 
-      console.log(`📩 Mensaje de ${from}: ${messageBody}`);
+      if (!messageBody) continue;
 
-      // Auto-reply with IA
-      if (messageBody && WHATSAPP_TOKEN && WHATSAPP_PHONE_ID) {
-        console.log('🔄 Procesando respuesta...');
-        
-        // 1. Save incoming message
+      console.log(`📩 Mensaje de ${from}: ${messageBody.substring(0, 80)}`);
+
+      // 1. Save incoming message
+      try {
+        await supabase.from('mensajes_whatsapp').insert({
+          from_number: from,
+          to_number: 'lycos_team',
+          body: messageBody,
+          tipo: 'entrante',
+          wa_message_id: wa_message_id,
+        });
+      } catch (e) {
+        console.error('Error saving incoming message:', e);
+      }
+
+      if (WHATSAPP_TOKEN && WHATSAPP_PHONE_ID) {
+        // 2. Fetch last 12 messages for this phone (conversation memory)
+        let conversationHistory: { role: string; parts: { text: string }[] }[] = [];
         try {
-          await saveMensaje({
-            from_number: from,
-            to_number: 'system',
-            body: messageBody,
-            tipo: 'entrante',
-            wa_message_id: wa_message_id
-          });
+          const { data: historyData } = await supabase
+            .from('mensajes_whatsapp')
+            .select('body, tipo, created_at')
+            .or(`from_number.eq.${from},to_number.eq.${from}`)
+            .order('created_at', { ascending: false })
+            .limit(12);
+
+          if (historyData && historyData.length > 0) {
+            // Reverse to chronological order, excluding the very last message (current one)
+            const reversed = historyData.reverse();
+            conversationHistory = reversed.slice(0, reversed.length - 1).map(msg => ({
+              role: msg.tipo === 'entrante' ? 'user' : 'model',
+              parts: [{ text: msg.body }]
+            }));
+          }
         } catch (e) {
-          console.error('Error saving incoming message:', e);
+          console.error('Error fetching conversation history:', e);
         }
 
-        // 2. Conversation State Management
+        // 3. Fetch stored client data for this phone (name, vehicle, etc.)
+        let clienteData = '';
+        try {
+          const { data: conv } = await supabase
+            .from('conversaciones')
+            .select('datos_cliente')
+            .eq('telefono', from)
+            .single();
+          if (conv?.datos_cliente && Object.keys(conv.datos_cliente).length > 0) {
+            clienteData = `\nDATO DEL CLIENTE YA CONOCIDOS:\n${JSON.stringify(conv.datos_cliente, null, 2)}`;
+          }
+        } catch { /* ignore */ }
+
+        // 4. Session freshness check
         let isNewSession = true;
         try {
-          const conv = await fetchConversacion(from);
-          if (conv && conv.ultimo_mensaje_at) {
-            const lastMsgDate = new Date(conv.ultimo_mensaje_at);
-            const now = new Date();
-            const hoursDiff = (now.getTime() - lastMsgDate.getTime()) / (1000 * 60 * 60);
-            
-            // If less than 12 hours, don't greet as if first time
-            if (hoursDiff < 12) {
-              isNewSession = false;
-            }
+          const { data: conv } = await supabase
+            .from('conversaciones')
+            .select('ultimo_mensaje_at')
+            .eq('telefono', from)
+            .single();
+          if (conv?.ultimo_mensaje_at) {
+            const hoursDiff = (Date.now() - new Date(conv.ultimo_mensaje_at).getTime()) / 3600000;
+            if (hoursDiff < 12) isNewSession = false;
           }
-        } catch (e) {
-          console.error('Error fetching conversation state:', e);
-        }
+        } catch { /* ignore */ }
 
-        // Detect location keywords for specific dual-message response
+        // 5. Location keyword detection
         const lowerBody = messageBody.toLowerCase();
-        const isLocationRequest = lowerBody.includes('ubicacion') || 
-                                 lowerBody.includes('ubicación') || 
-                                 lowerBody.includes('donde') || 
-                                 lowerBody.includes('dirección') || 
-                                 lowerBody.includes('llegar') ||
-                                 lowerBody.includes('ubicado');
+        const isLocationRequest =
+          lowerBody.includes('ubicacion') || lowerBody.includes('ubicación') ||
+          lowerBody.includes('donde') || lowerBody.includes('dirección') ||
+          lowerBody.includes('llegar') || lowerBody.includes('ubicado') ||
+          lowerBody.includes('gps') || lowerBody.includes('mapa');
 
         if (isLocationRequest) {
-          console.log('📍 Solicitud de ubicación detectada. Enviando mensajes específicos...');
-          await sendWhatsAppMessage(from, "📍 *Nuestra ubicación:* Altos Mirandinos, Miranda, Venezuela. Estamos ubicados estratégicamente para atender a clientes de Los Teques, San Antonio de los Altos y Carrizal.");
-          await sendWhatsAppMessage(from, "https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA");
+          console.log('📍 Location request detected');
+          await sendWhatsAppMessage(from,
+            '📍 *Estamos en San Antonio de los Altos, Miranda, Venezuela.*\nTe comparto nuestra ubicación en Google Maps y un video de cómo llegar 👇'
+          );
+          await new Promise(r => setTimeout(r, 800));
+          await sendWhatsAppMessage(from, 'https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA');
+          await new Promise(r => setTimeout(r, 600));
+          await sendWhatsAppMessage(from, 'https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==');
+          await new Promise(r => setTimeout(r, 400));
+          await sendWhatsAppMessage(from, '¡Síguenos también en Instagram @lycos.team para más tips y novedades! 📸');
         } else {
-          const aiResponse = await getAIResponse(messageBody, isNewSession);
+          // 6. Get AI response with full context
+          const aiResponse = await getAIResponse(
+            messageBody,
+            conversationHistory,
+            isNewSession,
+            clienteData
+          );
           if (aiResponse) {
-            await sendWhatsAppMessage(from, aiResponse);
-          } else {
-            console.error('❌ No se pudo generar respuesta de IA');
+            // Check if AI response includes a URL for link preview
+            const hasUrl = /https?:\/\//.test(aiResponse);
+            await sendWhatsAppMessage(from, aiResponse, hasUrl);
           }
         }
 
-        // Update conversation state
+        // 7. Update conversation state + extract client data from message
         try {
-          await upsertConversacion({
+          const currentConv = await supabase
+            .from('conversaciones')
+            .select('datos_cliente')
+            .eq('telefono', from)
+            .single();
+
+          const existingData = currentConv.data?.datos_cliente || {};
+          const updatedData = extractClientData(messageBody, existingData);
+
+          await supabase.from('conversaciones').upsert({
             telefono: from,
             ultimo_mensaje: messageBody.substring(0, 100),
-            ultimo_mensaje_at: new Date().toISOString()
-          });
+            ultimo_mensaje_at: new Date().toISOString(),
+            datos_cliente: updatedData,
+          }, { onConflict: 'telefono' });
         } catch (e) {
-          console.error('Error updating conversation state:', e);
+          console.error('Error updating conversation:', e);
         }
-      } else {
-        console.error('❌ Configuración incompleta:', {
-          hasMessage: !!messageBody,
-          hasToken: !!WHATSAPP_TOKEN,
-          hasPhoneId: !!WHATSAPP_PHONE_ID
-        });
       }
     }
 
@@ -155,82 +311,87 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function getAIResponse(userMessage: string, isNewSession: boolean = true): Promise<string | null> {
+// ─── Extract client data from messages ──────────────────────────────────────
+function extractClientData(
+  message: string,
+  existing: Record<string, string>
+): Record<string, string> {
+  const data = { ...existing };
+  const lower = message.toLowerCase();
+
+  // Detect name patterns: "soy Juan", "me llamo Maria", "mi nombre es Pedro"
+  const nameMatch = message.match(/(?:soy|me llamo|mi nombre es|llamo)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ\s]{1,30})/i);
+  if (nameMatch && !data.nombre) {
+    data.nombre = nameMatch[1].trim();
+  }
+
+  // Detect vehicle: e.g., "tengo un Corsa", "mi Civic 2019"
+  const vehicleMatch = message.match(/(?:tengo(?: un| una)?|mi)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ\s0-9]{2,25})/i);
+  if (vehicleMatch && !data.vehiculo && !lower.includes('problema') && !lower.includes('servicio')) {
+    data.vehiculo = vehicleMatch[1].trim();
+  }
+
+  // Detect year
+  const yearMatch = message.match(/\b(19[5-9]\d|20[0-2]\d)\b/);
+  if (yearMatch && !data.anio) {
+    data.anio = yearMatch[1];
+  }
+
+  return data;
+}
+
+// ─── AI Response with conversation history ──────────────────────────────────
+async function getAIResponse(
+  userMessage: string,
+  conversationHistory: { role: string; parts: { text: string }[] }[],
+  isNewSession: boolean,
+  clienteData: string
+): Promise<string | null> {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.error('❌ GEMINI_API_KEY no configurada');
+    if (!GEMINI_API_KEY) {
+      console.error('❌ GEMINI_API_KEY not set');
       return null;
     }
 
-    // Current time in Venezuela (UTC-4)
     const vzlaTime = new Intl.DateTimeFormat('es-VE', {
       timeZone: 'America/Caracas',
       dateStyle: 'full',
-      timeStyle: 'short'
+      timeStyle: 'short',
     }).format(new Date());
 
-    console.log(`🤖 Consultando Gemini para: "${userMessage.substring(0, 50)}..."`);
+    const systemPrompt = `${LYCOS_KNOWLEDGE}
+
+FECHA Y HORA ACTUAL EN VENEZUELA: ${vzlaTime}
+TIPO DE SESIÓN: ${isNewSession ? 'NUEVA (puedes saludar brevemente)' : 'CONTINUA (no repitas saludos, ve al grano)'}
+${clienteData}
+
+INSTRUCCIONES ADICIONALES:
+- Analiza el historial de la conversación antes de responder.
+- Recuerda lo que el cliente ya mencionó (nombre, vehículo, servicio) para no volver a preguntarlo.
+- Sé natural, como si fueras un asesor humano real del taller.
+- Si el cliente pregunta por silenciadores, primero pide la marca, modelo y cilindraje si no los ha dado.
+- Si el cliente quiere pagar con Cashea, pregunta su nivel ANTES de dar el precio con IVA.
+- Si el cliente pide datos bancarios, redirigelo a caja: "Para los datos de pago, te atendemos en caja o escríbenos al +58 412-334-3519"`;
+
+    // Build contents array with history + current message
+    const contents = [
+      ...conversationHistory,
+      { role: 'user', parts: [{ text: userMessage }] }
+    ];
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          system_instruction: {
-            parts: [{
-              text: `Eres el asistente virtual oficial de Lycos Team, el taller automotriz líder en los Altos Mirandinos, Venezuela. 
-TU MISIÓN: Brindar atención técnica excepcional, profesional y rápida.
-
-CONTEXTO TEMPORAL ACTUAL:
-- Fecha y Hora en Venezuela: ${vzlaTime}
-- IMPORTANTE: Usa esta fecha para ser preciso con las citas y el día de hoy.
-
-VALORES Y TONO:
-- Eres un asesor experto de Lycos Team.
-- Sé amigable pero muy profesional.
-- Usa emojis estratégicamente (🔧, 🚗, ⚡, 📍).
-
-GREETING LOGIC:
-- SESSION STATUS: ${isNewSession ? 'NUEVA INTERACCIÓN' : 'CONVERSACIÓN CONTINUA'}.
-- Si es una NUEVA INTERACCIÓN, puedes saludar cordialmente ("¡Hola!", "Saludos").
-- Si es una CONVERSACIÓN CONTINUA, ve DIRECTAMENTE al grano, responde la duda sin volver a saludar o decir "hola" de nuevo, a menos que el usuario te salude primero.
-
-SERVICIOS ESPECIALIZADOS:
-- 🔧 Mecánica General Avanzada: Frenos, suspensión, cambios de aceite premium.
-- ⚡ Electrónica Automotriz: Reparación de ECUs, módulos y sistemas eléctricos.
-- 🔑 Cerrajería Automotriz Pro: Programación de llaves chip, duplicados.
-- 💻 Diagnóstico Computarizado: Escaneo nivel concesionario.
-- ⚙️ Reparación de Motores: Overhaul completo.
-- 🚨 Asistencia de Emergencia 24/7 en Altos Mirandinos.
-
-AGENTAMIENTO DE CITAS:
-- Si el cliente quiere agendar una cita, DEBES solicitar:
-  1. Nombre completo.
-  2. Vehículo (Marca, Modelo, Año).
-  3. Falla o Servicio que requiere.
-  4. Día y hora de preferencia (considerando que cerramos a las 6pm).
-- Responde que una vez recibidos los datos, el técnico confirmará la disponibilidad.
-
-INFORMACIÓN DE CONTACTO:
-- 📱 WhatsApp: +58 412-334-3519
-- 📍 Altos Mirandinos (Cerca de Los Teques, San Antonio y Carrizal).
-- 📅 Horario: Lun-Vie 8am-6pm, Sáb 8am-2pm.
-
-REGLAS DE ORO:
-1. Responde siempre en español de Venezuela.
-2. Si preguntan por la ubicación, menciona los Altos Mirandinos (el sistema enviará el link GPS solo).
-3. Máximo 4 líneas por mensaje.
-4. Jamás ignores un "Hola", pero no abuses de los saludos si ya estás hablando.`
-            }]
-          },
-          contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+          system_instruction: { parts: [{ text: systemPrompt }] },
+          contents,
           generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 512,
+            temperature: 0.75,
+            maxOutputTokens: 600,
             topK: 40,
-            topP: 0.95
+            topP: 0.95,
           },
           safetySettings: [
             { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
@@ -242,7 +403,7 @@ REGLAS DE ORO:
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('❌ Error de Gemini API:', errorText);
+      console.error('❌ Gemini API error:', errorText);
       return null;
     }
 
@@ -250,66 +411,70 @@ REGLAS DE ORO:
     const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || null;
 
     if (aiText) {
-      console.log(`✅ Respuesta de Gemini generada: "${aiText.substring(0, 50)}..."`);
-    } else {
-      console.error('❌ Gemini no devolvió texto en la respuesta');
+      console.log(`✅ Gemini response: "${aiText.substring(0, 60)}..."`);
     }
 
     return aiText;
   } catch (error) {
-    console.error('❌ Error en getAIResponse:', error);
+    console.error('❌ Error in getAIResponse:', error);
     return null;
   }
 }
 
-async function sendWhatsAppMessage(to: string, text: string): Promise<void> {
+// ─── Send WhatsApp Message ───────────────────────────────────────────────────
+async function sendWhatsAppMessage(
+  to: string,
+  text: string,
+  previewUrl: boolean = false
+): Promise<void> {
   if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) {
-    console.error('❌ WhatsApp no configurado: faltan WHATSAPP_TOKEN o WHATSAPP_PHONE_ID');
+    console.error('❌ WhatsApp not configured');
     return;
   }
 
   try {
-    console.log(`📤 Enviando mensaje a ${to}...`);
-    
-    const response = await fetch(`https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to: to.replace(/[^0-9]/g, ''),
-        type: 'text',
-        text: { preview_url: false, body: text },
-      }),
-    });
+    const response = await fetch(
+      `https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: to.replace(/[^0-9]/g, ''),
+          type: 'text',
+          text: { preview_url: previewUrl, body: text },
+        }),
+      }
+    );
 
     if (!response.ok) {
       const error = await response.json();
-      console.error('❌ Error enviando mensaje WhatsApp:', error);
+      console.error('❌ Error sending WhatsApp message:', error);
       return;
     }
 
     const data = await response.json();
     const wa_message_id = data.messages?.[0]?.id;
-    console.log(`✅ Mensaje enviado exitosamente. ID: ${wa_message_id}`);
+    console.log(`✅ Message sent. ID: ${wa_message_id}`);
 
-    // Save outgoing message to DB
+    // Save outgoing message
     try {
-      await saveMensaje({
-        from_number: 'system',
+      await supabase.from('mensajes_whatsapp').insert({
+        from_number: 'lycos_team',
         to_number: to,
         body: text,
         tipo: 'saliente',
         wa_message_id: wa_message_id,
-        es_ia: true
+        es_ia: true,
       });
     } catch (e) {
       console.error('Error saving outgoing message:', e);
     }
   } catch (error) {
-    console.error('❌ Error en sendWhatsAppMessage:', error);
+    console.error('❌ Error in sendWhatsAppMessage:', error);
   }
 }
