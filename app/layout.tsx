@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import LoadingScreen from '@/components/layout/LoadingScreen';
+import { Analytics } from '@vercel/analytics/next';
 
 export const metadata: Metadata = {
   title: 'Lycos Team — Sistema de Gestión Automotriz',
@@ -18,6 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <LoadingScreen />
         {children}
+        <Analytics />
       </body>
     </html>
   );
