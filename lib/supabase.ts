@@ -168,6 +168,56 @@ export async function upsertConversacion(conv: {
   return data;
 }
 
+// ─── Inventario ─────────────────────────────────────────────────────────────
+export async function fetchInventario(categoria?: string) {
+  if (!supabase) return null;
+  let query = supabase
+    .from('inventario')
+    .select('*')
+    .eq('activo', true)
+    .order('categoria')
+    .order('nombre');
+  if (categoria) query = query.eq('categoria', categoria);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data;
+}
+
+export async function updateInventarioStock(id: string, stock: number) {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('inventario')
+    .update({ stock, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function createInventarioItem(item: {
+  nombre: string;
+  codigo?: string;
+  categoria: string;
+  marca?: string;
+  descripcion?: string;
+  precio_usd?: number;
+  precio_bs?: number;
+  stock: number;
+  stock_minimo?: number;
+  unidad?: string;
+  notas?: string;
+}) {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('inventario')
+    .insert(item)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
 // ─── Dashboard Stats ────────────────────────────────────────────────────────
 export async function fetchDashboardStats() {
   if (!supabase) return null;

@@ -5,9 +5,11 @@ const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'lycos_webhook_token_2
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
+const GEMINI_MODEL = 'gemini-2.0-flash-lite';
+
+// Asesor phone number (digits only, no +)
 const ASESOR_PHONE = '584123343519';
-const ASESOR_NAME = 'Lycos Team - Asesor';
+const ASESOR_DISPLAY_NAME = 'Asesor Lycos Team';
 
 function getDb() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -16,17 +18,99 @@ function getDb() {
   return createClient(url, key);
 }
 
+// ─── Venezuela date/time helpers ──────────────────────────────────────────────
+function getVzlaDate(): Date {
+  // Returns a Date object adjusted to Venezuela time (UTC-4)
+  const now = new Date();
+  const vzlaOffset = -4 * 60; // minutes
+  const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+  return new Date(utcMs + vzlaOffset * 60000);
+}
+
+function getVzlaDateString(): string {
+  const d = getVzlaDate();
+  return d.toISOString().split('T')[0]; // YYYY-MM-DD
+}
+
+function getVzlaDayOfWeek(): number {
+  // 0=Sunday, 1=Monday, ..., 6=Saturday
+  return getVzlaDate().getDay();
+}
+
+function formatVzlaDateTime(): string {
+  return new Intl.DateTimeFormat('es-VE', {
+    timeZone: 'America/Caracas',
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date());
+}
+
+function isSunday(dateStr: string): boolean {
+  // dateStr: YYYY-MM-DD
+  const d = new Date(dateStr + 'T12:00:00');
+  return d.getDay() === 0;
+}
+
+function getNextWorkingDay(fromDateStr: string): string {
+  const d = new Date(fromDateStr + 'T12:00:00');
+  d.setDate(d.getDate() + 1);
+  while (d.getDay() === 0) {
+    d.setDate(d.getDate() + 1);
+  }
+  return d.toISOString().split('T')[0];
+}
+
+// Resolve relative date expressions to YYYY-MM-DD in Venezuela timezone
+function resolveRelativeDate(text: string): string | null {
+  const lower = text.toLowerCase();
+  const today = getVzlaDate();
+  const todayStr = today.toISOString().split('T')[0];
+
+  if (lower.includes('hoy')) return todayStr;
+
+  if (lower.includes('mañana')) {
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return tomorrow.toISOString().split('T')[0];
+  }
+
+  if (lower.includes('pasado mañana')) {
+    const d = new Date(today);
+    d.setDate(d.getDate() + 2);
+    return d.toISOString().split('T')[0];
+  }
+
+  const dayNames: Record<string, number> = {
+    'lunes': 1, 'martes': 2, 'miércoles': 3, 'miercoles': 3,
+    'jueves': 4, 'viernes': 5, 'sábado': 6, 'sabado': 6,
+  };
+
+  for (const [name, targetDay] of Object.entries(dayNames)) {
+    if (lower.includes(name)) {
+      const currentDay = today.getDay();
+      let daysAhead = targetDay - currentDay;
+      if (daysAhead <= 0) daysAhead += 7;
+      const d = new Date(today);
+      d.setDate(d.getDate() + daysAhead);
+      return d.toISOString().split('T')[0];
+    }
+  }
+
+  return null;
+}
+
 // ─── KNOWLEDGE BASE ───────────────────────────────────────────────────────────
 const LYCOS_KNOWLEDGE = `
 IDENTIDAD:
 Eres el asistente virtual de Lycos Team, un taller automotriz profesional en San Antonio de los Altos, Miranda, Venezuela.
 NUNCA digas que eres una IA, bot, ChatGPT o robot. Si preguntan, eres el asistente del taller.
-Si el cliente pide hablar con una persona o asesor: responde "con gusto te comunico con uno de nuestros asesores" y en el siguiente mensaje se le enviará su contacto (ya lo gestiona el sistema, no lo menciones tú).
 
 HORARIO: Lunes a Sábado 8:00 AM – 5:00 PM.
-DOMINGOS: CERRADO. Sin excepciones. Si alguien escribe un domingo, indícales que el taller está cerrado y que pueden dejar su consulta para el lunes.
-
-FECHA/DÍA: Usa SIEMPRE la fecha/hora real de Venezuela provista en el contexto. Cuando el cliente diga "mañana", "el lunes", "esta semana", calcula la fecha exacta basándote en el día actual. Si el día calculado cae domingo, avisa que no se trabaja y propón el lunes siguiente.
+DOMINGOS: Cerrado. Sin excepciones, sin emergencias. Si alguien pide cita para domingo, indícalo claramente y ofrece el lunes u otro día.
 
 UBICACIÓN: San Antonio de los Altos, Altos Mirandinos, Miranda.
 REDES SOCIALES: Instagram y TikTok: @lycos.team
@@ -39,16 +123,23 @@ SERVICIOS (por categoría):
 🔌 Electrónica: Elevavidrios manuales/electrónicos. OBD II: escáner según disponibilidad en la cita.
 🚛 Otros: Grúa (consultar al asesor), inventario de repuestos, renovación de RCV.
 
-💳 CASHEA: IVA 16% adicional. Pide nivel PRIMERO → Nivel 1: 60% inicial | Nivel 2: 50% | Niveles 3-6: 40%. 3 cuotas c/14 días. Datos de pago → caja en persona.
+💳 CASHEA: IVA 16% adicional. Pide nivel PRIMERO → Nivel 1: 60% inicial | Nivel 2: 50% | Niveles 3-6: 40%. 3 cuotas c/14 días. Datos de pago → caja.
 
-📅 CITAS: Solicitar nombre completo, vehículo (marca/modelo/año), servicio, día y hora (L-S, 8AM-5PM). Calcula si el día que pide es válido (no domingo, dentro de horario). El sistema registra la disponibilidad.
+📅 CITAS: Solicitar nombre completo, vehículo (marca/modelo/año), servicio, día y hora (L-S, 8AM-5PM). El sistema revisa disponibilidad automáticamente.
+- Si el cliente dice "mañana", "el lunes", "el viernes", etc., usa la FECHA ACTUAL para calcular la fecha correcta.
+- NUNCA agendes citas en domingo. Si piden domingo, di que no laboramos ese día y sugiere el lunes.
+- Confirma siempre la fecha exacta (día de la semana + fecha) al agendar.
+
+ASESOR HUMANO:
+- Solo menciona al asesor cuando: el cliente lo pide explícitamente, hay una queja o situación compleja, se trata de grúa, o el bot no puede resolver la consulta.
+- NO menciones al asesor en cada mensaje ni de forma repetitiva.
+- Cuando sea necesario contactar al asesor, di: "Te envío el contacto de nuestro asesor por WhatsApp 👇" y el sistema enviará la tarjeta de contacto automáticamente.
 
 COMPORTAMIENTO:
 - Español venezolano, amigable y profesional.
 - Máximo 4-5 líneas por respuesta.
 - No improvises precios no listados.
-- Si no sabes algo: "déjame consultarlo con el equipo".
-- Solo menciona al asesor cuando el cliente lo pida directamente o cuando realmente sea necesario escalar. No lo menciones en cada respuesta.
+- Si no sabes algo: "déjame consultarlo con el equipo" y ofrece el contacto del asesor.
 `;
 
 // ─── GET: Webhook verification ────────────────────────────────────────────────
@@ -145,9 +236,9 @@ export async function POST(request: NextRequest) {
 
       // Contact/asesor request — send native contact card
       if (isContactRequest(lowerBody)) {
-        await sendMsg(from, 'Con gusto 😊 Te comparto el contacto directo de nuestro asesor:');
+        await sendMsg(from, '📱 Te envío el contacto de nuestro asesor para que puedas chatear directamente:');
         await delay(600);
-        await sendContactCard(from);
+        await sendContactCard(from, ASESOR_PHONE, ASESOR_DISPLAY_NAME);
         await updateConversation(db, from, messageBody, ctx.memoria);
         continue;
       }
@@ -156,8 +247,25 @@ export async function POST(request: NextRequest) {
       const aiResponse = await getAIResponse(messageBody, ctx);
 
       if (aiResponse) {
-        const hasUrl = /https?:\/\//.test(aiResponse);
-        await sendMsg(from, aiResponse, hasUrl);
+        // Check if AI decided to send the advisor contact
+        const needsAsesor = aiNeedsAsesor(aiResponse);
+
+        if (needsAsesor) {
+          // Send the text response (without the wa.me link if present)
+          const cleanedResponse = aiResponse
+            .replace(/https?:\/\/wa\.me\/\S+/gi, '')
+            .replace(/wa\.me\/\S+/gi, '')
+            .trim();
+          if (cleanedResponse) {
+            await sendMsg(from, cleanedResponse);
+            await delay(700);
+          }
+          // Send native contact card as separate message
+          await sendContactCard(from, ASESOR_PHONE, ASESOR_DISPLAY_NAME);
+        } else {
+          const hasUrl = /https?:\/\//.test(aiResponse);
+          await sendMsg(from, aiResponse, hasUrl);
+        }
 
         // 5. Post-response: extract intents and persist to DB
         void processIntents(db, from, messageBody, aiResponse, ctx);
@@ -196,10 +304,6 @@ async function loadConversationContext(
   from: string,
   currentMessage: string
 ): Promise<ConversationContext> {
-  const vzlaTime = new Intl.DateTimeFormat('es-VE', {
-    timeZone: 'America/Caracas', dateStyle: 'full', timeStyle: 'short',
-  }).format(new Date());
-
   let historia: { role: string; parts: { text: string }[] }[] = [];
   let memoria: Memoria = {};
   let citasInfo = '';
@@ -250,7 +354,7 @@ async function loadConversationContext(
 
   // Load upcoming and past appointments for this phone
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getVzlaDateString();
     const { data: citas } = await db
       .from('citas')
       .select('fecha, hora, tipo_servicio, descripcion, estado')
@@ -260,7 +364,6 @@ async function loadConversationContext(
 
     if (citas && citas.length > 0) {
       const citasList = citas.map(c => {
-        const citaDate = new Date(`${c.fecha}T${c.hora}`);
         const isPast = c.fecha < today;
         const status = isPast ? '(PASADA)' : '(PRÓXIMA)';
         return `- ${c.fecha} a las ${c.hora} | ${c.tipo_servicio} | ${c.descripcion || ''} | ${c.estado} ${status}`;
@@ -271,18 +374,27 @@ async function loadConversationContext(
 
   // Load inventory if message mentions products
   const lower = currentMessage.toLowerCase();
-  if (lower.includes('silenciador') || lower.includes('cl') || lower.includes('resonador') ||
-      lower.includes('flexible') || lower.includes('stock') || lower.includes('inventario') ||
-      lower.includes('disponible') || lower.includes('hay') || lower.includes('precio')) {
+  const inventoryKeywords = [
+    'silenciador', 'resonador', 'flexible', 'cola cromada', 'escape',
+    'filtro', 'aceite', 'gasolina', 'refrigerante', 'liquido', 'líquido',
+    'frenos', 'liga', 'dot', 'parabrisas', 'repuesto', 'stock',
+    'inventario', 'disponible', 'hay', 'precio', 'cl27', 'cl30', 'cl40',
+    'cl60', 'clh40', 'clk60', 'clp60', 'clc60', 'b55', 'curba', 'camioneta',
+    'dr care', 'cardoc', 'arauca', 'aveo', 'corolla', 'explorer', 'twingo',
+    'nissan', 'cavalier', 'camry', 'lancer', 'cherokee', 'sentra', 'blazer',
+    'trail', 'samuray', 'macho',
+  ];
+  if (inventoryKeywords.some(k => lower.includes(k))) {
     try {
       const { data: items } = await db
         .from('inventario')
-        .select('nombre, codigo, precio_usd, stock, notas')
+        .select('nombre, codigo, precio_usd, stock, notas, categoria')
         .eq('activo', true)
-        .order('categoria');
+        .order('categoria')
+        .order('nombre');
       if (items && items.length > 0) {
         const list = items.map(i =>
-          `  • ${i.nombre} (${i.codigo}): $${i.precio_usd} — Stock: ${i.stock > 0 ? i.stock + ' unidades' : '⚠️ SIN STOCK'}`
+          `  • [${i.categoria || 'general'}] ${i.nombre}${i.codigo ? ' (' + i.codigo + ')' : ''}${i.precio_usd ? ': $' + i.precio_usd : ''} — Stock: ${i.stock > 0 ? i.stock + ' unidades' : '⚠️ SIN STOCK'}`
         ).join('\n');
         inventarioInfo = `\nINVENTARIO ACTUAL (stock en tiempo real):\n${list}`;
       }
@@ -301,9 +413,11 @@ async function getAIResponse(
 ): Promise<string | null> {
   if (!GEMINI_API_KEY) return null;
 
-  const vzlaTime = new Intl.DateTimeFormat('es-VE', {
-    timeZone: 'America/Caracas', dateStyle: 'full', timeStyle: 'short',
-  }).format(new Date());
+  const vzlaDateTime = formatVzlaDateTime();
+  const vzlaDateStr = getVzlaDateString();
+  const vzlaDayNum = getVzlaDayOfWeek();
+  const dayNames = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+  const vzlaDayName = dayNames[vzlaDayNum];
 
   const memoriaStr = Object.keys(ctx.memoria).length > 0
     ? `\nMEMORIA DEL CLIENTE (recuerda esta info, no vuelvas a preguntar):
@@ -314,23 +428,25 @@ async function getAIResponse(
 
   const systemPrompt = `${LYCOS_KNOWLEDGE}
 
-FECHA Y HORA EXACTA EN VENEZUELA AHORA MISMO: ${vzlaTime}
-DÍA ACTUAL COMPLETO: ${vzlaDate}
-FECHA ISO HOY: ${todayDateISO}
-${isSunday ? '⚠️ HOY ES DOMINGO: El taller está CERRADO. Informa al cliente y sugiere escribir mañana lunes.' : ''}
-SESIÓN: ${ctx.isNewSession ? 'NUEVA - saluda brevemente si el mensaje lo amerita' : 'CONTINUA - ve al tema, sin repetir saludos'}
+FECHA Y HORA ACTUAL EN VENEZUELA: ${vzlaDateTime}
+HOY ES: ${vzlaDayName}, ${vzlaDateStr}
+DÍA DE LA SEMANA ACTUAL: ${vzlaDayName} (${vzlaDayNum === 0 ? 'DOMINGO - NO LABORAMOS' : vzlaDayNum === 6 ? 'SÁBADO - ÚLTIMO DÍA LABORAL DE LA SEMANA' : 'DÍA LABORAL'})
+
+SESIÓN: ${ctx.isNewSession ? 'NUEVA - puedes saludar brevemente si el mensaje lo amerita' : 'CONTINUA - ve al tema, no repitas saludos'}
 ${memoriaStr}
 ${ctx.citasInfo}
 ${ctx.inventarioInfo}
 
 REGLAS CRÍTICAS:
-- Usa la fecha y día de hoy para calcular fechas relativas ("mañana" = ${todayDateISO} + 1 día, "el lunes" = el próximo lunes calculado exacto, etc.).
-- Si el día calculado para una cita cae domingo, avisa que no laboramos y propón el lunes siguiente.
-- Si hay CITAS REGISTRADAS, úsalas: di si ya pasaron o están próximas con la fecha exacta.
-- Si el cliente pregunta stock/disponibilidad, usa el INVENTARIO ACTUAL arriba.
-- Un cliente puede tener VARIOS vehículos. Identifica de cuál habla.
-- Solo menciona o sugiere hablar con un asesor cuando el cliente lo pida o sea realmente necesario escalar. No lo uses como respuesta genérica.
-- Analiza el historial antes de responder. No repitas preguntas ya contestadas.`;
+- Conoces la fecha y hora actual exacta. Úsala para calcular fechas relativas ("mañana", "el lunes", etc.).
+- Si el cliente pide cita para "mañana", calcula la fecha correcta basándote en HOY (${vzlaDateStr}).
+- NUNCA agendes ni sugieras citas en domingo. Si piden domingo, di que no laboramos y sugiere el lunes.
+- Si el cliente pregunta por stock/disponibilidad, usa el INVENTARIO ACTUAL mostrado arriba.
+- Si hay CITAS REGISTRADAS, úsalas: indica si ya pasaron o si están próximas.
+- Si el cliente menciona querer agendar, solicita los datos y confirma la fecha exacta (día + fecha).
+- ASESOR: Solo menciona al asesor cuando el cliente lo pide, hay queja compleja, o el bot no puede resolver. NO lo menciones en cada mensaje. Cuando sea necesario, di exactamente: "Te envío el contacto de nuestro asesor 👇" (el sistema enviará la tarjeta automáticamente).
+- Recuerda que un cliente puede tener VARIOS vehículos. Identifica de cuál está hablando.
+- Analiza el historial completo antes de responder. No repitas preguntas ya respondidas.`;
 
   const contents = [
     ...ctx.historia,
@@ -371,6 +487,19 @@ REGLAS CRÍTICAS:
     console.error('❌ Error getAIResponse:', e);
     return null;
   }
+}
+
+// ─── Detect if AI response requires sending advisor contact ───────────────────
+function aiNeedsAsesor(aiText: string): boolean {
+  const lower = aiText.toLowerCase();
+  return (
+    lower.includes('te envío el contacto') ||
+    lower.includes('te envio el contacto') ||
+    lower.includes('te mando el contacto') ||
+    lower.includes('contacto de nuestro asesor') ||
+    lower.includes('wa.me/') ||
+    lower.includes('584123343519')
+  );
 }
 
 // ─── Intent Processing → DB writes ───────────────────────────────────────────
@@ -469,22 +598,25 @@ async function tryBookAppointment(
 ): Promise<void> {
   if (!db) return;
 
-  // Extract date/time patterns
-  const dateMatch = userMsg.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
-  const timeMatch = userMsg.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|AM|PM)/);
+  // Try to resolve relative date first
+  let fecha = resolveRelativeDate(userMsg);
 
-  if (!dateMatch && !timeMatch) return; // Not enough info to book
-
-  const now = new Date();
-  let fecha = '';
-  let hora = '08:00';
-
-  if (dateMatch) {
-    const day = dateMatch[1].padStart(2, '0');
-    const month = dateMatch[2].padStart(2, '0');
-    const year = dateMatch[3] ? (dateMatch[3].length === 2 ? '20' + dateMatch[3] : dateMatch[3]) : now.getFullYear().toString();
-    fecha = `${year}-${month}-${day}`;
+  // If no relative date, try explicit date pattern
+  if (!fecha) {
+    const dateMatch = userMsg.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
+    if (dateMatch) {
+      const now = getVzlaDate();
+      const day = dateMatch[1].padStart(2, '0');
+      const month = dateMatch[2].padStart(2, '0');
+      const year = dateMatch[3]
+        ? (dateMatch[3].length === 2 ? '20' + dateMatch[3] : dateMatch[3])
+        : now.getFullYear().toString();
+      fecha = `${year}-${month}-${day}`;
+    }
   }
+
+  const timeMatch = userMsg.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|AM|PM)/);
+  let hora = '08:00';
 
   if (timeMatch) {
     let h = parseInt(timeMatch[1]);
@@ -496,6 +628,13 @@ async function tryBookAppointment(
   }
 
   if (!fecha) return;
+
+  // Block Sundays
+  if (isSunday(fecha)) {
+    const nextDay = getNextWorkingDay(fecha);
+    console.log(`⛔ Cita solicitada en domingo (${fecha}). Próximo día hábil: ${nextDay}`);
+    return; // AI already handles the message; we just don't book
+  }
 
   // Check for conflicts: any appointment within ±60 minutes of requested time
   try {
@@ -516,7 +655,6 @@ async function tryBookAppointment(
 
     if (conflicts && conflicts.length > 0) {
       console.log(`⚠️ Conflicto de cita detectado para ${fecha} ${hora}`);
-      // Don't book automatically — AI has already been informed via citasInfo context
       return;
     }
 
@@ -561,7 +699,7 @@ async function updateConversation(
   })();
 }
 
-// ─── Send WhatsApp Message ────────────────────────────────────────────────────
+// ─── Send WhatsApp Text Message ───────────────────────────────────────────────
 async function sendMsg(to: string, text: string, previewUrl = false): Promise<void> {
   if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
 
@@ -608,6 +746,80 @@ async function sendMsg(to: string, text: string, previewUrl = false): Promise<vo
   }
 }
 
+// ─── Send Native WhatsApp Contact Card ───────────────────────────────────────
+async function sendContactCard(to: string, phone: string, displayName: string): Promise<void> {
+  if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
+
+  // Format phone for vCard: must include country code, no +
+  const cleanPhone = phone.replace(/[^0-9]/g, '');
+
+  try {
+    const resp = await fetch(
+      `https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: to.replace(/[^0-9]/g, ''),
+          type: 'contacts',
+          contacts: [
+            {
+              name: {
+                formatted_name: displayName,
+                first_name: 'Asesor',
+                last_name: 'Lycos Team',
+              },
+              phones: [
+                {
+                  phone: `+${cleanPhone}`,
+                  type: 'CELL',
+                  wa_id: cleanPhone,
+                },
+              ],
+              org: {
+                company: 'Lycos Team',
+                title: 'Asesor',
+              },
+            },
+          ],
+        }),
+      }
+    );
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error('❌ WhatsApp contact card error:', errText);
+      // Fallback: send as text link
+      await sendMsg(to, `📱 Contacto del asesor: https://wa.me/${cleanPhone}`, true);
+      return;
+    }
+
+    const data = await resp.json();
+    const wa_id = data.messages?.[0]?.id;
+    console.log(`📇 Tarjeta de contacto enviada a ${to}. ID: ${wa_id}`);
+
+    // Save outgoing contact card (non-blocking)
+    const db = getDb();
+    if (db) {
+      void (async () => {
+        try {
+          await db.from('mensajes_whatsapp').insert({
+            from_number: 'system', to_number: to,
+            body: `[Tarjeta de contacto: ${displayName} +${cleanPhone}]`,
+            tipo: 'saliente', wa_message_id: wa_id, es_ia: true,
+          });
+        } catch (e) { console.error('Error saving contact card:', e); }
+      })();
+    }
+  } catch (e) {
+    console.error('❌ sendContactCard error:', e);
+    // Fallback
+    await sendMsg(to, `📱 Contacto del asesor: https://wa.me/${cleanPhone}`, true);
+  }
+}
+
 // ─── Intent Detection Helpers ─────────────────────────────────────────────────
 function isLocationRequest(lower: string): boolean {
   return ['ubicacion', 'ubicación', 'donde', 'dirección', 'llegar', 'ubicado', 'gps', 'mapa', 'dirección']
@@ -615,10 +827,14 @@ function isLocationRequest(lower: string): boolean {
 }
 
 function isContactRequest(lower: string): boolean {
-  return ['numero del asesor', 'número del asesor', 'contacto del asesor', 'hablar con alguien',
-    'numero de whatsapp', 'número de whatsapp', 'comunicarme', 'contacto directo', 'hablar con una persona',
-    'número de contacto', 'numero de contacto', 'whatsapp del taller']
-    .some(k => lower.includes(k));
+  return [
+    'numero del asesor', 'número del asesor', 'contacto del asesor',
+    'hablar con alguien', 'numero de whatsapp', 'número de whatsapp',
+    'comunicarme', 'contacto directo', 'hablar con una persona',
+    'número de contacto', 'numero de contacto', 'whatsapp del taller',
+    'hablar con un humano', 'hablar con persona', 'asesor humano',
+    'quiero hablar con', 'necesito hablar con',
+  ].some(k => lower.includes(k));
 }
 
 function delay(ms: number): Promise<void> {
