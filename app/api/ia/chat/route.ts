@@ -30,7 +30,39 @@ PERSONALIDAD:
 - Prioriza la seguridad del vehículo y del cliente.
 
 CITAS:
-- Al agendar, solicita: Nombre, Vehículo (Marca/Modelo/Año), Servicio/Falla y Fecha/Hora preferida.`;
+- Al agendar, solicita: Nombre, Vehículo (Marca/Modelo/Año), Servicio/Falla y Fecha/Hora preferida.
+
+INVENTARIO DE FILTROS Y PRODUCTOS DISPONIBLES:
+**LÍQUIDOS Y REFRIGERANTES:**
+- REFRIGERANTE ROJO DR CARE - GALON (Cantidad: 4)
+- REFRIGERANTE VERDE DR CARE - GALON (Cantidad: 4)
+- LÍQUIDO LIMPIA PARABRISAS DR CARE - GALON (Cantidad: 4)
+- LIGA DE FRENOS DOT 3 DR CARE - 945ML (Cantidad: 6)
+
+**FILTROS DE ACEITE (CARDOC):**
+- CD 3614 ARAUCA (Cantidad: 6)
+- CD 47 AVEO (Cantidad: 6)
+- CD 4967 COROLLA (Cantidad: 6)
+- CD 2C EXPLORER (Cantidad: 2)
+- CD 8 FORD (Cantidad: 2)
+- CD 5885 TWINGO (Cantidad: 2)
+- CD 3682 NISSAN (Cantidad: 2)
+- CD 3506 CAVALIER (Cantidad: 2)
+- CD 96796 CAMRY (Cantidad: 2)
+
+**FILTROS DE GASOLINA (CARDOC):**
+- CF 5450 COROLLA (Cantidad: 3)
+- CF 6020 MACHO CA. (Cantidad: 3)
+- CF 6030 SAMURAY (Cantidad: 3)
+- CF 6040 4.5 INYEC (Cantidad: 3)
+- CF 831 TRAIL BLAZER (Cantidad: 3)
+- CF 580 BLAZER (Cantidad: 3)
+- CF 1036 EXPLORER (Cantidad: 3)
+- CF 3442 LANCER CA (Cantidad: 3)
+- CF 1586 CHEROKEE (Cantidad: 3)
+- CF 5237 SENTRA (Cantidad: 3)
+
+Cuando el cliente pregunte por filtros, indica la referencia exacta y la cantidad disponible.`;
 
 export async function POST(request: NextRequest) {
   try {
@@ -122,5 +154,10 @@ function generateFallbackResponse(userMsg: string): string {
     return '📍 **Nuestra ubicación:**\n\nAltos Mirandinos, Miranda, Venezuela.\n\nhttps://maps.app.goo.gl/7H6RGrbpXkxeqG2KA';
   }
 
-  return '¡Hola! Soy el asistente de **Lycos Team** 🔧\n\nEstoy aquí para ayudarle con:\n• 📋 Información sobre servicios\n• 💰 Precios y presupuestos\n• 📅 Agendar citas\n• ⏰ Horarios de atención\n• 🚨 Asistencia de emergencia\n\n¿En qué puedo ayudarle hoy?\n\n📞 También puede llamarnos: **+58 412-334-3519**';
+  // Filters inventory response
+  if (lower.includes('filtro') || lower.includes('aceite') || lower.includes('gasolina')) {
+    return '🔧 **Filtros disponibles en Lycos Team:**\n\n**FILTROS DE ACEITE:**\n• CD 47 AVEO\n• CD 4967 COROLLA\n• CD 3614 ARAUCA\n• CD 8 FORD\n• CD 2C EXPLORER\n• CD 5885 TWINGO\n• CD 3682 NISSAN\n• CD 3506 CAVALIER\n• CD 96796 CAMRY\n\n**FILTROS DE GASOLINA:**\n• CF 5450 COROLLA\n• CF 6020 MACHO\n• CF 6030 SAMURAY\n• CF 6040 4.5 INYEC\n• CF 831 TRAIL BLAZER\n• CF 580 BLAZER\n• CF 1036 EXPLORER\n• CF 3442 LANCER\n• CF 1586 CHEROKEE\n• CF 5237 SENTRA\n\n¡Consulta disponibilidad y precios con nosotros! 📞 +58 412-334-3519';
+  }
+
+  return '¡Hola! Soy el asistente de **Lycos Team** 🔧\n\nEstoy aquí para ayudarle con:\n• 📋 Información sobre servicios\n• 💰 Precios y presupuestos\n• 📅 Agendar citas\n• ⏰ Horarios de atención\n• 🚨 Asistencia de emergencia\n• 🔧 Filtros y repuestos\n\n¿En qué puedo ayudarle hoy?\n\n📞 También puede llamarnos: **+58 412-334-3519**';
 }

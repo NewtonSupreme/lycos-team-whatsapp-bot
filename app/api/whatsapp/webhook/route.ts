@@ -139,7 +139,39 @@ COMPORTAMIENTO:
 - Español venezolano, amigable y profesional.
 - Máximo 4-5 líneas por respuesta.
 - No improvises precios no listados.
-- Si no sabes algo: "déjame consultarlo con el equipo" y ofrece el contacto del asesor.
+- INVENTARIO DE FILTROS Y PRODUCTOS DISPONIBLES:
+LÍQUIDOS Y REFRIGERANTES:
+- REFRIGERANTE ROJO DR CARE - GALON (Cantidad: 4)
+- REFRIGERANTE VERDE DR CARE - GALON (Cantidad: 4)
+- LÍQUIDO LIMPIA PARABRISAS DR CARE - GALON (Cantidad: 4)
+- LIGA DE FRENOS DOT 3 DR CARE - 945ML (Cantidad: 6)
+
+FILTROS DE ACEITE (CARDOC):
+- CD 3614 ARAUCA (Cantidad: 6)
+- CD 47 AVEO (Cantidad: 6)
+- CD 4967 COROLLA (Cantidad: 6)
+- CD 2C EXPLORER (Cantidad: 2)
+- CD 8 FORD (Cantidad: 2)
+- CD 5885 TWINGO (Cantidad: 2)
+- CD 3682 NISSAN (Cantidad: 2)
+- CD 3506 CAVALIER (Cantidad: 2)
+- CD 96796 CAMRY (Cantidad: 2)
+
+FILTROS DE GASOLINA (CARDOC):
+- CF 5450 COROLLA (Cantidad: 3)
+- CF 6020 MACHO CA. (Cantidad: 3)
+- CF 6030 SAMURAY (Cantidad: 3)
+- CF 6040 4.5 INYEC (Cantidad: 3)
+- CF 831 TRAIL BLAZER (Cantidad: 3)
+- CF 580 BLAZER (Cantidad: 3)
+- CF 1036 EXPLORER (Cantidad: 3)
+- CF 3442 LANCER CA (Cantidad: 3)
+- CF 1586 CHEROKEE (Cantidad: 3)
+- CF 5237 SENTRA (Cantidad: 3)
+
+Cuando el cliente pregunte por filtros, indica la referencia exacta (ej: CD 47 para Aveo) y la cantidad disponible.
+
+Si no sabes algo: "déjame consultarlo con el equipo" y ofrece el contacto del asesor.
 `;
 
 // ─── GET: Webhook verification ────────────────────────────────────────────────
