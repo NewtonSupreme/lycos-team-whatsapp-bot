@@ -6,8 +6,6 @@ const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
-
-// Asesor phone number (digits only, no +)
 const ASESOR_PHONE = '584123343519';
 const ASESOR_DISPLAY_NAME = 'Asesor Lycos Team';
 
@@ -18,53 +16,40 @@ function getDb() {
   return createClient(url, key);
 }
 
-// ─── Venezuela date/time helpers ──────────────────────────────────────────────
+// ─── Venezuela date/time helpers ───────────────────────────────────────────────
 function getVzlaDate(): Date {
-  // Returns a Date object adjusted to Venezuela time (UTC-4)
   const now = new Date();
-  const vzlaOffset = -4 * 60; // minutes
   const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
-  return new Date(utcMs + vzlaOffset * 60000);
+  return new Date(utcMs + (-4 * 60) * 60000);
 }
 
 function getVzlaDateString(): string {
-  const d = getVzlaDate();
-  return d.toISOString().split('T')[0]; // YYYY-MM-DD
+  return getVzlaDate().toISOString().split('T')[0];
 }
 
 function getVzlaDayOfWeek(): number {
-  // 0=Sunday, 1=Monday, ..., 6=Saturday
-  return getVzlaDate().getDay();
+  return getVzlaDate().getDay(); // 0=Sun, 6=Sat
 }
 
 function formatVzlaDateTime(): string {
   return new Intl.DateTimeFormat('es-VE', {
     timeZone: 'America/Caracas',
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
   }).format(new Date());
 }
 
 function isSunday(dateStr: string): boolean {
-  // dateStr: YYYY-MM-DD
-  const d = new Date(dateStr + 'T12:00:00');
-  return d.getDay() === 0;
+  return new Date(dateStr + 'T12:00:00').getDay() === 0;
 }
 
 function getNextWorkingDay(fromDateStr: string): string {
   const d = new Date(fromDateStr + 'T12:00:00');
   d.setDate(d.getDate() + 1);
-  while (d.getDay() === 0) {
-    d.setDate(d.getDate() + 1);
-  }
+  while (d.getDay() === 0) d.setDate(d.getDate() + 1);
   return d.toISOString().split('T')[0];
 }
 
-// Resolve relative date expressions to YYYY-MM-DD in Venezuela timezone
 function resolveRelativeDate(text: string): string | null {
   const lower = text.toLowerCase();
   const today = getVzlaDate();
@@ -78,103 +63,130 @@ function resolveRelativeDate(text: string): string | null {
     return tomorrow.toISOString().split('T')[0];
   }
 
-  if (lower.includes('pasado mañana')) {
-    const d = new Date(today);
-    d.setDate(d.getDate() + 2);
-    return d.toISOString().split('T')[0];
-  }
-
   const dayNames: Record<string, number> = {
-    'lunes': 1, 'martes': 2, 'miércoles': 3, 'miercoles': 3,
-    'jueves': 4, 'viernes': 5, 'sábado': 6, 'sabado': 6,
+    domingo: 0, lunes: 1, martes: 2, miércoles: 3, miercoles: 3,
+    jueves: 4, viernes: 5, sábado: 6, sabado: 6,
   };
-
   for (const [name, targetDay] of Object.entries(dayNames)) {
     if (lower.includes(name)) {
-      const currentDay = today.getDay();
-      let daysAhead = targetDay - currentDay;
-      if (daysAhead <= 0) daysAhead += 7;
       const d = new Date(today);
-      d.setDate(d.getDate() + daysAhead);
+      const currentDay = d.getDay();
+      let diff = targetDay - currentDay;
+      if (diff <= 0) diff += 7;
+      d.setDate(d.getDate() + diff);
       return d.toISOString().split('T')[0];
     }
   }
-
   return null;
 }
 
-// ─── KNOWLEDGE BASE ───────────────────────────────────────────────────────────
+// ─── KNOWLEDGE BASE ────────────────────────────────────────────────────────────
 const LYCOS_KNOWLEDGE = `
 IDENTIDAD:
-Eres el asistente virtual de Lycos Team, un taller automotriz profesional en San Antonio de los Altos, Miranda, Venezuela.
-NUNCA digas que eres una IA, bot, ChatGPT o robot. Si preguntan, eres el asistente del taller.
+Eres el asistente virtual de Lycos Team, taller automotriz profesional en San Antonio de los Altos, Miranda, Venezuela.
+NUNCA digas que eres IA, bot, ChatGPT o robot. Si preguntan, di que eres el asistente del taller.
 
-HORARIO: Lunes a Sábado 8:00 AM – 5:00 PM.
-DOMINGOS: Cerrado. Sin excepciones, sin emergencias. Si alguien pide cita para domingo, indícalo claramente y ofrece el lunes u otro día.
+SALUDO INICIAL (solo cuando sea sesión NUEVA — adapta según hora del día):
+"¡Excelente día! Bienvenido al asistente virtual de *Lycos Team* 🔧🚗 Estoy aquí para ayudarte con servicios, precios, citas, inventario y cualquier consulta que tengas. ¿En qué puedo ayudarte hoy?"
 
+REDES SOCIALES: Instagram y TikTok @lycos.team | Enlace al perfil: https://www.lycos.team
+
+HORARIO: Lunes a Sábado 8:00 AM – 5:00 PM. DOMINGOS: CERRADO sin excepciones.
 UBICACIÓN: San Antonio de los Altos, Altos Mirandinos, Miranda.
-REDES SOCIALES: Instagram y TikTok: @lycos.team
 
-SERVICIOS (por categoría):
-🔧 Mecánica y Frenos: Mecánica ligera, frenos (pastillas, liga, cilindros, freno de mano, rectificación disco/tambores), alineación, balanceo, rotación y monturas de cauchos, limpieza de inyectores.
-🚗 Sistemas: Aire acondicionado, frenos, refrigeración, dirección, motor, luces, escape, suspensión, transmisión, autotronica.
-🏎️ Silenciadores y Escape (con instalación, en divisas): CL27/CL30 hasta 1.3L $40 | CL40 hasta 1.5L $50 | CLH40 1.6-3.7L $60 | CL60 3.8L+ $90 | CLC60 camión $90 | CLCP60 platanero $90 | Resonador $40 | Flexibles $40. Presupuestos válidos 2 días.
-🚿 Estética: Autolavado, pulitura de faros, latonería y pintura, papel ahumado, cámaras 360.
-🔌 Electrónica: Elevavidrios manuales/electrónicos. OBD II: escáner según disponibilidad en la cita.
-🚛 Otros: Grúa (consultar al asesor), inventario de repuestos, renovación de RCV.
+PRECIOS — CÓMO MANEJARLOS:
+- Precios "en divisas" = USD a tasa paralela/mercado (como Binance P2P).
+- Precios "a BCV" = bolívares a la tasa oficial del BCV.
+- Cuando el sistema te provea la tasa BCV actual, muestra: Precio_USD × TasaBCV = equivalente en Bs.
+- Si no tienes tasa: "Para el precio en bolívares te lo confirmamos al momento, ya que la tasa varía diariamente".
 
-💳 CASHEA: IVA 16% adicional. Pide nivel PRIMERO → Nivel 1: 60% inicial | Nivel 2: 50% | Niveles 3-6: 40%. 3 cuotas c/14 días. Datos de pago → caja.
+SERVICIOS Y PRECIOS:
 
-📅 CITAS: Solicitar nombre completo, vehículo (marca/modelo/año), servicio, día y hora (L-S, 8AM-5PM). El sistema revisa disponibilidad automáticamente.
-- Si el cliente dice "mañana", "el lunes", "el viernes", etc., usa la FECHA ACTUAL para calcular la fecha correcta.
-- NUNCA agendes citas en domingo. Si piden domingo, di que no laboramos ese día y sugiere el lunes.
-- Confirma siempre la fecha exacta (día de la semana + fecha) al agendar.
+🏎 SILENCIADORES Y ESCAPE — Fabricación propia, redondos tipo original, lámina galvanizada gruesa. Precios EN DIVISAS con instalación incluida:
+• CL27: Motor hasta 1.3L → $40
+• CL30: Motor hasta 1.3L → $40
+• CL40: Motor hasta 1.5L → $50
+• CLH40: Motor hasta 2.0L → $60
+• CL60: Motor desde 3.8L → $90
+• CLC60: Camión → $90
+• CLCP60 / CLP60: Platanero → $90
+• CLK60: Fabricación especial $100 (EXCLUSIVO para Kia Sportage y Dodge Caliber por tipo de entrada especial)
+• Resonador: $40
+• Flowmaster Serie 40: $140 (instalación incluida, flexibles doble malla)
+• Flexibles doble malla: $40
+• Tubo de silenciador/cola: Primer metro $30 | Metros adicionales $20/metro | Soldadura $10 | Gomas $7
+
+Colas cromadas (EN DIVISAS):
+• B55: $25 | Camioneta: $35 | Curba: $30
+
+Presupuesto silenciadores válido por 2 días. Siempre pide marca, modelo, año y cilindraje.
+
+🔧 MECÁNICA Y FRENOS:
+• Mecánica ligera en general, limpieza de inyectores.
+• Frenos completo: precios previa evaluación.
+• Terminal de dirección: $15 c/lado | Rótula: $20 c/lado
+  IMPORTANTE: Después de cambiar terminal o rótula, el vehículo DEBE alinearse.
+• Amortiguador: $40 c/u (EN DIVISAS)
+
+🔩 ALINEACIÓN (precios 100% a BCV — mostrar equivalente en Bs según tasa):
+• Carros pequeños / sedan: $15 | EcoSport: $20 | Camionetas 4x4: $25
+
+🛞 CAUCHOS Y BALANCEO (100% a BCV):
+• Balanceo: carros $5 c/u | camionetas $10 c/u
+• Monturas: carros $5 c/u | camionetas $10 c/u
+• Reparación caucho: $10 a $15
+
+🚿 AUTOLAVADO (100% a BCV):
+Lavadito = solo exterior | Lavado = interior y exterior:
+• Carros pequeños: lavadito $5 | lavado completo $10
+• Camionetas: lavadito $13 | lavado $15
+• Detailing: carros $60 | camionetas $100
+
+🚗 SISTEMAS DEL VEHÍCULO:
+Aire acondicionado, refrigeración, dirección, motor, luces, escape, suspensión, transmisión, autotronica.
+
+🔌 ELECTRÓNICA:
+• Elevavidrios manuales/electrónicos: Reparación $40
+• Reparación display Ford Fiesta (km / gasolina): $60 por display
+  NOTA: Hay 2 modelos de Fiesta — uno tiene display de gasolina y display de km por separado, cada uno a $60.
+  Siempre pregunta: "¿Qué modelo de Fiesta tienes?" Ver video del servicio: https://vt.tiktok.com/ZSuqsSgb5/ (envía con previsualización nativa)
+• OBD II: escáner asignado según disponibilidad al confirmar cita.
+
+🚿 ESTÉTICA:
+Autolavado (ver precios arriba), Pulitura de faros, Latonería y pintura (previa cotización), Papel ahumado, Cámaras 360.
+
+🚛 OTROS:
+Servicio de grúa (consultar al asesor para tarifa), Renovación de RCV, Inventario de repuestos.
+
+💳 CASHEA (pago a cuotas):
+El IVA del 16% se suma AL PRECIO TOTAL del producto, NO a la inicial.
+Ejemplo: producto $100 → total con IVA = $116 → el cliente paga su inicial sobre $116.
+Pide el nivel PRIMERO → Nivel 1: 60% inicial | Nivel 2: 50% | Niveles 3-6: 40%
+Resto en 3 cuotas cada 14 días. Datos bancarios/pago → atendemos en caja.
+
+📅 CITAS:
+Solicitar: nombre completo, vehículo (marca/modelo/año), servicio, día y hora preferida (L-S, 8AM-5PM).
+• Calcula la fecha correcta desde HOY en Venezuela.
+• Si el cliente dice "mañana", "el lunes", etc., usa la fecha actual del sistema para calcular.
+• NUNCA agendes citas en domingo. Si piden domingo, avísalo y propón el próximo lunes.
+• Confirma siempre la fecha exacta: día de la semana + fecha completa (ej: "lunes 23 de marzo de 2026").
 
 ASESOR HUMANO:
-- Solo menciona al asesor cuando: el cliente lo pide explícitamente, hay una queja o situación compleja, se trata de grúa, o el bot no puede resolver la consulta.
-- NO menciones al asesor en cada mensaje ni de forma repetitiva.
-- Cuando sea necesario contactar al asesor, di: "Te envío el contacto de nuestro asesor por WhatsApp 👇" y el sistema enviará la tarjeta de contacto automáticamente.
+Menciona al asesor SOLO si: el cliente lo pide explícitamente, hay queja compleja, necesita grúa, o el bot no puede resolver.
+NO lo menciones en cada mensaje. Cuando corresponda: "Te envío el contacto de nuestro asesor 👇" (el sistema envía la tarjeta automáticamente).
+
+INVENTARIO DE FILTROS Y PRODUCTOS (disponible en el sistema en tiempo real):
+Refrigerantes y líquidos Dr Care | Filtros aceite CARDOC: Arauca, Aveo, Corolla, Explorer, Ford, Twingo, Nissan, Cavalier, Camry | Filtros gasolina CARDOC: Corolla, Macho CA, Samuray, 4.5 Inyec, Trail Blazer, Blazer, Explorer, Lancer CA, Cherokee, Sentra.
+Al preguntar por filtros: indica la referencia correcta (ej: CD47 para Aveo) y el stock actual.
 
 COMPORTAMIENTO:
-- Español venezolano, amigable y profesional.
-- Máximo 4-5 líneas por respuesta.
-- No improvises precios no listados.
-- INVENTARIO DE FILTROS Y PRODUCTOS DISPONIBLES:
-LÍQUIDOS Y REFRIGERANTES:
-- REFRIGERANTE ROJO DR CARE - GALON (Cantidad: 4)
-- REFRIGERANTE VERDE DR CARE - GALON (Cantidad: 4)
-- LÍQUIDO LIMPIA PARABRISAS DR CARE - GALON (Cantidad: 4)
-- LIGA DE FRENOS DOT 3 DR CARE - 945ML (Cantidad: 6)
-
-FILTROS DE ACEITE (CARDOC):
-- CD 3614 ARAUCA (Cantidad: 6)
-- CD 47 AVEO (Cantidad: 6)
-- CD 4967 COROLLA (Cantidad: 6)
-- CD 2C EXPLORER (Cantidad: 2)
-- CD 8 FORD (Cantidad: 2)
-- CD 5885 TWINGO (Cantidad: 2)
-- CD 3682 NISSAN (Cantidad: 2)
-- CD 3506 CAVALIER (Cantidad: 2)
-- CD 96796 CAMRY (Cantidad: 2)
-
-FILTROS DE GASOLINA (CARDOC):
-- CF 5450 COROLLA (Cantidad: 3)
-- CF 6020 MACHO CA. (Cantidad: 3)
-- CF 6030 SAMURAY (Cantidad: 3)
-- CF 6040 4.5 INYEC (Cantidad: 3)
-- CF 831 TRAIL BLAZER (Cantidad: 3)
-- CF 580 BLAZER (Cantidad: 3)
-- CF 1036 EXPLORER (Cantidad: 3)
-- CF 3442 LANCER CA (Cantidad: 3)
-- CF 1586 CHEROKEE (Cantidad: 3)
-- CF 5237 SENTRA (Cantidad: 3)
-
-Cuando el cliente pregunte por filtros, indica la referencia exacta (ej: CD 47 para Aveo) y la cantidad disponible.
-
-Si no sabes algo: "déjame consultarlo con el equipo" y ofrece el contacto del asesor.
+• Español venezolano, amigable y profesional.
+• Máximo 4-5 líneas por respuesta. Si la info es amplia, usa puntos cortos.
+• No improvises precios no listados arriba. Di "previa cotización" cuando aplique.
+• Si no sabes: "déjame consultarlo con el equipo".
 `;
 
-// ─── GET: Webhook verification ────────────────────────────────────────────────
+// ─── GET: Webhook verification ─────────────────────────────────────────────────
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const mode = searchParams.get('hub.mode');
@@ -188,7 +200,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 }
 
-// ─── POST: Receive messages ───────────────────────────────────────────────────
+// ─── POST: Receive messages ────────────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -204,7 +216,6 @@ export async function POST(request: NextRequest) {
     for (const message of value.messages) {
       const from: string = message.from;
       const wa_message_id: string = message.id;
-
       const db = getDb();
 
       // 0. Deduplication
@@ -249,61 +260,62 @@ export async function POST(request: NextRequest) {
 
       // 2. Load full context for this phone number
       const ctx = await loadConversationContext(db, from, messageBody);
-
-      // 3. Detect intent-based special responses first
       const lowerBody = messageBody.toLowerCase();
 
-      // Location request
+      // 3. Special intent: location
       if (isLocationRequest(lowerBody)) {
-        await sendMsg(from, '📍 *Estamos en San Antonio de los Altos, Miranda.* Te mando el mapa y el video de cómo llegar 👇');
+        await sendMsg(from, '📍 *Estamos en San Antonio de los Altos, Miranda.* Te mando el mapa y un video de cómo llegar 👇');
         await delay(700);
         await sendMsg(from, 'https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
         await delay(600);
         await sendMsg(from, 'https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
         await delay(500);
-        await sendMsg(from, '¡Síguenos en Instagram @lycos.team! 📸');
+        await sendMsg(from, '¡Y síguenos en Instagram @lycos.team para más novedades! 📸');
         await updateConversation(db, from, messageBody, ctx.memoria);
         continue;
       }
 
-      // Contact/asesor request — send native contact card
+      // 4. Special intent: asesor contact (explicit request only)
       if (isContactRequest(lowerBody)) {
-        await sendMsg(from, '📱 Te envío el contacto de nuestro asesor para que puedas chatear directamente:');
+        await sendMsg(from, 'Con gusto 😊 Te comparto el contacto directo de nuestro asesor:');
         await delay(600);
         await sendContactCard(from, ASESOR_PHONE, ASESOR_DISPLAY_NAME);
         await updateConversation(db, from, messageBody, ctx.memoria);
         continue;
       }
 
-      // 4. Get AI response with full context
+      // 5. AI response
       const aiResponse = await getAIResponse(messageBody, ctx);
 
       if (aiResponse) {
-        // Check if AI decided to send the advisor contact
         const needsAsesor = aiNeedsAsesor(aiResponse);
-
         if (needsAsesor) {
-          // Send the text response (without the wa.me link if present)
-          const cleanedResponse = aiResponse
-            .replace(/https?:\/\/wa\.me\/\S+/gi, '')
-            .replace(/wa\.me\/\S+/gi, '')
-            .trim();
-          if (cleanedResponse) {
-            await sendMsg(from, cleanedResponse);
+          // Send AI text first (remove any manual wa.me links the AI may have added)
+          const cleaned = aiResponse.replace(/https?:\/\/wa\.me\/\S+/gi, '').replace(/wa\.me\/\S+/gi, '').trim();
+          if (cleaned) {
+            await sendMsg(from, cleaned);
             await delay(700);
           }
-          // Send native contact card as separate message
           await sendContactCard(from, ASESOR_PHONE, ASESOR_DISPLAY_NAME);
         } else {
-          const hasUrl = /https?:\/\//.test(aiResponse);
-          await sendMsg(from, aiResponse, hasUrl);
+          // Check if we need to send TikTok link separately with preview
+          const tiktokMatch = aiResponse.match(/https?:\/\/(?:vt\.tiktok\.com|tiktok\.com)\/\S+/i);
+          if (tiktokMatch) {
+            const textWithoutUrl = aiResponse.replace(tiktokMatch[0], '').trim();
+            if (textWithoutUrl) await sendMsg(from, textWithoutUrl);
+            await delay(500);
+            await sendMsg(from, tiktokMatch[0], true); // preview enabled
+          } else {
+            const hasUrl = /https?:\/\//.test(aiResponse);
+            await sendMsg(from, aiResponse, hasUrl);
+          }
         }
 
-        // 5. Post-response: extract intents and persist to DB
+        // 6. Extract and persist intents to DB (non-blocking)
         void processIntents(db, from, messageBody, aiResponse, ctx);
       }
 
-      // 6. Update conversation state
+      // 7. Update conversation state
       await updateConversation(db, from, messageBody, ctx.memoria);
     }
 
@@ -314,7 +326,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// ─── Context Loading ──────────────────────────────────────────────────────────
+// ─── Context Loading ───────────────────────────────────────────────────────────
 interface Memoria {
   nombre?: string;
   vehiculos?: { marca: string; modelo: string; anio?: string; placa?: string }[];
@@ -344,7 +356,7 @@ async function loadConversationContext(
 
   if (!db) return { historia, memoria, citasInfo, inventarioInfo, isNewSession };
 
-  // Load conversation history (last 14 messages)
+  // Message history (last 14, keep 12)
   try {
     const { data: msgs } = await db
       .from('mensajes_whatsapp')
@@ -362,17 +374,15 @@ async function loadConversationContext(
         role: m.tipo === 'entrante' ? 'user' : 'model',
         parts: [{ text: m.body }],
       }));
-
-      // Session check
       const latest = msgs[0];
       if (latest?.created_at) {
-        const diff = (Date.now() - new Date(latest.created_at).getTime()) / 3600000;
-        if (diff < 12) isNewSession = false;
+        const diffH = (Date.now() - new Date(latest.created_at).getTime()) / 3600000;
+        if (diffH < 12) isNewSession = false;
       }
     }
   } catch (e) { console.error('Error loading history:', e); }
 
-  // Load conversation memoria JSONB
+  // Memoria JSONB
   try {
     const { data: convRows } = await db
       .from('conversaciones')
@@ -384,7 +394,7 @@ async function loadConversationContext(
     }
   } catch (e) { console.error('Error loading memoria:', e); }
 
-  // Load upcoming and past appointments for this phone
+  // Appointments for this phone
   try {
     const today = getVzlaDateString();
     const { data: citas } = await db
@@ -395,54 +405,47 @@ async function loadConversationContext(
       .limit(5);
 
     if (citas && citas.length > 0) {
-      const citasList = citas.map(c => {
+      const list = citas.map(c => {
         const isPast = c.fecha < today;
-        const status = isPast ? '(PASADA)' : '(PRÓXIMA)';
-        return `- ${c.fecha} a las ${c.hora} | ${c.tipo_servicio} | ${c.descripcion || ''} | ${c.estado} ${status}`;
+        return `- ${c.fecha} ${c.hora} | ${c.tipo_servicio} | ${c.descripcion || ''} | ${c.estado} ${isPast ? '(PASADA)' : '(PRÓXIMA)'}`;
       }).join('\n');
-      citasInfo = `\nCITAS REGISTRADAS PARA ESTE CLIENTE:\n${citasList}`;
+      citasInfo = `\nCITAS REGISTRADAS PARA ESTE CLIENTE:\n${list}`;
     }
   } catch (e) { console.error('Error loading citas:', e); }
 
-  // Load inventory if message mentions products
+  // Inventory (only when relevant keywords detected)
   const lower = currentMessage.toLowerCase();
   const inventoryKeywords = [
-    'silenciador', 'resonador', 'flexible', 'cola cromada', 'escape',
-    'filtro', 'aceite', 'gasolina', 'refrigerante', 'liquido', 'líquido',
-    'frenos', 'liga', 'dot', 'parabrisas', 'repuesto', 'stock',
-    'inventario', 'disponible', 'hay', 'precio', 'cl27', 'cl30', 'cl40',
-    'cl60', 'clh40', 'clk60', 'clp60', 'clc60', 'b55', 'curba', 'camioneta',
-    'dr care', 'cardoc', 'arauca', 'aveo', 'corolla', 'explorer', 'twingo',
-    'nissan', 'cavalier', 'camry', 'lancer', 'cherokee', 'sentra', 'blazer',
-    'trail', 'samuray', 'macho',
+    'silenciador', 'resonador', 'flexible', 'cola', 'escape', 'cl27', 'cl30', 'cl40',
+    'clh40', 'cl60', 'clk60', 'clc60', 'clp60', 'b55', 'curba', 'flowmaster',
+    'filtro', 'aceite', 'gasolina', 'refrigerante', 'liquido', 'líquido', 'frenos', 'liga', 'dot',
+    'repuesto', 'stock', 'inventario', 'disponible', 'hay', 'tienes',
+    'arauca', 'aveo', 'corolla', 'twingo', 'cavalier', 'camry', 'sentra', 'blazer',
+    'lancer', 'cherokee', 'explorer', 'samuray', 'macho',
   ];
   if (inventoryKeywords.some(k => lower.includes(k))) {
     try {
       const { data: items } = await db
         .from('inventario')
-        .select('nombre, codigo, precio_usd, stock, notas, categoria')
+        .select('nombre, codigo, precio_usd, stock, categoria')
         .eq('activo', true)
         .order('categoria')
         .order('nombre');
       if (items && items.length > 0) {
         const list = items.map(i =>
-          `  • [${i.categoria || 'general'}] ${i.nombre}${i.codigo ? ' (' + i.codigo + ')' : ''}${i.precio_usd ? ': $' + i.precio_usd : ''} — Stock: ${i.stock > 0 ? i.stock + ' unidades' : '⚠️ SIN STOCK'}`
+          `  • ${i.nombre}${i.codigo ? ' [' + i.codigo + ']' : ''}${i.precio_usd ? ': $' + i.precio_usd : ''} — ${i.stock > 0 ? 'Stock: ' + i.stock : '⚠️ SIN STOCK'}`
         ).join('\n');
-        inventarioInfo = `\nINVENTARIO ACTUAL (stock en tiempo real):\n${list}`;
+        inventarioInfo = `\nINVENTARIO ACTUAL (tiempo real):\n${list}`;
       }
     } catch (e) { console.error('Error loading inventory:', e); }
   }
 
-  console.log(`🧠 Contexto cargado: ${historia.length} msgs hist, memoria: ${JSON.stringify(memoria).substring(0, 80)}`);
-
+  console.log(`🧠 Ctx: ${historia.length} msgs, memoria: ${JSON.stringify(memoria).substring(0, 60)}`);
   return { historia, memoria, citasInfo, inventarioInfo, isNewSession };
 }
 
-// ─── AI Response ──────────────────────────────────────────────────────────────
-async function getAIResponse(
-  userMessage: string,
-  ctx: ConversationContext
-): Promise<string | null> {
+// ─── AI Response ───────────────────────────────────────────────────────────────
+async function getAIResponse(userMessage: string, ctx: ConversationContext): Promise<string | null> {
   if (!GEMINI_API_KEY) return null;
 
   const vzlaDateTime = formatVzlaDateTime();
@@ -450,35 +453,34 @@ async function getAIResponse(
   const vzlaDayNum = getVzlaDayOfWeek();
   const dayNames = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
   const vzlaDayName = dayNames[vzlaDayNum];
+  const isDomingo = vzlaDayNum === 0;
 
   const memoriaStr = Object.keys(ctx.memoria).length > 0
-    ? `\nMEMORIA DEL CLIENTE (recuerda esta info, no vuelvas a preguntar):
+    ? `\nMEMORIA DEL CLIENTE (ya registrada — no preguntes lo que ya sabes):
 - Nombre: ${ctx.memoria.nombre || 'no registrado'}
-- Vehículos: ${ctx.memoria.vehiculos?.map(v => `${v.marca} ${v.modelo} ${v.anio || ''}`).join(', ') || 'no registrado'}
+- Vehículos: ${ctx.memoria.vehiculos?.map(v => `${v.marca} ${v.modelo}${v.anio ? ' ' + v.anio : ''}`).join(', ') || 'no registrado'}
 - Notas: ${ctx.memoria.notas || 'ninguna'}`
     : '';
 
   const systemPrompt = `${LYCOS_KNOWLEDGE}
 
 FECHA Y HORA ACTUAL EN VENEZUELA: ${vzlaDateTime}
-HOY ES: ${vzlaDayName}, ${vzlaDateStr}
-DÍA DE LA SEMANA ACTUAL: ${vzlaDayName} (${vzlaDayNum === 0 ? 'DOMINGO - NO LABORAMOS' : vzlaDayNum === 6 ? 'SÁBADO - ÚLTIMO DÍA LABORAL DE LA SEMANA' : 'DÍA LABORAL'})
-
-SESIÓN: ${ctx.isNewSession ? 'NUEVA - puedes saludar brevemente si el mensaje lo amerita' : 'CONTINUA - ve al tema, no repitas saludos'}
+HOY ES: ${vzlaDayName} ${vzlaDateStr}
+${isDomingo ? '⚠️ HOY ES DOMINGO — El taller está CERRADO. Informa al cliente y sugiere que escriba mañana (lunes).' : ''}
+SESIÓN: ${ctx.isNewSession ? 'NUEVA — saluda con el mensaje de bienvenida' : 'CONTINUA — ve directo al tema, sin repetir saludos'}
 ${memoriaStr}
 ${ctx.citasInfo}
 ${ctx.inventarioInfo}
 
 REGLAS CRÍTICAS:
-- Conoces la fecha y hora actual exacta. Úsala para calcular fechas relativas ("mañana", "el lunes", etc.).
-- Si el cliente pide cita para "mañana", calcula la fecha correcta basándote en HOY (${vzlaDateStr}).
-- NUNCA agendes ni sugieras citas en domingo. Si piden domingo, di que no laboramos y sugiere el lunes.
-- Si el cliente pregunta por stock/disponibilidad, usa el INVENTARIO ACTUAL mostrado arriba.
-- Si hay CITAS REGISTRADAS, úsalas: indica si ya pasaron o si están próximas.
-- Si el cliente menciona querer agendar, solicita los datos y confirma la fecha exacta (día + fecha).
-- ASESOR: Solo menciona al asesor cuando el cliente lo pide, hay queja compleja, o el bot no puede resolver. NO lo menciones en cada mensaje. Cuando sea necesario, di exactamente: "Te envío el contacto de nuestro asesor 👇" (el sistema enviará la tarjeta automáticamente).
-- Recuerda que un cliente puede tener VARIOS vehículos. Identifica de cuál está hablando.
-- Analiza el historial completo antes de responder. No repitas preguntas ya respondidas.`;
+- Usa la fecha actual (${vzlaDateStr}) para calcular fechas relativas: "mañana" = +1 día, "el lunes" = próximo lunes, etc.
+- NUNCA sugieras ni aceptes citas en domingo. Si el cliente pide domingo, avisa e indica el lunes.
+- Si el cliente pregunta stock/disponibilidad: usa el INVENTARIO ACTUAL arriba.
+- Si hay CITAS REGISTRADAS: indícalas (pasadas o próximas con fecha exacta).
+- Asesor: solo mencionarlo cuando el cliente lo pide o sea imprescindible. NO en cada respuesta.
+- Un cliente puede tener VARIOS vehículos. Identifica de cuál habla.
+- Para TikTok del servicio Fiesta: envía https://vt.tiktok.com/ZSuqsSgb5/ con previsualización.
+- Analiza el historial antes de responder. No repitas preguntas ya respondidas.`;
 
   const contents = [
     ...ctx.historia,
@@ -494,9 +496,7 @@ REGLAS CRÍTICAS:
         body: JSON.stringify({
           system_instruction: { parts: [{ text: systemPrompt }] },
           contents,
-          generationConfig: {
-            temperature: 0.75, maxOutputTokens: 700, topK: 40, topP: 0.95,
-          },
+          generationConfig: { temperature: 0.75, maxOutputTokens: 700, topK: 40, topP: 0.95 },
           safetySettings: [
             { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
             { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
@@ -506,8 +506,7 @@ REGLAS CRÍTICAS:
     );
 
     if (!resp.ok) {
-      const err = await resp.text();
-      console.error(`❌ Gemini error ${resp.status}:`, err.substring(0, 300));
+      console.error(`❌ Gemini error ${resp.status}:`, (await resp.text()).substring(0, 200));
       return null;
     }
 
@@ -516,30 +515,29 @@ REGLAS CRÍTICAS:
     if (text) console.log(`✅ Gemini: "${text.substring(0, 70)}..."`);
     return text;
   } catch (e) {
-    console.error('❌ Error getAIResponse:', e);
+    console.error('❌ getAIResponse error:', e);
     return null;
   }
 }
 
-// ─── Detect if AI response requires sending advisor contact ───────────────────
+// ─── Detect if AI says to send asesor contact ──────────────────────────────────
 function aiNeedsAsesor(aiText: string): boolean {
   const lower = aiText.toLowerCase();
   return (
     lower.includes('te envío el contacto') ||
     lower.includes('te envio el contacto') ||
-    lower.includes('te mando el contacto') ||
     lower.includes('contacto de nuestro asesor') ||
     lower.includes('wa.me/') ||
     lower.includes('584123343519')
   );
 }
 
-// ─── Intent Processing → DB writes ───────────────────────────────────────────
+// ─── Intent Processing → DB writes ────────────────────────────────────────────
 async function processIntents(
   db: ReturnType<typeof getDb>,
   from: string,
   userMsg: string,
-  aiMsg: string,
+  _aiMsg: string,
   ctx: ConversationContext
 ): Promise<void> {
   if (!db) return;
@@ -554,18 +552,19 @@ async function processIntents(
   if (nameMatch && !newMemoria.nombre) {
     newMemoria.nombre = nameMatch[1].trim();
     memChanged = true;
-    console.log(`👤 Nombre detectado: ${newMemoria.nombre}`);
+    console.log(`👤 Nombre: ${newMemoria.nombre}`);
   }
 
-  // Extract vehicle info (supports multiple vehicles)
+  // Extract vehicle
   const vehicleMatch = userMsg.match(
-    /\b(toyota|ford|chevrolet|hyundai|kia|honda|nissan|mazda|volkswagen|corsa|aveo|spark|cruze|sail|captiva|tucson|sportage|yaris|hilux|ranger|f-150|sentra|tiida|versa|frontier|x-trail|cx-5|cx30|rio|accent|elantra|sonata|civic|fit|hrv|crv|gol|bora|jetta|passat|polo|peugeot|renault|mitsubishi|suzuki|isuzu)[^\n,]{0,25}/i
+    /\b(toyota|ford|chevrolet|hyundai|kia|honda|nissan|mazda|volkswagen|corsa|aveo|spark|cruze|sail|captiva|tucson|sportage|yaris|hilux|ranger|f-150|sentra|tiida|versa|frontier|x-trail|cx-5|cx30|rio|accent|elantra|sonata|civic|fit|hrv|crv|gol|bora|jetta|passat|polo|peugeot|renault|mitsubishi|suzuki|isuzu|fiesta|caliber|dodge)[^\n,]{0,25}/i
   );
   const yearMatch = userMsg.match(/\b(19[8-9]\d|20[0-2]\d)\b/);
   if (vehicleMatch) {
+    const parts = vehicleMatch[0].trim().split(/\s+/);
     const vehiculo = {
-      marca: vehicleMatch[0].split(' ')[0],
-      modelo: vehicleMatch[0].split(' ').slice(1).join(' ') || vehicleMatch[0],
+      marca: parts[0],
+      modelo: parts.slice(1).join(' ') || parts[0],
       anio: yearMatch?.[1],
     };
     if (!newMemoria.vehiculos) newMemoria.vehiculos = [];
@@ -576,146 +575,111 @@ async function processIntents(
     if (!exists) {
       newMemoria.vehiculos.push(vehiculo);
       memChanged = true;
-      console.log(`🚗 Vehículo añadido: ${vehiculo.marca} ${vehiculo.modelo}`);
+      console.log(`🚗 Vehículo: ${vehiculo.marca} ${vehiculo.modelo}`);
     }
   }
 
-  // Detect appointment booking intent
-  const bookingKeywords = ['cita', 'agendar', 'reservar', 'cuando puedo', 'disponibilidad', 'quiero ir'];
-  const hasBookingIntent = bookingKeywords.some(k => userMsg.toLowerCase().includes(k));
-
-  if (hasBookingIntent) {
-    await tryBookAppointment(db, from, userMsg, newMemoria);
+  // Booking intent
+  const bookingKw = ['cita', 'agendar', 'reservar', 'cuando puedo', 'quiero ir', 'disponible para'];
+  if (bookingKw.some(k => userMsg.toLowerCase().includes(k))) {
+    await tryBookAppointment(db, from, userMsg);
   }
 
-  // Save updated memoria
+  // Save memoria
   if (memChanged) {
     try {
       await db.from('conversaciones').upsert(
         { telefono: from, memoria: newMemoria },
         { onConflict: 'telefono' }
       );
-      console.log('💾 Memoria actualizada');
     } catch (e) { console.error('Error saving memoria:', e); }
   }
 
-  // Upsert client in clientes table if we have name + phone
+  // Upsert to clientes table
   if (newMemoria.nombre && memChanged) {
     try {
-      const { data: existing } = await db
-        .from('clientes')
-        .select('id')
-        .eq('telefono', from)
-        .limit(1);
-
+      const { data: existing } = await db.from('clientes').select('id').eq('telefono', from).limit(1);
       if (!existing || existing.length === 0) {
-        const nameParts = newMemoria.nombre.split(' ');
+        const parts = newMemoria.nombre.split(' ');
         await db.from('clientes').insert({
-          nombre: nameParts[0] || newMemoria.nombre,
-          apellido: nameParts.slice(1).join(' ') || 'WhatsApp',
+          nombre: parts[0],
+          apellido: parts.slice(1).join(' ') || 'WhatsApp',
           telefono: from,
         });
-        console.log(`✅ Cliente creado: ${newMemoria.nombre}`);
+        console.log(`✅ Cliente: ${newMemoria.nombre}`);
       }
-    } catch (e) { console.error('Error upserting cliente:', e); }
+    } catch (e) { console.error('Error upsert cliente:', e); }
   }
 }
 
-// ─── Appointment Booking with Conflict Detection ──────────────────────────────
+// ─── Appointment Booking ───────────────────────────────────────────────────────
 async function tryBookAppointment(
   db: ReturnType<typeof getDb>,
   from: string,
-  userMsg: string,
-  memoria: Memoria
+  userMsg: string
 ): Promise<void> {
   if (!db) return;
 
-  // Try to resolve relative date first
   let fecha = resolveRelativeDate(userMsg);
-
-  // If no relative date, try explicit date pattern
   if (!fecha) {
-    const dateMatch = userMsg.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
-    if (dateMatch) {
+    const m = userMsg.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
+    if (m) {
       const now = getVzlaDate();
-      const day = dateMatch[1].padStart(2, '0');
-      const month = dateMatch[2].padStart(2, '0');
-      const year = dateMatch[3]
-        ? (dateMatch[3].length === 2 ? '20' + dateMatch[3] : dateMatch[3])
-        : now.getFullYear().toString();
-      fecha = `${year}-${month}-${day}`;
+      const d = m[1].padStart(2, '0');
+      const mo = m[2].padStart(2, '0');
+      const y = m[3] ? (m[3].length === 2 ? '20' + m[3] : m[3]) : now.getFullYear().toString();
+      fecha = `${y}-${mo}-${d}`;
     }
   }
+  if (!fecha) return;
+  if (isSunday(fecha)) {
+    console.log(`⛔ Cita domingo bloqueada: ${fecha}`);
+    return;
+  }
 
-  const timeMatch = userMsg.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|AM|PM)/);
+  const tm = userMsg.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|AM|PM)/);
   let hora = '08:00';
-
-  if (timeMatch) {
-    let h = parseInt(timeMatch[1]);
-    const m = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
-    const meridian = timeMatch[3]?.toLowerCase();
-    if (meridian === 'pm' && h < 12) h += 12;
-    if (meridian === 'am' && h === 12) h = 0;
+  if (tm) {
+    let h = parseInt(tm[1]);
+    const m = tm[2] ? parseInt(tm[2]) : 0;
+    const mer = tm[3]?.toLowerCase();
+    if (mer === 'pm' && h < 12) h += 12;
+    if (mer === 'am' && h === 12) h = 0;
     hora = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
   }
 
-  if (!fecha) return;
-
-  // Block Sundays
-  if (isSunday(fecha)) {
-    const nextDay = getNextWorkingDay(fecha);
-    console.log(`⛔ Cita solicitada en domingo (${fecha}). Próximo día hábil: ${nextDay}`);
-    return; // AI already handles the message; we just don't book
-  }
-
-  // Check for conflicts: any appointment within ±60 minutes of requested time
   try {
-    const requestedDateTime = new Date(`${fecha}T${hora}:00`);
-    const windowStart = new Date(requestedDateTime.getTime() - 60 * 60 * 1000);
-    const windowEnd = new Date(requestedDateTime.getTime() + 60 * 60 * 1000);
+    const dt = new Date(`${fecha}T${hora}:00`);
+    const ws = new Date(dt.getTime() - 3600000);
+    const we = new Date(dt.getTime() + 3600000);
+    const st = `${ws.getHours().toString().padStart(2,'0')}:${ws.getMinutes().toString().padStart(2,'0')}`;
+    const et = `${we.getHours().toString().padStart(2,'0')}:${we.getMinutes().toString().padStart(2,'0')}`;
 
-    const startTime = `${windowStart.getHours().toString().padStart(2,'0')}:${windowStart.getMinutes().toString().padStart(2,'0')}`;
-    const endTime = `${windowEnd.getHours().toString().padStart(2,'0')}:${windowEnd.getMinutes().toString().padStart(2,'0')}`;
-
-    const { data: conflicts } = await db
-      .from('citas')
-      .select('hora, descripcion')
-      .eq('fecha', fecha)
-      .neq('estado', 'cancelada')
-      .gte('hora', startTime)
-      .lte('hora', endTime);
+    const { data: conflicts } = await db.from('citas')
+      .select('hora').eq('fecha', fecha).neq('estado', 'cancelada')
+      .gte('hora', st).lte('hora', et);
 
     if (conflicts && conflicts.length > 0) {
-      console.log(`⚠️ Conflicto de cita detectado para ${fecha} ${hora}`);
+      console.log(`⚠️ Conflicto cita ${fecha} ${hora}`);
       return;
     }
 
-    // No conflict → create the appointment
-    const servicioMatch = userMsg.match(
-      /(?:por|para|quiero|necesito|servicio de?)\s+([a-záéíóúñA-ZÁÉÍÓÚÑ\s]{3,40})/i
-    );
-
+    const sm = userMsg.match(/(?:para|quiero|necesito|servicio de?)\s+([a-záéíóúñA-ZÁÉÍÓÚÑ\s]{3,40})/i);
     await db.from('citas').insert({
-      fecha,
-      hora,
-      telefono: from,
+      fecha, hora, telefono: from,
       tipo_servicio: 'otro',
-      descripcion: servicioMatch?.[1]?.trim() || 'Servicio solicitado por WhatsApp',
-      estado: 'pendiente',
-      duracion_minutos: 60,
+      descripcion: sm?.[1]?.trim() || 'Servicio por WhatsApp',
+      estado: 'pendiente', duracion_minutos: 60,
     });
-
-    console.log(`📅 Cita creada: ${fecha} ${hora} para ${from}`);
-  } catch (e) {
-    console.error('Error booking appointment:', e);
-  }
+    console.log(`📅 Cita: ${fecha} ${hora} para ${from}`);
+  } catch (e) { console.error('Error booking:', e); }
 }
 
-// ─── Update conversation row ──────────────────────────────────────────────────
+// ─── Update conversation row ───────────────────────────────────────────────────
 async function updateConversation(
   db: ReturnType<typeof getDb>,
   from: string,
-  lastMessage: string,
+  lastMsg: string,
   memoria: Memoria
 ): Promise<void> {
   if (!db) return;
@@ -723,18 +687,17 @@ async function updateConversation(
     try {
       await db.from('conversaciones').upsert({
         telefono: from,
-        ultimo_mensaje: lastMessage.substring(0, 100),
+        ultimo_mensaje: lastMsg.substring(0, 100),
         ultimo_mensaje_at: new Date().toISOString(),
         memoria,
       }, { onConflict: 'telefono' });
-    } catch (e) { console.error('Error updating conversacion:', e); }
+    } catch (e) { console.error('Error update conversacion:', e); }
   })();
 }
 
-// ─── Send WhatsApp Text Message ───────────────────────────────────────────────
+// ─── Send WhatsApp Text ────────────────────────────────────────────────────────
 async function sendMsg(to: string, text: string, previewUrl = false): Promise<void> {
   if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
-
   try {
     const resp = await fetch(
       `https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`,
@@ -742,49 +705,34 @@ async function sendMsg(to: string, text: string, previewUrl = false): Promise<vo
         method: 'POST',
         headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: to.replace(/[^0-9]/g, ''),
-          type: 'text',
+          messaging_product: 'whatsapp', recipient_type: 'individual',
+          to: to.replace(/[^0-9]/g, ''), type: 'text',
           text: { preview_url: previewUrl, body: text },
         }),
       }
     );
-
-    if (!resp.ok) {
-      console.error('❌ WhatsApp send error:', await resp.text());
-      return;
-    }
-
+    if (!resp.ok) { console.error('❌ sendMsg error:', await resp.text()); return; }
     const data = await resp.json();
     const wa_id = data.messages?.[0]?.id;
-    console.log(`📤 Enviado a ${to}. ID: ${wa_id}`);
-
-    // Save outgoing (non-blocking)
+    console.log(`📤 Sent to ${to}. ID: ${wa_id}`);
     const db = getDb();
     if (db) {
       void (async () => {
         try {
           await db.from('mensajes_whatsapp').insert({
             from_number: 'system', to_number: to,
-            body: text, tipo: 'saliente',
-            wa_message_id: wa_id, es_ia: true,
+            body: text, tipo: 'saliente', wa_message_id: wa_id, es_ia: true,
           });
         } catch (e) { console.error('Error saving saliente:', e); }
       })();
     }
-  } catch (e) {
-    console.error('❌ sendMsg error:', e);
-  }
+  } catch (e) { console.error('❌ sendMsg exception:', e); }
 }
 
-// ─── Send Native WhatsApp Contact Card ───────────────────────────────────────
+// ─── Send Native WhatsApp Contact Card ────────────────────────────────────────
 async function sendContactCard(to: string, phone: string, displayName: string): Promise<void> {
   if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
-
-  // Format phone for vCard: must include country code, no +
   const cleanPhone = phone.replace(/[^0-9]/g, '');
-
   try {
     const resp = await fetch(
       `https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`,
@@ -792,79 +740,52 @@ async function sendContactCard(to: string, phone: string, displayName: string): 
         method: 'POST',
         headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: to.replace(/[^0-9]/g, ''),
-          type: 'contacts',
-          contacts: [
-            {
-              name: {
-                formatted_name: displayName,
-                first_name: 'Asesor',
-                last_name: 'Lycos Team',
-              },
-              phones: [
-                {
-                  phone: `+${cleanPhone}`,
-                  type: 'CELL',
-                  wa_id: cleanPhone,
-                },
-              ],
-              org: {
-                company: 'Lycos Team',
-                title: 'Asesor',
-              },
-            },
-          ],
+          messaging_product: 'whatsapp', recipient_type: 'individual',
+          to: to.replace(/[^0-9]/g, ''), type: 'contacts',
+          contacts: [{
+            name: { formatted_name: displayName, first_name: 'Asesor', last_name: 'Lycos Team' },
+            phones: [{ phone: `+${cleanPhone}`, type: 'CELL', wa_id: cleanPhone }],
+            org: { company: 'Lycos Team', title: 'Asesor' },
+          }],
         }),
       }
     );
-
     if (!resp.ok) {
-      const errText = await resp.text();
-      console.error('❌ WhatsApp contact card error:', errText);
-      // Fallback: send as text link
+      console.error('❌ Contact card error:', await resp.text());
       await sendMsg(to, `📱 Contacto del asesor: https://wa.me/${cleanPhone}`, true);
       return;
     }
-
     const data = await resp.json();
-    const wa_id = data.messages?.[0]?.id;
-    console.log(`📇 Tarjeta de contacto enviada a ${to}. ID: ${wa_id}`);
-
-    // Save outgoing contact card (non-blocking)
+    console.log(`📇 Tarjeta enviada a ${to}. ID: ${data.messages?.[0]?.id}`);
     const db = getDb();
     if (db) {
       void (async () => {
         try {
           await db.from('mensajes_whatsapp').insert({
             from_number: 'system', to_number: to,
-            body: `[Tarjeta de contacto: ${displayName} +${cleanPhone}]`,
-            tipo: 'saliente', wa_message_id: wa_id, es_ia: true,
+            body: `[Tarjeta de contacto: ${displayName}]`,
+            tipo: 'saliente', es_ia: true,
           });
         } catch (e) { console.error('Error saving contact card:', e); }
       })();
     }
   } catch (e) {
-    console.error('❌ sendContactCard error:', e);
-    // Fallback
+    console.error('❌ sendContactCard exception:', e);
     await sendMsg(to, `📱 Contacto del asesor: https://wa.me/${cleanPhone}`, true);
   }
 }
 
-// ─── Intent Detection Helpers ─────────────────────────────────────────────────
+// ─── Intent Detection Helpers ──────────────────────────────────────────────────
 function isLocationRequest(lower: string): boolean {
-  return ['ubicacion', 'ubicación', 'donde', 'dirección', 'llegar', 'ubicado', 'gps', 'mapa', 'dirección']
+  return ['ubicacion', 'ubicación', 'donde est', 'dirección', 'llegar', 'ubicado', 'gps', 'mapa']
     .some(k => lower.includes(k));
 }
 
 function isContactRequest(lower: string): boolean {
   return [
-    'numero del asesor', 'número del asesor', 'contacto del asesor',
-    'hablar con alguien', 'numero de whatsapp', 'número de whatsapp',
-    'comunicarme', 'contacto directo', 'hablar con una persona',
-    'número de contacto', 'numero de contacto', 'whatsapp del taller',
-    'hablar con un humano', 'hablar con persona', 'asesor humano',
+    'numero del asesor', 'número del asesor', 'contacto del asesor', 'hablar con alguien',
+    'numero de whatsapp', 'número de whatsapp', 'hablar con una persona', 'número de contacto',
+    'numero de contacto', 'whatsapp del taller', 'hablar con un humano', 'asesor humano',
     'quiero hablar con', 'necesito hablar con',
   ].some(k => lower.includes(k));
 }
