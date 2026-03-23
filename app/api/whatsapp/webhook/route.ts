@@ -267,11 +267,56 @@ export async function POST(request: NextRequest) {
       }
 
       let messageBody = '';
-      if (message.type === 'text') messageBody = message.text?.body || '';
-      else if (message.type === 'image') messageBody = '[Cliente envió imagen]';
-      else if (message.type === 'audio') messageBody = '[Cliente envió audio]';
-      else if (message.type === 'document') messageBody = '[Cliente envió documento]';
-      else if (message.type === 'location') {
+      if (message.type === 'text') {
+        messageBody = message.text?.body || '';
+      } else if (message.type === 'image') {
+        messageBody = '[Cliente envió imagen]';
+      } else if (message.type === 'audio') {
+        const audioId = message.audio?.id;
+        if (audioId && WHATSAPP_TOKEN) {
+          try {
+            const mediaUrlResp = await fetch(`https://graph.facebook.com/v18.0/${audioId}`, {
+              headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
+            });
+            if (mediaUrlResp.ok) {
+              const mediaData = await mediaUrlResp.json();
+              if (mediaData.url) {
+                const mediaResp = await fetch(mediaData.url, {
+                  headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
+                });
+                if (mediaResp.ok) {
+                  const arrayBuffer = await mediaResp.arrayBuffer();
+                  const base64Data = Buffer.from(arrayBuffer).toString('base64');
+                  const mimeType = mediaData.mime_type || 'audio/ogg';
+                  
+                  const transcript = await transcribeAudio(base64Data, mimeType);
+                  if (transcript) {
+                    messageBody = `${transcript} (Audio transcrito)`;
+                    console.log(`🎙️ Audio transcrito de [${from}]: ${transcript.substring(0, 50)}...`);
+                  } else {
+                    messageBody = '[Cliente envió audio, pero no se pudo transcribir]';
+                  }
+                } else {
+                  console.error('Error descargando audio de WhatsApp');
+                  messageBody = '[Cliente envió audio]';
+                }
+              } else {
+                messageBody = '[Cliente envió audio]';
+              }
+            } else {
+              console.error('Error obteniendo URL del audio', await mediaUrlResp.text());
+              messageBody = '[Cliente envió audio]';
+            }
+          } catch (e) {
+            console.error('Excepción al procesar audio:', e);
+            messageBody = '[Cliente envió audio]';
+          }
+        } else {
+          messageBody = '[Cliente envió audio]';
+        }
+      } else if (message.type === 'document') {
+        messageBody = '[Cliente envió documento]';
+      } else if (message.type === 'location') {
         const loc = message.location;
         messageBody = `[Cliente compartió ubicación: ${loc?.latitude}, ${loc?.longitude}]`;
       }
@@ -533,6 +578,43 @@ REGLAS CRITICAS:
     if (text) console.log(`✅ Gemini: "${text.substring(0, 70)}..."`);
     return text;
   } catch (e) { console.error('❌ getAIResponse:', e); return null; }
+}
+
+async function transcribeAudio(base64Data: string, mimeType: string): Promise<string | null> {
+  if (!GEMINI_API_KEY) return null;
+  // Use gemini-1.5-flash as it is the standard and fastest model for multimodality
+  const sttModel = 'gemini-1.5-flash';
+  const systemPrompt = "Eres un sistema de reconocimiento de voz. Tu UNICA tarea es transcribir el audio a texto exacto en español. NO agregues explicaciones, respuestas, introducciones ni comentarios. Solo escribe lo que el usuario dice en español tal cual.";
+  
+  try {
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${sttModel}:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: systemPrompt }] },
+          contents: [{
+            role: 'user',
+            parts: [
+              { inlineData: { mimeType: mimeType.split(';')[0], data: base64Data } },
+              { text: "Transcribe el audio siguiente:" }
+            ]
+          }],
+          generationConfig: { temperature: 0.1 }
+        })
+      }
+    );
+    if (!resp.ok) {
+      console.error(`❌ Gemini STT error ${resp.status}:`, (await resp.text()).substring(0, 200));
+      return null;
+    }
+    const data = await resp.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+  } catch (e) {
+    console.error('❌ transcribeAudio excepcion:', e);
+    return null;
+  }
 }
 
 function aiNeedsAsesor(text: string): boolean {
