@@ -1,22 +1,21 @@
 'use client';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  MessageSquare, Send, Bot, User, Phone, MoreVertical,
+  MessageSquare, Send, Bot, User, Phone,
   Smile, CheckCheck, Check, X, RefreshCw, UserCheck, Wifi, WifiOff
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/lib/supabase';
 import { cn, formatRelativeTime } from '@/lib/utils';
-import StatusBadge from '@/components/ui/status-badge';
 
 const QUICK_REPLIES = [
   '¡Hola! ¿En qué le puedo ayudar? 😊',
   'Su vehículo está listo para retirar. 🔧',
   'Le informamos que su servicio está en proceso.',
-  '¿Podría indicarnos su marca/modelo y año del vehículo?',
-  'Tenemos disponibilidad para el diagnóstico mañana. 📅',
-  'Le envío información de precios en un momento. 💰',
+  '¿Podría indicarnos su marca/modelo y año?',
+  'Tenemos disponibilidad mañana. 📅',
+  'Le envío los precios en un momento. 💰',
 ];
 
 interface RawMsg {
@@ -73,15 +72,28 @@ export default function WhatsAppPage() {
   const [isConnected, setIsConnected] = useState(false);
   const [showQuickReplies, setShowQuickReplies] = useState(false);
   const [showMobileChat, setShowMobileChat] = useState(false);
+  const [togglingMode, setTogglingMode] = useState(false);
+
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Use a ref for selected so Realtime callback always has the latest value
+  const selectedRef = useRef<RawConv | null>(null);
+  selectedRef.current = selected;
 
-  // Scroll to bottom
+  // Scroll to the very bottom of the chat
+  const scrollToBottom = useCallback(() => {
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+    }
+  }, []);
+
+  // Scroll whenever messages change
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [msgs]);
+    scrollToBottom();
+  }, [msgs, scrollToBottom]);
 
-  // Load conversations from Supabase
+  // Load conversations
   const loadConvs = useCallback(async () => {
     if (!supabase) return;
     const { data, error } = await supabase
@@ -89,21 +101,28 @@ export default function WhatsAppPage() {
       .select('*')
       .order('ultimo_mensaje_at', { ascending: false })
       .limit(50);
-    if (!error && data) setConvs(data as RawConv[]);
+    if (!error && data) {
+      setConvs(data as RawConv[]);
+      // Update selected conversation state if it changed
+      if (selectedRef.current) {
+        const updated = (data as RawConv[]).find(c => c.id === selectedRef.current!.id);
+        if (updated) setSelected(updated);
+      }
+    }
   }, []);
 
-  // Load messages for selected conversation
+  // Load messages for a phone number
   const loadMsgs = useCallback(async (telefono: string) => {
     if (!supabase) return;
-    setLoadingMsgs(true);
     const { data, error } = await supabase
       .from('mensajes_whatsapp')
       .select('*')
       .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
       .order('created_at', { ascending: true })
-      .limit(100);
-    if (!error && data) setMsgs(data as RawMsg[]);
-    setLoadingMsgs(false);
+      .limit(150);
+    if (!error && data) {
+      setMsgs(data as RawMsg[]);
+    }
   }, []);
 
   // Initial load
@@ -111,48 +130,41 @@ export default function WhatsAppPage() {
     loadConvs();
   }, [loadConvs]);
 
-  // Realtime subscriptions — single global channel for ALL message events + polling fallback
+  // ── Single global Realtime channel + polling fallback ──────────────────────
   useEffect(() => {
     if (!supabase) return;
     const sb = supabase;
 
-    // ── Global broadcast: listen to ALL inserts on mensajes_whatsapp ──────────
-    // We can't use an OR filter in Supabase Realtime row-level filters,
-    // so we subscribe broadly and route client-side.
-    const msgChannel = sb
-      .channel('crm-global-msgs')
+    const channel = sb
+      .channel('crm-live-v2')
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
         table: 'mensajes_whatsapp',
       }, (payload) => {
         const newMsg = payload.new as RawMsg;
-        // Figure out which phone this message belongs to
-        const msgPhone = newMsg.tipo === 'entrante' ? newMsg.from_number : newMsg.to_number;
-
-        // Add to chat if this message belongs to the currently selected conversation
-        setSelected(prev => {
-          if (prev && (prev.telefono === msgPhone || prev.telefono === newMsg.from_number || prev.telefono === newMsg.to_number)) {
-            setMsgs(existing => {
-              if (existing.find(m => m.id === newMsg.id)) return existing;
-              return [...existing, newMsg];
+        const cur = selectedRef.current;
+        if (cur) {
+          const phone = cur.telefono;
+          // Belongs to current chat?
+          if (newMsg.from_number === phone || newMsg.to_number === phone) {
+            setMsgs(prev => {
+              if (prev.find(m => m.id === newMsg.id)) return prev;
+              return [...prev, newMsg];
             });
           }
-          return prev;
-        });
-
-        // Always refresh conversation list so unread counts and last message update
+        }
         loadConvs();
       })
       .on('postgres_changes', {
         event: 'UPDATE',
         schema: 'public',
-        table: 'conversaciones',
+        table: 'mensajes_whatsapp',
       }, () => {
-        loadConvs();
+        if (selectedRef.current) loadMsgs(selectedRef.current.telefono);
       })
       .on('postgres_changes', {
-        event: 'INSERT',
+        event: '*',
         schema: 'public',
         table: 'conversaciones',
       }, () => {
@@ -162,27 +174,27 @@ export default function WhatsAppPage() {
         setIsConnected(status === 'SUBSCRIBED');
       });
 
-    // ── Polling fallback: re-fetch messages every 3s for the active chat ──────
-    const pollInterval = setInterval(() => {
-      setSelected(prev => {
-        if (prev) loadMsgs(prev.telefono);
-        loadConvs();
-        return prev;
-      });
-    }, 3000);
+    // Polling every 2s — ensures updates even if WS drops
+    const poll = setInterval(() => {
+      const cur = selectedRef.current;
+      if (cur) loadMsgs(cur.telefono);
+      loadConvs();
+    }, 2000);
 
     return () => {
-      sb.removeChannel(msgChannel);
-      clearInterval(pollInterval);
+      sb.removeChannel(channel);
+      clearInterval(poll);
     };
   }, [loadConvs, loadMsgs]);
 
-
-  const selectConv = (conv: RawConv) => {
+  const selectConv = async (conv: RawConv) => {
     setSelected(conv);
     setShowMobileChat(true);
-    loadMsgs(conv.telefono);
-
+    setMsgs([]);
+    setLoadingMsgs(true);
+    await loadMsgs(conv.telefono);
+    setLoadingMsgs(false);
+    scrollToBottom();
     // Mark as read
     if (supabase && (conv.mensajes_sin_leer ?? 0) > 0) {
       supabase.from('conversaciones')
@@ -199,8 +211,8 @@ export default function WhatsAppPage() {
     setSending(true);
     inputRef.current?.focus();
 
-    // Optimistic update
-    const optimisticMsg: RawMsg = {
+    // Optimistic insert shown immediately
+    const optimistic: RawMsg = {
       id: `tmp-${Date.now()}`,
       from_number: 'system',
       to_number: selected.telefono,
@@ -210,7 +222,7 @@ export default function WhatsAppPage() {
       es_ia: false,
       created_at: new Date().toISOString(),
     };
-    setMsgs(prev => [...prev, optimisticMsg]);
+    setMsgs(prev => [...prev, optimistic]);
 
     try {
       const res = await fetch('/api/whatsapp/send', {
@@ -226,25 +238,25 @@ export default function WhatsAppPage() {
       console.error('Error de red:', e);
     } finally {
       setSending(false);
-      // Refresh messages to replace optimistic
-      loadMsgs(selected.telefono);
-      loadConvs();
+      await loadMsgs(selected.telefono);
+      await loadConvs();
     }
   };
 
-  const resumeBot = async () => {
-    if (!selected || !supabase) return;
+  // Toggle between bot/humano mode
+  const setMode = async (mode: 'bot' | 'humano') => {
+    if (!selected || !supabase || togglingMode) return;
+    setTogglingMode(true);
     await supabase.from('conversaciones')
-      .update({ estado: 'bot' })
+      .update({ estado: mode })
       .eq('telefono', selected.telefono);
-    loadConvs();
+    await loadConvs();
+    setTogglingMode(false);
   };
 
   const filtered = convs.filter(c => {
     const q = search.toLowerCase();
-    return (
-      (displayName(c) + c.telefono + (c.ultimo_mensaje || '')).toLowerCase().includes(q)
-    );
+    return (displayName(c) + c.telefono + (c.ultimo_mensaje || '')).toLowerCase().includes(q);
   });
 
   const estadoColor: Record<string, string> = {
@@ -254,17 +266,19 @@ export default function WhatsAppPage() {
     activa: 'bg-green-400',
   };
 
-  const totalUnread = convs.reduce((sum, c) => sum + (c.mensajes_sin_leer ?? 0), 0);
+  const isHumano = selected?.estado === 'humano';
+  const totalUnread = convs.reduce((s, c) => s + (c.mensajes_sin_leer ?? 0), 0);
 
   return (
     <div className="space-y-4">
+      {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>WhatsApp CRM</h1>
           <p className="text-sm text-muted-foreground mt-0.5 flex items-center gap-1.5">
             {isConnected
-              ? <><Wifi className="w-3 h-3 text-green-400" /> En vivo · {totalUnread > 0 ? `${totalUnread} sin leer` : 'Todo leído'}</>
-              : <><WifiOff className="w-3 h-3 text-red-400" /> Conectando...</>}
+              ? <><Wifi className="w-3 h-3 text-green-400" /> En vivo{totalUnread > 0 ? ` · ${totalUnread} sin leer` : ''}</>
+              : <><WifiOff className="w-3 h-3 text-yellow-400 animate-pulse" /> Conectando Realtime...</>}
           </p>
         </div>
         <Button variant="ghost" size="sm" onClick={loadConvs} className="text-xs gap-1.5">
@@ -272,12 +286,11 @@ export default function WhatsAppPage() {
         </Button>
       </div>
 
-      <div className="flex h-[calc(100vh-200px)] min-h-[500px] rounded-2xl border border-border/50 overflow-hidden bg-card/30">
+      <div className="flex h-[calc(100vh-200px)] min-h-[550px] rounded-2xl border border-border/50 overflow-hidden bg-card/30">
 
-        {/* Left: Conversations list */}
+        {/* ── Left: conversation list ── */}
         <div className={cn(
-          'flex flex-col border-r border-border/30 bg-card/50 transition-all',
-          'w-full md:w-80 lg:w-72 flex-shrink-0',
+          'flex flex-col border-r border-border/30 bg-card/50 transition-all w-full md:w-80 lg:w-72 flex-shrink-0',
           showMobileChat ? 'hidden md:flex' : 'flex'
         )}>
           <div className="p-3 border-b border-border/30">
@@ -317,10 +330,7 @@ export default function WhatsAppPage() {
                     )}>
                       {avatarLetters(conv)}
                     </div>
-                    <div className={cn(
-                      'absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-card',
-                      estadoColor[estado] || 'bg-gray-500'
-                    )} />
+                    <div className={cn('absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-card', estadoColor[estado] || 'bg-gray-500')} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-1">
@@ -342,51 +352,88 @@ export default function WhatsAppPage() {
           </div>
         </div>
 
-        {/* Right: Chat */}
-        <div className={cn('flex-1 flex flex-col', !showMobileChat && 'hidden md:flex')}>
+        {/* ── Right: chat window ── */}
+        <div className={cn('flex-1 flex flex-col min-h-0', !showMobileChat && 'hidden md:flex')}>
           {selected ? (
             <>
               {/* Chat header */}
-              <div className="flex items-center gap-3 px-4 py-3 border-b border-border/30 bg-card/40">
-                <button onClick={() => setShowMobileChat(false)} className="md:hidden w-7 h-7 rounded-lg hover:bg-white/10 flex items-center justify-center">
+              <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border/30 bg-card/40 flex-shrink-0">
+                <button
+                  onClick={() => setShowMobileChat(false)}
+                  className="md:hidden w-7 h-7 rounded-lg hover:bg-white/10 flex items-center justify-center"
+                >
                   <X className="w-4 h-4" />
                 </button>
                 <div className="relative">
-                  <div className="w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center text-xs font-bold text-green-400">
+                  <div className={cn(
+                    'w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold',
+                    isHumano ? 'bg-orange-500/20 text-orange-400' : 'bg-violet-500/20 text-violet-400'
+                  )}>
                     {avatarLetters(selected)}
                   </div>
-                  <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-400 border border-card" />
+                  <div className={cn('absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-card',
+                    isHumano ? 'bg-orange-400' : 'bg-violet-400'
+                  )} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-semibold">{displayName(selected)}</p>
-                    <StatusBadge status={selected.estado || 'activa'} type="conversacion" size="sm" />
-                  </div>
+                  <p className="text-sm font-semibold">{displayName(selected)}</p>
                   <p className="text-[11px] text-muted-foreground">{selected.telefono}</p>
                 </div>
-                <div className="flex items-center gap-1">
-                  {selected.estado === 'humano' && (
-                    <button
-                      onClick={resumeBot}
-                      title="Reactivar bot"
-                      className="flex items-center gap-1 px-2 py-1 text-[10px] rounded-lg bg-violet-500/15 border border-violet-500/30 text-violet-400 hover:bg-violet-500/25 transition-colors"
-                    >
-                      <Bot className="w-3 h-3" /> Reactivar IA
-                    </button>
-                  )}
+
+                {/* ── Mode toggle buttons (always visible) ── */}
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <button
+                    onClick={() => setMode('bot')}
+                    disabled={togglingMode || selected.estado === 'bot'}
+                    className={cn(
+                      'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all',
+                      selected.estado === 'bot'
+                        ? 'bg-violet-500/20 border-violet-500/40 text-violet-300 cursor-default'
+                        : 'bg-card/50 border-border/40 text-muted-foreground hover:bg-violet-500/10 hover:border-violet-500/30 hover:text-violet-400'
+                    )}
+                  >
+                    <Bot className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Bot IA</span>
+                  </button>
+                  <button
+                    onClick={() => setMode('humano')}
+                    disabled={togglingMode || selected.estado === 'humano'}
+                    className={cn(
+                      'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all',
+                      selected.estado === 'humano'
+                        ? 'bg-orange-500/20 border-orange-500/40 text-orange-300 cursor-default'
+                        : 'bg-card/50 border-border/40 text-muted-foreground hover:bg-orange-500/10 hover:border-orange-500/30 hover:text-orange-400'
+                    )}
+                  >
+                    <UserCheck className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Humano</span>
+                  </button>
                   <Button variant="ghost" size="icon-sm">
                     <Phone className="w-3.5 h-3.5" />
-                  </Button>
-                  <Button variant="ghost" size="icon-sm">
-                    <MoreVertical className="w-3.5 h-3.5" />
                   </Button>
                 </div>
               </div>
 
-              {/* Messages */}
+              {/* Mode status bar */}
+              <div className={cn(
+                'px-4 py-1.5 flex items-center gap-2 text-[11px] flex-shrink-0 border-b border-border/20',
+                isHumano
+                  ? 'bg-orange-500/8 text-orange-400'
+                  : 'bg-violet-500/8 text-violet-400'
+              )}>
+                {isHumano
+                  ? <><UserCheck className="w-3 h-3" /> Modo humano activo — el bot está pausado, estás respondiendo tú</>
+                  : <><Bot className="w-3 h-3" /> Bot IA activo — respondiendo automáticamente a este cliente</>}
+              </div>
+
+              {/* Messages area */}
               <div
-                className="flex-1 overflow-y-auto p-4 space-y-3"
-                style={{ background: 'radial-gradient(ellipse at 50% 100%, rgba(249,115,22,0.02), transparent 60%)' }}
+                ref={messagesContainerRef}
+                className="flex-1 overflow-y-auto p-4 space-y-2"
+                style={{
+                  minHeight: 0,
+                  background: 'radial-gradient(ellipse at 50% 100%, rgba(249,115,22,0.02), transparent 60%)',
+                }}
               >
                 {loadingMsgs && (
                   <div className="flex justify-center py-6">
@@ -394,13 +441,14 @@ export default function WhatsAppPage() {
                   </div>
                 )}
                 {!loadingMsgs && msgs.length === 0 && (
-                  <div className="flex justify-center py-6">
+                  <div className="flex flex-col items-center justify-center h-32 text-center">
+                    <MessageSquare className="w-6 h-6 text-muted-foreground/30 mb-2" />
                     <span className="text-xs text-muted-foreground">Sin mensajes en este chat aún</span>
                   </div>
                 )}
+
                 {msgs.map((msg, i) => {
                   const isOut = msg.tipo === 'saliente';
-                  // Date divider
                   const prevMsg = msgs[i - 1];
                   const thisDay = new Date(msg.created_at).toLocaleDateString('es-VE');
                   const prevDay = prevMsg ? new Date(prevMsg.created_at).toLocaleDateString('es-VE') : null;
@@ -409,52 +457,57 @@ export default function WhatsAppPage() {
                   return (
                     <React.Fragment key={msg.id}>
                       {showDivider && (
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3 my-2">
                           <div className="flex-1 h-px bg-border/20" />
-                          <span className="text-[10px] text-muted-foreground px-2 py-1 rounded-full bg-muted/30">
+                          <span className="text-[10px] text-muted-foreground px-2 py-0.5 rounded-full bg-muted/30">
                             {thisDay === new Date().toLocaleDateString('es-VE') ? 'Hoy' : thisDay}
                           </span>
                           <div className="flex-1 h-px bg-border/20" />
                         </div>
                       )}
-                      <div className={cn('flex gap-2', isOut ? 'justify-end' : 'justify-start')}>
+                      <div className={cn('flex gap-2 items-end', isOut ? 'justify-end' : 'justify-start')}>
                         {!isOut && (
-                          <div className="w-6 h-6 rounded-full bg-green-500/20 flex items-center justify-center flex-shrink-0 mt-auto text-[10px] text-green-400 font-bold">
+                          <div className="w-6 h-6 rounded-full bg-green-500/20 flex items-center justify-center flex-shrink-0 text-[10px] text-green-400 font-bold mb-0.5">
                             {avatarLetters(selected)}
                           </div>
                         )}
-                        <div className={cn('max-w-[75%]', isOut ? 'chat-bubble-out' : 'chat-bubble-in')}>
+                        <div className={cn('max-w-[72%] rounded-2xl px-3 py-2 text-sm',
+                          isOut
+                            ? 'bg-primary text-primary-foreground rounded-br-sm'
+                            : 'bg-card border border-border/40 rounded-bl-sm'
+                        )}>
                           {msg.es_ia && (
-                            <div className="flex items-center gap-1 mb-1">
-                              <Bot className="w-3 h-3 text-violet-400" />
-                              <span className="text-[10px] text-violet-400 font-medium">Bot IA</span>
+                            <div className="flex items-center gap-1 mb-1 opacity-70">
+                              <Bot className="w-3 h-3" />
+                              <span className="text-[10px] font-medium">Bot IA</span>
                             </div>
                           )}
-                          <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.body}</p>
-                          <div className={cn('flex items-center gap-1 mt-1', isOut ? 'justify-end' : 'justify-start')}>
-                            <span className="text-[10px] text-muted-foreground">{formatTime(msg.created_at)}</span>
+                          <p className="leading-relaxed whitespace-pre-wrap break-words">{msg.body}</p>
+                          <div className={cn('flex items-center gap-1 mt-1', isOut ? 'justify-end opacity-70' : 'justify-start opacity-60')}>
+                            <span className="text-[10px]">{formatTime(msg.created_at)}</span>
                             {isOut && (
-                              msg.estado === 'leido' ? <CheckCheck className="w-3 h-3 text-blue-400" /> :
-                              msg.estado === 'entregado' ? <CheckCheck className="w-3 h-3 text-muted-foreground" /> :
-                              <Check className="w-3 h-3 text-muted-foreground" />
+                              msg.estado === 'leido' ? <CheckCheck className="w-3 h-3 text-blue-300" /> :
+                              msg.estado === 'entregado' ? <CheckCheck className="w-3 h-3" /> :
+                              <Check className="w-3 h-3" />
                             )}
                           </div>
                         </div>
                         {isOut && (
-                          <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 mt-auto">
-                            {msg.es_ia ? <Bot className="w-3 h-3 text-violet-400" /> : <User className="w-3 h-3 text-primary" />}
+                          <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center flex-shrink-0 mb-0.5">
+                            {msg.es_ia ? <Bot className="w-3 h-3 text-violet-400" /> : <User className="w-3 h-3 text-muted-foreground" />}
                           </div>
                         )}
                       </div>
                     </React.Fragment>
                   );
                 })}
-                <div ref={messagesEndRef} />
+                {/* Invisible anchor at the very bottom */}
+                <div ref={messagesEndRef} className="h-1" />
               </div>
 
-              {/* Quick replies */}
+              {/* Quick replies strip */}
               {showQuickReplies && (
-                <div className="px-3 py-2 border-t border-border/20 flex gap-2 overflow-x-auto">
+                <div className="px-3 py-2 border-t border-border/20 flex gap-2 overflow-x-auto flex-shrink-0">
                   {QUICK_REPLIES.map((r, i) => (
                     <button
                       key={i}
@@ -467,43 +520,38 @@ export default function WhatsAppPage() {
                 </div>
               )}
 
-              {/* Input */}
-              <div className="px-3 py-3 border-t border-border/30 bg-card/20">
-                {selected.estado === 'humano' && (
-                  <div className="flex items-center gap-1.5 mb-2 px-1">
-                    <UserCheck className="w-3.5 h-3.5 text-orange-400" />
-                    <span className="text-[11px] text-orange-400">Modo humano activo — el bot está pausado en este chat</span>
-                  </div>
-                )}
+              {/* Input area */}
+              <div className="px-3 py-3 border-t border-border/30 bg-card/20 flex-shrink-0">
                 <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="icon-sm" onClick={() => setShowQuickReplies(!showQuickReplies)} title="Respuestas rápidas">
-                    <Smile className="w-4 h-4 text-muted-foreground" />
-                  </Button>
-                  <div className="flex-1 relative">
-                    <input
-                      ref={inputRef}
-                      value={message}
-                      onChange={e => setMessage(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-                      placeholder="Escribe un mensaje..."
-                      className="w-full h-9 rounded-xl border border-border/50 bg-background/50 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary/50"
-                    />
-                  </div>
-                  <Button
+                  <button
+                    onClick={() => setShowQuickReplies(!showQuickReplies)}
+                    title="Respuestas rápidas"
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors flex-shrink-0"
+                  >
+                    <Smile className="w-4 h-4" />
+                  </button>
+                  <input
+                    ref={inputRef}
+                    value={message}
+                    onChange={e => setMessage(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                    placeholder={isHumano ? 'Escribe tu respuesta...' : 'Escribe un mensaje (toma control del chat)...'}
+                    className="flex-1 h-9 rounded-xl border border-border/50 bg-background/50 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary/50"
+                  />
+                  <button
                     onClick={handleSend}
                     disabled={!message.trim() || sending}
-                    size="icon-sm"
-                    className="rounded-xl w-9 h-9 flex-shrink-0"
+                    className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center flex-shrink-0 hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
                   >
-                    <Send className={cn('w-3.5 h-3.5', sending && 'animate-pulse')} />
-                  </Button>
+                    <Send className={cn('w-3.5 h-3.5 text-primary-foreground', sending && 'animate-pulse')} />
+                  </button>
                 </div>
-                <div className="flex items-center justify-between mt-2 px-1">
-                  <span className="text-[10px] text-muted-foreground">Enter para enviar · Shift+Enter para salto de línea</span>
-                  <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                    {selected.estado === 'bot'
-                      ? <><Bot className="w-2.5 h-2.5 text-violet-400" /><span className="text-violet-400">IA activa</span></>
-                      : <><UserCheck className="w-2.5 h-2.5 text-orange-400" /><span className="text-orange-400">Control humano</span></>}
+                <div className="flex items-center justify-between mt-1.5 px-1">
+                  <span className="text-[10px] text-muted-foreground">Enter para enviar</span>
+                  <span className="text-[10px] flex items-center gap-1">
+                    {isHumano
+                      ? <><UserCheck className="w-2.5 h-2.5 text-orange-400" /><span className="text-orange-400">Control humano</span></>
+                      : <><Bot className="w-2.5 h-2.5 text-violet-400" /><span className="text-violet-400">Bot IA respondiendo</span></>}
                   </span>
                 </div>
               </div>
