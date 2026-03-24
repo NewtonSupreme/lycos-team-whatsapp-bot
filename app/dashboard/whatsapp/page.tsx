@@ -1,11 +1,9 @@
 'use client';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  MessageSquare, Send, Bot, User, Phone,
-  Smile, CheckCheck, Check, X, RefreshCw, UserCheck, Wifi, WifiOff
+  MessageSquare, Send, Bot, User,
+  Smile, CheckCheck, Check, X, RefreshCw, UserCheck, Wifi, WifiOff, Search
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { supabase } from '@/lib/supabase';
 import { cn, formatRelativeTime } from '@/lib/utils';
 
@@ -49,16 +47,25 @@ function avatarLetters(conv: RawConv): string {
   const name = conv.datos_cliente?.nombre;
   if (name) {
     const parts = name.trim().split(' ');
-    return parts.length >= 2 ? (parts[0][0] + parts[1][0]).toUpperCase() : parts[0].slice(0, 2).toUpperCase();
+    return parts.length >= 2
+      ? (parts[0][0] + parts[1][0]).toUpperCase()
+      : parts[0].slice(0, 2).toUpperCase();
   }
   const num = conv.telefono?.replace(/[^0-9]/g, '') || '';
   return num.slice(-2);
 }
 
 function displayName(conv: RawConv): string {
-  const name = conv.datos_cliente?.nombre;
-  if (name) return name;
-  return conv.telefono || 'Desconocido';
+  return conv.datos_cliente?.nombre || conv.telefono || 'Desconocido';
+}
+
+// Merge two arrays of messages deduplicating by id
+function mergeMessages(existing: RawMsg[], incoming: RawMsg[]): RawMsg[] {
+  const map = new Map(existing.map(m => [m.id, m]));
+  for (const m of incoming) map.set(m.id, m);
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
 }
 
 export default function WhatsAppPage() {
@@ -74,69 +81,92 @@ export default function WhatsAppPage() {
   const [showMobileChat, setShowMobileChat] = useState(false);
   const [togglingMode, setTogglingMode] = useState(false);
 
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  // Use a ref for selected so Realtime callback always has the latest value
+  // Stable refs used inside Realtime + polling closures
   const selectedRef = useRef<RawConv | null>(null);
-  selectedRef.current = selected;
+  const msgsRef = useRef<RawMsg[]>([]);
 
-  // Scroll to the very bottom of the chat
-  const scrollToBottom = useCallback(() => {
-    if (messagesContainerRef.current) {
-      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+  selectedRef.current = selected;
+  msgsRef.current = msgs;
+
+  // Always scroll to the very bottom of the chat
+  const scrollToBottom = useCallback((instant = false) => {
+    const el = chatScrollRef.current;
+    if (!el) return;
+    if (instant) {
+      el.scrollTop = el.scrollHeight;
+    } else {
+      requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
     }
   }, []);
 
-  // Scroll whenever messages change
   useEffect(() => {
     scrollToBottom();
   }, [msgs, scrollToBottom]);
 
-  // Load conversations
+  // ── Load conversations ──────────────────────────────────────────────────────
   const loadConvs = useCallback(async () => {
     if (!supabase) return;
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('conversaciones')
       .select('*')
       .order('ultimo_mensaje_at', { ascending: false })
       .limit(50);
-    if (!error && data) {
-      setConvs(data as RawConv[]);
-      // Update selected conversation state if it changed
-      if (selectedRef.current) {
-        const updated = (data as RawConv[]).find(c => c.id === selectedRef.current!.id);
-        if (updated) setSelected(updated);
-      }
+    if (!data) return;
+    setConvs(data as RawConv[]);
+    // Keep selected in sync with fresh estado/datos
+    if (selectedRef.current) {
+      const fresh = (data as RawConv[]).find(c => c.id === selectedRef.current!.id);
+      if (fresh) setSelected(fresh);
     }
   }, []);
 
-  // Load messages for a phone number
-  const loadMsgs = useCallback(async (telefono: string) => {
+  // ── Full load: replaces all messages (only called when switching chats) ─────
+  const loadAllMsgs = useCallback(async (telefono: string) => {
     if (!supabase) return;
-    const { data, error } = await supabase
+    setLoadingMsgs(true);
+    const { data } = await supabase
       .from('mensajes_whatsapp')
       .select('*')
       .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
       .order('created_at', { ascending: true })
       .limit(150);
-    if (!error && data) {
-      setMsgs(data as RawMsg[]);
+    setLoadingMsgs(false);
+    if (data) setMsgs(data as RawMsg[]);
+  }, []);
+
+  // ── Incremental load: only fetch messages NEWER than what we have ──────────
+  // This never wipes existing messages — it only adds new ones.
+  const fetchNewMsgs = useCallback(async (telefono: string) => {
+    if (!supabase) return;
+    const latest = msgsRef.current;
+    const lastTs = latest.length
+      ? latest[latest.length - 1].created_at
+      : new Date(0).toISOString();
+    const { data } = await supabase
+      .from('mensajes_whatsapp')
+      .select('*')
+      .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
+      .gt('created_at', lastTs)
+      .order('created_at', { ascending: true })
+      .limit(50);
+    if (data && data.length > 0) {
+      setMsgs(prev => mergeMessages(prev, data as RawMsg[]));
     }
   }, []);
 
-  // Initial load
-  useEffect(() => {
-    loadConvs();
-  }, [loadConvs]);
+  // ── Initial load ───────────────────────────────────────────────────────────
+  useEffect(() => { loadConvs(); }, [loadConvs]);
 
-  // ── Single global Realtime channel + polling fallback ──────────────────────
+  // ── Realtime + incremental polling ─────────────────────────────────────────
   useEffect(() => {
     if (!supabase) return;
     const sb = supabase;
 
     const channel = sb
-      .channel('crm-live-v2')
+      .channel('crm-wa-live')
+      // New message arrives → append it (no full reload)
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
@@ -146,23 +176,20 @@ export default function WhatsAppPage() {
         const cur = selectedRef.current;
         if (cur) {
           const phone = cur.telefono;
-          // Belongs to current chat?
           if (newMsg.from_number === phone || newMsg.to_number === phone) {
+            // Remove any optimistic placeholder that matches this body+tipo
             setMsgs(prev => {
-              if (prev.find(m => m.id === newMsg.id)) return prev;
-              return [...prev, newMsg];
+              const withoutOptimistic = prev.filter(m =>
+                !(m.id.startsWith('tmp-') && m.body === newMsg.body && m.tipo === newMsg.tipo)
+              );
+              return mergeMessages(withoutOptimistic, [newMsg]);
             });
           }
         }
+        // Always refresh conv list
         loadConvs();
       })
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'mensajes_whatsapp',
-      }, () => {
-        if (selectedRef.current) loadMsgs(selectedRef.current.telefono);
-      })
+      // Conversation updated → refresh sidebar + selected header
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
@@ -174,27 +201,26 @@ export default function WhatsAppPage() {
         setIsConnected(status === 'SUBSCRIBED');
       });
 
-    // Polling every 2s — ensures updates even if WS drops
+    // Incremental poll every 3s — guarantees we catch messages even if WS drops.
+    // Uses fetchNewMsgs so it NEVER overwrites existing messages.
     const poll = setInterval(() => {
       const cur = selectedRef.current;
-      if (cur) loadMsgs(cur.telefono);
+      if (cur) fetchNewMsgs(cur.telefono);
       loadConvs();
-    }, 2000);
+    }, 3000);
 
     return () => {
       sb.removeChannel(channel);
       clearInterval(poll);
     };
-  }, [loadConvs, loadMsgs]);
+  }, [loadConvs, fetchNewMsgs]);
 
+  // ── Select a conversation ──────────────────────────────────────────────────
   const selectConv = async (conv: RawConv) => {
     setSelected(conv);
     setShowMobileChat(true);
-    setMsgs([]);
-    setLoadingMsgs(true);
-    await loadMsgs(conv.telefono);
-    setLoadingMsgs(false);
-    scrollToBottom();
+    setMsgs([]); // clear old chat first
+    await loadAllMsgs(conv.telefono);
     // Mark as read
     if (supabase && (conv.mensajes_sin_leer ?? 0) > 0) {
       supabase.from('conversaciones')
@@ -204,6 +230,7 @@ export default function WhatsAppPage() {
     }
   };
 
+  // ── Send message ───────────────────────────────────────────────────────────
   const handleSend = async () => {
     if (!message.trim() || !selected || sending) return;
     const body = message.trim();
@@ -211,9 +238,10 @@ export default function WhatsAppPage() {
     setSending(true);
     inputRef.current?.focus();
 
-    // Optimistic insert shown immediately
+    // Optimistic message — shown immediately
+    const optimisticId = `tmp-${Date.now()}`;
     const optimistic: RawMsg = {
-      id: `tmp-${Date.now()}`,
+      id: optimisticId,
       from_number: 'system',
       to_number: selected.telefono,
       body,
@@ -225,25 +253,22 @@ export default function WhatsAppPage() {
     setMsgs(prev => [...prev, optimistic]);
 
     try {
-      const res = await fetch('/api/whatsapp/send', {
+      await fetch('/api/whatsapp/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ to: selected.telefono, message: body }),
       });
-      if (!res.ok) {
-        const err = await res.json();
-        console.error('Error enviando:', err.error);
-      }
     } catch (e) {
-      console.error('Error de red:', e);
+      console.error('Error enviando:', e);
     } finally {
       setSending(false);
-      await loadMsgs(selected.telefono);
+      // Remove optimistic + fetch actual from DB (incremental)
+      await fetchNewMsgs(selected.telefono);
       await loadConvs();
     }
   };
 
-  // Toggle between bot/humano mode
+  // ── Mode toggle ────────────────────────────────────────────────────────────
   const setMode = async (mode: 'bot' | 'humano') => {
     if (!selected || !supabase || togglingMode) return;
     setTogglingMode(true);
@@ -259,191 +284,221 @@ export default function WhatsAppPage() {
     return (displayName(c) + c.telefono + (c.ultimo_mensaje || '')).toLowerCase().includes(q);
   });
 
-  const estadoColor: Record<string, string> = {
-    bot: 'bg-violet-400',
-    humano: 'bg-orange-400',
-    cerrada: 'bg-gray-500',
-    activa: 'bg-green-400',
-  };
-
   const isHumano = selected?.estado === 'humano';
   const totalUnread = convs.reduce((s, c) => s + (c.mensajes_sin_leer ?? 0), 0);
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>WhatsApp CRM</h1>
+          <h1 className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
+            WhatsApp CRM
+          </h1>
           <p className="text-sm text-muted-foreground mt-0.5 flex items-center gap-1.5">
             {isConnected
               ? <><Wifi className="w-3 h-3 text-green-400" /> En vivo{totalUnread > 0 ? ` · ${totalUnread} sin leer` : ''}</>
-              : <><WifiOff className="w-3 h-3 text-yellow-400 animate-pulse" /> Conectando Realtime...</>}
+              : <><WifiOff className="w-3 h-3 text-yellow-400 animate-pulse" /> Conectando...</>}
           </p>
         </div>
-        <Button variant="ghost" size="sm" onClick={loadConvs} className="text-xs gap-1.5">
+        <button onClick={loadConvs} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg hover:bg-white/5">
           <RefreshCw className="w-3.5 h-3.5" /> Actualizar
-        </Button>
+        </button>
       </div>
 
-      <div className="flex h-[calc(100vh-200px)] min-h-[550px] rounded-2xl border border-border/50 overflow-hidden bg-card/30">
-
-        {/* ── Left: conversation list ── */}
-        <div className={cn(
-          'flex flex-col border-r border-border/30 bg-card/50 transition-all w-full md:w-80 lg:w-72 flex-shrink-0',
-          showMobileChat ? 'hidden md:flex' : 'flex'
-        )}>
-          <div className="p-3 border-b border-border/30">
-            <Input
-              placeholder="Buscar conversación..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="h-8 text-xs"
-            />
+      {/* ── Chat layout — mimics WhatsApp Web ── */}
+      <div
+        className="flex rounded-2xl overflow-hidden border border-white/8"
+        style={{
+          height: 'calc(100vh - 180px)',
+          minHeight: '560px',
+          background: '#111b21',
+        }}
+      >
+        {/* ── Left panel: conversation list ── */}
+        <div
+          className={cn(
+            'flex flex-col flex-shrink-0 w-full md:w-[340px] border-r border-white/6',
+            showMobileChat ? 'hidden md:flex' : 'flex'
+          )}
+          style={{ background: '#202c33' }}
+        >
+          {/* Search bar */}
+          <div className="px-3 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <div className="flex items-center gap-2 rounded-lg px-3 py-2" style={{ background: '#2a3942' }}>
+              <Search className="w-4 h-4 text-white/40 flex-shrink-0" />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Buscar o empezar un chat"
+                className="flex-1 bg-transparent text-sm text-white/80 placeholder:text-white/35 outline-none"
+              />
+            </div>
           </div>
 
+          {/* Conversation items */}
           <div className="flex-1 overflow-y-auto">
             {filtered.length === 0 && (
               <div className="flex flex-col items-center justify-center h-40 text-center p-4">
-                <MessageSquare className="w-8 h-8 text-muted-foreground/40 mb-2" />
-                <p className="text-xs text-muted-foreground">Sin conversaciones aún</p>
+                <MessageSquare className="w-8 h-8 mb-2" style={{ color: 'rgba(255,255,255,0.2)' }} />
+                <p className="text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>Sin conversaciones aún</p>
               </div>
             )}
             {filtered.map(conv => {
               const isActive = selected?.id === conv.id;
               const estado = conv.estado || 'activa';
+              const dotColor = estado === 'bot' ? '#a78bfa' : estado === 'humano' ? '#fb923c' : estado === 'activa' ? '#34d399' : '#6b7280';
               return (
                 <div
                   key={conv.id}
                   onClick={() => selectConv(conv)}
-                  className={cn(
-                    'flex items-center gap-2.5 p-3 cursor-pointer transition-colors border-b border-border/10 hover:bg-white/3',
-                    isActive && 'bg-primary/5 border-l-2 border-l-primary'
-                  )}
+                  className="flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors"
+                  style={{
+                    background: isActive ? '#2a3942' : 'transparent',
+                    borderBottom: '1px solid rgba(255,255,255,0.04)',
+                  }}
+                  onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = '#202c33'; }}
+                  onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
                 >
+                  {/* Avatar */}
                   <div className="relative flex-shrink-0">
-                    <div className={cn(
-                      'w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold',
-                      estado === 'bot' ? 'bg-violet-500/20 text-violet-400' :
-                      estado === 'humano' ? 'bg-orange-500/20 text-orange-400' :
-                      'bg-muted text-muted-foreground'
-                    )}>
+                    <div
+                      className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold"
+                      style={{ background: '#2a3942', color: '#e9edef' }}
+                    >
                       {avatarLetters(conv)}
                     </div>
-                    <div className={cn('absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-card', estadoColor[estado] || 'bg-gray-500')} />
+                    <div
+                      className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2"
+                      style={{ background: dotColor, borderColor: '#202c33' }}
+                    />
                   </div>
+                  {/* Info */}
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-1">
-                      <span className="text-xs font-semibold truncate">{displayName(conv)}</span>
-                      <span className="text-[10px] text-muted-foreground flex-shrink-0">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium truncate" style={{ color: '#e9edef' }}>
+                        {displayName(conv)}
+                      </span>
+                      <span className="text-[11px] flex-shrink-0 ml-2" style={{ color: '#8696a0' }}>
                         {conv.ultimo_mensaje_at ? formatRelativeTime(conv.ultimo_mensaje_at) : ''}
                       </span>
                     </div>
-                    <p className="text-[11px] text-muted-foreground truncate">{conv.ultimo_mensaje || '...'}</p>
+                    <div className="flex items-center justify-between mt-0.5">
+                      <p className="text-[12px] truncate" style={{ color: '#8696a0' }}>
+                        {conv.ultimo_mensaje || '...'}
+                      </p>
+                      {(conv.mensajes_sin_leer ?? 0) > 0 && (
+                        <span className="flex-shrink-0 ml-2 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ background: '#00a884', color: '#111b21' }}>
+                          {conv.mensajes_sin_leer}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  {(conv.mensajes_sin_leer ?? 0) > 0 && (
-                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary flex items-center justify-center text-[10px] font-bold text-primary-foreground">
-                      {conv.mensajes_sin_leer}
-                    </span>
-                  )}
                 </div>
               );
             })}
           </div>
         </div>
 
-        {/* ── Right: chat window ── */}
-        <div className={cn('flex-1 flex flex-col min-h-0', !showMobileChat && 'hidden md:flex')}>
+        {/* ── Right panel: chat window ── */}
+        <div
+          className={cn('flex-1 flex flex-col min-h-0', !showMobileChat && 'hidden md:flex')}
+          style={{ background: '#0b141a' }}
+        >
           {selected ? (
             <>
               {/* Chat header */}
-              <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border/30 bg-card/40 flex-shrink-0">
+              <div
+                className="flex items-center gap-3 px-4 py-2.5 flex-shrink-0"
+                style={{ background: '#202c33', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+              >
                 <button
                   onClick={() => setShowMobileChat(false)}
-                  className="md:hidden w-7 h-7 rounded-lg hover:bg-white/10 flex items-center justify-center"
+                  className="md:hidden w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/5"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-4 h-4" style={{ color: '#aebac1' }} />
                 </button>
-                <div className="relative">
-                  <div className={cn(
-                    'w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold',
-                    isHumano ? 'bg-orange-500/20 text-orange-400' : 'bg-violet-500/20 text-violet-400'
-                  )}>
-                    {avatarLetters(selected)}
-                  </div>
-                  <div className={cn('absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-card',
-                    isHumano ? 'bg-orange-400' : 'bg-violet-400'
-                  )} />
+                {/* Avatar */}
+                <div className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0" style={{ background: '#2a3942', color: '#e9edef' }}>
+                  {avatarLetters(selected)}
                 </div>
+                {/* Name + phone */}
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold">{displayName(selected)}</p>
-                  <p className="text-[11px] text-muted-foreground">{selected.telefono}</p>
+                  <p className="text-sm font-medium" style={{ color: '#e9edef' }}>{displayName(selected)}</p>
+                  <p className="text-[11px]" style={{ color: '#8696a0' }}>{selected.telefono}</p>
                 </div>
-
-                {/* ── Mode toggle buttons (always visible) ── */}
-                <div className="flex items-center gap-1.5 flex-shrink-0">
+                {/* Mode buttons */}
+                <div className="flex items-center gap-1.5">
                   <button
                     onClick={() => setMode('bot')}
                     disabled={togglingMode || selected.estado === 'bot'}
                     className={cn(
-                      'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all',
+                      'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all',
                       selected.estado === 'bot'
-                        ? 'bg-violet-500/20 border-violet-500/40 text-violet-300 cursor-default'
-                        : 'bg-card/50 border-border/40 text-muted-foreground hover:bg-violet-500/10 hover:border-violet-500/30 hover:text-violet-400'
+                        ? 'cursor-default'
+                        : 'hover:opacity-80'
                     )}
+                    style={{
+                      background: selected.estado === 'bot' ? 'rgba(167,139,250,0.2)' : 'rgba(255,255,255,0.06)',
+                      color: selected.estado === 'bot' ? '#a78bfa' : '#8696a0',
+                      border: `1px solid ${selected.estado === 'bot' ? 'rgba(167,139,250,0.4)' : 'rgba(255,255,255,0.08)'}`,
+                    }}
                   >
                     <Bot className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Bot IA</span>
+                    <span>Bot IA</span>
                   </button>
                   <button
                     onClick={() => setMode('humano')}
                     disabled={togglingMode || selected.estado === 'humano'}
                     className={cn(
-                      'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all',
-                      selected.estado === 'humano'
-                        ? 'bg-orange-500/20 border-orange-500/40 text-orange-300 cursor-default'
-                        : 'bg-card/50 border-border/40 text-muted-foreground hover:bg-orange-500/10 hover:border-orange-500/30 hover:text-orange-400'
+                      'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all',
+                      selected.estado === 'humano' ? 'cursor-default' : 'hover:opacity-80'
                     )}
+                    style={{
+                      background: selected.estado === 'humano' ? 'rgba(251,146,60,0.2)' : 'rgba(255,255,255,0.06)',
+                      color: selected.estado === 'humano' ? '#fb923c' : '#8696a0',
+                      border: `1px solid ${selected.estado === 'humano' ? 'rgba(251,146,60,0.4)' : 'rgba(255,255,255,0.08)'}`,
+                    }}
                   >
                     <UserCheck className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Humano</span>
+                    <span>Humano</span>
                   </button>
-                  <Button variant="ghost" size="icon-sm">
-                    <Phone className="w-3.5 h-3.5" />
-                  </Button>
                 </div>
               </div>
 
-              {/* Mode status bar */}
-              <div className={cn(
-                'px-4 py-1.5 flex items-center gap-2 text-[11px] flex-shrink-0 border-b border-border/20',
-                isHumano
-                  ? 'bg-orange-500/8 text-orange-400'
-                  : 'bg-violet-500/8 text-violet-400'
-              )}>
+              {/* Mode status strip */}
+              <div
+                className="flex items-center gap-2 px-4 py-1.5 text-[11px] flex-shrink-0"
+                style={{
+                  background: isHumano ? 'rgba(251,146,60,0.08)' : 'rgba(167,139,250,0.08)',
+                  color: isHumano ? '#fb923c' : '#a78bfa',
+                  borderBottom: `1px solid ${isHumano ? 'rgba(251,146,60,0.15)' : 'rgba(167,139,250,0.15)'}`,
+                }}
+              >
                 {isHumano
-                  ? <><UserCheck className="w-3 h-3" /> Modo humano activo — el bot está pausado, estás respondiendo tú</>
-                  : <><Bot className="w-3 h-3" /> Bot IA activo — respondiendo automáticamente a este cliente</>}
+                  ? <><UserCheck className="w-3 h-3" /> Modo humano — bot pausado, respondes tú</>
+                  : <><Bot className="w-3 h-3" /> Modo Bot IA — respondiendo automáticamente</>}
               </div>
 
               {/* Messages area */}
               <div
-                ref={messagesContainerRef}
-                className="flex-1 overflow-y-auto p-4 space-y-2"
+                ref={chatScrollRef}
+                className="flex-1 overflow-y-auto px-4 py-4 space-y-1"
                 style={{
                   minHeight: 0,
-                  background: 'radial-gradient(ellipse at 50% 100%, rgba(249,115,22,0.02), transparent 60%)',
+                  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Crect width='400' height='400' fill='%230b141a'/%3E%3C/svg%3E")`,
                 }}
               >
                 {loadingMsgs && (
-                  <div className="flex justify-center py-6">
-                    <span className="text-xs text-muted-foreground animate-pulse">Cargando mensajes...</span>
+                  <div className="flex justify-center py-8">
+                    <span className="text-xs animate-pulse" style={{ color: '#8696a0' }}>Cargando mensajes...</span>
                   </div>
                 )}
                 {!loadingMsgs && msgs.length === 0 && (
-                  <div className="flex flex-col items-center justify-center h-32 text-center">
-                    <MessageSquare className="w-6 h-6 text-muted-foreground/30 mb-2" />
-                    <span className="text-xs text-muted-foreground">Sin mensajes en este chat aún</span>
+                  <div className="flex flex-col items-center justify-center h-40 text-center">
+                    <MessageSquare className="w-8 h-8 mb-2" style={{ color: 'rgba(255,255,255,0.15)' }} />
+                    <p className="text-xs" style={{ color: '#8696a0' }}>Sin mensajes en este chat aún</p>
                   </div>
                 )}
 
@@ -453,116 +508,133 @@ export default function WhatsAppPage() {
                   const thisDay = new Date(msg.created_at).toLocaleDateString('es-VE');
                   const prevDay = prevMsg ? new Date(prevMsg.created_at).toLocaleDateString('es-VE') : null;
                   const showDivider = thisDay !== prevDay;
+                  const isOptimistic = msg.id.startsWith('tmp-');
 
                   return (
                     <React.Fragment key={msg.id}>
                       {showDivider && (
-                        <div className="flex items-center gap-3 my-2">
-                          <div className="flex-1 h-px bg-border/20" />
-                          <span className="text-[10px] text-muted-foreground px-2 py-0.5 rounded-full bg-muted/30">
+                        <div className="flex justify-center my-3">
+                          <span className="text-[11px] px-3 py-1 rounded-full" style={{ background: '#182229', color: '#8696a0' }}>
                             {thisDay === new Date().toLocaleDateString('es-VE') ? 'Hoy' : thisDay}
                           </span>
-                          <div className="flex-1 h-px bg-border/20" />
                         </div>
                       )}
-                      <div className={cn('flex gap-2 items-end', isOut ? 'justify-end' : 'justify-start')}>
-                        {!isOut && (
-                          <div className="w-6 h-6 rounded-full bg-green-500/20 flex items-center justify-center flex-shrink-0 text-[10px] text-green-400 font-bold mb-0.5">
-                            {avatarLetters(selected)}
-                          </div>
-                        )}
-                        <div className={cn('max-w-[72%] rounded-2xl px-3 py-2 text-sm',
-                          isOut
-                            ? 'bg-primary text-primary-foreground rounded-br-sm'
-                            : 'bg-card border border-border/40 rounded-bl-sm'
-                        )}>
+
+                      <div className={cn('flex', isOut ? 'justify-end' : 'justify-start')} style={{ marginBottom: '2px' }}>
+                        <div
+                          className="relative max-w-[70%] rounded-lg px-3 py-2 shadow-sm"
+                          style={{
+                            background: isOut ? '#005c4b' : '#202c33',
+                            opacity: isOptimistic ? 0.75 : 1,
+                            borderRadius: isOut ? '8px 8px 2px 8px' : '8px 8px 8px 2px',
+                          }}
+                        >
+                          {/* Bot badge */}
                           {msg.es_ia && (
-                            <div className="flex items-center gap-1 mb-1 opacity-70">
+                            <div className="flex items-center gap-1 mb-1" style={{ color: '#a78bfa' }}>
                               <Bot className="w-3 h-3" />
                               <span className="text-[10px] font-medium">Bot IA</span>
                             </div>
                           )}
-                          <p className="leading-relaxed whitespace-pre-wrap break-words">{msg.body}</p>
-                          <div className={cn('flex items-center gap-1 mt-1', isOut ? 'justify-end opacity-70' : 'justify-start opacity-60')}>
-                            <span className="text-[10px]">{formatTime(msg.created_at)}</span>
+                          {/* Message text */}
+                          <p className="text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: '#e9edef' }}>
+                            {msg.body}
+                          </p>
+                          {/* Time + status */}
+                          <div className="flex items-center gap-1 justify-end mt-1" style={{ marginRight: '-2px' }}>
+                            <span className="text-[10px]" style={{ color: 'rgba(233,237,239,0.6)' }}>
+                              {formatTime(msg.created_at)}
+                            </span>
                             {isOut && (
-                              msg.estado === 'leido' ? <CheckCheck className="w-3 h-3 text-blue-300" /> :
-                              msg.estado === 'entregado' ? <CheckCheck className="w-3 h-3" /> :
-                              <Check className="w-3 h-3" />
+                              isOptimistic ? <Check className="w-3 h-3" style={{ color: 'rgba(233,237,239,0.5)' }} /> :
+                              msg.estado === 'leido' ? <CheckCheck className="w-3.5 h-3.5" style={{ color: '#53bdeb' }} /> :
+                              msg.estado === 'entregado' ? <CheckCheck className="w-3.5 h-3.5" style={{ color: 'rgba(233,237,239,0.5)' }} /> :
+                              <Check className="w-3 h-3" style={{ color: 'rgba(233,237,239,0.5)' }} />
+                            )}
+                            {!isOut && msg.es_ia && (
+                              <Bot className="w-3 h-3 ml-0.5" style={{ color: 'rgba(167,139,250,0.6)' }} />
+                            )}
+                            {isOut && !msg.es_ia && !isOptimistic && (
+                              <User className="w-2.5 h-2.5" style={{ color: 'rgba(233,237,239,0.4)' }} />
                             )}
                           </div>
                         </div>
-                        {isOut && (
-                          <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center flex-shrink-0 mb-0.5">
-                            {msg.es_ia ? <Bot className="w-3 h-3 text-violet-400" /> : <User className="w-3 h-3 text-muted-foreground" />}
-                          </div>
-                        )}
                       </div>
                     </React.Fragment>
                   );
                 })}
-                {/* Invisible anchor at the very bottom */}
-                <div ref={messagesEndRef} className="h-1" />
+                <div style={{ height: '4px' }} />
               </div>
 
-              {/* Quick replies strip */}
+              {/* Quick replies */}
               {showQuickReplies && (
-                <div className="px-3 py-2 border-t border-border/20 flex gap-2 overflow-x-auto flex-shrink-0">
+                <div
+                  className="flex gap-2 overflow-x-auto px-3 py-2 flex-shrink-0"
+                  style={{ background: '#202c33', borderTop: '1px solid rgba(255,255,255,0.06)' }}
+                >
                   {QUICK_REPLIES.map((r, i) => (
                     <button
                       key={i}
                       onClick={() => { setMessage(r); setShowQuickReplies(false); inputRef.current?.focus(); }}
-                      className="flex-shrink-0 text-[11px] px-2.5 py-1.5 rounded-lg bg-muted/40 border border-border/30 hover:bg-primary/10 hover:border-primary/30 transition-colors text-muted-foreground hover:text-foreground whitespace-nowrap"
+                      className="flex-shrink-0 text-[11px] px-2.5 py-1.5 rounded-lg whitespace-nowrap transition-colors hover:opacity-80"
+                      style={{ background: '#2a3942', color: '#8696a0', border: '1px solid rgba(255,255,255,0.06)' }}
                     >
-                      {r.length > 35 ? r.slice(0, 35) + '...' : r}
+                      {r.length > 38 ? r.slice(0, 38) + '…' : r}
                     </button>
                   ))}
                 </div>
               )}
 
               {/* Input area */}
-              <div className="px-3 py-3 border-t border-border/30 bg-card/20 flex-shrink-0">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setShowQuickReplies(!showQuickReplies)}
-                    title="Respuestas rápidas"
-                    className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors flex-shrink-0"
-                  >
-                    <Smile className="w-4 h-4" />
-                  </button>
-                  <input
-                    ref={inputRef}
-                    value={message}
-                    onChange={e => setMessage(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-                    placeholder={isHumano ? 'Escribe tu respuesta...' : 'Escribe un mensaje (toma control del chat)...'}
-                    className="flex-1 h-9 rounded-xl border border-border/50 bg-background/50 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary/50"
-                  />
-                  <button
-                    onClick={handleSend}
-                    disabled={!message.trim() || sending}
-                    className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center flex-shrink-0 hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-                  >
-                    <Send className={cn('w-3.5 h-3.5 text-primary-foreground', sending && 'animate-pulse')} />
-                  </button>
-                </div>
-                <div className="flex items-center justify-between mt-1.5 px-1">
-                  <span className="text-[10px] text-muted-foreground">Enter para enviar</span>
-                  <span className="text-[10px] flex items-center gap-1">
-                    {isHumano
-                      ? <><UserCheck className="w-2.5 h-2.5 text-orange-400" /><span className="text-orange-400">Control humano</span></>
-                      : <><Bot className="w-2.5 h-2.5 text-violet-400" /><span className="text-violet-400">Bot IA respondiendo</span></>}
-                  </span>
-                </div>
+              <div
+                className="flex items-center gap-2 px-3 py-3 flex-shrink-0"
+                style={{ background: '#202c33', borderTop: '1px solid rgba(255,255,255,0.06)' }}
+              >
+                <button
+                  onClick={() => setShowQuickReplies(!showQuickReplies)}
+                  className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors flex-shrink-0"
+                >
+                  <Smile className="w-5 h-5" style={{ color: '#aebac1' }} />
+                </button>
+                <input
+                  ref={inputRef}
+                  value={message}
+                  onChange={e => setMessage(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                  placeholder="Escribe un mensaje"
+                  className="flex-1 py-2 px-4 rounded-lg text-sm outline-none"
+                  style={{
+                    background: '#2a3942',
+                    color: '#e9edef',
+                    border: 'none',
+                  }}
+                />
+                <button
+                  onClick={handleSend}
+                  disabled={!message.trim() || sending}
+                  className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-all"
+                  style={{
+                    background: message.trim() && !sending ? '#00a884' : '#2a3942',
+                    opacity: !message.trim() || sending ? 0.5 : 1,
+                  }}
+                >
+                  <Send className={cn('w-4 h-4', sending && 'animate-pulse')} style={{ color: '#e9edef' }} />
+                </button>
               </div>
             </>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-center p-6">
-              <div className="w-16 h-16 rounded-2xl bg-green-500/10 border border-green-500/20 flex items-center justify-center mb-4">
-                <MessageSquare className="w-8 h-8 text-green-400" />
+            /* No conversation selected */
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+              <div
+                className="w-20 h-20 rounded-full flex items-center justify-center mb-4"
+                style={{ background: 'rgba(0,168,132,0.1)', border: '2px solid rgba(0,168,132,0.2)' }}
+              >
+                <MessageSquare className="w-9 h-9" style={{ color: '#00a884' }} />
               </div>
-              <h3 className="font-semibold mb-1">Selecciona una conversación</h3>
-              <p className="text-sm text-muted-foreground">Elige un chat de la lista para ver los mensajes en tiempo real</p>
+              <h3 className="font-medium mb-1 text-base" style={{ color: '#e9edef' }}>WhatsApp CRM</h3>
+              <p className="text-sm" style={{ color: '#8696a0' }}>
+                Selecciona una conversación para ver los mensajes en tiempo real
+              </p>
             </div>
           )}
         </div>
