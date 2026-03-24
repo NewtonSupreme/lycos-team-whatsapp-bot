@@ -270,7 +270,50 @@ export async function POST(request: NextRequest) {
       if (message.type === 'text') {
         messageBody = message.text?.body || '';
       } else if (message.type === 'image') {
-        messageBody = '[Cliente envió imagen]';
+        const imageId = message.image?.id;
+        const rawCaption = message.image?.caption || '';
+        const captionStr = rawCaption ? ` - Mensaje del cliente adjunto: "${rawCaption}"` : '';
+        if (imageId && WHATSAPP_TOKEN) {
+          try {
+            const mediaUrlResp = await fetch(`https://graph.facebook.com/v18.0/${imageId}`, {
+              headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
+            });
+            if (mediaUrlResp.ok) {
+              const mediaData = await mediaUrlResp.json();
+              if (mediaData.url) {
+                const mediaResp = await fetch(mediaData.url, {
+                  headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
+                });
+                if (mediaResp.ok) {
+                  const arrayBuffer = await mediaResp.arrayBuffer();
+                  const base64Data = Buffer.from(arrayBuffer).toString('base64');
+                  const mimeType = mediaData.mime_type || 'image/jpeg';
+                  
+                  const description = await describeImage(base64Data, mimeType);
+                  if (description) {
+                    messageBody = `[Imagen enviada por el cliente. Descripción automática (analízala y respondele en base a esto): ${description}]${captionStr}`;
+                    console.log(`🖼️ Imagen descrita de [${from}]: ${description.substring(0, 50)}...`);
+                  } else {
+                    messageBody = `[Cliente envió imagen]${captionStr}`;
+                  }
+                } else {
+                  console.error('Error descargando imagen de WhatsApp');
+                  messageBody = `[Cliente envió imagen]${captionStr}`;
+                }
+              } else {
+                messageBody = `[Cliente envió imagen]${captionStr}`;
+              }
+            } else {
+              console.error('Error obteniendo URL de la imagen', await mediaUrlResp.text());
+              messageBody = `[Cliente envió imagen]${captionStr}`;
+            }
+          } catch (e) {
+            console.error('Excepción al procesar imagen:', e);
+            messageBody = `[Cliente envió imagen]${captionStr}`;
+          }
+        } else {
+          messageBody = `[Cliente envió imagen]${captionStr}`;
+        }
       } else if (message.type === 'audio') {
         const audioId = message.audio?.id;
         if (audioId && WHATSAPP_TOKEN) {
@@ -323,16 +366,31 @@ export async function POST(request: NextRequest) {
       if (!messageBody) continue;
       console.log(`📩 [${from}]: ${messageBody.substring(0, 80)}`);
 
-      // Save incoming (non-blocking)
+      // Save incoming (blocking to capture exact time)
+      let insertedTimestamp = new Date().toISOString();
       if (db) {
-        void (async () => {
-          try {
-            await db.from('mensajes_whatsapp').insert({
-              from_number: from, to_number: 'system',
-              body: messageBody, tipo: 'entrante', wa_message_id,
-            });
-          } catch (e) { console.error('Error guardando entrante:', e); }
-        })();
+        try {
+          const { data } = await db.from('mensajes_whatsapp').insert({
+            from_number: from, to_number: 'system',
+            body: messageBody, tipo: 'entrante', wa_message_id,
+          }).select('created_at').single();
+          if (data?.created_at) insertedTimestamp = data.created_at;
+        } catch (e) { console.error('Error guardando entrante:', e); }
+
+        // Debounce to group multiple images or chopped messages
+        await delay(4000); // 4 seconds debounce
+        try {
+          const { data: newer } = await db.from('mensajes_whatsapp')
+            .select('id')
+            .eq('from_number', from)
+            .eq('tipo', 'entrante')
+            .gt('created_at', insertedTimestamp)
+            .limit(1);
+          if (newer && newer.length > 0) {
+            console.log(`⏩ Ignorando respuesta IA de ${wa_message_id} porque hay mensajes más recientes (agrupación de imágenes/mensajes).`);
+            continue; // Skip AI response, letting the newer message handle it
+          }
+        } catch(e) { console.error('Error consultando mensajes recientes:', e); }
       }
 
       if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) continue;
@@ -551,6 +609,7 @@ REGLAS CRITICAS:
 - Citas registradas: indica si son pasadas o proximas.
 - Asesor: solo si el cliente lo pide o sea imprescindible.
 - Un cliente puede tener varios vehiculos.
+- Si ves "[Imagen enviada...]", lee su descripción automática para entender qué mandó y responderle. Si manda varias fotos o texto repartido en varios envíos seguidos, asume el contexto completo unificado.
 - No repitas preguntas ya respondidas en el historial.`;
 
   const contents = [...ctx.historia, { role: 'user', parts: [{ text: userMessage }] }];
@@ -612,6 +671,42 @@ async function transcribeAudio(base64Data: string, mimeType: string): Promise<st
     return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
   } catch (e) {
     console.error('❌ transcribeAudio excepcion:', e);
+    return null;
+  }
+}
+
+async function describeImage(base64Data: string, mimeType: string): Promise<string | null> {
+  if (!GEMINI_API_KEY) return null;
+  const sttModel = GEMINI_MODEL;
+  const systemPrompt = "Eres un analista de imágenes de un taller automotriz. Detalla brevemente y de forma muy precisa qué se ve en la imagen para que el chatbot lo entienda y pueda ayudar al cliente. Si hay texto relevante en la imagen, menciónalo. Responde siempre en español.";
+  
+  try {
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${sttModel}:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: systemPrompt }] },
+          contents: [{
+            role: 'user',
+            parts: [
+              { inlineData: { mimeType: mimeType.split(';')[0], data: base64Data } },
+              { text: "Describe esta imagen detalladamente pensando como mecánico:" }
+            ]
+          }],
+          generationConfig: { temperature: 0.4 }
+        })
+      }
+    );
+    if (!resp.ok) {
+      console.error(`❌ Gemini Vision error ${resp.status}:`, (await resp.text()).substring(0, 200));
+      return null;
+    }
+    const data = await resp.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+  } catch (e) {
+    console.error('❌ describeImage excepcion:', e);
     return null;
   }
 }
