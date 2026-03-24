@@ -582,8 +582,7 @@ REGLAS CRITICAS:
 
 async function transcribeAudio(base64Data: string, mimeType: string): Promise<string | null> {
   if (!GEMINI_API_KEY) return null;
-  // Use gemini-1.5-flash as it is the standard and fastest model for multimodality
-  const sttModel = 'gemini-1.5-flash';
+  const sttModel = GEMINI_MODEL;
   const systemPrompt = "Eres un sistema de reconocimiento de voz. Tu UNICA tarea es transcribir el audio a texto exacto en español. NO agregues explicaciones, respuestas, introducciones ni comentarios. Solo escribe lo que el usuario dice en español tal cual.";
   
   try {
