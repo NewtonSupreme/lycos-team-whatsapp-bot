@@ -111,15 +111,48 @@ export default function WhatsAppPage() {
     loadConvs();
   }, [loadConvs]);
 
-  // Realtime subscriptions
+  // Realtime subscriptions — single global channel for ALL message events + polling fallback
   useEffect(() => {
     if (!supabase) return;
     const sb = supabase;
 
-    const convChannel = sb
-      .channel('crm-conversaciones')
+    // ── Global broadcast: listen to ALL inserts on mensajes_whatsapp ──────────
+    // We can't use an OR filter in Supabase Realtime row-level filters,
+    // so we subscribe broadly and route client-side.
+    const msgChannel = sb
+      .channel('crm-global-msgs')
       .on('postgres_changes', {
-        event: '*',
+        event: 'INSERT',
+        schema: 'public',
+        table: 'mensajes_whatsapp',
+      }, (payload) => {
+        const newMsg = payload.new as RawMsg;
+        // Figure out which phone this message belongs to
+        const msgPhone = newMsg.tipo === 'entrante' ? newMsg.from_number : newMsg.to_number;
+
+        // Add to chat if this message belongs to the currently selected conversation
+        setSelected(prev => {
+          if (prev && (prev.telefono === msgPhone || prev.telefono === newMsg.from_number || prev.telefono === newMsg.to_number)) {
+            setMsgs(existing => {
+              if (existing.find(m => m.id === newMsg.id)) return existing;
+              return [...existing, newMsg];
+            });
+          }
+          return prev;
+        });
+
+        // Always refresh conversation list so unread counts and last message update
+        loadConvs();
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'conversaciones',
+      }, () => {
+        loadConvs();
+      })
+      .on('postgres_changes', {
+        event: 'INSERT',
         schema: 'public',
         table: 'conversaciones',
       }, () => {
@@ -129,37 +162,21 @@ export default function WhatsAppPage() {
         setIsConnected(status === 'SUBSCRIBED');
       });
 
-    return () => {
-      sb.removeChannel(convChannel);
-    };
-  }, [loadConvs]);
-
-  // Realtime messages for selected conversation
-  useEffect(() => {
-    if (!supabase || !selected) return;
-    const sb = supabase;
-
-    const msgChannel = sb
-      .channel(`crm-msgs-${selected.telefono}`)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'mensajes_whatsapp',
-        filter: `from_number=eq.${selected.telefono}`,
-      }, (payload) => {
-        setMsgs(prev => {
-          const exists = prev.find(m => m.id === payload.new.id);
-          if (exists) return prev;
-          return [...prev, payload.new as RawMsg];
-        });
+    // ── Polling fallback: re-fetch messages every 3s for the active chat ──────
+    const pollInterval = setInterval(() => {
+      setSelected(prev => {
+        if (prev) loadMsgs(prev.telefono);
         loadConvs();
-      })
-      .subscribe();
+        return prev;
+      });
+    }, 3000);
 
     return () => {
       sb.removeChannel(msgChannel);
+      clearInterval(pollInterval);
     };
-  }, [selected, loadConvs]);
+  }, [loadConvs, loadMsgs]);
+
 
   const selectConv = (conv: RawConv) => {
     setSelected(conv);
