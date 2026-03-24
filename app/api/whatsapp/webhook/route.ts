@@ -434,6 +434,26 @@ export async function POST(request: NextRequest) {
             continue; // Skip AI response, letting the newer message handle it
           }
         } catch(e) { console.error('Error consultando mensajes recientes:', e); }
+
+        // ─── Human takeover check ───────────────────────────────────────────
+        // If an admin has taken manual control of this chat, skip bot response
+        try {
+          const { data: convData } = await db.from('conversaciones')
+            .select('estado')
+            .eq('telefono', from)
+            .limit(1)
+            .single();
+          if (convData?.estado === 'humano') {
+            console.log(`👤 [${from}] Conversación en control humano — bot silenciado.`);
+            // Update last message in CRM so admin sees it, incrementing unread count
+            await db.from('conversaciones').update({
+              ultimo_mensaje: messageBody.substring(0, 200),
+              ultimo_mensaje_at: new Date().toISOString(),
+              mensajes_sin_leer: 1,
+            }).eq('telefono', from);
+            continue; // Skip AI response
+          }
+        } catch { /* no conversation row yet — proceed with bot */ }
       }
 
       if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) continue;
