@@ -102,19 +102,21 @@ function formatBs(amount: number): string {
 }
 
 function buildRatesContext(rates: ExchangeRates | null): string {
-  if (!rates) return '\nTASAS DE CAMBIO: No disponibles. Di "te confirmamos el precio en bs al momento".';
+  if (!rates) return '\nTASAS DE CAMBIO: No disponibles en este momento.';
   return `
-ESTRUCTURA DE TASAS DE CAMBIO VIGENTES (Actualizadas ahora mismo):
-1. Tasa PRINCIPAL (Externa/P2P): Bs. ${formatBs(rates.paralelo)} por dólar. -> USAR PARA SERVICIOS DE ESCAPES, MECÁNICA, CATALIZADOR Y TODO LO DEMÁS.
-2. Tasa SECUNDARIA (Oficial/BCV): Bs. ${formatBs(rates.bcv)} por dólar. -> USAR EXCLUSIVAMENTE PARA ALINEACIÓN, CAUCHOS Y AUTOLAVADO.
+REGLA DE CONVERSIÓN MONETARIA (CRÍTICO):
+Tienes 2 tasas de cambio disponibles. Sigue ESTRICTAMENTE las reglas de uso para dar precios al cliente:
 
-REGLAS DE CONVERSIÓN MATEMÁTICA Y RESPUESTA:
-- Si el cliente pregunta por Alineación, Cauchos o Autolavado: Multiplica el precio en dólares por la Tasa SECUNDARIA (Bs. ${formatBs(rates.bcv)}) y aclárales explícitamente "calculado a tasa BCV".
-- Si el cliente pregunta por Escapes, Silenciadores, Mecánica, u otros servicios: Multiplica el precio en dólares por la Tasa PRINCIPAL (Bs. ${formatBs(rates.paralelo)}).
+1) SERVICIOS A TASA BCV (Usa la tasa de Bs. ${formatBs(rates.bcv)}):
+   - Aplica EXCLUSIVAMENTE para: Alineación, Cauchos, Monturas, Autolavado, y Certificado Médico.
+   - Al mostrar el precio final al cliente, DEBES indicarle "calculado a tasa BCV".
+   - Ejemplo: "Precio: $15 (equivalente a Bs. [calculado]) calculado a tasa BCV."
 
-FORMATO DEL PRECIO AL CLIENTE:
-"Precio: $X (equivalente a Bs. [resultado_matemático])"
-¡VITAL! Cuando uses la tasa principal (Binance), NUNCA VAYAS A MENCIONAR las palabras "Binance", "paralelo" o "USDT" con el cliente, solo entrégale el monto en bolívares fríamente. Si usaste la tasa BCV (Alineación, Cauchos), SÍ debes decirle "calculado a tasa BCV".`;
+2) SERVICIOS EN 'PROMO DIVISAS' (Usa la tasa externa de Bs. ${formatBs(rates.paralelo)}):
+   - Aplica para TODOS LOS DEMÁS servicios: Escapes, Silenciadores, Resonadores, Mecánica, Frenos, Catalizador, Electrónica, Estética, etc.
+   - ¡REGLA DE ORO! ESTÁ TOTALMENTE PROHIBIDO mencionar o especificar qué tasa usaste. NUNCA vayas a usar las palabras "Binance", "P2P", "paralela", "externa", ni decirle "promo divisa" a la persona.
+   - Simplemente dale el equivalente numérico en bolívares.
+   - Ejemplo OBLIGATORIO: "Precio: $X (equivalente a Bs. [calculado])."`;
 }
 
 // ─── Strip markdown for WhatsApp ──────────────────────────────────────────────
