@@ -104,18 +104,17 @@ function formatBs(amount: number): string {
 function buildRatesContext(rates: ExchangeRates | null): string {
   if (!rates) return '\nTASAS DE CAMBIO: No disponibles. Di "te confirmamos el precio en bs al momento".';
   return `
-TASAS DE CAMBIO (para cálculos internos, NUNCA digas "Binance" ni "Paralelo" en el chat):
-- Tasa externa (Binance P2P interne): Bs. ${formatBs(rates.paralelo)} por dólar
-- Tasa BCV: Bs. ${formatBs(rates.bcv)} por dólar
+ESTRUCTURA DE TASAS DE CAMBIO VIGENTES (Actualizadas ahora mismo):
+1. Tasa PRINCIPAL (Externa/P2P): Bs. ${formatBs(rates.paralelo)} por dólar. -> USAR PARA SERVICIOS DE ESCAPES, MECÁNICA, CATALIZADOR Y TODO LO DEMÁS.
+2. Tasa SECUNDARIA (Oficial/BCV): Bs. ${formatBs(rates.bcv)} por dólar. -> USAR EXCLUSIVAMENTE PARA ALINEACIÓN, CAUCHOS Y AUTOLAVADO.
 
-REGLA DE CONVERSIÓN DE PRECIOS A BOLÍVARES:
-- Para precios "en divisas" (ej: $40): Calcula siempre usando la "Tasa externa" que ves arriba. Ejemplo $40 -> Bs. ${formatBs(40 * rates.paralelo)}.
-- Para servicios marcados "100% a BCV": Calcula siempre usando la "Tasa BCV" que ves arriba.
+REGLAS DE CONVERSIÓN MATEMÁTICA Y RESPUESTA:
+- Si el cliente pregunta por Alineación, Cauchos o Autolavado: Multiplica el precio en dólares por la Tasa SECUNDARIA (Bs. ${formatBs(rates.bcv)}) y aclárales explícitamente "calculado a tasa BCV".
+- Si el cliente pregunta por Escapes, Silenciadores, Mecánica, u otros servicios: Multiplica el precio en dólares por la Tasa PRINCIPAL (Bs. ${formatBs(rates.paralelo)}).
 
 FORMATO DEL PRECIO AL CLIENTE:
-Cuando ofrezcas un precio en divisas y te pidan o decidas mostrar su equivalente, ponlo así:
-"Precio: $X (equivalente a Bs. [calculado])"
-¡VITAL! NUNCA utilices las palabras "Binance", "paralelo" o "USDT" con el cliente, solo entrégale el monto en BS.`;
+"Precio: $X (equivalente a Bs. [resultado_matemático])"
+¡VITAL! Cuando uses la tasa principal (Binance), NUNCA VAYAS A MENCIONAR las palabras "Binance", "paralelo" o "USDT" con el cliente, solo entrégale el monto en bolívares fríamente. Si usaste la tasa BCV (Alineación, Cauchos), SÍ debes decirle "calculado a tasa BCV".`;
 }
 
 // ─── Strip markdown for WhatsApp ──────────────────────────────────────────────
