@@ -32,25 +32,67 @@ const RATES_TTL = 30 * 60 * 1000; // 30 minutes
 async function fetchExchangeRates(): Promise<ExchangeRates | null> {
   if (ratesCache && Date.now() - ratesCacheTime < RATES_TTL) return ratesCache;
   try {
-    const resp = await fetch('https://ve.dolarapi.com/v1/dolares', {
-      headers: { 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!resp.ok) return ratesCache;
-    const data: { nombre: string; promedio: number }[] = await resp.json();
-    const bcvEntry = data.find(d => d.nombre?.toLowerCase().includes('oficial') || d.nombre?.toLowerCase().includes('bcv'));
-    const parEntry = data.find(d => d.nombre?.toLowerCase().includes('paralelo') || d.nombre?.toLowerCase().includes('cripto') || d.nombre?.toLowerCase().includes('binance'));
-    if (!bcvEntry || !parEntry) return ratesCache;
+    let bcvRate = 0;
+    try {
+      const respBcv = await fetch('https://ve.dolarapi.com/v1/dolares/oficial', {
+        headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (respBcv.ok) {
+        const bcvEntry: { promedio?: number; precio?: number } = await respBcv.json();
+        if (bcvEntry) bcvRate = bcvEntry.promedio || bcvEntry.precio || 0;
+      }
+    } catch(e) { console.error('Error fetching BCV:', e); }
+
+    let binanceRate = 0;
+    try {
+      const respBin = await fetch('https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36'
+        },
+        body: JSON.stringify({
+          fiat: "VES", page: 1, rows: 10, tradeType: "BUY", asset: "USDT",
+          countries: [], proMerchantAds: false, shieldMerchantAds: false,
+          publisherType: null, payTypes: ["PagoMovil"], classifies: ["mass", "profession", "user"]
+        }),
+        signal: AbortSignal.timeout(5000)
+      });
+      if (respBin.ok) {
+        const binData = await respBin.json();
+        if (binData.data && binData.data.length > 0) {
+          binanceRate = parseFloat(binData.data[0].adv.price);
+        }
+      }
+    } catch(e) { console.error('Error fetching Binance P2P:', e); }
+
+    if (!bcvRate && ratesCache) bcvRate = ratesCache.bcv;
+    if (!binanceRate && ratesCache) binanceRate = ratesCache.paralelo;
+
+    if (!binanceRate) {
+      // Fallback
+      try {
+        const tempResp = await fetch('https://ve.dolarapi.com/v1/dolares/paralelo');
+        if (tempResp.ok) {
+          const parEntry: { promedio?: number; precio?: number } = await tempResp.json();
+          if (parEntry) binanceRate = parEntry.promedio || parEntry.precio || 0;
+        }
+      } catch(e) {}
+    }
+
+    if (!bcvRate || !binanceRate) return ratesCache;
+
     ratesCache = {
-      bcv: bcvEntry.promedio,
-      paralelo: parEntry.promedio,
+      bcv: bcvRate,
+      paralelo: binanceRate,
       fetchedAt: new Date().toISOString(),
     };
     ratesCacheTime = Date.now();
-    console.log(`💱 Tasas actualizadas: BCV ${ratesCache.bcv} | Paralelo ${ratesCache.paralelo}`);
+    console.log(`💱 Tasas actualizadas: BCV ${ratesCache.bcv} | Binance P2P Nativo ${ratesCache.paralelo}`);
     return ratesCache;
   } catch (e) {
-    console.error('Error fetching rates:', e);
+    console.error('Error general fetchExchangeRates:', e);
     return ratesCache;
   }
 }
