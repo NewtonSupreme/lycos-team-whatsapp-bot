@@ -18,6 +18,30 @@ function getDb() {
   return createClient(url, key);
 }
 
+// ─── Upload media to Supabase Storage ──────────────────────────────────────────
+// Downloads from WhatsApp and re-uploads to our permanent storage bucket.
+// Returns the public URL or null on failure.
+async function uploadMediaToStorage(
+  arrayBuffer: ArrayBuffer,
+  mimeType: string,
+  mediaId: string
+): Promise<string | null> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+  if (!url || !key) return null;
+  try {
+    const ext = mimeType.split('/')[1]?.split(';')[0] || 'bin';
+    const fileName = `${Date.now()}-${mediaId.slice(-8)}.${ext}`;
+    const sb = createClient(url, key);
+    const { error } = await sb.storage
+      .from('whatsapp-media')
+      .upload(fileName, arrayBuffer, { contentType: mimeType, upsert: false });
+    if (error) { console.error('Storage upload error:', error.message); return null; }
+    const { data: publicData } = sb.storage.from('whatsapp-media').getPublicUrl(fileName);
+    return publicData?.publicUrl || null;
+  } catch (e) { console.error('uploadMediaToStorage exception:', e); return null; }
+}
+
 // ─── Exchange Rates ────────────────────────────────────────────────────────────
 interface ExchangeRates {
   bcv: number;        // VES per USD (BCV official)
