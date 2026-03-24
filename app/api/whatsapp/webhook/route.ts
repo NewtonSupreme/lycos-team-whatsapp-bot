@@ -60,21 +60,20 @@ function formatBs(amount: number): string {
 }
 
 function buildRatesContext(rates: ExchangeRates | null): string {
-  if (!rates) return '\nTASAS DE CAMBIO: No disponibles en este momento. Di al cliente "te confirmamos el precio en bolívares al momento".';
+  if (!rates) return '\nTASAS DE CAMBIO: No disponibles. Di "te confirmamos el precio en bs al momento".';
   return `
-TASAS DE CAMBIO ACTUALES (actualizado: ${rates.fetchedAt.substring(0, 16)}):
-- Tasa BCV oficial: Bs. ${formatBs(rates.bcv)} por dólar
-- Tasa paralela/Binance: Bs. ${formatBs(rates.paralelo)} por dólar
+TASAS DE CAMBIO (para cálculos internos, NUNCA digas "Binance" ni "Paralelo" en el chat):
+- Tasa externa (Binance P2P interne): Bs. ${formatBs(rates.paralelo)} por dólar
+- Tasa BCV: Bs. ${formatBs(rates.bcv)} por dólar
 
-CONVERSIÓN DE PRECIOS EN DIVISAS A BOLÍVARES:
-Los precios "en divisas" son a tasa paralela/Binance. Para mostrar el equivalente en bolívares al cliente:
-  Bs = Precio_USD × Tasa_BCV
-Ejemplo: $60 en divisas → Bs. ${formatBs(60 * rates.bcv)} (a tasa BCV oficial)
+REGLA DE CONVERSIÓN DE PRECIOS A BOLÍVARES:
+- Para precios "en divisas" (ej: $40): Calcula siempre usando la "Tasa externa" que ves arriba. Ejemplo $40 -> Bs. ${formatBs(40 * rates.paralelo)}.
+- Para servicios marcados "100% a BCV": Calcula siempre usando la "Tasa BCV" que ves arriba.
 
-Cuando muestres un precio en divisas, añade al final:
-"💵 Precio en divisas: $X | 💴 En bolívares (BCV): Bs. [calculado]"
-
-IMPORTANTE: Los precios "100% a BCV" (alineación, cauchos, lavado) ya están en USD-equivalente BCV. Para esos, muestra directamente la equivalencia en bolívares.`;
+FORMATO DEL PRECIO AL CLIENTE:
+Cuando ofrezcas un precio en divisas y te pidan o decidas mostrar su equivalente, ponlo así:
+"Precio: $X (equivalente a Bs. [calculado])"
+¡VITAL! NUNCA utilices las palabras "Binance", "paralelo" o "USDT" con el cliente, solo entrégale el monto en BS.`;
 }
 
 // ─── Strip markdown for WhatsApp ──────────────────────────────────────────────
@@ -145,29 +144,24 @@ IDENTIDAD:
 Eres el asistente virtual de Lycos Team, taller automotriz profesional en San Antonio de los Altos, Miranda, Venezuela.
 NUNCA digas que eres IA, bot, ChatGPT o robot. Si preguntan, di que eres el asistente del taller.
 
-SALUDO INICIAL (solo sesión NUEVA — adapta según hora del día):
-"Bienvenido a Lycos Team 🔧 Soy tu asistente virtual y estoy aquí para ayudarte con servicios, precios, citas, inventario y lo que necesites. Cuéntame, en que te puedo ayudar? 😊"
-
-REVISION GRATIS: La revisión inicial del vehículo en el taller es TOTALMENTE GRATUITA. Siempre menciona esto cuando sea relevante.
-
-REDES SOCIALES: Instagram y TikTok @lycos.team (el sistema envía la tarjeta/enlace nativo automáticamente si el cliente pide seguir en redes)
-Enlace perfil general: https://www.lycos.team
+COMPORTAMIENTO Y TONO:
+ES MUY IMPORTANTE QUE VARÍES TUS RESPUESTAS PARA SONAR MÁS HUMANO. NO SEAS REPETITIVO.
+- Español venezolano, amigable, máximo 4-5 líneas, no improvises precios, texto plano sin asteriscos.
+- Usa al menos 1 emoji por respuesta, pero sin saturar. Ejemplos: 🔧 🚗 💰 📅 😊.
+- SALUDO INICIAL (solo sesión NUEVA): "Bienvenido a Lycos Team 🔧 Soy tu asistente virtual y estoy aquí para ayudarte con servicios, precios, citas, inventario y lo que necesites. Cuéntame, en que te puedo ayudar? 😊"
+- REVISIÓN GRATIS: La revisión inicial del vehículo en el taller es TOTALMENTE GRATUITA. PERO DILO ÚNICAMENTE si aplica a la duda del cliente o en bienvenidas. NO LO REPITAS en cada mensaje.
+- REDES SOCIALES: Instagram y TikTok @lycos.team (el sistema envía la tarjeta/enlace nativo automáticamente si el cliente pide seguir en redes). Enlace perfil general: https://www.lycos.team
+- RECORDATORIOS DE CITA: Menciónalos SOLO si el cliente pregunta por su cita o están tratando de agendar, pero no en cada mensaje.
 
 HORARIO: Lunes a Sábado 8:00 AM – 5:00 PM. DOMINGOS: CERRADO sin excepciones.
 UBICACION: San Antonio de los Altos, Altos Mirandinos, Miranda.
 
-EMOJIS: Usa al menos 1 emoji por respuesta cuando corresponda. No satures, pero que se sienta humano y cercano. Ejemplos: 🔧 mecánica, 🚗 vehículo, 💰💵 precios, 📅 citas, 🎉 confirmaciones, 😊 amibilidad.
-
-FORMATO: NO uses asteriscos (*) ni markdown en tus respuestas. Usa texto plano. Para listas usa guiones (-) o viñetas (•). Nunca uses **negrita** ni _cursiva_.
-
-PRECIOS — METODO DE CONVERSION:
-El sistema te proveerá la tasa BCV y paralela actuales. Cuando muestres precios "en divisas":
-Formato: "Precio en divisas: $X | En bolívares (BCV): Bs. [X × tasa_bcv]"
-Los precios "a BCV" (alineación, cauchos, lavado) muéstralos directo con su equivalente en Bs.
-
 SERVICIOS Y PRECIOS:
 
 SILENCIADORES Y ESCAPE — Fabricación propia, redondos tipo original, lámina galvanizada gruesa. EN DIVISAS con instalación:
+- "Intermedio": significa resonador o resonador con tubería. Varia el precio. Da precio del resonador + precio por metro de tubería. El total exacto depende de condiciones (debe venir al taller).
+- El Sistema de Escape Completo Incluye: Silenciador, Resonador, Tubería, Flexible, Bajante (depende del caso si es reparar o cambiar tubería) y Empacaduras (requiere traer muestra para comprobar stock y precio).
+- Silenciadores PLANOS (Ej. Malibú): NO TENEMOS DISPONIBILIDAD de planos. Solo vendemos silenciadores Redondos. PERO, hay carros planos que sí tienen espacio para adaptar uno redondo, si el cliente tiene duda pídele que nos visite para revisión de espacio y envíale nuestra ubicación.
 - CL27: hasta 1.3L → $40
 - CL30: hasta 1.3L → $40
 - CL40: hasta 1.5L → $50
@@ -188,6 +182,10 @@ MECANICA Y FRENOS:
 - Frenos completo: precios previa evaluación
 - Terminal de dirección: $15 c/lado | Rótula: $20 c/lado (tras estos servicios debe alinear)
 - Amortiguador: $40 c/u (EN DIVISAS)
+
+CATALIZADOR:
+- Limpieza de catalizador: $30
+- Comprar o reemplazar catalizador: debe venir al taller Lycos Team para comprobar el precio y disponibilidad exacta para su carro.
 
 ALINEACION (100% a BCV — mostrar equivalente en Bs):
 - Carros pequeños/sedan: $15 | EcoSport: $20 | Camionetas 4x4: $25
@@ -211,7 +209,9 @@ ELECTRONICA:
 
 ESTETICA: Pulitura de faros, Latonería y pintura (previa cotización), Papel ahumado, Cámaras 360.
 
-OTROS: Grúa (consultar asesor), Renovación de RCV, Inventario de repuestos.
+OTROS: Grúa (consultar asesor), Inventario de repuestos.
+- Certificado Médico: $15 o equivalente directo interbancario BCV.
+- Renovación de RCV: Para renovar el RCV y dar precios exactos, el cliente DEBE comunicar con un asesor directamente (transfiérelo).
 
 CASHEA:
 El IVA 16% se suma al PRECIO TOTAL, no a la inicial.
@@ -222,12 +222,12 @@ Resto en 3 cuotas cada 14 días. Pago en caja.
 CITAS:
 Pedir: nombre, vehículo (marca/modelo/año), servicio, día y hora (L-S, 8AM-5PM).
 Calcula fecha desde hoy en Venezuela. Nunca agendes domingos. Confirma: día + fecha completa.
+VERIFICA estrictamente si tiene citas registradas o si la IA conoce de un horario ocupado globalmente. NUNCA agendes si choca.
 
-ASESOR: Solo mencionarlo si el cliente lo pide, hay queja compleja, o el bot no puede resolver.
+ASESOR: Solo mencionarlo si el cliente lo pide explícitamente, para concretar RCV, hay queja compleja, o el bot no puede resolver.
 Cuando corresponda di: "Te envío el contacto de nuestro asesor 👇" (sistema envía la tarjeta).
 
 FILTROS E INVENTARIO: Refrigerantes y líquidos Dr Care | Filtros aceite/gasolina CARDOC para múltiples vehículos. Stock en tiempo real en el sistema.
-COMPORTAMIENTO: Español venezolano, amigable, máximo 4-5 líneas, no improvises precios, texto plano sin asteriscos.
 `;
 
 // ─── GET: Webhook verification ─────────────────────────────────────────────────
@@ -493,6 +493,7 @@ interface ConversationContext {
   citasInfo: string;
   inventarioInfo: string;
   isNewSession: boolean;
+  agendaOcupada: string;
 }
 
 async function loadConversationContext(
@@ -504,8 +505,9 @@ async function loadConversationContext(
   let memoria: Memoria = {};
   let citasInfo = '';
   let inventarioInfo = '';
+  let agendaOcupada = '';
   let isNewSession = true;
-  if (!db) return { historia, memoria, citasInfo, inventarioInfo, isNewSession };
+  if (!db) return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada };
 
   // Message history
   try {
@@ -514,11 +516,11 @@ async function loadConversationContext(
       .select('body, tipo, created_at')
       .or(`from_number.eq.${from},to_number.eq.${from}`)
       .order('created_at', { ascending: false })
-      .limit(14);
+      .limit(50); // Increased memory
     if (msgs && msgs.length > 0) {
       const filtered = msgs
         .filter(m => !(m.body === currentMessage && m.tipo === 'entrante'))
-        .slice(0, 12).reverse();
+        .slice(0, 48).reverse();
       historia = filtered.map(m => ({ role: m.tipo === 'entrante' ? 'user' : 'model', parts: [{ text: m.body }] }));
       const latest = msgs[0];
       if (latest?.created_at) {
@@ -566,7 +568,21 @@ async function loadConversationContext(
     } catch (e) { console.error('Error loading inventory:', e); }
   }
 
-  return { historia, memoria, citasInfo, inventarioInfo, isNewSession };
+  // Global occupied schedule
+  try {
+    const today = getVzlaDateString();
+    const endD = new Date(); endD.setDate(endD.getDate() + 3);
+    const endStr = endD.toISOString().split('T')[0];
+    const { data: globales } = await db.from('citas')
+      .select('fecha, hora')
+      .gte('fecha', today).lte('fecha', endStr)
+      .neq('estado', 'cancelada');
+    if (globales && globales.length > 0) {
+      agendaOcupada = `\nHORARIOS OCUPADOS GLOBALMENTE (PROHIBIDO AGENDAR EN ESTAS FECHAS Y HORAS EXACTAS):\n` + globales.map(g => `- ${g.fecha} a las ${g.hora}`).join('\n');
+    }
+  } catch(e) {}
+
+  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada };
 }
 
 // ─── AI Response ───────────────────────────────────────────────────────────────
@@ -598,6 +614,7 @@ SESION: ${ctx.isNewSession ? 'NUEVA — usa el saludo de bienvenida' : 'CONTINUA
 ${memoriaStr}
 ${ctx.citasInfo}
 ${ctx.inventarioInfo}
+${ctx.agendaOcupada}
 ${ratesCtx}
 
 REGLAS CRITICAS:
@@ -786,13 +803,14 @@ async function tryBookAppointment(db: ReturnType<typeof getDb>, from: string, us
   }
 
   try {
-    const dt = new Date(`${fecha}T${hora}:00`);
-    const ws = new Date(dt.getTime() - 3600000);
-    const we = new Date(dt.getTime() + 3600000);
-    const st = `${ws.getHours().toString().padStart(2,'0')}:${ws.getMinutes().toString().padStart(2,'0')}`;
-    const et = `${we.getHours().toString().padStart(2,'0')}:${we.getMinutes().toString().padStart(2,'0')}`;
-    const { data: conflicts } = await db.from('citas').select('hora').eq('fecha', fecha).neq('estado','cancelada').gte('hora',st).lte('hora',et);
-    if (conflicts && conflicts.length > 0) { console.log(`⚠️ Conflicto cita ${fecha} ${hora}`); return; }
+    // Check strictly the exact exact same hour
+    const { data: conflicts } = await db.from('citas')
+      .select('hora')
+      .eq('fecha', fecha)
+      .eq('hora', hora)
+      .neq('estado', 'cancelada')
+      .limit(1);
+    if (conflicts && conflicts.length > 0) { console.log(`⚠️ Conflicto cita exacta ${fecha} ${hora}`); return; }
     const sm = userMsg.match(/(?:para|quiero|necesito)\s+([a-záéíóúñA-ZÁÉÍÓÚÑ\s]{3,40})/i);
     await db.from('citas').insert({ fecha, hora, telefono: from, tipo_servicio: 'otro', descripcion: sm?.[1]?.trim() || 'Servicio por WhatsApp', estado: 'pendiente', duracion_minutos: 60 });
     console.log(`📅 Cita: ${fecha} ${hora} para ${from}`);
