@@ -83,10 +83,30 @@ export async function fetchCitas() {
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('citas')
-    .select('*, clientes(nombre, apellido), vehiculos(marca, modelo, placa)')
+    .select('*, cliente:clientes(nombre, apellido), vehiculo:vehiculos(marca, modelo, placa)')
     .order('fecha', { ascending: true });
   if (error) throw error;
   return data;
+}
+
+export async function createCita(cita: Record<string, any>) {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('citas').insert(cita).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateCita(id: string, updates: Record<string, any>) {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('citas').update(updates).eq('id', id).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteCita(id: string) {
+  if (!supabase) return null;
+  const { error } = await supabase.from('citas').delete().eq('id', id);
+  if (error) throw error;
 }
 
 // ─── Mensajes WhatsApp ──────────────────────────────────────────────────────

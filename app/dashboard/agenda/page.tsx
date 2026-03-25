@@ -1,15 +1,15 @@
 'use client';
-import React, { useState } from 'react';
-import { Calendar, Plus, Clock, User, Car, Check, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useEffect } from 'react';
+import { Calendar, Plus, Clock, User, Car, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import StatusBadge from '@/components/ui/status-badge';
-import { mockCitas, mockClientes, mockVehiculos } from '@/lib/mockData';
-import { Cita, TipoServicio } from '@/types';
-import { formatDate, tipoServicioLabel, cn } from '@/lib/utils';
+import { fetchCitas, createCita, updateCita, deleteCita, fetchClientes, fetchVehiculos } from '@/lib/supabase';
+import { Cita, TipoServicio, Cliente, Vehiculo } from '@/types';
+import { formatDate, cn } from '@/lib/utils';
 
 const HORAS = ['08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00'];
 const TIPOS: { v: TipoServicio; l: string }[] = [
@@ -33,13 +33,39 @@ const estadoColorMap: Record<string, string> = {
 
 export default function AgendaPage() {
   const today = new Date();
-  const [citas, setCitas] = useState<Cita[]>(mockCitas);
-  const [currentYear, setCurrentYear] = useState(today.getFullYear());
-  const [currentMonth, setCurrentMonth] = useState(today.getMonth());
-  const [selectedDate, setSelectedDate] = useState<string | null>(today.toISOString().split('T')[0]);
-  const [showModal, setShowModal] = useState(false);
-  const [editCita, setEditCita] = useState<Cita | null>(null);
-  const [form, setForm] = useState({ cliente_id: '', vehiculo_id: '', fecha: '', hora: '09:00', tipo_servicio: 'mecanica', descripcion: '', estado: 'pendiente', notas: '' });
+  const [citas, setCitas] = React.useState<Cita[]>([]);
+  const [clientes, setClientes] = React.useState<Cliente[]>([]);
+  const [vehiculos, setVehiculos] = React.useState<Vehiculo[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [currentYear, setCurrentYear] = React.useState(today.getFullYear());
+  const [currentMonth, setCurrentMonth] = React.useState(today.getMonth());
+  const [selectedDate, setSelectedDate] = React.useState<string | null>(today.toISOString().split('T')[0]);
+  const [showModal, setShowModal] = React.useState(false);
+  const [editCita, setEditCita] = React.useState<Cita | null>(null);
+  const [form, setForm] = React.useState({ cliente_id: '', vehiculo_id: '', fecha: '', hora: '09:00', tipo_servicio: 'mecanica', descripcion: '', estado: 'pendiente', notas: '' });
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  async function loadData() {
+    setLoading(true);
+    try {
+      const [cData, clData, vData] = await Promise.all([
+        fetchCitas(),
+        fetchClientes(),
+        fetchVehiculos()
+      ]);
+      if (cData) setCitas(cData);
+      if (clData) setClientes(clData);
+      if (vData) setVehiculos(vData);
+    } catch (_err) {
+      console.error('Error updating status');
+      alert('Error al actualizar el estado');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   const prevMonth = () => { if (currentMonth === 0) { setCurrentMonth(11); setCurrentYear(y => y - 1); } else setCurrentMonth(m => m - 1); };
   const nextMonth = () => { if (currentMonth === 11) { setCurrentMonth(0); setCurrentYear(y => y + 1); } else setCurrentMonth(m => m + 1); };
@@ -47,7 +73,7 @@ export default function AgendaPage() {
   const daysInMonth = getDaysInMonth(currentYear, currentMonth);
   const firstDay = getFirstDayOfMonth(currentYear, currentMonth);
 
-  const getCitasForDate = (dateStr: string) => citas.filter(c => c.fecha === dateStr);
+  const getCitasForDate = (dateStr: string) => (citas || []).filter(c => c.fecha === dateStr);
   const citasDelDia = selectedDate ? getCitasForDate(selectedDate) : [];
 
   const openNew = () => {
@@ -61,29 +87,59 @@ export default function AgendaPage() {
     setShowModal(true);
   };
 
-  const handleSave = () => {
-    if (editCita) {
-      setCitas(prev => prev.map(c => c.id === editCita.id ? { ...c, ...form, tipo_servicio: form.tipo_servicio as TipoServicio, estado: form.estado as any } : c));
-    } else {
-      setCitas(prev => [...prev, { id: Date.now().toString(), ...form, tipo_servicio: form.tipo_servicio as TipoServicio, estado: form.estado as any, created_at: new Date().toISOString() }]);
+  const handleSave = async () => {
+    try {
+      if (editCita) {
+        await updateCita(editCita.id, form);
+      } else {
+        await createCita(form);
+      }
+      setShowModal(false);
+      loadData();
+    } catch (err) {
+      alert('Error al guardar la cita');
     }
-    setShowModal(false);
   };
 
-  const handleDelete = (id: string) => setCitas(prev => prev.filter(c => c.id !== id));
-  const changeEstado = (id: string, estado: string) => setCitas(prev => prev.map(c => c.id === id ? { ...c, estado: estado as any } : c));
-  const getCliente = (id: string) => mockClientes.find(c => c.id === id);
-  const getVehiculo = (id: string) => mockVehiculos.find(v => v.id === id);
-  const getVehiculosByCliente = (clienteId: string) => mockVehiculos.filter(v => v.cliente_id === clienteId);
+  const handleDelete = async (id: string) => {
+    if (confirm('¿Estás seguro de eliminar esta cita?')) {
+      try {
+        await deleteCita(id);
+        loadData();
+      } catch (_err) {
+        console.error('Error deleting appointment');
+        alert('Error al eliminar la cita');
+      }
+    }
+  };
+
+  const changeEstado = async (id: string, estado: string) => {
+    try {
+      await updateCita(id, { estado });
+      loadData();
+    } catch (err) {
+      alert('Error al actualizar el estado');
+    }
+  };
+
+  const getCliente = (id: string) => clientes.find(c => c.id === id);
+  const getVehiculo = (id: string) => vehiculos.find(v => v.id === id);
+  const getVehiculosByCliente = (clienteId: string) => vehiculos.filter(v => v.cliente_id === clienteId);
 
   const todayStr = today.toISOString().split('T')[0];
-  const countConfirmadas = citas.filter(c => c.estado === 'confirmada').length;
-  const countPendientes = citas.filter(c => c.estado === 'pendiente').length;
+  const countConfirmadas = (citas || []).filter(c => c.estado === 'confirmada').length;
+  const countPendientes = (citas || []).filter(c => c.estado === 'pendiente').length;
   const citasHoy = getCitasForDate(todayStr).length;
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Agenda</h1>
           <p className="text-sm text-muted-foreground mt-0.5">{citas.length} citas programadas</p>
@@ -291,7 +347,7 @@ export default function AgendaPage() {
               <label className="text-xs font-medium text-muted-foreground">Cliente *</label>
               <Select value={form.cliente_id} onValueChange={v => { setForm(p => ({ ...p, cliente_id: v, vehiculo_id: '' })); }}>
                 <SelectTrigger><SelectValue placeholder="Seleccionar cliente" /></SelectTrigger>
-                <SelectContent>{mockClientes.map(c => <SelectItem key={c.id} value={c.id}>{c.nombre} {c.apellido}</SelectItem>)}</SelectContent>
+                <SelectContent>{(clientes || []).map(c => <SelectItem key={c.id} value={c.id}>{c.nombre} {c.apellido}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5">
@@ -349,6 +405,8 @@ export default function AgendaPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+        </>
+      )}
     </div>
   );
 }

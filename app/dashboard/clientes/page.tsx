@@ -1,46 +1,80 @@
 'use client';
-import React, { useState } from 'react';
-import { Users, Plus, Search, Phone, Mail, Car, MoreHorizontal, Edit, Trash2, Eye } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import React, { useState, useEffect } from 'react';
+import { Plus, Search, Phone, Mail, Car, Edit, Trash2, Eye } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { mockClientes, mockVehiculos } from '@/lib/mockData';
-import { Cliente } from '@/types';
+import { fetchClientes, createCliente, updateCliente, deleteCliente, fetchVehiculos } from '@/lib/supabase';
+import { Cliente, Vehiculo } from '@/types';
 import { formatDate, getInitials } from '@/lib/utils';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
 const COLORS = ['bg-blue-500/20 text-blue-400','bg-purple-500/20 text-purple-400','bg-green-500/20 text-green-400','bg-orange-500/20 text-orange-400','bg-pink-500/20 text-pink-400','bg-cyan-500/20 text-cyan-400'];
 
 export default function ClientesPage() {
-  const [clientes, setClientes] = useState<Cliente[]>(mockClientes);
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [vehiculos, setVehiculos] = useState<Vehiculo[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editCliente, setEditCliente] = useState<Cliente | null>(null);
   const [viewCliente, setViewCliente] = useState<Cliente | null>(null);
   const [form, setForm] = useState({ nombre: '', apellido: '', email: '', telefono: '', cedula: '', direccion: '', notas: '' });
 
-  const filtered = clientes.filter(c =>
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  async function loadData() {
+    setLoading(true);
+    try {
+      const [cData, vData] = await Promise.all([
+        fetchClientes(),
+        fetchVehiculos()
+      ]);
+      if (cData) setClientes(cData);
+      if (vData) setVehiculos(vData);
+    } catch (_err) {
+      console.error('Error loading data');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const filtered = (clientes || []).filter(c =>
     `${c.nombre} ${c.apellido} ${c.email} ${c.telefono} ${c.cedula}`.toLowerCase().includes(search.toLowerCase())
   );
 
   const openNew = () => { setEditCliente(null); setForm({ nombre:'',apellido:'',email:'',telefono:'',cedula:'',direccion:'',notas:'' }); setShowModal(true); };
   const openEdit = (c: Cliente) => { setEditCliente(c); setForm({ nombre:c.nombre,apellido:c.apellido,email:c.email,telefono:c.telefono,cedula:c.cedula||'',direccion:c.direccion||'',notas:c.notas||'' }); setShowModal(true); };
 
-  const handleSave = () => {
-    if (editCliente) {
-      setClientes(prev => prev.map(c => c.id === editCliente.id ? { ...c, ...form, updated_at: new Date().toISOString() } : c));
-    } else {
-      const nuevo: Cliente = { id: Date.now().toString(), ...form, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
-      setClientes(prev => [nuevo, ...prev]);
+  const handleSave = async () => {
+    try {
+      if (editCliente) {
+        await updateCliente(editCliente.id, form);
+      } else {
+        await createCliente(form);
+      }
+      setShowModal(false);
+      loadData();
+    } catch (_err) {
+      alert('Error al guardar el cliente');
     }
-    setShowModal(false);
   };
 
-  const handleDelete = (id: string) => setClientes(prev => prev.filter(c => c.id !== id));
+  const handleDelete = async (id: string) => {
+    if (confirm('¿Estás seguro de eliminar este cliente?')) {
+      try {
+        await deleteCliente(id);
+        loadData();
+      } catch (_err) {
+        alert('Error al eliminar el cliente');
+      }
+    }
+  };
 
-  const getVehiculos = (clienteId: string) => mockVehiculos.filter(v => v.cliente_id === clienteId);
+  const getVehiculos = (clienteId: string) => (vehiculos || []).filter(v => v.cliente_id === clienteId);
 
   return (
     <div className="space-y-5">
@@ -82,8 +116,13 @@ export default function ClientesPage() {
       </div>
 
       {/* Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {filtered.map((cliente, i) => {
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {filtered.map((cliente, i) => {
           const vehiculos = getVehiculos(cliente.id);
           const colorClass = COLORS[i % COLORS.length];
           return (
@@ -137,13 +176,6 @@ export default function ClientesPage() {
           );
         })}
       </div>
-
-      {filtered.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <Users className="w-12 h-12 text-muted-foreground/30 mb-3" />
-          <p className="text-muted-foreground">No se encontraron clientes</p>
-          <p className="text-sm text-muted-foreground/60 mt-1">Intenta con otra búsqueda o agrega un nuevo cliente</p>
-        </div>
       )}
 
       {/* Modal nuevo/editar */}
@@ -218,10 +250,10 @@ export default function ClientesPage() {
               </div>
               <div className="space-y-2">
                 {[
-                  { label: 'Teléfono', value: viewCliente.telefono, icon: Phone },
-                  { label: 'Email', value: viewCliente.email, icon: Mail },
-                  { label: 'Dirección', value: viewCliente.direccion || 'No registrada', icon: null },
-                ].map(({ label, value, icon: Icon }) => (
+                  { label: 'Teléfono', value: viewCliente.telefono },
+                  { label: 'Email', value: viewCliente.email },
+                  { label: 'Dirección', value: viewCliente.direccion || 'No registrada' },
+                ].map(({ label, value }) => (
                   <div key={label} className="flex items-center gap-2 p-2.5 rounded-lg border border-border/30">
                     <span className="text-xs text-muted-foreground w-16 flex-shrink-0">{label}</span>
                     <span className="text-xs font-medium">{value}</span>

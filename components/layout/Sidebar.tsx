@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Users, Car, Wrench, Calendar, MessageSquare,
   Bot, FileText, Settings, ChevronLeft, ChevronRight,
-  Activity
+  Activity, LogOut
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -138,6 +138,21 @@ export default function Sidebar() {
               </div>
             )}
           </div>
+
+          <button
+            onClick={async () => {
+              await fetch('/api/auth/logout', { method: 'POST' });
+              window.location.href = '/login';
+            }}
+            className={cn(
+              'sidebar-item group w-full text-left mt-1 hover:bg-red-500/10 hover:text-red-400 pb-20 lg:pb-2',
+              !sidebarOpen && 'justify-center px-2'
+            )}
+            title={!sidebarOpen ? 'Cerrar Sesión' : undefined}
+          >
+            <LogOut className="flex-shrink-0 w-4 h-4 text-muted-foreground group-hover:text-red-400" />
+            {sidebarOpen && <span className="text-sm text-muted-foreground group-hover:text-red-400">Cerrar Sesión</span>}
+          </button>
         </div>
 
         {/* Toggle button */}
