@@ -7,8 +7,8 @@ import { Input } from '@/components/ui/input';
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState('admin@lycosteam.com');
-  const [password, setPassword] = useState('lycos2026');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -17,12 +17,25 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     setError('');
-    // Simulate auth
-    await new Promise(r => setTimeout(r, 1200));
-    if (email && password) {
-      router.push('/dashboard');
-    } else {
-      setError('Credenciales inválidas');
+
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      if (res.ok) {
+        const searchParams = new URLSearchParams(window.location.search);
+        const from = searchParams.get('from') || '/dashboard';
+        router.push(from);
+      } else {
+        const data = await res.json();
+        setError(data.error || 'Credenciales inválidas');
+        setLoading(false);
+      }
+    } catch (_err) {
+      setError('Error de conexión');
       setLoading(false);
     }
   };
@@ -38,7 +51,7 @@ export default function LoginPage() {
         <div className="text-center mb-8">
           <div className="inline-flex w-16 h-16 rounded-2xl bg-white/5 border border-white/10 items-center justify-center mb-4 shadow-[0_0_30px_rgba(255,255,255,0.05)] overflow-hidden">
             <img 
-              src="/Icono lycos team blanco.png" 
+              src="/Icono%20lycos%20team%20blanco.png" 
               alt="Lycos Team Logo" 
               className="w-12 h-12 object-contain truck-anim"
             />
@@ -58,13 +71,13 @@ export default function LoginPage() {
 
           <form onSubmit={handleLogin} className="space-y-3">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Email</label>
+              <label className="text-xs font-medium text-muted-foreground">Email o Usuario</label>
               <Input
-                type="email"
+                type="text"
                 icon={<Mail />}
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                placeholder="admin@lycosteam.com"
+                placeholder="Email o nombre de usuario"
                 required
                 autoComplete="email"
               />
@@ -118,15 +131,6 @@ export default function LoginPage() {
               )}
             </Button>
           </form>
-
-          {/* Demo hint */}
-          <div className="mt-4 p-3 rounded-xl bg-muted/30 border border-border/20">
-            <p className="text-[10px] font-medium text-muted-foreground mb-1.5">Credenciales de demostración:</p>
-            <div className="space-y-0.5">
-              <p className="text-[11px] text-foreground/80">📧 admin@lycosteam.com</p>
-              <p className="text-[11px] text-foreground/80">🔒 lycos2026</p>
-            </div>
-          </div>
         </div>
 
         {/* Feature pills */}
@@ -144,7 +148,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-[10px] text-muted-foreground mt-5">
-          © 2024 Lycos Team · Desarrollado por Leandro Márquez
+          © 2026 Lycos Team · Desarrollado por Leandro Márquez
         </p>
       </div>
     </div>
