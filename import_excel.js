@@ -21,37 +21,32 @@ async function importData() {
   const workbook = XLSX.readFile(filePath);
   const sheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
-  const data = XLSX.utils.sheet_to_json(worksheet);
+  // Use header: 1 to get raw rows
+  const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
 
-  console.log(`Starting import of ${data.length - 1} records...`);
+  console.log(`Starting clean import. Total rows in Excel: ${rows.length}`);
 
-  // Map to store existing or newly created clients to handle duplicates
-  // Key: cedula OR name+lastname
+  // Cleanup: Delete previous imports from today
+  console.log('Cleaning up previous imports...');
+  const today = '2026-03-25T04:00:00Z';
+  await supabase.from('vehiculos').delete().gte('created_at', today);
+  await supabase.from('clientes').delete().gte('created_at', today);
+
   const clientsMap = new Map();
 
-  // Fetch existing clients to avoid duplicates if script is re-run
-  const { data: existingClientes, error: fetchError } = await supabase.from('clientes').select('id, nombre, apellido, cedula');
-  if (fetchError) {
-    console.error('Error fetching existing clients:', fetchError);
-    return;
-  }
+  // Data starts at row 2 (index 2)
+  for (let i = 2; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.length === 0) continue;
 
-  existingClientes.forEach(c => {
-    if (c.cedula) clientsMap.set(c.cedula.toString().trim(), c.id);
-    clientsMap.set(`${c.nombre.trim().toLowerCase()}|${c.apellido.trim().toLowerCase()}`, c.id);
-  });
-
-  // Skip row 0 (headers)
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    const nombre = (row['DATOS DEL CLIENTE '] || '').toString().trim();
-    const apellido = (row['__EMPTY'] || '').toString().trim();
-    const cedula = (row['__EMPTY_1'] || '').toString().trim();
-    const telefono = (row['__EMPTY_2'] || '').toString().trim();
-    const marca = (row['VEHICULO'] || '').toString().trim();
-    const modelo = (row['__EMPTY_3'] || '').toString().trim();
-    const color = (row['__EMPTY_4'] || '').toString().trim();
-    let anio = parseInt(row['__EMPTY_5']);
+    const nombre = (row[0] || '').toString().trim();
+    const apellido = (row[1] || '').toString().trim();
+    const cedula = (row[2] || '').toString().trim();
+    const telefono = (row[3] || '').toString().trim();
+    const marca = (row[4] || '').toString().trim();
+    const modelo = (row[5] || '').toString().trim();
+    const color = (row[6] || '').toString().trim();
+    let anio = parseInt(row[7]);
     if (isNaN(anio)) anio = null;
 
     if (!nombre && !apellido) continue;
@@ -68,7 +63,7 @@ async function importData() {
           apellido,
           cedula: cedula || null,
           telefono: telefono || '',
-          email: '', // Not in excel
+          email: '',
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         })
@@ -84,7 +79,7 @@ async function importData() {
     }
 
     if (marca || modelo) {
-      console.log(`Adding vehicle to ${nombre}: ${marca} ${modelo}`);
+      console.log(`Adding vehicle to ${nombre}: ${marca} ${modelo} (${color})`);
       const { error: vehicleError } = await supabase
         .from('vehiculos')
         .insert({
@@ -94,7 +89,7 @@ async function importData() {
           color: color || '',
           anio: anio,
           estado: 'activo',
-          placa: `TEMP-${Math.random().toString(36).substring(2, 7).toUpperCase()}`, // No plate in excel, generating temp
+          placa: `TEMP-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
           created_at: new Date().toISOString()
         });
 

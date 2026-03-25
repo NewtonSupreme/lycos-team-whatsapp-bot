@@ -1,0 +1,27 @@
+VEHICLE DATA:
+id: 83e037e7-4086-4f6e-8152-b8f04066beff
+cliente_id: 4ba01f1b-c313-49fe-a42e-4b39a3fa43b1
+marca: Desconocida
+modelo: CLIO
+anio: 1986
+placa: TEMP-IE1KH
+color: VERDE
+kilometraje: 0
+vin: null
+estado: activo
+notas: null
+created_at: 2026-03-25T05:03:20.257+00:00
+updated_at: 2026-03-25T05:03:20.02574+00:00
+
+CLIENT DATA:
+id: ec68d8ee-aa00-47e8-8dd9-177bb0e1a64f
+nombre: Cliente
+apellido: WhatsApp
+email: null
+telefono: +584142279708
+cedula: null
+direccion: null
+notas: null
+activo: true
+created_at: 2026-03-19T05:48:06.846199+00:00
+updated_at: 2026-03-19T05:48:06.846199+00:00

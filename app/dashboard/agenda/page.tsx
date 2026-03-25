@@ -32,23 +32,30 @@ const estadoColorMap: Record<string, string> = {
 };
 
 export default function AgendaPage() {
-  const today = new Date();
+  const [mounted, setMounted] = React.useState(false);
   const [citas, setCitas] = React.useState<Cita[]>([]);
   const [clientes, setClientes] = React.useState<Cliente[]>([]);
   const [vehiculos, setVehiculos] = React.useState<Vehiculo[]>([]);
   const [loading, setLoading] = React.useState(true);
-  const [currentYear, setCurrentYear] = React.useState(today.getFullYear());
-  const [currentMonth, setCurrentMonth] = React.useState(today.getMonth());
-  const [selectedDate, setSelectedDate] = React.useState<string | null>(today.toISOString().split('T')[0]);
+  const [currentYear, setCurrentYear] = React.useState(2026);
+  const [currentMonth, setCurrentMonth] = React.useState(0);
+  const [selectedDate, setSelectedDate] = React.useState<string | null>(null);
   const [showModal, setShowModal] = React.useState(false);
   const [editCita, setEditCita] = React.useState<Cita | null>(null);
   const [form, setForm] = React.useState({ cliente_id: '', vehiculo_id: '', fecha: '', hora: '09:00', tipo_servicio: 'mecanica', descripcion: '', estado: 'pendiente', notas: '' });
 
   useEffect(() => {
+    setMounted(true);
+    const today = new Date();
+    setCurrentYear(today.getFullYear());
+    setCurrentMonth(today.getMonth());
+    const dateStr = today.toISOString().split('T')[0];
+    setSelectedDate(dateStr);
     loadData();
   }, []);
 
   async function loadData() {
+    if (!mounted) return;
     setLoading(true);
     try {
       const [cData, clData, vData] = await Promise.all([
@@ -59,7 +66,7 @@ export default function AgendaPage() {
       if (cData) setCitas(cData);
       if (clData) setClientes(clData);
       if (vData) setVehiculos(vData);
-    } catch (_err) {
+    } catch {
       console.error('Error updating status');
       alert('Error al actualizar el estado');
     } finally {
@@ -78,7 +85,8 @@ export default function AgendaPage() {
 
   const openNew = () => {
     setEditCita(null);
-    setForm({ cliente_id:'', vehiculo_id:'', fecha: selectedDate||today.toISOString().split('T')[0], hora:'09:00', tipo_servicio:'mecanica', descripcion:'', estado:'pendiente', notas:'' });
+    const dateStr = selectedDate || new Date().toISOString().split('T')[0];
+    setForm({ cliente_id:'', vehiculo_id:'', fecha: dateStr, hora:'09:00', tipo_servicio:'mecanica', descripcion:'', estado:'pendiente', notas:'' });
     setShowModal(true);
   };
   const openEdit = (c: Cita) => {
@@ -96,7 +104,7 @@ export default function AgendaPage() {
       }
       setShowModal(false);
       loadData();
-    } catch (err) {
+    } catch {
       alert('Error al guardar la cita');
     }
   };
@@ -117,7 +125,7 @@ export default function AgendaPage() {
     try {
       await updateCita(id, { estado });
       loadData();
-    } catch (err) {
+    } catch {
       alert('Error al actualizar el estado');
     }
   };
@@ -126,10 +134,12 @@ export default function AgendaPage() {
   const getVehiculo = (id: string) => vehiculos.find(v => v.id === id);
   const getVehiculosByCliente = (clienteId: string) => vehiculos.filter(v => v.cliente_id === clienteId);
 
-  const todayStr = today.toISOString().split('T')[0];
+  const getTodayStr = () => new Date().toISOString().split('T')[0];
   const countConfirmadas = (citas || []).filter(c => c.estado === 'confirmada').length;
   const countPendientes = (citas || []).filter(c => c.estado === 'pendiente').length;
-  const citasHoy = getCitasForDate(todayStr).length;
+  const citasHoyCount = getCitasForDate(getTodayStr()).length;
+
+  if (!mounted) return null;
 
   return (
     <div className="space-y-5">
@@ -155,7 +165,7 @@ export default function AgendaPage() {
           { label: 'Total Citas', value: citas.length, color: 'text-foreground' },
           { label: 'Confirmadas', value: countConfirmadas, color: 'text-green-400' },
           { label: 'Pendientes', value: countPendientes, color: 'text-yellow-400' },
-          { label: 'Hoy', value: citasHoy, color: 'text-primary' },
+          { label: 'Hoy', value: citasHoyCount, color: 'text-primary' },
         ].map(s => (
           <div key={s.label} className="stat-card border border-border/50">
             <p className="text-xs text-muted-foreground">{s.label}</p>
@@ -172,7 +182,7 @@ export default function AgendaPage() {
               <CardTitle className="text-base">{MONTHS[currentMonth]} {currentYear}</CardTitle>
               <div className="flex gap-1">
                 <Button variant="ghost" size="icon-sm" onClick={prevMonth}><ChevronLeft className="w-4 h-4" /></Button>
-                <Button variant="ghost" size="icon-sm" onClick={() => { setCurrentMonth(today.getMonth()); setCurrentYear(today.getFullYear()); setSelectedDate(todayStr); }}>Hoy</Button>
+                <Button variant="ghost" size="icon-sm" onClick={() => { const now = new Date(); setCurrentMonth(now.getMonth()); setCurrentYear(now.getFullYear()); setSelectedDate(now.toISOString().split('T')[0]); }}>Hoy</Button>
                 <Button variant="ghost" size="icon-sm" onClick={nextMonth}><ChevronRight className="w-4 h-4" /></Button>
               </div>
             </div>
@@ -191,7 +201,7 @@ export default function AgendaPage() {
                 const day = i + 1;
                 const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
                 const citasCount = getCitasForDate(dateStr).length;
-                const isToday = dateStr === todayStr;
+                const isToday = mounted && dateStr === getTodayStr();
                 const isSelected = dateStr === selectedDate;
                 return (
                   <button

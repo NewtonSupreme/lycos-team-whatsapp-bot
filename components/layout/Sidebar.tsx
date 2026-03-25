@@ -31,6 +31,11 @@ const bottomItems = [
 export default function Sidebar() {
   const pathname = usePathname();
   const { sidebarOpen, toggleSidebar, user } = useAppStore();
+  const [mounted, setMounted] = React.useState(false);
+
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
 
   return (
     <>
@@ -57,7 +62,7 @@ export default function Sidebar() {
             !sidebarOpen && "w-9 h-9"
           )}>
             <img 
-              src="/Icono lycos team blanco.png" 
+              src="/logo-icon-white.png" 
               alt="Logo" 
               className="w-8 h-8 object-contain truck-anim"
             />
@@ -128,13 +133,19 @@ export default function Sidebar() {
           <div className={cn('flex items-center gap-2 px-2 py-2 mt-1 rounded-lg', !sidebarOpen && 'justify-center')}>
             <Avatar className="w-7 h-7 flex-shrink-0">
               <AvatarFallback className="text-[10px]">
-                {user ? getInitials(user.nombre) : 'AD'}
+                {mounted && user ? getInitials(user.nombre) : 'AD'}
               </AvatarFallback>
             </Avatar>
-            {sidebarOpen && (
+            {sidebarOpen && mounted && (
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium truncate">{user?.nombre || 'Admin'}</p>
                 <p className="text-[10px] text-muted-foreground truncate">{user?.email}</p>
+              </div>
+            )}
+            {sidebarOpen && !mounted && (
+              <div className="flex-1 min-w-0">
+                <div className="h-3 w-16 bg-muted animate-pulse rounded mb-1" />
+                <div className="h-2 w-24 bg-muted animate-pulse rounded" />
               </div>
             )}
           </div>

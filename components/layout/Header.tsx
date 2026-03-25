@@ -1,12 +1,12 @@
 'use client';
 import React, { useState } from 'react';
-import { Bell, Search, Menu, X, Zap } from 'lucide-react';
+import { Bell, Search, Menu, X } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
-import { cn, formatRelativeTime, getInitials } from '@/lib/utils';
+// import { Badge } from '@/components/ui/badge';
+import { cn, getInitials } from '@/lib/utils';
 import { ThemeToggle } from './ThemeToggle';
 
 export default function Header() {
@@ -15,7 +15,7 @@ export default function Header() {
   const [showSearch, setShowSearch] = useState(false);
 
   return (
-    <header className="h-14 flex items-center gap-3 px-4 border-b border-border/30 bg-card/40 backdrop-blur-xl sticky top-0 z-20">
+    <header suppressHydrationWarning className="h-14 flex items-center gap-3 px-4 border-b border-border/30 bg-card/40 backdrop-blur-xl sticky top-0 z-20">
       {/* Mobile menu */}
       <Button variant="ghost" size="icon-sm" className="lg:hidden" onClick={toggleSidebar}>
         {sidebarOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}

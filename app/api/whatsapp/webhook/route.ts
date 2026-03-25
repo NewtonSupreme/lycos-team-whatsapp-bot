@@ -260,7 +260,9 @@ SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gr
 - Cola de sistema de escape: depende del vehiculo, responder: "Depende del vehiculo, debes traerlo para darte el precio exacto"
 Presupuesto válido 2 días. Pide marca/modelo/año/cilindraje para recomendar el código.
 - Presupuesto aproximado/Precios aproximados de sistemas de escape: si piden un aproximado o precio aproximado para un trabajo, debes hacer el calculo correspondiente a la investigacion del vehiculo pero tomando unicamente los datos y precios de lycos team, por jemplo para un presupuesto de silenciadores debes tomar en cuenta el precio del silenciador, el precio por metro de tuberia, el precio de la soldadura y el precio de las gomas, y debes investigar cuanto mide la tuberia para dar un rango de precio estimado.
-
+- IMÁGENES DE SILENCIADORES Y EJEMPLOS: Si el cliente pregunta específicamente por un silenciador para su vehículo, pide ver una foto, o quiere ver un ejemplo de nuestro trabajo (fabricación propia), DEBES incluir la etiqueta [IMG:nombre] en tu respuesta para que el sistema le envíe la foto real automáticamente.
+  Nombres válidos para la etiqueta: cl 27, cl 30, cl 40, clh 40, cl 60, clc 60, clp 60, clk 60.
+  EJEMPLO: "Fabricamos silenciadores a medida de excelente calidad. Aquí tienes un ejemplo del modelo que usaría tu vehículo: [IMG:cl 60]"
 
 MECANICA Y FRENOS:
 - Mecánica ligera, limpieza de inyectores
@@ -550,7 +552,17 @@ export async function POST(request: NextRequest) {
       const aiResponse = await getAIResponse(messageBody, ctx, rates);
 
       if (aiResponse) {
-        const cleanedAi = cleanForWhatsApp(aiResponse);
+        let cleanedAi = cleanForWhatsApp(aiResponse);
+
+        // Fetch extracted IMG tags
+        const imgRegex = /\[IMG:(.+?)\]/gi;
+        const imgMatches: string[] = [];
+        let match;
+        while ((match = imgRegex.exec(cleanedAi)) !== null) {
+          imgMatches.push(match[1].trim());
+        }
+        cleanedAi = cleanedAi.replace(imgRegex, '').trim();
+
         const needsAsesor = aiNeedsAsesor(cleanedAi);
 
         if (needsAsesor) {
@@ -571,6 +583,18 @@ export async function POST(request: NextRequest) {
           } else {
             const hasUrl = /https?:\/\//.test(cleanedAi);
             await sendMsg(from, cleanedAi, hasUrl);
+          }
+        }
+
+        // Send images if Gemini added the tags
+        if (imgMatches.length > 0) {
+          const origin = request.nextUrl ? request.nextUrl.origin : new URL(request.url).origin;
+          for (const imgName of imgMatches) {
+            await delay(800);
+            const encodedName = encodeURIComponent(imgName.toLowerCase());
+            // Se asume que la extensión será jpg
+            const imgUrl = `${origin}/Silenciadores/${encodedName}.jpg`;
+            await sendImage(from, imgUrl);
           }
         }
 
@@ -959,6 +983,45 @@ async function sendMsg(to: string, text: string, previewUrl = false): Promise<vo
       })();
     }
   } catch (e) { console.error('❌ sendMsg exception:', e); }
+}
+
+// ─── Send WhatsApp Image ───────────────────────────────────────────────────────
+async function sendImage(to: string, imageUrl: string, caption?: string): Promise<void> {
+  if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
+  try {
+    const body: {
+      messaging_product: string;
+      recipient_type: string;
+      to: string;
+      type: string;
+      image: { link: string; caption?: string };
+    } = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: to.replace(/[^0-9]/g, ''),
+      type: 'image',
+      image: { link: imageUrl }
+    };
+    if (caption) body.image.caption = caption;
+
+    const resp = await fetch(`https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) { console.error('❌ sendImage error:', (await resp.text()).substring(0, 200)); return; }
+    const data = await resp.json();
+    const wa_id = data.messages?.[0]?.id;
+    console.log(`📤 Image sent to ${to}. ID: ${wa_id}`);
+    const db = getDb();
+    if (db) {
+      void (async () => {
+        try {
+          await db.from('mensajes_whatsapp').insert({ from_number: 'system', to_number: to, body: caption ? `[Imagen enviada: ${caption}]` : '[Imagen enviada]', tipo: 'saliente', wa_message_id: wa_id, es_ia: true });
+        } catch (e) { console.error('Error saving image saliente:', e); }
+      })();
+    }
+  } catch (e) { console.error('❌ sendImage exception:', e); }
 }
 
 // ─── Send Native Contact Card ──────────────────────────────────────────────────

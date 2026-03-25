@@ -48,8 +48,8 @@ function avatarLetters(conv: RawConv): string {
   if (name) {
     const parts = name.trim().split(' ');
     return parts.length >= 2
-      ? (parts[0][0] + parts[1][0]).toUpperCase()
-      : parts[0].slice(0, 2).toUpperCase();
+      ? (`${parts[0]?.charAt(0) || ''}${parts[1]?.charAt(0) || ''}`).toUpperCase()
+      : parts[0]?.slice(0, 2).toUpperCase() || '';
   }
   const num = conv.telefono?.replace(/[^0-9]/g, '') || '';
   return num.slice(-2);
@@ -288,6 +288,10 @@ export default function WhatsAppPage() {
   const totalUnread = convs.reduce((s, c) => s + (c.mensajes_sin_leer ?? 0), 0);
 
   // ── Render ─────────────────────────────────────────────────────────────────
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+
   return (
     <div className="space-y-3">
       {/* Page header */}

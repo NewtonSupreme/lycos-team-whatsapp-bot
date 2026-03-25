@@ -2,12 +2,11 @@
 import React from 'react';
 import {
   Users, Car, Wrench, MessageSquare, DollarSign, Bot,
-  Calendar, CheckCircle, TrendingUp, Clock, ArrowRight,
-  AlertCircle, Zap
+  Calendar, CheckCircle, ArrowRight, Zap
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend
+  Tooltip, ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
 import StatCard from '@/components/dashboard/StatCard';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -21,12 +20,12 @@ import { formatCurrency, formatRelativeTime, tipoServicioLabel } from '@/lib/uti
 
 const PIE_COLORS = ['#f97316', '#3b82f6', '#8b5cf6', '#10b981', '#ef4444', '#06b6d4'];
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: unknown[]; label?: string }) => {
   if (active && payload && payload.length) {
     return (
       <div className="bg-card border border-border rounded-xl px-3 py-2 shadow-xl text-xs">
         <p className="font-semibold mb-1">{label}</p>
-        {payload.map((p: any) => (
+        {(payload as { name: string; color: string; value: number | string }[]).map((p) => (
           <p key={p.name} style={{ color: p.color }}>{p.name}: {typeof p.value === 'number' && p.name === 'ingresos' ? formatCurrency(p.value) : p.value}</p>
         ))}
       </div>
@@ -45,7 +44,12 @@ const pieData = [
 ];
 
 export default function DashboardPage() {
+  const [mounted, setMounted] = React.useState(false);
   const stats = mockDashboardStats;
+
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -56,7 +60,7 @@ export default function DashboardPage() {
             Panel Principal
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Bienvenido de vuelta · {new Date().toLocaleDateString('es-VE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            Bienvenido de vuelta · {mounted ? new Date().toLocaleDateString('es-VE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : '---'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -231,7 +235,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="flex flex-col items-end gap-1">
                     <StatusBadge status={conv.estado} type="conversacion" />
-                    <span className="text-[10px] text-muted-foreground">{formatRelativeTime(conv.ultimo_mensaje_at)}</span>
+                    <span className="text-[10px] text-muted-foreground">{mounted ? formatRelativeTime(conv.ultimo_mensaje_at) : '---'}</span>
                   </div>
                 </div>
               ))}
@@ -252,7 +256,7 @@ export default function DashboardPage() {
         </CardHeader>
         <CardContent className="pt-0">
           <div className="space-y-0 divide-y divide-border/20">
-            {mockActivityLog.map((log, i) => (
+            {mockActivityLog.map((log) => (
               <div key={log.id} className="flex items-center gap-3 py-2.5 hover:bg-white/2 transition-colors rounded-lg px-2">
                 <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
                   log.modulo === 'WhatsApp' ? 'bg-green-400' :
@@ -266,7 +270,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted/50 text-muted-foreground">{log.modulo}</span>
-                  <span className="text-[10px] text-muted-foreground">{formatRelativeTime(log.created_at)}</span>
+                  <span className="text-[10px] text-muted-foreground">{mounted ? formatRelativeTime(log.created_at) : '---'}</span>
                 </div>
               </div>
             ))}

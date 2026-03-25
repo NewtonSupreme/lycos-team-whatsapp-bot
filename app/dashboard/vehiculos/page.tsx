@@ -6,8 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import StatusBadge from '@/components/ui/status-badge';
-import { mockVehiculos, mockClientes, mockServicios } from '@/lib/mockData';
-import { Vehiculo } from '@/types';
+import { fetchVehiculos, createVehiculo, updateVehiculo, deleteVehiculo, fetchClientes } from '@/lib/supabase';
+import { Vehiculo, Cliente, Servicio } from '@/types';
 import { formatDate } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
@@ -15,7 +15,9 @@ const MARCAS = ['Toyota','Ford','Chevrolet','Honda','Nissan','Hyundai','Kia','Ma
 const ESTADOS_V = [{ v:'activo',l:'Activo'},{v:'en_servicio',l:'En Servicio'},{v:'listo',l:'Listo'},{v:'inactivo',l:'Inactivo'}];
 
 export default function VehiculosPage() {
-  const [vehiculos, setVehiculos] = useState<Vehiculo[]>(mockVehiculos);
+  const [vehiculos, setVehiculos] = useState<Vehiculo[]>([]);
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterEstado, setFilterEstado] = useState('todos');
   const [showModal, setShowModal] = useState(false);
@@ -23,9 +25,33 @@ export default function VehiculosPage() {
   const [viewVehiculo, setViewVehiculo] = useState<Vehiculo | null>(null);
   const [form, setForm] = useState({ cliente_id: '', marca: '', modelo: '', anio: '', placa: '', color: '', kilometraje: '', vin: '', estado: 'activo', notas: '' });
 
+  const [mounted, setMounted] = useState(false);
+
+  React.useEffect(() => {
+    setMounted(true);
+    loadData();
+  }, []);
+
+  if (!mounted) return null;
+
+  async function loadData() {
+    setLoading(true);
+    try {
+      const [vData, cData] = await Promise.all([
+        fetchVehiculos(),
+        fetchClientes()
+      ]);
+      if (vData) setVehiculos(vData);
+      if (cData) setClientes(cData);
+    } catch {
+      console.error('Error loading data');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const filtered = vehiculos.filter(v => {
-    const cliente = mockClientes.find(c => c.id === v.cliente_id);
-    const match = `${v.marca} ${v.modelo} ${v.placa} ${v.color} ${cliente?.nombre} ${cliente?.apellido}`.toLowerCase().includes(search.toLowerCase());
+    const match = `${v.marca} ${v.modelo} ${v.placa} ${v.color} ${v.cliente?.nombre} ${v.cliente?.apellido}`.toLowerCase().includes(search.toLowerCase());
     const estadoMatch = filterEstado === 'todos' || v.estado === filterEstado;
     return match && estadoMatch;
   });
@@ -33,19 +59,41 @@ export default function VehiculosPage() {
   const openNew = () => { setEditVehiculo(null); setForm({ cliente_id:'', marca:'', modelo:'', anio:'', placa:'', color:'', kilometraje:'', vin:'', estado:'activo', notas:'' }); setShowModal(true); };
   const openEdit = (v: Vehiculo) => { setEditVehiculo(v); setForm({ cliente_id:v.cliente_id, marca:v.marca, modelo:v.modelo, anio:v.anio.toString(), placa:v.placa, color:v.color||'', kilometraje:v.kilometraje?.toString()||'', vin:v.vin||'', estado:v.estado, notas:v.notas||'' }); setShowModal(true); };
 
-  const handleSave = () => {
-    if (editVehiculo) {
-      setVehiculos(prev => prev.map(v => v.id === editVehiculo.id ? { ...v, ...form, anio: Number(form.anio), kilometraje: Number(form.kilometraje) } as Vehiculo : v));
-    } else {
-      const nuevo: Vehiculo = { id: Date.now().toString(), ...form, anio: Number(form.anio), kilometraje: Number(form.kilometraje), estado: form.estado as Vehiculo['estado'], created_at: new Date().toISOString() };
-      setVehiculos(prev => [nuevo, ...prev]);
+  const handleSave = async () => {
+    try {
+      const data = { 
+        ...form, 
+        anio: Number(form.anio), 
+        kilometraje: Number(form.kilometraje || 0),
+        estado: form.estado as Vehiculo['estado']
+      };
+      if (editVehiculo) {
+        await updateVehiculo(editVehiculo.id, data);
+      } else {
+        await createVehiculo(data);
+      }
+      setShowModal(false);
+      loadData();
+    } catch {
+      alert('Error al guardar el vehículo');
     }
-    setShowModal(false);
   };
 
-  const handleDelete = (id: string) => setVehiculos(prev => prev.filter(v => v.id !== id));
-  const getCliente = (id: string) => mockClientes.find(c => c.id === id);
-  const getServicios = (id: string) => mockServicios.filter(s => s.vehiculo_id === id);
+  const handleDelete = async (id: string) => {
+    if (confirm('¿Estás seguro de eliminar este vehículo?')) {
+      try {
+        await deleteVehiculo(id);
+        loadData();
+      } catch {
+        alert('Error al eliminar el vehículo');
+      }
+    }
+  };
+
+  const getCliente = (id: string) => clientes.find(c => c.id === id);
+  const getServicios = (): Servicio[] => {
+    return []; 
+  };
 
   const estadoBgColor: Record<string, string> = {
     activo: 'border-green-500/20 bg-green-500/5',
@@ -55,7 +103,7 @@ export default function VehiculosPage() {
   };
 
   return (
-    <div className="space-y-5">
+    <div suppressHydrationWarning className="space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Vehículos</h1>
@@ -93,65 +141,70 @@ export default function VehiculosPage() {
       </div>
 
       {/* Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {filtered.map((vehiculo) => {
-          const cliente = getCliente(vehiculo.cliente_id);
-          const servicios = getServicios(vehiculo.id);
-          return (
-            <Card key={vehiculo.id} className={`hover:border-primary/20 transition-all duration-200 group border ${estadoBgColor[vehiculo.estado] || ''}`}>
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between gap-2 mb-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-9 h-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
-                      <Car className="w-4 h-4 text-primary" />
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {filtered.map((vehiculo) => {
+            const cliente = vehiculo.cliente || getCliente(vehiculo.cliente_id);
+            {/* const servicios = getServicios(); */}
+            return (
+              <Card key={vehiculo.id} className={`hover:border-primary/20 transition-all duration-200 group border ${estadoBgColor[vehiculo.estado] || ''}`}>
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between gap-2 mb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-9 h-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+                        <Car className="w-4 h-4 text-primary" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-sm truncate max-w-[150px]">{vehiculo.marca} {vehiculo.modelo}</h3>
+                        <p className="text-xs text-muted-foreground">{vehiculo.anio} · {vehiculo.color}</p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="font-semibold text-sm">{vehiculo.marca} {vehiculo.modelo}</h3>
-                      <p className="text-xs text-muted-foreground">{vehiculo.anio} · {vehiculo.color}</p>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => setViewVehiculo(vehiculo)} className="w-6 h-6 rounded-md hover:bg-white/10 flex items-center justify-center"><Eye className="w-3.5 h-3.5 text-muted-foreground" /></button>
+                      <button onClick={() => openEdit(vehiculo)} className="w-6 h-6 rounded-md hover:bg-white/10 flex items-center justify-center"><Edit className="w-3.5 h-3.5 text-muted-foreground" /></button>
+                      <button onClick={() => handleDelete(vehiculo.id)} className="w-6 h-6 rounded-md hover:bg-red-500/10 flex items-center justify-center"><Trash2 className="w-3.5 h-3.5 text-red-400" /></button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => setViewVehiculo(vehiculo)} className="w-6 h-6 rounded-md hover:bg-white/10 flex items-center justify-center"><Eye className="w-3.5 h-3.5 text-muted-foreground" /></button>
-                    <button onClick={() => openEdit(vehiculo)} className="w-6 h-6 rounded-md hover:bg-white/10 flex items-center justify-center"><Edit className="w-3.5 h-3.5 text-muted-foreground" /></button>
-                    <button onClick={() => handleDelete(vehiculo.id)} className="w-6 h-6 rounded-md hover:bg-red-500/10 flex items-center justify-center"><Trash2 className="w-3.5 h-3.5 text-red-400" /></button>
-                  </div>
-                </div>
 
-                <div className="grid grid-cols-2 gap-2 mb-3">
-                  <div className="p-2 rounded-lg bg-muted/30 border border-border/20">
-                    <p className="text-[10px] text-muted-foreground">Placa</p>
-                    <p className="text-xs font-bold tracking-wider text-primary">{vehiculo.placa}</p>
-                  </div>
-                  <div className="p-2 rounded-lg bg-muted/30 border border-border/20">
-                    <p className="text-[10px] text-muted-foreground">Kilometraje</p>
-                    <p className="text-xs font-medium">{vehiculo.kilometraje?.toLocaleString()} km</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground">
-                      {cliente ? (cliente.nombre[0] + cliente.apellido[0]) : '?'}
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    <div className="p-2 rounded-lg bg-muted/30 border border-border/20">
+                      <p className="text-[10px] text-muted-foreground">Placa</p>
+                      <p className="text-xs font-bold tracking-wider text-primary">{vehiculo.placa}</p>
                     </div>
-                    <span className="text-xs text-muted-foreground truncate max-w-[100px]">
-                      {cliente ? `${cliente.nombre} ${cliente.apellido}` : 'Sin cliente'}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <Wrench className="w-3 h-3" />
-                      <span>{servicios.length}</span>
+                    <div className="p-2 rounded-lg bg-muted/30 border border-border/20">
+                      <p className="text-[10px] text-muted-foreground">Kilometraje</p>
+                      <p className="text-xs font-medium">{vehiculo.kilometraje?.toLocaleString()} km</p>
                     </div>
-                    <StatusBadge status={vehiculo.estado} type="vehiculo" />
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
 
-      {filtered.length === 0 && (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                      <div className="w-5 h-5 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary flex-shrink-0">
+                        {cliente ? `${cliente.nombre?.charAt(0) || ''}${cliente.apellido?.charAt(0) || ''}`.toUpperCase() || '?' : '?'}
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-medium truncate">
+                          {cliente ? `${cliente.nombre} ${cliente.apellido}` : 'Sin cliente'}
+                        </span>
+                        {cliente?.cedula && <span className="text-[9px] text-muted-foreground">{cliente.cedula}</span>}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 ml-2">
+                      <StatusBadge status={vehiculo.estado} type="vehiculo" />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {!loading && filtered.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <Car className="w-12 h-12 text-muted-foreground/30 mb-3" />
           <p className="text-muted-foreground">No se encontraron vehículos</p>
@@ -170,7 +223,7 @@ export default function VehiculosPage() {
               <Select value={form.cliente_id} onValueChange={v => setForm(p => ({ ...p, cliente_id: v }))}>
                 <SelectTrigger><SelectValue placeholder="Seleccionar cliente" /></SelectTrigger>
                 <SelectContent>
-                  {mockClientes.map(c => <SelectItem key={c.id} value={c.id}>{c.nombre} {c.apellido}</SelectItem>)}
+                  {clientes.map(c => <SelectItem key={c.id} value={c.id}>{c.nombre} {c.apellido}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -249,17 +302,34 @@ export default function VehiculosPage() {
                   </div>
                 ))}
               </div>
+              <div className="p-3 rounded-lg border border-border/30 bg-primary/5">
+                <p className="text-xs font-bold text-primary mb-2 uppercase tracking-tight">Propietario</p>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-muted-foreground">Nombre:</span>
+                    <span className="font-medium">{(viewVehiculo.cliente || getCliente(viewVehiculo.cliente_id))?.nombre} {(viewVehiculo.cliente || getCliente(viewVehiculo.cliente_id))?.apellido}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-muted-foreground">Cédula:</span>
+                    <span className="font-medium">{(viewVehiculo.cliente || getCliente(viewVehiculo.cliente_id))?.cedula || 'N/A'}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-muted-foreground">Teléfono:</span>
+                    <span className="font-medium">{(viewVehiculo.cliente || getCliente(viewVehiculo.cliente_id))?.telefono}</span>
+                  </div>
+                </div>
+              </div>
               <div>
-                <p className="text-xs font-medium text-muted-foreground mb-2">Historial de Servicios ({getServicios(viewVehiculo.id).length})</p>
+                <p className="text-xs font-medium text-muted-foreground mb-2">Historial de Servicios ({getServicios().length})</p>
                 <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                  {getServicios(viewVehiculo.id).map(s => (
+                  {getServicios().map(s => (
                     <div key={s.id} className="flex items-center gap-2 p-2 rounded-lg bg-muted/20 border border-border/20">
                       <Wrench className="w-3 h-3 text-primary flex-shrink-0" />
                       <span className="text-xs flex-1 truncate">{s.descripcion}</span>
                       <StatusBadge status={s.estado} />
                     </div>
                   ))}
-                  {getServicios(viewVehiculo.id).length === 0 && <p className="text-xs text-muted-foreground text-center py-2">Sin historial de servicios</p>}
+                  {getServicios().length === 0 && <p className="text-xs text-muted-foreground text-center py-2">Sin historial de servicios</p>}
                 </div>
               </div>
             </>

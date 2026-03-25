@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { Vehiculo } from '@/types';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -15,7 +16,7 @@ export async function fetchClientes() {
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('clientes')
-    .select('*')
+    .select('*, vehiculos(*)')
     .order('created_at', { ascending: false });
   if (error) throw error;
   return data;
@@ -55,6 +56,31 @@ export async function fetchVehiculos() {
     .order('created_at', { ascending: false });
   if (error) throw error;
   return data;
+}
+
+export async function createVehiculo(vehiculo: Partial<Vehiculo>) {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('vehiculos').insert(vehiculo).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateVehiculo(id: string, updates: Partial<Vehiculo>) {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('vehiculos')
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteVehiculo(id: string) {
+  if (!supabase) return null;
+  const { error } = await supabase.from('vehiculos').delete().eq('id', id);
+  if (error) throw error;
 }
 
 // ─── Servicios ─────────────────────────────────────────────────────────────

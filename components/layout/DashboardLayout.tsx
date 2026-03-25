@@ -9,7 +9,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { sidebarOpen } = useAppStore();
 
   return (
-    <div className="min-h-screen bg-background dot-pattern">
+    <div suppressHydrationWarning className="min-h-screen bg-background dot-pattern">
       <Sidebar />
       <div className={cn(
         'flex flex-col min-h-screen transition-all duration-300',

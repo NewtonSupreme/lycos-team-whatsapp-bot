@@ -1,14 +1,14 @@
 'use client';
 import React, { useState } from 'react';
-import { Activity, Filter, Search, Download, Bot, User, Wrench, MessageSquare, Calendar, Settings, Shield } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Activity, Search, Download, Bot, User, Wrench, MessageSquare, Calendar, Settings, Shield } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { mockActivityLog } from '@/lib/mockData';
-import { formatRelativeTime, formatDate, formatTime, cn } from '@/lib/utils';
+import { formatRelativeTime, cn } from '@/lib/utils';
 
-const MODULE_ICONS: Record<string, any> = {
+const MODULE_ICONS: Record<string, React.ElementType> = {
   WhatsApp: MessageSquare, Servicios: Wrench, Clientes: User, Agenda: Calendar,
   Configuración: Settings, Sistema: Shield, IA: Bot,
 };
@@ -30,7 +30,12 @@ const EXTENDED_LOGS = [
 ];
 
 export default function ActividadPage() {
+  const [mounted, setMounted] = useState(false);
   const [search, setSearch] = useState('');
+
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
   const [filterModule, setFilterModule] = useState('todos');
   const [filterUser, setFilterUser] = useState('todos');
 
@@ -126,7 +131,7 @@ export default function ActividadPage() {
                   {/* Meta */}
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
                     <span className={cn('text-[10px] px-2 py-0.5 rounded-full font-medium', colorClass)}>{log.modulo}</span>
-                    <span className="text-[10px] text-muted-foreground">{formatRelativeTime(log.created_at)}</span>
+                    <span className="text-[10px] text-muted-foreground">{mounted ? formatRelativeTime(log.created_at) : '---'}</span>
                   </div>
                 </div>
               );

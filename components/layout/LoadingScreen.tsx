@@ -26,14 +26,13 @@ export default function LoadingScreen() {
   if (!mounted) return null;
 
   return (
-    <div className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-background/90 backdrop-blur-sm transition-all duration-700 ${fading ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+    <div suppressHydrationWarning className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-background/90 backdrop-blur-sm transition-all duration-700 ${fading ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
       <div className="relative flex flex-col items-center gap-8">
-        {/* Transparent Logo */}
-        <div className="w-48 h-48 md:w-64 md:h-64 animate-logo-pulse">
+        <div className="w-48 h-48 md:w-64 md:h-64 animate-logo-pulse relative">
           <img 
-            src="/Logo lycos team trans.png" 
+            src="/logo-trans.png" 
             alt="Lycos Team" 
-            className="w-full h-full object-contain dark:invert-0 light:invert"
+            className="w-full h-full object-contain"
             style={{ filter: 'var(--logo-filter)' }}
           />
         </div>
