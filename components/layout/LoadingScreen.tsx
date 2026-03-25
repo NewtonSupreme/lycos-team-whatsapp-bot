@@ -31,7 +31,7 @@ export default function LoadingScreen() {
         {/* Transparent Logo */}
         <div className="w-48 h-48 md:w-64 md:h-64 animate-logo-pulse">
           <img 
-            src="/Logo%20lycos%20team%20trans.png" 
+            src="/Logo lycos team trans.png" 
             alt="Lycos Team" 
             className="w-full h-full object-contain dark:invert-0 light:invert"
             style={{ filter: 'var(--logo-filter)' }}

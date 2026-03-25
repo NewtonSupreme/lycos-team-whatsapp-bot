@@ -11,7 +11,11 @@ export function middleware(request: NextRequest) {
     pathname.includes("/api/auth") ||
     pathname === "/login" ||
     pathname.includes("/Icono") ||
-    pathname.includes("/favicon")
+    pathname.includes("/Logo") ||
+    pathname.includes("/favicon") ||
+    pathname.endsWith(".png") ||
+    pathname.endsWith(".svg") ||
+    pathname.endsWith(".ico")
   ) {
     return NextResponse.next();
   }
