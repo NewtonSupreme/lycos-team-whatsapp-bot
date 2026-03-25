@@ -66,7 +66,7 @@ async function fetchExchangeRates(): Promise<ExchangeRates | null> {
         const bcvEntry: { promedio?: number; precio?: number } = await respBcv.json();
         if (bcvEntry) bcvRate = bcvEntry.promedio || bcvEntry.precio || 0;
       }
-    } catch(e) { console.error('Error fetching BCV:', e); }
+    } catch (e) { console.error('Error fetching BCV:', e); }
 
     let binanceRate = 0;
     try {
@@ -89,7 +89,7 @@ async function fetchExchangeRates(): Promise<ExchangeRates | null> {
           binanceRate = parseFloat(binData.data[0].adv.price);
         }
       }
-    } catch(e) { console.error('Error fetching Binance P2P:', e); }
+    } catch (e) { console.error('Error fetching Binance P2P:', e); }
 
     if (!bcvRate && ratesCache) bcvRate = ratesCache.bcv;
     if (!binanceRate && ratesCache) binanceRate = ratesCache.paralelo;
@@ -102,7 +102,7 @@ async function fetchExchangeRates(): Promise<ExchangeRates | null> {
           const parEntry: { promedio?: number; precio?: number } = await tempResp.json();
           if (parEntry) binanceRate = parEntry.promedio || parEntry.precio || 0;
         }
-      } catch(e) {}
+      } catch (e) { }
     }
 
     if (!bcvRate || !binanceRate) return ratesCache;
@@ -125,22 +125,37 @@ function formatBs(amount: number): string {
   return new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
 }
 
+function calculateBcvPrice(usdPromo: number, rates: ExchangeRates): number {
+  return (usdPromo * rates.paralelo) / rates.bcv;
+}
+
 function buildRatesContext(rates: ExchangeRates | null): string {
   if (!rates) return '\nTASAS DE CAMBIO: No disponibles en este momento.';
+  const multiplier = rates.paralelo / rates.bcv;
   return `
 REGLA DE CONVERSIÓN MONETARIA (CRÍTICO):
-Tienes 2 tasas de cambio disponibles. Sigue ESTRICTAMENTE las reglas de uso para dar precios al cliente:
+Sigue ESTRICTAMENTE estas reglas para dar precios al cliente:
 
-1) SERVICIOS A TASA BCV (Usa la tasa de Bs. ${formatBs(rates.bcv)}):
-   - Aplica EXCLUSIVAMENTE para: Alineación, Cauchos, Monturas, Autolavado, y Certificado Médico.
-   - Al mostrar el precio final al cliente, DEBES indicarle "calculado a tasa BCV".
-   - Ejemplo: "Precio: $15 (equivalente a Bs. [calculado]) calculado a tasa BCV."
+1) SERVICIOS A TASA BCV:
+   - Aplica para: Alineación, Cauchos, Monturas, Autolavado, y Certificado Médico.
+   - PRECIO: Di solo el monto en dólares seguido de "a tasa BCV".
+   - REGLA DE ORO: ¡PROHIBIDO! No des el precio en bolívares (Bs.) bajo ninguna circunstancia.
+   - MENSAJE OBLIGATORIO: "Se trabaja a tasa BCV de el momento a pagar, en caja le darán el monto exacto a pagar en bolívares."
 
-2) SERVICIOS EN 'PROMO DIVISAS' (Usa la tasa externa de Bs. ${formatBs(rates.paralelo)}):
-   - Aplica para TODOS LOS DEMÁS servicios: Escapes, Silenciadores, Resonadores, Mecánica, Frenos, Catalizador, Electrónica, Estética, etc.
-   - ¡REGLA DE ORO! ESTÁ TOTALMENTE PROHIBIDO mencionar o especificar qué tasa usaste. NUNCA vayas a usar las palabras "Binance", "P2P", "paralela", "externa", ni decirle "promo divisa" a la persona.
-   - Simplemente dale el equivalente numérico en bolívares.
-   - Ejemplo OBLIGATORIO: "Precio: $X (equivalente a Bs. [calculado])."`;
+2) SERVICIOS EN 'PROMOCIÓN EN DIVISAS':
+   - Aplica para: Escapes, Silenciadores, Resonadores, Mecánica, Frenos, Catalizador, Electrónica, Estética, etc. (Todo lo que sea de la lista general o se mencione como promo).
+   - PRECIO: Debes mostrar DOS montos en dólares:
+     a) "Promocion en divisas: $[MontoOriginal]"
+     b) "Precio: $[MontoConvertido] a tasa BCV"
+   - CONVERSIÓN: El MontoConvertido se calcula como: MontoOriginal * ${multiplier.toFixed(4)}. Redondea a 2 decimales.
+   - REGLA DE ORO: ¡PROHIBIDO! NUNCA menciones "Binance", "P2P", "paralela", "externa", ni des el precio en bolívares (Bs.) bajo ninguna circunstancia.
+   - MENSAJE OBLIGATORIO: "Se trabaja a tasa BCV de el momento a pagar, en caja le darán el monto exacto a pagar en bolívares."
+
+EJEMPLO PARA "PROMOCIÓN EN DIVISAS" ($40):
+Promocion en divisas: $40
+Precio: $48.20 a tasa BCV (ejemplo calculado con el multiplicador)
+Se trabaja a tasa BCV de el momento a pagar, en caja le darán el monto exacto a pagar en bolívares.
+`;
 }
 
 // ─── Strip markdown for WhatsApp ──────────────────────────────────────────────
@@ -225,9 +240,9 @@ UBICACION: San Antonio de los Altos, Altos Mirandinos, Miranda.
 
 SERVICIOS Y PRECIOS:
 
-SILENCIADORES Y ESCAPE — Fabricación propia, redondos tipo original, lámina galvanizada gruesa. EN DIVISAS con instalación:
+SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gruesa. PROMOCIÓN EN DIVISAS con instalación:
 - "Intermedio": significa resonador o resonador con tubería. Varia el precio. Da precio del resonador + precio por metro de tubería. El total exacto depende de condiciones (debe venir al taller).
-- El Sistema de Escape Completo Incluye: Silenciador, Resonador, Tubería, Flexible, Bajante (depende del caso si es reparar o cambiar tubería) y Empacaduras (requiere traer muestra para comprobar stock y precio).
+- El Sistema de Escape Completo Incluye: Silenciador, Resonador, Tubería, Flexible (si aplica), Bajante (depende del caso si es reparar o cambiar tubería), gomas y Empacaduras (requiere traer muestra para comprobar stock y precio).
 - Silenciadores PLANOS (Ej. Malibú): NO TENEMOS DISPONIBILIDAD de planos. Solo vendemos silenciadores Redondos. PERO, hay carros planos que sí tienen espacio para adaptar uno redondo, si el cliente tiene duda pídele que nos visite para revisión de espacio y envíale nuestra ubicación.
 - CL27: hasta 1.3L → $40
 - CL30: hasta 1.3L → $40
@@ -236,25 +251,28 @@ SILENCIADORES Y ESCAPE — Fabricación propia, redondos tipo original, lámina 
 - CL60: desde 3.8L → $90
 - CLC60: camión → $90
 - CLCP60/CLP60: platanero → $90
-- CLK60: fabricación especial $100 — SOLO para Kia Sportage y Dodge Caliber
+- CLK60: fabricación especial $100 — SOLO para Kia Sportage, Hyundai Tucson y Dodge Caliber
 - Resonador: $40
 - Flowmaster Serie 40: $140 (instalación incluida, flexibles doble malla)
 - Flexibles doble malla: $40
-- Tubo silenciador/cola: Primer metro $30, metros adicionales $20/metro, soldadura $10, gomas $7
+- Tubo silenciador/cola: Primer metro $35, metros adicionales $20/metro, soldadura $15, gomas $7
 - Colas cromadas: B55 $25, Camioneta $35, Curba $30
+- Cola de sistema de escape: depende del vehiculo, responder: "Depende del vehiculo, debes traerlo para darte el precio exacto"
 Presupuesto válido 2 días. Pide marca/modelo/año/cilindraje para recomendar el código.
+- Presupuesto aproximado/Precios aproximados de sistemas de escape: si piden un aproximado o precio aproximado para un trabajo, debes hacer el calculo correspondiente a la investigacion del vehiculo pero tomando unicamente los datos y precios de lycos team, por jemplo para un presupuesto de silenciadores debes tomar en cuenta el precio del silenciador, el precio por metro de tuberia, el precio de la soldadura y el precio de las gomas, y debes investigar cuanto mide la tuberia para dar un rango de precio estimado.
+
 
 MECANICA Y FRENOS:
 - Mecánica ligera, limpieza de inyectores
 - Frenos completo: precios previa evaluación
 - Terminal de dirección: $15 c/lado | Rótula: $20 c/lado (tras estos servicios debe alinear)
-- Amortiguador: $40 c/u (EN DIVISAS)
+- Amortiguador: $40 c/u (PROMOCIÓN EN DIVISAS)
 
 CATALIZADOR:
 - Limpieza de catalizador: $30
 - Comprar o reemplazar catalizador: debe venir al taller Lycos Team para comprobar el precio y disponibilidad exacta para su carro.
 
-ALINEACION (100% a BCV — mostrar equivalente en Bs):
+ALINEACION (100% a BCV):
 - Carros pequeños/sedan: $15 | EcoSport: $20 | Camionetas 4x4: $25
 
 CAUCHOS Y BALANCEO (100% a BCV):
@@ -272,6 +290,7 @@ SISTEMAS: Aire acondicionado, refrigeración, dirección, motor, luces, suspensi
 ELECTRONICA:
 - Elevavidrios manuales/electrónicos: $40
 - Display Ford Fiesta (km/gasolina): $60 c/u. SIEMPRE pregunta qué modelo tiene (2 modelos). Ver servicio: https://vt.tiktok.com/ZSuqsSgb5/
+- OBD I: 20$
 - OBD II: escáner según disponibilidad en la cita
 
 ESTETICA: Pulitura de faros, Latonería y pintura (previa cotización), Papel ahumado, Cámaras 360.
@@ -355,7 +374,7 @@ export async function POST(request: NextRequest) {
                   const arrayBuffer = await mediaResp.arrayBuffer();
                   const base64Data = Buffer.from(arrayBuffer).toString('base64');
                   const mimeType = mediaData.mime_type || 'image/jpeg';
-                  
+
                   const description = await describeImage(base64Data, mimeType);
                   if (description) {
                     messageBody = `[Imagen enviada por el cliente. Descripción automática (analízala y respondele en base a esto): ${description}]${captionStr}`;
@@ -398,7 +417,7 @@ export async function POST(request: NextRequest) {
                   const arrayBuffer = await mediaResp.arrayBuffer();
                   const base64Data = Buffer.from(arrayBuffer).toString('base64');
                   const mimeType = mediaData.mime_type || 'audio/ogg';
-                  
+
                   const transcript = await transcribeAudio(base64Data, mimeType);
                   if (transcript) {
                     messageBody = `${transcript} (Audio transcrito)`;
@@ -457,7 +476,7 @@ export async function POST(request: NextRequest) {
             console.log(`⏩ Ignorando respuesta IA de ${wa_message_id} porque hay mensajes más recientes (agrupación de imágenes/mensajes).`);
             continue; // Skip AI response, letting the newer message handle it
           }
-        } catch(e) { console.error('Error consultando mensajes recientes:', e); }
+        } catch (e) { console.error('Error consultando mensajes recientes:', e); }
 
         // ─── Human takeover check ───────────────────────────────────────────
         // If an admin has taken manual control of this chat, skip bot response
@@ -637,10 +656,10 @@ async function loadConversationContext(
 
   // Inventory (only when relevant)
   const lower = currentMessage.toLowerCase();
-  const invKw = ['silenciador','resonador','flexible','cola','filtro','aceite','gasolina','refrigerante','liquido','líquido',
-    'liga','dot','repuesto','stock','inventario','disponible','hay','tienes','precio','cl27','cl30','cl40','clh40',
-    'cl60','clk60','clc60','clp60','b55','curba','flowmaster','arauca','aveo','corolla','twingo','cavalier',
-    'camry','sentra','blazer','lancer','cherokee','explorer','samuray','macho'];
+  const invKw = ['silenciador', 'resonador', 'flexible', 'cola', 'filtro', 'aceite', 'gasolina', 'refrigerante', 'liquido', 'líquido',
+    'liga', 'dot', 'repuesto', 'stock', 'inventario', 'disponible', 'hay', 'tienes', 'precio', 'cl27', 'cl30', 'cl40', 'clh40',
+    'cl60', 'clk60', 'clc60', 'clp60', 'b55', 'curba', 'flowmaster', 'arauca', 'aveo', 'corolla', 'twingo', 'cavalier',
+    'camry', 'sentra', 'blazer', 'lancer', 'cherokee', 'explorer', 'samuray', 'macho'];
   if (invKw.some(k => lower.includes(k))) {
     try {
       const { data: items } = await db.from('inventario')
@@ -648,7 +667,7 @@ async function loadConversationContext(
         .order('categoria').order('nombre');
       if (items && items.length > 0) {
         const list = items.map(i =>
-          `  - ${i.nombre}${i.codigo ? ' ['+i.codigo+']' : ''}${i.precio_usd ? ': $'+i.precio_usd : ''} — ${i.stock > 0 ? 'Stock: '+i.stock : 'SIN STOCK'}`
+          `  - ${i.nombre}${i.codigo ? ' [' + i.codigo + ']' : ''}${i.precio_usd ? ': $' + i.precio_usd : ''} — ${i.stock > 0 ? 'Stock: ' + i.stock : 'SIN STOCK'}`
         ).join('\n');
         inventarioInfo = `\nINVENTARIO ACTUAL:\n${list}`;
       }
@@ -667,7 +686,7 @@ async function loadConversationContext(
     if (globales && globales.length > 0) {
       agendaOcupada = `\nHORARIOS OCUPADOS GLOBALMENTE (PROHIBIDO AGENDAR EN ESTAS FECHAS Y HORAS EXACTAS):\n` + globales.map(g => `- ${g.fecha} a las ${g.hora}`).join('\n');
     }
-  } catch(e) {}
+  } catch (e) { }
 
   return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada };
 }
@@ -687,7 +706,7 @@ async function getAIResponse(
   const dayName = dayNames[dayNum];
 
   const memoriaStr = Object.keys(ctx.memoria).length > 0
-    ? `\nMEMORIA DEL CLIENTE:\n- Nombre: ${ctx.memoria.nombre || 'no registrado'}\n- Vehiculos: ${ctx.memoria.vehiculos?.map(v => `${v.marca} ${v.modelo}${v.anio ? ' '+v.anio : ''}`).join(', ') || 'no registrado'}\n- Notas: ${ctx.memoria.notas || 'ninguna'}`
+    ? `\nMEMORIA DEL CLIENTE:\n- Nombre: ${ctx.memoria.nombre || 'no registrado'}\n- Vehiculos: ${ctx.memoria.vehiculos?.map(v => `${v.marca} ${v.modelo}${v.anio ? ' ' + v.anio : ''}`).join(', ') || 'no registrado'}\n- Notas: ${ctx.memoria.notas || 'ninguna'}`
     : '';
 
   const ratesCtx = buildRatesContext(rates);
@@ -708,11 +727,8 @@ REGLAS CRITICAS:
 - NUNCA uses asteriscos (*) en tus respuestas. Texto plano siempre. Listas con - o numeradas.
 - Pon al menos 1 emoji relevante en la respuesta.
 - Usa la fecha (${vzlaDateStr}) para calcular fechas relativas. Nunca agendes domingo.
-- Para precios en divisas: muestra el precio USD Y el equivalente en bolivares (BCV).
-- Stock/disponibilidad: usa el INVENTARIO ACTUAL.
-- Citas registradas: indica si son pasadas o proximas.
-- Asesor: solo si el cliente lo pide o sea imprescindible.
 - Un cliente puede tener varios vehiculos.
+- REGLA DE ORO (PRECIOS): NUNCA, bajo ningún concepto, des el precio en Bolívares (Bs.). Solo usa dólares ($) y dólares a tasa BCV según las REGLAS DE CONVERSIÓN MONETARIA.
 - Si ves "[Imagen enviada...]", lee su descripción automática para entender qué mandó y responderle. Si manda varias fotos o texto repartido en varios envíos seguidos, asume el contexto completo unificado.
 - No repitas preguntas ya respondidas en el historial.`;
 
@@ -747,7 +763,7 @@ async function transcribeAudio(base64Data: string, mimeType: string): Promise<st
   if (!GEMINI_API_KEY) return null;
   const sttModel = GEMINI_MODEL;
   const systemPrompt = "Eres un sistema de reconocimiento de voz. Tu UNICA tarea es transcribir el audio a texto exacto en español. NO agregues explicaciones, respuestas, introducciones ni comentarios. Solo escribe lo que el usuario dice en español tal cual.";
-  
+
   try {
     const resp = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${sttModel}:generateContent?key=${GEMINI_API_KEY}`,
@@ -783,7 +799,7 @@ async function describeImage(base64Data: string, mimeType: string): Promise<stri
   if (!GEMINI_API_KEY) return null;
   const sttModel = GEMINI_MODEL;
   const systemPrompt = "Eres un analista de imágenes de un taller automotriz. Detalla brevemente y de forma muy precisa qué se ve en la imagen para que el chatbot lo entienda y pueda ayudar al cliente. Si hay texto relevante en la imagen, menciónalo. Responde siempre en español.";
-  
+
   try {
     const resp = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${sttModel}:generateContent?key=${GEMINI_API_KEY}`,
@@ -871,8 +887,8 @@ async function tryBookAppointment(db: ReturnType<typeof getDb>, from: string, us
   if (!fecha) {
     const m = userMsg.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
     if (m) {
-      const y = m[3] ? (m[3].length === 2 ? '20'+m[3] : m[3]) : getVzlaDate().getFullYear().toString();
-      fecha = `${y}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+      const y = m[3] ? (m[3].length === 2 ? '20' + m[3] : m[3]) : getVzlaDate().getFullYear().toString();
+      fecha = `${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
     }
   }
   if (!fecha) return;
@@ -886,7 +902,7 @@ async function tryBookAppointment(db: ReturnType<typeof getDb>, from: string, us
     const mer = tm[3]?.toLowerCase();
     if (mer === 'pm' && h < 12) h += 12;
     if (mer === 'am' && h === 12) h = 0;
-    hora = `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}`;
+    hora = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
   }
 
   try {
@@ -910,7 +926,7 @@ async function updateConversation(db: ReturnType<typeof getDb>, from: string, la
   void (async () => {
     try {
       await db.from('conversaciones').upsert({
-        telefono: from, ultimo_mensaje: lastMsg.substring(0,100),
+        telefono: from, ultimo_mensaje: lastMsg.substring(0, 100),
         ultimo_mensaje_at: new Date().toISOString(), memoria,
       }, { onConflict: 'telefono' });
     } catch (e) { console.error('Error update conversacion:', e); }
@@ -930,7 +946,7 @@ async function sendMsg(to: string, text: string, previewUrl = false): Promise<vo
         text: { preview_url: previewUrl, body: text },
       }),
     });
-    if (!resp.ok) { console.error('❌ sendMsg error:', (await resp.text()).substring(0,200)); return; }
+    if (!resp.ok) { console.error('❌ sendMsg error:', (await resp.text()).substring(0, 200)); return; }
     const data = await resp.json();
     const wa_id = data.messages?.[0]?.id;
     console.log(`📤 Sent to ${to}. ID: ${wa_id}`);
@@ -964,7 +980,7 @@ async function sendContactCard(to: string, phone: string, displayName: string): 
       }),
     });
     if (!resp.ok) {
-      console.error('❌ Contact card error:', (await resp.text()).substring(0,200));
+      console.error('❌ Contact card error:', (await resp.text()).substring(0, 200));
       await sendMsg(to, `Contacto del asesor: https://wa.me/${cleanPhone}`, true);
       return;
     }
@@ -986,15 +1002,15 @@ async function sendContactCard(to: string, phone: string, displayName: string): 
 
 // ─── Intent Detection ──────────────────────────────────────────────────────────
 function isLocationRequest(lower: string): boolean {
-  return ['ubicacion','ubicación','donde est','dirección','direccion','llegar','ubicado','gps','mapa'].some(k => lower.includes(k));
+  return ['ubicacion', 'ubicación', 'donde est', 'dirección', 'direccion', 'llegar', 'ubicado', 'gps', 'mapa'].some(k => lower.includes(k));
 }
 function isSocialRequest(lower: string): boolean {
-  return ['instagram','tiktok','redes sociales','redes','sigueme','seguir','perfil redes','@lycos'].some(k => lower.includes(k));
+  return ['instagram', 'tiktok', 'redes sociales', 'redes', 'sigueme', 'seguir', 'perfil redes', '@lycos'].some(k => lower.includes(k));
 }
 function isContactRequest(lower: string): boolean {
-  return ['numero del asesor','número del asesor','contacto del asesor','hablar con alguien',
-    'numero de whatsapp','número de whatsapp','hablar con una persona','número de contacto',
-    'numero de contacto','whatsapp del taller','hablar con un humano','asesor humano',
-    'quiero hablar con','necesito hablar con'].some(k => lower.includes(k));
+  return ['numero del asesor', 'número del asesor', 'contacto del asesor', 'hablar con alguien',
+    'numero de whatsapp', 'número de whatsapp', 'hablar con una persona', 'número de contacto',
+    'numero de contacto', 'whatsapp del taller', 'hablar con un humano', 'asesor humano',
+    'quiero hablar con', 'necesito hablar con'].some(k => lower.includes(k));
 }
 function delay(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
