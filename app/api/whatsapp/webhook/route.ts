@@ -588,12 +588,15 @@ export async function POST(request: NextRequest) {
 
         // Send images if Gemini added the tags
         if (imgMatches.length > 0) {
-          const origin = request.nextUrl ? request.nextUrl.origin : new URL(request.url).origin;
+          const host = request.headers.get('x-forwarded-host') || request.headers.get('host');
+          const proto = request.headers.get('x-forwarded-proto') || 'https';
+          const origin = `${proto}://${host}`;
+          
           for (const imgName of imgMatches) {
             await delay(800);
-            const encodedName = encodeURIComponent(imgName.toLowerCase());
-            // Se asume que la extensión será jpg
+            const encodedName = encodeURIComponent(imgName.toUpperCase());
             const imgUrl = `${origin}/Silenciadores/${encodedName}.jpg`;
+            console.log(`Intentando enviar imagen desde URL: ${imgUrl}`);
             await sendImage(from, imgUrl);
           }
         }
