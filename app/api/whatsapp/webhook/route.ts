@@ -153,7 +153,7 @@ Sigue ESTRICTAMENTE estas reglas para dar precios al cliente:
 
 EJEMPLO PARA "PROMOCIÓN EN DIVISAS" ($40):
 Promocion en divisas: $40
-Precio: $48.20 a tasa BCV (ejemplo calculado con el multiplicador)
+Precio: $60 a tasa BCV (ejemplo calculado con el multiplicador)
 Se trabaja a tasa BCV de el momento a pagar, en caja le darán el monto exacto a pagar en bolívares.
 `;
 }
