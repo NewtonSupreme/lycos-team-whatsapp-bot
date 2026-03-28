@@ -186,7 +186,7 @@ function generateFallbackResponse(userMsg: string): string {
   }
 
   if (lower.includes('horario') || lower.includes('hora') || lower.includes('abierto') || lower.includes('atiend')) {
-    return '⏰ **Horario Lycos Team:**\n\n📅 Lunes a Viernes: 8:00 AM — 6:00 PM\n📅 Sábado: 8:00 AM — 2:00 PM\n❌ Domingo: Cerrado\n\n📞 Emergencias: +58 412-334-3519 (disponible fuera de horario para urgencias)';
+    return '⏰ **Horario Lycos Team:**\n\n📅 Lunes a Sabado: 8:00 AM — 5:00 PM\n❌ Domingo: Cerrado\n\n📞 Emergencias: +58 412-334-3519 (disponible fuera de horario para urgencias)';
   }
 
   if (lower.includes('cita') || lower.includes('agendar') || lower.includes('reserv') || lower.includes('disponib')) {
