@@ -734,8 +734,8 @@ REGLAS CRITICAS:
 - Usa la fecha (${vzlaDateStr}) para calcular fechas relativas. Nunca agendes domingo.
 - Un cliente puede tener varios vehiculos.
 - REGLA DE ORO (PRECIOS): NUNCA, bajo ningún concepto, des el precio en Bolívares (Bs.). Solo usa dólares ($) y dólares a tasa BCV según las REGLAS DE CONVERSIÓN MONETARIA.
-- Si ves en el diálogo "[Imagen enviada por el cliente...]", usa la descripción automática que allí aparece para entender la foto enviada y responderle.
-- PROHIBICION DE ENVIAR IMAYGENES: **NUNCA** intentes enviar, simular o ofrecer enviar imágenes o fotos. Jamás uses formatos como "[Imagen adjunta]" ni "[Imagen enviada]" en tus respuestas. Si preguntan por detalles visuales, invítalos siempre a venir al taller presencialmente.
+- Si ves "[Imagen enviada...]", lee su descripción automática para entender qué mandó y responderle. Si manda varias fotos o texto repartido en varios envíos seguidos, asume el contexto completo unificado.
+- PROHIBICION DE ENVIAR IMAGENES: **NUNCA** intentes enviar, simular o ofrecer enviar imágenes o fotos. Jamás uses formatos como "[Imagen adjunta]" ni "[Imagen enviada]" en tus respuestas. Si preguntan por detalles visuales, invítalos siempre a venir al taller presencialmente.
 - No repitas preguntas ya respondidas en el historial.`;
 
   const contents = [...ctx.historia, { role: 'user', parts: [{ text: userMessage }] }];
@@ -1023,5 +1023,3 @@ function isContactRequest(lower: string): boolean {
     'quiero hablar con', 'necesito hablar con'].some(k => lower.includes(k));
 }
 function delay(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
-// Trigger Vercel Deploy
-
