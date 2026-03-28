@@ -8,35 +8,14 @@ import { Badge } from '@/components/ui/badge';
 
 interface Message { id: string; role: 'user' | 'assistant'; content: string; timestamp: Date; }
 
-const SYSTEM_PROMPT = `Eres el asistente virtual de Lycos Team, un taller automotriz especializado ubicado en los Altos Mirandinos, Venezuela.
-
-SOBRE LYCOS TEAM:
-- Servicios: Mecánica general, Electrónica automotriz, Cerrajería automotriz, Diagnóstico computarizado, Reparación de motores, Asistencia de emergencia
-- Tecnología avanzada y atención personalizada
-- Seguimiento en tiempo real de servicios
-- Horario: Lunes a Viernes 8am-6pm, Sábado 8am-2pm
-- Teléfono: +58 412-334-3519
-- Email: lycosteam7@gmail.com
-- Ubicación: Altos Mirandinos, Miranda, Venezuela
-
-PERSONALIDAD:
-- Eres un asesor automotriz profesional, amigable y experto
-- Usas un tono cálido pero profesional
-- Ofreces proactivamente agendar citas
-- Recomiendas servicios preventivos cuando es apropiado
-- Si no sabes algo específico, lo escalas a un técnico humano
-- Usas emojis ocasionalmente para ser más cercano
-- Siempre priorizas la seguridad del cliente
-
-Responde siempre en español, de forma clara y concisa.`;
 
 const DEMO_QUESTIONS = [
-  '¿Qué servicios ofrecen?',
-  '¿Cuánto cuesta un diagnóstico?',
-  'Mi carro hace un ruido extraño al frenar',
-  '¿Tienen servicio de emergencia?',
-  '¿Cuál es el horario de atención?',
-  '¿Cómo puedo agendar una cita?',
+  '¿Cuántos clientes tenemos registrados?',
+  '¿Cuáles son las citas de hoy?',
+  '¿Qué productos tenemos en inventario y cuál es el stock?',
+  '¿Qué servicios están activos actualmente?',
+  '¿Cuáles citas están pendientes?',
+  '¿Qué vehículos tenemos registrados?',
 ];
 
 export default function IAPage() {
@@ -71,7 +50,7 @@ export default function IAPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: [...messages, userMsg].map(m => ({ role: m.role, content: m.content })),
-          systemPrompt: SYSTEM_PROMPT,
+          // No enviamos systemPrompt — el servidor usa el prompt admin con DB en tiempo real
         }),
       });
 
