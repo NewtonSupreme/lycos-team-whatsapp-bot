@@ -260,7 +260,7 @@ export default function IAPage() {
               {[
                 { icon: Car, label: 'Taller', value: 'Lycos Team' },
                 { icon: MapPin, label: 'Ubicación', value: 'Altos Mirandinos, VE' },
-                { icon: Clock, label: 'Horario', value: 'L-V 8am-6pm · S 8am-2pm' },
+                { icon: Clock, label: 'Horario', value: 'Lunes a Sabado 8am a 5pm' },
                 { icon: Phone, label: 'Teléfono', value: '+58 412-334-3519' },
                 { icon: Wrench, label: 'Servicios', value: '6 especialidades' },
               ].map(({ icon: Icon, label, value }) => (
