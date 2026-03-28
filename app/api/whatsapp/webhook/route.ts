@@ -734,7 +734,8 @@ REGLAS CRITICAS:
 - Usa la fecha (${vzlaDateStr}) para calcular fechas relativas. Nunca agendes domingo.
 - Un cliente puede tener varios vehiculos.
 - REGLA DE ORO (PRECIOS): NUNCA, bajo ningún concepto, des el precio en Bolívares (Bs.). Solo usa dólares ($) y dólares a tasa BCV según las REGLAS DE CONVERSIÓN MONETARIA.
-- Si ves "[Imagen enviada...]", lee su descripción automática para entender qué mandó y responderle. Si manda varias fotos o texto repartido en varios envíos seguidos, asume el contexto completo unificado.
+- Si ves en el diálogo "[Imagen enviada por el cliente...]", usa la descripción automática que allí aparece para entender la foto enviada y responderle.
+- PROHIBICION DE ENVIAR IMAYGENES: **NUNCA** intentes enviar, simular o ofrecer enviar imágenes o fotos. Jamás uses formatos como "[Imagen adjunta]" ni "[Imagen enviada]" en tus respuestas. Si preguntan por detalles visuales, invítalos siempre a venir al taller presencialmente.
 - No repitas preguntas ya respondidas en el historial.`;
 
   const contents = [...ctx.historia, { role: 'user', parts: [{ text: userMessage }] }];
@@ -967,43 +968,7 @@ async function sendMsg(to: string, text: string, previewUrl = false): Promise<vo
 }
 
 // ─── Send WhatsApp Image ───────────────────────────────────────────────────────
-async function sendImage(to: string, imageUrl: string, caption?: string): Promise<void> {
-  if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
-  try {
-    const body: {
-      messaging_product: string;
-      recipient_type: string;
-      to: string;
-      type: string;
-      image: { link: string; caption?: string };
-    } = {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to: to.replace(/[^0-9]/g, ''),
-      type: 'image',
-      image: { link: imageUrl }
-    };
-    if (caption) body.image.caption = caption;
 
-    const resp = await fetch(`https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!resp.ok) { console.error('❌ sendImage error:', (await resp.text()).substring(0, 200)); return; }
-    const data = await resp.json();
-    const wa_id = data.messages?.[0]?.id;
-    console.log(`📤 Image sent to ${to}. ID: ${wa_id}`);
-    const db = getDb();
-    if (db) {
-      void (async () => {
-        try {
-          await db.from('mensajes_whatsapp').insert({ from_number: 'system', to_number: to, body: caption ? `[Imagen enviada: ${caption}]` : '[Imagen enviada]', tipo: 'saliente', wa_message_id: wa_id, es_ia: true });
-        } catch (e) { console.error('Error saving image saliente:', e); }
-      })();
-    }
-  } catch (e) { console.error('❌ sendImage exception:', e); }
-}
 
 // ─── Send Native Contact Card ──────────────────────────────────────────────────
 async function sendContactCard(to: string, phone: string, displayName: string): Promise<void> {
