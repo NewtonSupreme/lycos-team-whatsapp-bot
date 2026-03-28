@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import {
+  fetchClientes,
+  fetchVehiculos,
+  fetchCitas,
+  fetchServicios,
+  fetchInventario,
+} from '@/lib/supabase';
 
 const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
-
-function getDb() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-  if (!url || !key) return null;
-  return createClient(url, key);
-}
 
 function getVzlaDateTime(): string {
   return new Intl.DateTimeFormat('es-VE', {
@@ -17,95 +16,115 @@ function getVzlaDateTime(): string {
   }).format(new Date());
 }
 
-// ─── Load Full DB Context ──────────────────────────────────────────────────────
+// ─── Load Full DB Context using proven lib functions ───────────────────────────
 async function loadDbContext(): Promise<string> {
-  const db = getDb();
-  if (!db) return '[BASE DE DATOS NO DISPONIBLE]';
   const sections: string[] = [];
 
+  // Clientes
   try {
-    const { data } = await db
-      .from('clientes')
-      .select('id, nombre, apellido, telefono, email, cedula, direccion')
-      .order('nombre');
-    if (data?.length) {
+    const clientes = await fetchClientes();
+    if (clientes && clientes.length > 0) {
       sections.push(
-        `CLIENTES (${data.length}):\n` +
-        data.map(c =>
-          `  • ID:${c.id} | ${c.nombre} ${c.apellido} | Tel: ${c.telefono} | Email: ${c.email || '-'} | CI: ${c.cedula || '-'} | Dir: ${c.direccion || '-'}`
+        `=== CLIENTES REGISTRADOS (${clientes.length}) ===\n` +
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        clientes.map((c: any) =>
+          `• ID:${c.id} | ${c.nombre} ${c.apellido} | Teléfono: ${c.telefono} | Email: ${c.email || 'N/A'} | CI: ${c.cedula || 'N/A'} | Dirección: ${c.direccion || 'N/A'} | Vehículos: ${c.vehiculos?.length ?? 0}`
         ).join('\n')
       );
-    } else sections.push('CLIENTES: Sin registros.');
-  } catch (e) { sections.push(`CLIENTES: Error - ${e}`); }
+    } else {
+      sections.push('=== CLIENTES: Sin registros ===');
+    }
+  } catch (e) {
+    sections.push(`=== CLIENTES: Error al cargar (${e}) ===`);
+  }
 
+  // Vehículos
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await db.from('vehiculos').select('id, marca, modelo, anio, placa, color, kilometraje, estado, clientes(nombre, apellido, telefono)').order('marca') as any;
-    if (data?.length) {
+    const vehiculos = await fetchVehiculos();
+    if (vehiculos && vehiculos.length > 0) {
       sections.push(
-        `VEHÍCULOS (${data.length}):\n` +
-        data.map((v: Record<string, any>) =>
-          `  • ID:${v.id} | ${v.marca} ${v.modelo} ${v.anio} | Placa:${v.placa} | Estado:${v.estado} | Dueño: ${v.clientes?.nombre || '-'} ${v.clientes?.apellido || ''} Tel:${v.clientes?.telefono || '-'}`
+        `=== VEHÍCULOS REGISTRADOS (${vehiculos.length}) ===\n` +
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        vehiculos.map((v: any) =>
+          `• ID:${v.id} | ${v.marca} ${v.modelo} ${v.anio} | Placa: ${v.placa} | Color: ${v.color || '-'} | KM: ${v.kilometraje || '-'} | Estado: ${v.estado} | Dueño: ${v.clientes?.nombre || '-'} ${v.clientes?.apellido || ''} | Tel dueño: ${v.clientes?.telefono || '-'}`
         ).join('\n')
       );
-    } else sections.push('VEHÍCULOS: Sin registros.');
-  } catch (e) { sections.push(`VEHÍCULOS: Error - ${e}`); }
+    } else {
+      sections.push('=== VEHÍCULOS: Sin registros ===');
+    }
+  } catch (e) {
+    sections.push(`=== VEHÍCULOS: Error al cargar (${e}) ===`);
+  }
 
+  // Citas
   try {
-    const { data } = await db.from('citas')
-      .select('id, fecha, hora, telefono, tipo_servicio, descripcion, estado, clientes(nombre, apellido), vehiculos(marca, modelo)')
-      .order('fecha', { ascending: true })
-      .order('hora', { ascending: true })
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .limit(40) as any;
-    if (data?.length) {
+    const citas = await fetchCitas();
+    if (citas && citas.length > 0) {
       sections.push(
-        `CITAS (${data.length}):\n` +
-        data.map((c: Record<string, any>) =>
-          `  • ID:${c.id} | ${c.fecha} ${c.hora} | ${c.estado.toUpperCase()} | Cliente: ${c.clientes?.nombre || '-'} ${c.clientes?.apellido || ''} | Tel:${c.telefono || '-'} | Servicio: ${c.descripcion || c.tipo_servicio}`
+        `=== CITAS REGISTRADAS (${citas.length}) ===\n` +
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        citas.map((c: any) =>
+          `• ID:${c.id} | Fecha: ${c.fecha} | Hora: ${c.hora} | Estado: ${c.estado.toUpperCase()} | Cliente: ${c.cliente?.nombre || '-'} ${c.cliente?.apellido || ''} | Teléfono: ${c.telefono || '-'} | Servicio: ${c.descripcion || c.tipo_servicio} | Vehículo: ${c.vehiculo?.marca || '-'} ${c.vehiculo?.modelo || ''} (${c.vehiculo?.placa || '-'})`
         ).join('\n')
       );
-    } else sections.push('CITAS: Sin citas.');
-  } catch (e) { sections.push(`CITAS: Error - ${e}`); }
+    } else {
+      sections.push('=== CITAS: Sin citas registradas ===');
+    }
+  } catch (e) {
+    sections.push(`=== CITAS: Error al cargar (${e}) ===`);
+  }
 
+  // Servicios
   try {
-    const { data } = await db.from('servicios')
-      .select('id, tipo, descripcion, estado, costo_estimado, costo_final, fecha_inicio, fecha_fin, vehiculos(marca, modelo, placa, clientes(nombre, apellido))')
-      .order('created_at', { ascending: false })
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .limit(25) as any;
-    if (data?.length) {
+    const servicios = await fetchServicios();
+    if (servicios && servicios.length > 0) {
       sections.push(
-        `SERVICIOS/ÓRDENES (${data.length}):\n` +
-        data.map((s: Record<string, any>) =>
-          `  • ID:${s.id} | ${s.estado} | ${s.tipo} - ${s.descripcion} | Vehículo: ${s.vehiculos?.marca || '-'} ${s.vehiculos?.modelo || ''} (${s.vehiculos?.placa || ''}) | Cliente: ${s.vehiculos?.clientes?.nombre || '-'} | Costo: $${s.costo_final ?? s.costo_estimado ?? '-'}`
+        `=== ÓRDENES DE SERVICIO (${servicios.length}) ===\n` +
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        servicios.slice(0, 30).map((s: any) =>
+          `• ID:${s.id} | Estado: ${s.estado} | Tipo: ${s.tipo} | ${s.descripcion} | Vehículo: ${s.vehiculos?.marca || '-'} ${s.vehiculos?.modelo || ''} (${s.vehiculos?.placa || ''}) | Cliente: ${s.vehiculos?.clientes?.nombre || '-'} | Costo: $${s.costo_final ?? s.costo_estimado ?? '-'}`
         ).join('\n')
       );
-    } else sections.push('SERVICIOS: Sin órdenes.');
-  } catch (e) { sections.push(`SERVICIOS: Error - ${e}`); }
+    } else {
+      sections.push('=== SERVICIOS: Sin órdenes ===');
+    }
+  } catch (e) {
+    sections.push(`=== SERVICIOS: Error al cargar (${e}) ===`);
+  }
 
+  // Inventario
   try {
-    const { data } = await db.from('inventario')
-      .select('id, nombre, codigo, categoria, marca, precio_usd, precio_bs, stock, stock_minimo, unidad, notas')
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .eq('activo', true).order('categoria').order('nombre') as any;
-    if (data?.length) {
+    const inventario = await fetchInventario();
+    if (inventario && inventario.length > 0) {
       sections.push(
-        `INVENTARIO (${data.length} productos):\n` +
-        data.map((i: Record<string, any>) =>
-          `  • ID:${i.id} | [${i.categoria}] ${i.nombre}${i.codigo ? ' (' + i.codigo + ')' : ''} | Stock: ${i.stock}${i.stock_minimo ? ' mín:' + i.stock_minimo : ''} | $${i.precio_usd ?? '-'} | ${i.unidad || ''}`
+        `=== INVENTARIO (${inventario.length} productos) ===\n` +
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        inventario.map((i: any) =>
+          `• ID:${i.id} | Categoría: ${i.categoria} | ${i.nombre}${i.codigo ? ' [' + i.codigo + ']' : ''} | Stock: ${i.stock}${i.stock_minimo != null ? ' (mín:' + i.stock_minimo + ')' : ''} | Precio: $${i.precio_usd ?? '-'} | ${i.unidad || ''}`
         ).join('\n')
       );
-    } else sections.push('INVENTARIO: Sin productos activos.');
-  } catch (e) { sections.push(`INVENTARIO: Error - ${e}`); }
+    } else {
+      sections.push('=== INVENTARIO: Sin productos activos ===');
+    }
+  } catch (e) {
+    sections.push(`=== INVENTARIO: Error al cargar (${e}) ===`);
+  }
 
   return sections.join('\n\n');
 }
 
-// ─── Execute Write Action Tags ─────────────────────────────────────────────────
-// AI embeds [ACTION: tipo | k=v | k=v] at end of response for write operations
+// ─── Execute Write Actions ─────────────────────────────────────────────────────
+import { createClient } from '@supabase/supabase-js';
+
+function getAdminDb() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+  if (!url || !key) return null;
+  return createClient(url, key);
+}
+
 async function executeActions(text: string): Promise<{ clean: string; results: string[] }> {
-  const db = getDb();
+  const db = getAdminDb();
   const results: string[] = [];
   let clean = text;
 
@@ -126,32 +145,43 @@ async function executeActions(text: string): Promise<{ clean: string; results: s
           descripcion: p.descripcion || 'Cita por asistente IA',
           tipo_servicio: p.tipo_servicio || 'otro', estado: 'pendiente', duracion_minutos: 60,
         });
-        results.push(`✅ Cita creada: ${p.fecha} ${p.hora || '09:00'}`);
-      } else if (tipo === 'actualizar_estado_cita') {
-        await db.from('citas').update({ estado: p.estado }).eq('id', p.id);
-        results.push(`✅ Cita ${p.id} → estado: ${p.estado}`);
+        results.push(`✅ Cita creada: ${p.fecha} a las ${p.hora || '09:00'}`);
+      } else if (tipo === 'actualizar_cita') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const updates: Record<string, any> = {};
+        if (p.estado) updates.estado = p.estado;
+        if (p.hora) updates.hora = p.hora;
+        if (p.descripcion) updates.descripcion = p.descripcion;
+        await db.from('citas').update(updates).eq('id', p.id);
+        results.push(`✅ Cita actualizada (ID: ${p.id})`);
       } else if (tipo === 'actualizar_stock') {
         const { data } = await db.from('inventario')
           .update({ stock: Number(p.stock), updated_at: new Date().toISOString() })
           .eq('id', p.id).select('nombre').single();
-        results.push(`✅ Stock de "${data?.nombre}" actualizado a ${p.stock}`);
-      } else if (tipo === 'desactivar_producto') {
+        results.push(`✅ Stock de "${data?.nombre}" → ${p.stock} unidades`);
+      } else if (tipo === 'eliminar_producto') {
         const { data } = await db.from('inventario')
           .update({ activo: false, updated_at: new Date().toISOString() })
           .eq('id', p.id).select('nombre').single();
-        results.push(`✅ Producto "${data?.nombre}" eliminado del inventario`);
+        results.push(`✅ Producto "${data?.nombre}" eliminado del inventario activo`);
       } else if (tipo === 'crear_cliente') {
         await db.from('clientes').insert({
           nombre: p.nombre, apellido: p.apellido || '', telefono: p.telefono || '',
-          email: p.email || '', cedula: p.cedula || '', updated_at: new Date().toISOString(),
+          email: p.email || '', cedula: p.cedula || '',
+          updated_at: new Date().toISOString(),
         });
         results.push(`✅ Cliente "${p.nombre} ${p.apellido}" registrado`);
       } else if (tipo === 'actualizar_servicio') {
-        await db.from('servicios').update({ estado: p.estado, updated_at: new Date().toISOString() }).eq('id', p.id);
-        results.push(`✅ Servicio ${p.id} → estado: ${p.estado}`);
+        await db.from('servicios')
+          .update({ estado: p.estado, updated_at: new Date().toISOString() })
+          .eq('id', p.id);
+        results.push(`✅ Servicio actualizado → ${p.estado}`);
       }
-    } catch (e) { results.push(`❌ Error en ${tipo}: ${e}`); }
+    } catch (e) {
+      results.push(`❌ Error en ${tipo}: ${e}`);
+    }
   }
+
   return { clean: clean.trim(), results };
 }
 
@@ -167,7 +197,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Load all real-time DB data and inject as context
+    // Load ALL database data in real time
     const dbContext = await loadDbContext();
     const finalSystemPrompt = systemPrompt || buildSystemPrompt(dbContext);
 
@@ -185,7 +215,10 @@ export async function POST(request: NextRequest) {
           system_instruction: { parts: [{ text: finalSystemPrompt }] },
           contents: geminiMessages,
           generationConfig: {
-            temperature: 0.7, topK: 40, topP: 0.95, maxOutputTokens: 1500,
+            temperature: 0.4,
+            topK: 40,
+            topP: 0.95,
+            maxOutputTokens: 2048,
           },
           safetySettings: [
             { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
@@ -197,7 +230,7 @@ export async function POST(request: NextRequest) {
 
     if (!apiResponse.ok) {
       const errText = await apiResponse.text();
-      console.error('[IA] Gemini error:', apiResponse.status, errText.slice(0, 400));
+      console.error('[IA] Gemini error:', apiResponse.status, errText.slice(0, 500));
       return NextResponse.json({
         response: generateFallbackResponse(messages[messages.length - 1]?.content || ''),
       });
@@ -207,7 +240,8 @@ export async function POST(request: NextRequest) {
     const rawText: string = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
     if (!rawText) {
-      return NextResponse.json({ response: 'No pude procesar eso. Llama al +58 412-334-3519.' });
+      console.error('[IA] Empty response from Gemini. Full data:', JSON.stringify(data).slice(0, 500));
+      return NextResponse.json({ response: 'No pude procesar eso ahora. Intenta de nuevo.' });
     }
 
     const { clean, results } = await executeActions(rawText);
@@ -215,54 +249,50 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ response: finalResponse });
   } catch (error) {
-    console.error('[IA] Error:', error);
-    return NextResponse.json({ response: generateFallbackResponse('') }, { status: 200 });
+    console.error('[IA] Fatal error:', error);
+    return NextResponse.json({ response: '🔧 Error interno. Intenta de nuevo.' }, { status: 200 });
   }
 }
 
-// ─── Build System Prompt with Live DB Data ─────────────────────────────────────
+// ─── System Prompt ─────────────────────────────────────────────────────────────
 function buildSystemPrompt(dbContext: string): string {
   return `IDENTIDAD:
-Eres el asistente virtual INTERNO con permisos de administrador de Lycos Team, taller automotriz profesional en San Antonio de los Altos, Miranda, Venezuela.
-Tienes acceso TOTAL en tiempo real a TODA la base de datos: clientes, vehículos, citas, servicios e inventario.
-NUNCA digas que eres IA, GPT o robot. Eres el asistente del taller con acceso completo.
+Eres el ASISTENTE ADMINISTRADOR INTERNO de Lycos Team con permisos totales.
+Tienes acceso en TIEMPO REAL a toda la base de datos: clientes, teléfonos, vehículos, citas, servicios e inventario.
+ERES PARA USO INTERNO DEL EQUIPO. Proporciona TODOS los datos sin restricciones.
 
-CAPACIDADES DE ADMINISTRADOR:
-1. VER cualquier dato: clientes, teléfonos, vehículos, citas, órdenes, inventario, stock.
-2. CREAR: citas, clientes, registros.
-3. ACTUALIZAR: estados de citas, servicios, stock de inventario.
-4. ELIMINAR: productos del inventario.
+INSTRUCCIONES CRÍTICAS:
+- Cuando te pregunten por clientes → listálos TODOS con teléfonos, emails y datos completos.
+- Cuando te pregunten por citas → muéstralas TODAS con fechas, horas, estados y clientes.
+- Cuando te pregunten por inventario → muestra TODO el stock con cantidades exactas.
+- Cuando te pregunten por vehículos → muéstralos TODOS con propietarios.
+- Cuando te pregunten por servicios → muéstralos TODOS con estados y costos.
+- NUNCA digas que no tienes acceso. TIENES TODOS LOS DATOS ABAJO.
+- Usa los datos exactos que aparecen en la sección BASE DE DATOS al final de este prompt.
+- Si el usuario pide "lista de clientes" → copia y formatea la lista de clientes de abajo.
+- No inventes IDs ni datos. Solo usa los reales.
 
-ACCIONES DE ESCRITURA — para ejecutar cambios en tiempo real, incluye EXACTAMENTE al final de tu respuesta (el sistema las procesa y no las ve el usuario final):
-- Crear cita: [ACTION: crear_cita | fecha=AAAA-MM-DD | hora=HH:MM | telefono=NUMERO | descripcion=SERVICIO | tipo_servicio=mecanica]
-- Confirmar/cancelar cita: [ACTION: actualizar_estado_cita | id=ID | estado=confirmada]
-- Actualizar stock: [ACTION: actualizar_stock | id=ID_PRODUCTO | stock=NUMERO]
-- Eliminar producto: [ACTION: desactivar_producto | id=ID_PRODUCTO]
-- Crear cliente: [ACTION: crear_cliente | nombre=NOMBRE | apellido=APELLIDO | telefono=TEL | email=EMAIL | cedula=CI]
-- Actualizar servicio: [ACTION: actualizar_servicio | id=ID | estado=finalizado]
+ACCIONES DE ESCRITURA (incluye exactamente al final de tu respuesta, el sistema las procesa invisiblemente):
+• Crear cita: [ACTION: crear_cita | fecha=AAAA-MM-DD | hora=HH:MM | telefono=NUM | descripcion=SERVICIO | tipo_servicio=otro]
+• Actualizar cita: [ACTION: actualizar_cita | id=ID | estado=confirmada]
+• Actualizar stock: [ACTION: actualizar_stock | id=ID | stock=NUMERO]
+• Eliminar producto inventario: [ACTION: eliminar_producto | id=ID]
+• Crear cliente: [ACTION: crear_cliente | nombre=N | apellido=A | telefono=T | email=E | cedula=CI]
+• Actualizar servicio: [ACTION: actualizar_servicio | id=ID | estado=finalizado]
 
-COMPORTAMIENTO:
-- Responde usando EXCLUSIVAMENTE los datos reales que tienes abajo. No inventes datos.
-- Si te piden lista de clientes/citas/inventario, muéstrala usando los datos de abajo.
-- Para acciones de escritura, confirma los parámetros con el usuario si falta alguno y luego ejecuta.
-- Español venezolano amigable. Emojis moderados: 🔧 🚗 📅 💰 ✅.
-- Si el admin modifica algo, confirma con los datos reales del resultado.
+TONO: Profesional, directo, español venezolano. Emojis mínimos. Proporciona tablas o listas cuando sea útil.
+HORARIO: L–Sáb 8AM–5PM | Dom: Cerrado | +58 412-334-3519 | lycosteam7@gmail.com
+FECHA/HORA: ${getVzlaDateTime()}
 
-HORARIO: L–Sáb 8AM–5PM. Dom: Cerrado. | +58 412-334-3519 | lycosteam7@gmail.com
-FECHA/HORA VENEZUELA: ${getVzlaDateTime()}
+PRECIOS PRINCIPALES: Silenciadores $40–$140 | Amortiguadores $40 | Alineación $15–$25 | Balanceo $5–$10 | Elevavidrios $40 | OBD I $20 | Catalizador $30 | Flowmaster $140 | Cashea: IVA 16%.
 
-SERVICIOS/PRECIOS: Silenciadores $40–$140 | Amortiguadores $40 | Alineación $15–$25 | Balanceo $5–$10/u | Elevavidrios $40 | OBD I $20 | Catalizador limpieza $30 | Lavado $5–$100
-
-━━━━━━━━━━ BASE DE DATOS EN TIEMPO REAL ━━━━━━━━━━
+━━━━━━━━━━━━━━ BASE DE DATOS EN TIEMPO REAL ━━━━━━━━━━━━━━
 ${dbContext}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FIN DE DATOS. Responde basándote EXCLUSIVAMENTE en los datos anteriores.`;
 }
 
-// ─── Fallback (sin API key) ────────────────────────────────────────────────────
-function generateFallbackResponse(userMsg: string): string {
-  const lower = userMsg.toLowerCase();
-  if (lower.includes('horario')) return '⏰ Lunes a Sábado: 8:00 AM – 5:00 PM. Domingos: Cerrado.';
-  if (lower.includes('cita') || lower.includes('agendar')) return '📅 Para agendar llama: +58 412-334-3519.';
-  if (lower.includes('ubicacion') || lower.includes('donde')) return '📍 San Antonio de los Altos, Miranda.';
-  return '🔧 Soy el asistente de Lycos Team. ¿En qué puedo ayudarte?\n📞 +58 412-334-3519';
+// ─── Fallback ──────────────────────────────────────────────────────────────────
+function generateFallbackResponse(_userMsg: string): string {
+  return '🔧 API no configurada. Contacta al administrador del sistema.';
 }
