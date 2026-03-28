@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   MessageSquare, Send, Bot, User,
-  Smile, CheckCheck, Check, X, RefreshCw, UserCheck, Wifi, WifiOff, Search
+  Smile, CheckCheck, Check, X, RefreshCw, UserCheck, Wifi, WifiOff, Search, Clock
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { cn, formatRelativeTime } from '@/lib/utils';
@@ -81,6 +81,8 @@ export default function WhatsAppPage() {
   const [showMobileChat, setShowMobileChat] = useState(false);
   const [togglingMode, setTogglingMode] = useState(false);
   const [isScrolledUp, setIsScrolledUp] = useState(false);
+  const [timeLeftStr, setTimeLeftStr] = useState<string | null>(null);
+  const [isWindowOpen, setIsWindowOpen] = useState<boolean>(true);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -162,8 +164,46 @@ export default function WhatsAppPage() {
     }
   }, []);
 
-  // ── Initial load ───────────────────────────────────────────────────────────
-  useEffect(() => { loadConvs(); }, [loadConvs]);
+  // ── Initial load & Permissions ─────────────────────────────────────────────
+  useEffect(() => {
+    loadConvs();
+    if ('Notification' in window && Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+      Notification.requestPermission();
+    }
+  }, [loadConvs]);
+
+  // ── Timer Logic (24h WhatsApp Window) ──────────────────────────────────────
+  useEffect(() => {
+    if (!selected || msgs.length === 0) {
+      setTimeLeftStr(null);
+      return;
+    }
+    const lastIncoming = [...msgs].reverse().find(m => m.tipo === 'entrante');
+    if (!lastIncoming) {
+      setTimeLeftStr('Vencido');
+      setIsWindowOpen(false);
+      return;
+    }
+    const updateTimer = () => {
+      const now = new Date().getTime();
+      const lastTime = new Date(lastIncoming.created_at).getTime();
+      const expiresAt = lastTime + 24 * 60 * 60 * 1000;
+      const diff = expiresAt - now;
+      if (diff <= 0) {
+        setTimeLeftStr('Vencido');
+        setIsWindowOpen(false);
+      } else {
+        setIsWindowOpen(true);
+        const h = Math.floor(diff / (1000 * 60 * 60));
+        const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        const s = Math.floor((diff % (1000 * 60)) / 1000);
+        setTimeLeftStr(`${h}h ${m}m ${s}s`);
+      }
+    };
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+    return () => clearInterval(interval);
+  }, [selected, msgs]);
 
   // ── Realtime + incremental polling ─────────────────────────────────────────
   useEffect(() => {
@@ -189,6 +229,15 @@ export default function WhatsAppPage() {
                 !(m.id.startsWith('tmp-') && m.body === newMsg.body && m.tipo === newMsg.tipo)
               );
               return mergeMessages(withoutOptimistic, [newMsg]);
+            });
+          }
+        }
+        // Native browser notification for incoming messages
+        if (newMsg.tipo === 'entrante') {
+          if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification('Lycos Team - Nuevo Mensaje', {
+              body: newMsg.body,
+              icon: '/favicon.ico',
             });
           }
         }
@@ -441,8 +490,19 @@ export default function WhatsAppPage() {
                   <p className="text-sm font-medium" style={{ color: '#e9edef' }}>{displayName(selected)}</p>
                   <p className="text-[11px]" style={{ color: '#8696a0' }}>{selected.telefono}</p>
                 </div>
-                {/* Mode buttons */}
-                <div className="flex items-center gap-1.5">
+                {/* Mode buttons & Timer */}
+                <div className="flex items-center gap-1.5 flex-wrap md:flex-nowrap justify-end">
+                  {/* Timer UI */}
+                  {timeLeftStr && (
+                    <div className={cn(
+                      'flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium mr-1',
+                      isWindowOpen ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'
+                    )}>
+                      <Clock className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span className="whitespace-nowrap tabular-nums">{timeLeftStr}</span>
+                    </div>
+                  )}
+
                   <button
                     onClick={() => setMode('bot')}
                     disabled={togglingMode || selected.estado === 'bot'}
@@ -458,8 +518,8 @@ export default function WhatsAppPage() {
                       border: `1px solid ${selected.estado === 'bot' ? 'rgba(167,139,250,0.4)' : 'rgba(255,255,255,0.08)'}`,
                     }}
                   >
-                    <Bot className="w-3.5 h-3.5" />
-                    <span>Bot IA</span>
+                    <Bot className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span className="hidden md:inline">Bot IA</span>
                   </button>
                   <button
                     onClick={() => setMode('humano')}
@@ -474,8 +534,8 @@ export default function WhatsAppPage() {
                       border: `1px solid ${selected.estado === 'humano' ? 'rgba(251,146,60,0.4)' : 'rgba(255,255,255,0.08)'}`,
                     }}
                   >
-                    <UserCheck className="w-3.5 h-3.5" />
-                    <span>Humano</span>
+                    <UserCheck className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span className="hidden md:inline">Humano</span>
                   </button>
                 </div>
               </div>
