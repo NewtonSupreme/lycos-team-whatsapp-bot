@@ -11,14 +11,15 @@ import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { getInitials } from '@/lib/utils';
+import { supabase } from '@/lib/supabase';
 
-const navItems = [
+const navItemsConfig = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', badge: null },
   { href: '/dashboard/clientes', icon: Users, label: 'Clientes', badge: null },
   { href: '/dashboard/vehiculos', icon: Car, label: 'Vehículos', badge: null },
-  { href: '/dashboard/servicios', icon: Wrench, label: 'Servicios', badge: '3' },
+  { href: '/dashboard/servicios', icon: Wrench, label: 'Servicios', badge: null },
   { href: '/dashboard/agenda', icon: Calendar, label: 'Agenda', badge: null },
-  { href: '/dashboard/whatsapp', icon: MessageSquare, label: 'WhatsApp', badge: '5' },
+  { href: '/dashboard/whatsapp', icon: MessageSquare, label: 'WhatsApp', badge: null },
   { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente', badge: null },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', badge: null },
   { href: '/dashboard/actividad', icon: Activity, label: 'Actividad', badge: null },
@@ -32,10 +33,39 @@ export default function Sidebar() {
   const pathname = usePathname();
   const { sidebarOpen, toggleSidebar, user } = useAppStore();
   const [mounted, setMounted] = React.useState(false);
+  const [unreadWa, setUnreadWa] = React.useState(0);
 
   React.useEffect(() => {
     setMounted(true);
+    
+    // Fetch unread messages
+    const fetchUnread = async () => {
+      if (!supabase) return;
+      const { data } = await supabase.from('conversaciones').select('mensajes_sin_leer');
+      if (data) {
+        setUnreadWa(data.reduce((acc, row) => acc + (row.mensajes_sin_leer || 0), 0));
+      }
+    };
+    fetchUnread();
+
+    if (!supabase) return;
+    const channel = supabase.channel('sidebar-unread')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversaciones' }, () => {
+        fetchUnread();
+      })
+      .subscribe();
+
+    return () => {
+      supabase?.removeChannel(channel);
+    };
   }, []);
+
+  const navItems = navItemsConfig.map(item => {
+    if (item.label === 'WhatsApp') {
+      return { ...item, badge: unreadWa > 0 ? unreadWa.toString() : null };
+    }
+    return item;
+  });
 
   return (
     <>

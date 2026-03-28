@@ -134,8 +134,8 @@ function generateFallbackResponse(userMsg: string): string {
     return '🔧 En **Lycos Team** ofrecemos:\n\n• **Mecánica General** — Frenos, suspensión, aceite\n• **Electrónica Automotriz** — Diagnóstico de fallas\n• **Cerrajería Automotriz** — Llaves con chip\n• **Diagnóstico Computarizado** — Escaneo OBD2\n• **Reparación de Motores** — Overhaul completo\n• **Asistencia de Emergencia** — 24/7\n\n¿Le gustaría agendar una cita o tiene alguna consulta específica? 😊';
   }
 
-  if (lower.includes('precio') || lower.includes('costo') || lower.includes('cuánto') || lower.includes('cuanto')) {
-    return '💰 Nuestros precios orientativos:\n\n• Cambio aceite sintético: $25-40\n• Diagnóstico computarizado: $30-50\n• Revisión de frenos: $35-80\n• Cerrajería (llave chip): $60-120\n• Emergencia: Consultar\n\n Para una cotización exacta, necesitamos inspeccionar su vehículo. ¿Le agendamos una revisión?';
+  if (lower.includes('precio') || lower.includes('costo') || lower.includes('cuánto') || lower.includes('cuanto') || lower.includes('presupuesto')) {
+    return '🔧 Para darte un presupuesto exacto e indicarte con precisión qué hay que reparar, cambiar o hacerle mantenimiento, te invitamos a realizar una **Revisión Física de tu vehículo TOTALMENTE GRATUITA** en nuestro taller. A veces el problema real puede ser distinto a lo que parece. ¿Te gustaría agendar una cita para revisión?';
   }
 
   if (lower.includes('horario') || lower.includes('hora') || lower.includes('abierto') || lower.includes('atiend')) {
