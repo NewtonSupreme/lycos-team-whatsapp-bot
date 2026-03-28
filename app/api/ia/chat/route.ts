@@ -1,24 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 
-// Current time in Venezuela (UTC-4)
+// Venezuela time
 const vzlaTime = new Intl.DateTimeFormat('es-VE', {
   timeZone: 'America/Caracas',
   dateStyle: 'full',
   timeStyle: 'short'
 }).format(new Date());
 
+function getDb() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+  if (!url || !key) return null;
+  return createClient(url, key);
+}
+
+// ─── System Prompt ────────────────────────────────────────────────────────────
 const SYSTEM_PROMPT = `
 IDENTIDAD:
-Eres el asistente virtual de Lycos Team, taller automotriz profesional en San Antonio de los Altos, Miranda, Venezuela.
+Eres el asistente virtual interno de Lycos Team, taller automotriz profesional en San Antonio de los Altos, Miranda, Venezuela.
+Tienes acceso TOTAL a la base de datos del taller: clientes, vehículos, citas, servicios e inventario.
 NUNCA digas que eres IA, bot, ChatGPT o robot. Si preguntan, di que eres el asistente del taller.
 
 COMPORTAMIENTO Y TONO:
-ES MUY IMPORTANTE QUE VARÍES TUS RESPUESTAS PARA SONAR MÁS HUMANO. NO SEAS REPETITIVO.
-- Español venezolano, amigable, máximo 4-5 líneas por respuesta, no improvises precios, texto claro.
-- Usa al menos 1 emoji por respuesta, pero sin saturar. Ejemplos: 🔧 🚗 💰 📅 😊.
-- REVISIÓN GRATIS: La revisión visual del vehículo al traerlo al taller es totalmente gratuita. Menciónalo SOLO UNA VEZ cuando trates de convencer al cliente de ir al taller para revisar un presupuesto que no puedes dar por chat.
-- REDES SOCIALES: Instagram y TikTok @lycos.team. Enlace perfil general: https://www.lycos.team
-- RECORDATORIOS DE CITA: Menciónalo SOLO si el cliente pregunta por su cita o están tratando de agendar.
+- Español venezolano, amigable, profesional. Varía tus respuestas para no ser repetitivo.
+- Usa emojis moderadamente: 🔧 🚗 💰 📅 😊.
+- Cuando el usuario pida información, usa tus herramientas para obtener datos REALES de la base de datos.
+- Cuando puedas hacer una acción (crear cita, actualizar stock, etc.), hazla directamente con las herramientas.
+- Confirma siempre las acciones realizadas con los datos que devolvieron las herramientas.
+- Si necesitas más información para ejecutar una acción, pregúntala primero.
 
 HORARIO: Lunes a Sábado 8:00 AM – 5:00 PM. DOMINGOS: CERRADO sin excepciones.
 UBICACION: San Antonio de los Altos, Altos Mirandinos, Miranda.
@@ -26,99 +36,267 @@ LINK MAPS: https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA
 CONTACTO ASESOR: +58 412-334-3519 | lycosteam7@gmail.com
 
 SERVICIOS Y PRECIOS:
-
-SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gruesa. PROMOCIÓN EN DIVISAS con instalación:
-- REGLA DE PRESUPUESTO DE SISTEMA DE ESCAPE: PROHIBIDO dar presupuestos completos o cálculos matemáticos si el cliente pide reemplazar todo el sistema de escape. INVÍTALO AL TALLER PARA UNA REVISIÓN, somos fabricantes propios y muchas veces el cliente no necesita todo nuevo.
-- "Intermedio": significa resonador o resonador con tubería. Varía el precio. Da precio del resonador + precio por metro de tubería. El total exacto depende de condiciones (debe venir al taller).
-- El Sistema de Escape Completo Incluye: Silenciador, Resonador, Tubería, Flexible (si aplica), Bajante, gomas y Empacaduras (requiere venir al taller para comprobar todo).
-- Silenciadores PLANOS (Ej. Malibú): NO TENEMOS DISPONIBILIDAD de planos. Solo vendemos silenciadores Redondos. PERO, hay carros planos que sí tienen espacio para adaptar uno redondo.
-- CL27: hasta 1.3L → $40
-- CL30: hasta 1.3L → $40
-- CL40: hasta 1.5L → $50
-- CLH40: hasta 2.0L → $60
-- CL60: desde 3.8L → $90
-- CLC60: camión → $90
-- CLCP60/CLP60: platanero → $90
-- CLK60: fabricación especial $100 — SOLO para Kia Sportage, Hyundai Tucson y Dodge Caliber
-- Resonador: $40
-- Flowmaster Serie 40: $140 (instalación incluida, flexibles doble malla)
-- Flexibles doble malla: $40
-- Tubo silenciador/cola: Primer metro $35, metros adicionales $20/metro, soldadura $15, gomas $7
+SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gruesa. PROMOCIÓN EN DIVISAS:
+- CL27/CL30: hasta 1.3L → $40 | CL40: 1.5L → $50 | CLH40: 2.0L → $60
+- CL60: desde 3.8L → $90 | CLC60/CLCP60/CLP60: camión/platanero → $90
+- CLK60: $100 (Kia Sportage, Hyundai Tucson, Dodge Caliber) | Resonador: $40
+- Flowmaster Serie 40: $140 | Flexibles doble malla: $40
+- Tubo: Primer metro $35, metros adicionales $20, soldadura $15, gomas $7
 - Colas cromadas: B55 $25, Camioneta $35, Curba $30
-- Cola de sistema de escape: depende del vehículo, responder: "Depende del vehículo, debes traerlo para darte el precio exacto"
-- REGLA DE PRESUPUESTOS: PROHIBIDO dar presupuestos, cálculos o precios aproximados de trabajos completos. Si el cliente pide un estimado de reparación o reemplazo complejo, INVÍTALO A UNA REVISIÓN FÍSICA GRATUITA EN EL TALLER.
+MECANICA: Terminal dirección $15/lado | Rótula $20/lado | Amortiguador $40 (PROMO EN DIVISAS)
+CATALIZADOR: Limpieza $30 | Reemplazar: requiere visita física
+ALINEACION (BCV): Carros $15 | EcoSport $20 | 4x4 $25
+CAUCHOS/BALANCEO (BCV): Balanceo carros $5/u, camionetas $10/u | Monturas carros $5/u, camionetas $10/u
+AUTOLAVADO (BCV): Lavadito $5-$13 | Lavado completo $10-$15 | Detailing $60-$100
+ELECTRONICA: Elevavidrios $40 | Display Ford Fiesta $60/u | OBD I $20 | OBD II: según cita
+CASHEA: IVA 16% sobre total. Nivel 1: 60% ini | Nivel 2: 50% | Niveles 3-6: 40%. Resto en 3 cuotas c/14 días.
+Certificado Médico: $15. RCV: requiere asesor humano.
 
-MECANICA Y FRENOS:
-- Mecánica ligera, limpieza de inyectores
-- Frenos completo: precios previa evaluación
-- Terminal de dirección: $15 c/lado | Rótula: $20 c/lado (tras estos servicios debe alinear)
-- Amortiguador: $40 c/u (PROMOCIÓN EN DIVISAS)
-
-CATALIZADOR:
-- Limpieza de catalizador: $30
-- Comprar o reemplazar catalizador: debe venir al taller para comprobar el precio y disponibilidad exacta.
-
-ALINEACION (100% a BCV):
-- Carros pequeños/sedan: $15 | EcoSport: $20 | Camionetas 4x4: $25
-
-CAUCHOS Y BALANCEO (100% a BCV):
-- Balanceo: carros $5 c/u, camionetas $10 c/u
-- Monturas: carros $5 c/u, camionetas $10 c/u
-- Reparación caucho: $10 a $15
-
-AUTOLAVADO (100% a BCV):
-- Lavadito (solo exterior): carros $5, camionetas $13
-- Lavado completo: carros $10, camionetas $15
-- Detailing: carros $60, camionetas $100
-
-SISTEMAS: Aire acondicionado, refrigeración, dirección, motor, luces, suspensión, transmisión, autotronica.
-
-ELECTRONICA:
-- Elevavidrios manuales/electrónicos: $40
-- Display Ford Fiesta (km/gasolina): $60 c/u. SIEMPRE pregunta qué modelo tiene (2 modelos).
-- OBD I: $20
-- OBD II: escáner según disponibilidad en la cita
-
-ESTETICA: Pulitura de faros, Latonería y pintura (previa cotización), Papel ahumado, Cámaras 360.
-
-OTROS: Grúa (consultar asesor), Inventario de repuestos.
-- Certificado Médico: $15 o equivalente directo interbancario BCV.
-- Renovación de RCV: Para renovar el RCV y dar precios exactos, el cliente DEBE comunicar con un asesor directamente.
-
-CASHEA (financiamiento):
-El IVA 16% se suma al PRECIO TOTAL, no a la inicial.
-Ejemplo: $100 + 16% IVA = $116 total → el cliente paga su inicial sobre $116.
-Pide el nivel PRIMERO → Nivel 1: 60% | Nivel 2: 50% | Niveles 3-6: 40%
-Resto en 3 cuotas cada 14 días. Pago en caja.
-
-CITAS:
-Al agendar, solicita: nombre del cliente, vehículo (marca/modelo/año), servicio/falla específica y fecha+hora preferida (Lunes-Sábados, 8AM-5PM). Nunca agendes domingos.
-
-PRECIOS EN BOLÍVARES (TASA BCV):
-- Los precios en dólares se convierten a bolívares usando la tasa BCV del momento.
-- Si el cliente pregunta cuánto es en bolívares, explica que se paga a tasa BCV en caja y que el monto exacto lo recibirá allá.
-- Cuando hagas una conversión aproximada, redondea el resultado al múltiplo de 5 superior más cercano (ej: $42 → $45, $48 → $50).
-- NUNCA menciones que estás redondeando, simplemente da el precio cerrado.
-
-FILTROS E INVENTARIO: Refrigerantes y líquidos Dr Care | Filtros aceite/gasolina CARDOC para múltiples vehículos:
-- CD 3614 ARAUCA | CD 47 AVEO | CD 4967 COROLLA | CD 2C EXPLORER | CD 8 FORD
-- CD 5885 TWINGO | CD 3682 NISSAN | CD 3506 CAVALIER | CD 96796 CAMRY
-- CF 5450 COROLLA | CF 6020 MACHO | CF 6030 SAMURAY | CF 6040 4.5 INYEC
-- CF 831 TRAIL BLAZER | CF 580 BLAZER | CF 1036 EXPLORER | CF 3442 LANCER | CF 1586 CHEROKEE | CF 5237 SENTRA
-- Refrigerante Rojo Dr Care - Galón | Refrigerante Verde Dr Care - Galón
-- Líquido Limpia Parabrisas Dr Care - Galón | Liga de Frenos DOT 3 Dr Care - 945ml
-
-CONTEXTO TEMPORAL: ${vzlaTime}
+FECHA/HORA VENEZUELA: ${vzlaTime}
 `;
 
+// ─── Tool Definitions (Gemini Function Calling) ────────────────────────────────
+const TOOLS = [
+  {
+    functionDeclarations: [
+      {
+        name: 'get_clientes',
+        description: 'Obtiene la lista de todos los clientes registrados en el taller con sus vehículos, teléfonos y datos de contacto.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            buscar: {
+              type: 'STRING',
+              description: 'Opcional. Nombre, apellido o teléfono del cliente a buscar. Si no se proporciona, devuelve todos.',
+            },
+          },
+        },
+      },
+      {
+        name: 'get_citas',
+        description: 'Obtiene todas las citas agendadas en el taller.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            fecha: {
+              type: 'STRING',
+              description: 'Opcional. Fecha en formato AAAA-MM-DD para filtrar citas de ese día.',
+            },
+            estado: {
+              type: 'STRING',
+              description: 'Opcional. Estado de las citas: pendiente, confirmada, cancelada, completada.',
+            },
+          },
+        },
+      },
+      {
+        name: 'crear_cita',
+        description: 'Crea (agenda) una nueva cita en el sistema.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            fecha: { type: 'STRING', description: 'Fecha de la cita en formato AAAA-MM-DD.' },
+            hora: { type: 'STRING', description: 'Hora de la cita en formato HH:MM (24h).' },
+            telefono: { type: 'STRING', description: 'Teléfono del cliente.' },
+            descripcion: { type: 'STRING', description: 'Descripción del servicio o motivo de la cita.' },
+            tipo_servicio: {
+              type: 'STRING',
+              description: 'Tipo de servicio: mecanica, electronica, cerrajeria, diagnostico, motor, emergencia, otro.',
+            },
+          },
+          required: ['fecha', 'hora', 'telefono', 'descripcion'],
+        },
+      },
+      {
+        name: 'actualizar_cita',
+        description: 'Actualiza el estado o datos de una cita existente.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            id: { type: 'STRING', description: 'ID de la cita a actualizar.' },
+            estado: { type: 'STRING', description: 'Nuevo estado: pendiente, confirmada, cancelada, completada.' },
+            hora: { type: 'STRING', description: 'Nueva hora en formato HH:MM.' },
+            descripcion: { type: 'STRING', description: 'Nueva descripción.' },
+          },
+          required: ['id'],
+        },
+      },
+      {
+        name: 'get_vehiculos',
+        description: 'Obtiene todos los vehículos registrados, opcionalmente filtrados por cliente.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            cliente_id: { type: 'STRING', description: 'Opcional. ID del cliente para filtrar sus vehículos.' },
+          },
+        },
+      },
+      {
+        name: 'get_servicios',
+        description: 'Obtiene los servicios/órdenes de trabajo registradas en el taller.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            estado: {
+              type: 'STRING',
+              description: 'Opcional. Estado: pendiente, en_proceso, finalizado, cancelado.',
+            },
+          },
+        },
+      },
+      {
+        name: 'get_inventario',
+        description: 'Obtiene el inventario de productos del taller con stock actual.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            categoria: {
+              type: 'STRING',
+              description: 'Opcional. Categoría del producto: filtros, liquidos, repuestos, etc.',
+            },
+          },
+        },
+      },
+      {
+        name: 'actualizar_stock',
+        description: 'Actualiza el stock de un producto del inventario.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            id: { type: 'STRING', description: 'ID del producto en inventario.' },
+            stock: { type: 'NUMBER', description: 'Nuevo valor de stock.' },
+          },
+          required: ['id', 'stock'],
+        },
+      },
+      {
+        name: 'eliminar_producto_inventario',
+        description: 'Marca un producto del inventario como inactivo (lo elimina del stock activo).',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            id: { type: 'STRING', description: 'ID del producto a eliminar/desactivar.' },
+          },
+          required: ['id'],
+        },
+      },
+    ],
+  },
+];
+
+// ─── Tool Executor ─────────────────────────────────────────────────────────────
+async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
+  const db = getDb();
+  if (!db) return JSON.stringify({ error: 'Base de datos no disponible' });
+
+  try {
+    switch (name) {
+      case 'get_clientes': {
+        let query = db.from('clientes').select('id, nombre, apellido, telefono, email, cedula, direccion, notas, vehiculos(id, marca, modelo, anio, placa, estado)').order('nombre');
+        const buscar = args.buscar as string | undefined;
+        if (buscar) {
+          query = query.or(`nombre.ilike.%${buscar}%,apellido.ilike.%${buscar}%,telefono.ilike.%${buscar}%`);
+        }
+        const { data, error } = await query;
+        if (error) return JSON.stringify({ error: error.message });
+        return JSON.stringify({ total: data?.length ?? 0, clientes: data });
+      }
+
+      case 'get_citas': {
+        let query = db.from('citas')
+          .select('id, fecha, hora, telefono, tipo_servicio, descripcion, estado, duracion_minutos, cliente:clientes(nombre, apellido, telefono), vehiculo:vehiculos(marca, modelo, placa)')
+          .order('fecha', { ascending: true })
+          .order('hora', { ascending: true });
+        if (args.fecha) query = query.eq('fecha', args.fecha as string);
+        if (args.estado) query = query.eq('estado', args.estado as string);
+        const { data, error } = await query;
+        if (error) return JSON.stringify({ error: error.message });
+        return JSON.stringify({ total: data?.length ?? 0, citas: data });
+      }
+
+      case 'crear_cita': {
+        const { data, error } = await db.from('citas').insert({
+          fecha: args.fecha,
+          hora: args.hora,
+          telefono: args.telefono,
+          descripcion: args.descripcion,
+          tipo_servicio: args.tipo_servicio || 'otro',
+          estado: 'pendiente',
+          duracion_minutos: 60,
+        }).select().single();
+        if (error) return JSON.stringify({ error: error.message });
+        return JSON.stringify({ success: true, cita: data });
+      }
+
+      case 'actualizar_cita': {
+        const updates: Record<string, unknown> = {};
+        if (args.estado) updates.estado = args.estado;
+        if (args.hora) updates.hora = args.hora;
+        if (args.descripcion) updates.descripcion = args.descripcion;
+        const { data, error } = await db.from('citas').update(updates).eq('id', args.id as string).select().single();
+        if (error) return JSON.stringify({ error: error.message });
+        return JSON.stringify({ success: true, cita: data });
+      }
+
+      case 'get_vehiculos': {
+        let query = db.from('vehiculos')
+          .select('id, marca, modelo, anio, placa, color, kilometraje, estado, clientes(id, nombre, apellido, telefono)')
+          .order('marca');
+        if (args.cliente_id) query = query.eq('cliente_id', args.cliente_id as string);
+        const { data, error } = await query;
+        if (error) return JSON.stringify({ error: error.message });
+        return JSON.stringify({ total: data?.length ?? 0, vehiculos: data });
+      }
+
+      case 'get_servicios': {
+        let query = db.from('servicios')
+          .select('id, tipo, descripcion, estado, costo_estimado, costo_final, fecha_inicio, fecha_fin, notas, vehiculos(marca, modelo, placa, clientes(nombre, apellido, telefono))')
+          .order('created_at', { ascending: false });
+        if (args.estado) query = query.eq('estado', args.estado as string);
+        const { data, error } = await query;
+        if (error) return JSON.stringify({ error: error.message });
+        return JSON.stringify({ total: data?.length ?? 0, servicios: data });
+      }
+
+      case 'get_inventario': {
+        let query = db.from('inventario').select('id, nombre, codigo, categoria, marca, precio_usd, precio_bs, stock, stock_minimo, unidad, notas, activo').eq('activo', true).order('categoria').order('nombre');
+        if (args.categoria) query = query.eq('categoria', args.categoria as string);
+        const { data, error } = await query;
+        if (error) return JSON.stringify({ error: error.message });
+        return JSON.stringify({ total: data?.length ?? 0, inventario: data });
+      }
+
+      case 'actualizar_stock': {
+        const { data, error } = await db.from('inventario')
+          .update({ stock: args.stock, updated_at: new Date().toISOString() })
+          .eq('id', args.id as string).select().single();
+        if (error) return JSON.stringify({ error: error.message });
+        return JSON.stringify({ success: true, producto: data });
+      }
+
+      case 'eliminar_producto_inventario': {
+        const { data, error } = await db.from('inventario')
+          .update({ activo: false, updated_at: new Date().toISOString() })
+          .eq('id', args.id as string).select('id, nombre').single();
+        if (error) return JSON.stringify({ error: error.message });
+        return JSON.stringify({ success: true, eliminado: data });
+      }
+
+      default:
+        return JSON.stringify({ error: `Herramienta desconocida: ${name}` });
+    }
+  } catch (e) {
+    return JSON.stringify({ error: String(e) });
+  }
+}
+
+// ─── POST handler (agentic loop) ──────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
     const { messages, systemPrompt } = await request.json();
-
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      // Return intelligent fallback without API key
       return NextResponse.json({
         response: generateFallbackResponse(messages[messages.length - 1]?.content || ''),
       });
@@ -130,82 +308,98 @@ export async function POST(request: NextRequest) {
       parts: [{ text: m.content }],
     }));
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: systemPrompt || SYSTEM_PROMPT }] },
-          contents: geminiMessages,
-          generationConfig: {
-            temperature: 0.7,
-            topK: 40,
-            topP: 0.95,
-            maxOutputTokens: 1024,
-          },
-          safetySettings: [
-            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-          ],
-        }),
-      }
-    );
+    // Agentic loop: up to 5 tool-call rounds
+    let contents = [...geminiMessages];
+    let finalText = '';
 
-    if (!response.ok) {
-      const error = await response.text();
-      console.error('Gemini API error:', error);
+    for (let round = 0; round < 5; round++) {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            system_instruction: { parts: [{ text: systemPrompt || SYSTEM_PROMPT }] },
+            contents,
+            tools: TOOLS,
+            generationConfig: {
+              temperature: 0.7,
+              topK: 40,
+              topP: 0.95,
+              maxOutputTokens: 2048,
+            },
+            safetySettings: [
+              { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+              { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+            ],
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error('Gemini API error:', errText);
+        return NextResponse.json({
+          response: generateFallbackResponse(messages[messages.length - 1]?.content || ''),
+        });
+      }
+
+      const data = await response.json();
+      const candidate = data.candidates?.[0];
+      if (!candidate) break;
+
+      const parts = candidate.content?.parts ?? [];
+
+      // Check if AI wants to call a function
+      const toolCallParts = parts.filter((p: { functionCall?: unknown }) => p.functionCall);
+      const textParts = parts.filter((p: { text?: string }) => p.text);
+
+      if (toolCallParts.length > 0) {
+        // Add AI's message with tool calls to context
+        contents.push({ role: 'model', parts });
+
+        // Execute all requested tool calls
+        const toolResultParts = await Promise.all(
+          toolCallParts.map(async (p: { functionCall: { name: string; args: Record<string, unknown> } }) => {
+            const result = await executeTool(p.functionCall.name, p.functionCall.args || {});
+            console.log(`🛠️ Tool: ${p.functionCall.name} →`, result.substring(0, 120));
+            return {
+              functionResponse: {
+                name: p.functionCall.name,
+                response: { result },
+              },
+            };
+          })
+        );
+
+        // Add tool results back to context for next round
+        contents.push({ role: 'user', parts: toolResultParts });
+        continue; // next round
+      }
+
+      // No tool calls → we have the final text response
+      finalText = textParts.map((p: { text?: string }) => p.text || '').join('');
+      break;
+    }
+
+    if (!finalText) {
       return NextResponse.json({
-        response: generateFallbackResponse(messages[messages.length - 1]?.content || ''),
+        response: 'Lo siento, no pude procesar tu consulta. Por favor contacta al taller: +58 412-334-3519.',
       });
     }
 
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (!text) {
-      return NextResponse.json({ response: 'Lo siento, no pude procesar tu consulta. Por favor contacta al taller directamente al +58 412-334-3519.' });
-    }
-
-    return NextResponse.json({ response: text });
+    return NextResponse.json({ response: finalText });
   } catch (error) {
     console.error('IA chat error:', error);
     return NextResponse.json({ response: generateFallbackResponse('') }, { status: 200 });
   }
 }
 
+// ─── Fallback (no API key) ─────────────────────────────────────────────────────
 function generateFallbackResponse(userMsg: string): string {
   const lower = userMsg.toLowerCase();
-
-  if (lower.includes('servicio') || lower.includes('ofrec') || lower.includes('hacen')) {
-    return '🔧 En **Lycos Team** ofrecemos:\n\n• **Mecánica General** — Frenos, suspensión, aceite\n• **Electrónica Automotriz** — Diagnóstico de fallas\n• **Cerrajería Automotriz** — Llaves con chip\n• **Diagnóstico Computarizado** — Escaneo OBD2\n• **Reparación de Motores** — Overhaul completo\n• **Asistencia de Emergencia** — 24/7\n\n¿Le gustaría agendar una cita o tiene alguna consulta específica? 😊';
-  }
-
-  if (lower.includes('precio') || lower.includes('costo') || lower.includes('cuánto') || lower.includes('cuanto') || lower.includes('presupuesto')) {
-    return '🔧 Para darte un presupuesto exacto e indicarte con precisión qué hay que reparar, cambiar o hacerle mantenimiento, te invitamos a realizar una **Revisión Física de tu vehículo TOTALMENTE GRATUITA** en nuestro taller. A veces el problema real puede ser distinto a lo que parece. ¿Te gustaría agendar una cita para revisión?';
-  }
-
-  if (lower.includes('horario') || lower.includes('hora') || lower.includes('abierto') || lower.includes('atiend')) {
-    return '⏰ **Horario Lycos Team:**\n\n📅 Lunes a Sabado: 8:00 AM — 5:00 PM\n❌ Domingo: Cerrado\n\n📞 Emergencias: +58 412-334-3519 (disponible fuera de horario para urgencias)';
-  }
-
-  if (lower.includes('cita') || lower.includes('agendar') || lower.includes('reserv') || lower.includes('disponib')) {
-    return '📅 ¡Con gusto agendamos su cita!\n\nPara reservar necesitamos:\n1. Su nombre completo\n2. Marca, modelo y año del vehículo\n3. Tipo de servicio requerido\n4. Fecha y hora preferida\n\n📞 Llámenos: **+58 412-334-3519**\n📧 Email: **lycosteam7@gmail.com**\n📍 Altos Mirandinos, Miranda, VE\n\n¡Tenemos disponibilidad esta semana! 🙌';
-  }
-
-  if (lower.includes('emergencia') || lower.includes('urgente') || lower.includes('auxilio') || lower.includes('no arranca') || lower.includes('no enciende')) {
-    return '🚨 **ASISTENCIA DE EMERGENCIA**\n\nContáctenos AHORA:\n📞 **+58 412-334-3519**\n\nNuestro técnico puede estar con usted en aprox. 30-60 minutos. Por favor indique:\n• Su ubicación exacta\n• El problema que presenta\n• Marca y modelo del vehículo\n\n¡No se preocupe, estamos aquí para ayudarle! 💪';
-  }
-
-  if (lower.includes('ubicacion') || lower.includes('ubicación') || lower.includes('donde') || lower.includes('dirección') || lower.includes('llegar')) {
-    return '📍 **Nuestra ubicación:**\n\nAltos Mirandinos, Miranda, Venezuela.\n\nhttps://maps.app.goo.gl/7H6RGrbpXkxeqG2KA';
-  }
-
-  // Filters inventory response
-  if (lower.includes('filtro') || lower.includes('aceite') || lower.includes('gasolina')) {
-    return '🔧 **Filtros disponibles en Lycos Team:**\n\n**FILTROS DE ACEITE:**\n• CD 47 AVEO\n• CD 4967 COROLLA\n• CD 3614 ARAUCA\n• CD 8 FORD\n• CD 2C EXPLORER\n• CD 5885 TWINGO\n• CD 3682 NISSAN\n• CD 3506 CAVALIER\n• CD 96796 CAMRY\n\n**FILTROS DE GASOLINA:**\n• CF 5450 COROLLA\n• CF 6020 MACHO\n• CF 6030 SAMURAY\n• CF 6040 4.5 INYEC\n• CF 831 TRAIL BLAZER\n• CF 580 BLAZER\n• CF 1036 EXPLORER\n• CF 3442 LANCER\n• CF 1586 CHEROKEE\n• CF 5237 SENTRA\n\n¡Consulta disponibilidad y precios con nosotros! 📞 +58 412-334-3519';
-  }
-
-  return '¡Hola! Soy el asistente de **Lycos Team** 🔧\n\nEstoy aquí para ayudarle con:\n• 📋 Información sobre servicios\n• 💰 Precios y presupuestos\n• 📅 Agendar citas\n• ⏰ Horarios de atención\n• 🚨 Asistencia de emergencia\n• 🔧 Filtros y repuestos\n\n¿En qué puedo ayudarle hoy?\n\n📞 También puede llamarnos: **+58 412-334-3519**';
+  if (lower.includes('horario') || lower.includes('hora')) return '⏰ Lunes a Sábado: 8:00 AM – 5:00 PM. Domingos: Cerrado.';
+  if (lower.includes('cita') || lower.includes('agendar')) return '📅 Para agendar llama: +58 412-334-3519 o escríbenos por WhatsApp.';
+  if (lower.includes('ubicacion') || lower.includes('donde')) return '📍 San Antonio de los Altos, Miranda. https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA';
+  return '¡Hola! Soy el asistente de Lycos Team 🔧 ¿En qué puedo ayudarte?\n📞 +58 412-334-3519';
 }
-
