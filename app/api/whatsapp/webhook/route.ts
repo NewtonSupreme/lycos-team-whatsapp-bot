@@ -275,11 +275,12 @@ CITAS:
 Pedir: nombre, vehículo (marca/modelo/año), servicio, día y hora exacta (Lunes-Sábados, 8AM-5PM).
 Calcula la fecha exacta desde hoy usando FECHA/HORA VENEZUELA. Nunca agendes domingos.
 VERIFICA estrictamente si tiene citas registradas o si el horario está ocupado globalmente. NUNCA agendes si choca.
-ORDEN DEL SISTEMA (CRÍTICO): Cuando tú y el cliente ya acordaron de forma exitosa el día y la hora de la cita, DEBES obligatoriamente imprimir la siguiente etiqueta oculta de sistema AL FINAL de tu respuesta:
-[CITA: AAAA-MM-DD HH:MM]
-Ejemplo: "Perfecto Carlos, tu cita quedó para este martes a las 10:00 AM. ¡Te esperamos! 😊 [CITA: 2026-03-31 10:00]"
-Asegúrate de poner la hora en formato militar 24h dentro de la etiqueta (ejemplo 02:30 PM es 14:30).
-Si el cliente todavía no ha confirmado la hora y día, NO imprimas la etiqueta.
+ORDEN DEL SISTEMA (CRÍTICO): Cuando tú y el cliente ya acordaron de forma exitosa el día y la hora de la cita, DEBES obligatoriamente imprimir la siguiente etiqueta oculta de sistema AL FINAL de tu respuesta (solo UNA vez):
+[CITA: AAAA-MM-DD HH:MM | descripcion breve del servicio | marca modelo del vehiculo]
+Ejemplo: "Perfecto Carlos, tu cita quedó para el martes a las 10:00 AM. ¡Te esperamos! 😊 [CITA: 2026-03-31 10:00 | Cambio de aceite y filtro | Toyota Hilux]"
+La descripción debe ser breve (el servicio que quiere el cliente). El vehículo toma la forma Marca Modelo.
+Hora en formato 24h (ejemplo: 02:30 PM es 14:30).
+Si el cliente todavía NO ha confirmado el día y la hora exacta, NO imprimas la etiqueta.
 ASESOR: Solo mencionarlo si el cliente lo pide explícitamente, para concretar RCV, hay queja compleja, o el bot no puede resolver.
 Cuando corresponda di: "Te envío el contacto de nuestro asesor 👇" (sistema envía la tarjeta).
 
@@ -523,26 +524,41 @@ export async function POST(request: NextRequest) {
         let cleanedAi = cleanForWhatsApp(aiResponse);
 
         // ── Appointment Parsing ──
-        const citaMatch = cleanedAi.match(/\[CITA:\s*(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\]/);
+        // Format: [CITA: AAAA-MM-DD HH:MM | descripcion | marca modelo]
+        const citaMatch = cleanedAi.match(/\[CITA:\s*(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?:\s*\|\s*([^|\]]+?))?(?:\s*\|\s*([^\]]+?))?\s*\]/);
         if (citaMatch) {
           const fecha = citaMatch[1];
           const hora = citaMatch[2];
+          const servicio = citaMatch[3]?.trim() || '';
+          const vehiculo = citaMatch[4]?.trim() || '';
           cleanedAi = cleanedAi.replace(/\[CITA:[^\]]+\]/g, '').trim();
 
           try {
             if (db) {
-              const userName = ctx.memoria?.nombre || 'Cliente WhatsApp';
-              const veh = ctx.memoria?.vehiculos?.[0] ? `${ctx.memoria.vehiculos[0].marca} ${ctx.memoria.vehiculos[0].modelo}` : '';
-              await db.from('citas').insert({
-                fecha,
-                hora,
-                telefono: from,
-                tipo_servicio: 'otro',
-                descripcion: `Agendado por Bot - ${userName} ${veh}`.trim(),
-                estado: 'pendiente',
-                duracion_minutos: 60
-              });
-              console.log(`📅 AUTO-CITA IA: ${fecha} ${hora} para ${from}`);
+              const userName = ctx.memoria?.nombre || '';
+              // Check dedup first: same phone + date + hour (non-cancelled)
+              const { data: existing } = await db.from('citas')
+                .select('id').eq('telefono', from).eq('fecha', fecha).eq('hora', hora)
+                .neq('estado', 'cancelada').limit(1);
+              if (existing && existing.length > 0) {
+                console.log(`⚠️ Cita duplicada ignorada: ${fecha} ${hora} para ${from}`);
+              } else {
+                const descripcionFinal = [
+                  servicio || 'Servicio por WhatsApp',
+                  vehiculo ? `(${vehiculo})` : '',
+                  userName ? `- ${userName}` : '',
+                ].filter(Boolean).join(' ');
+                await db.from('citas').insert({
+                  fecha,
+                  hora,
+                  telefono: from,
+                  tipo_servicio: 'otro',
+                  descripcion: descripcionFinal,
+                  estado: 'pendiente',
+                  duracion_minutos: 60
+                });
+                console.log(`📅 AUTO-CITA IA: ${fecha} ${hora} | ${descripcionFinal} | ${from}`);
+              }
             }
           } catch (e) { console.error('Error insertando cita automatica:', e); }
         }
