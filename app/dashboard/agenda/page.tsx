@@ -121,9 +121,38 @@ export default function AgendaPage() {
     }
   };
 
-  const changeEstado = async (id: string, estado: string) => {
+  const changeEstado = async (id: string, estado: string, cita?: Cita) => {
     try {
       await updateCita(id, { estado });
+
+      // Auto-enviar WhatsApp si se confirma la cita
+      if (estado === 'confirmada' && cita) {
+        const cliente = getCliente(cita.cliente_id);
+        const telefono = cita.telefono || cliente?.telefono;
+        if (telefono) {
+          const fechaLegible = new Date(cita.fecha + 'T12:00:00').toLocaleDateString('es-VE', { weekday: 'long', day: 'numeric', month: 'long' });
+          const nombreCliente = cliente ? `${cliente.nombre}` : 'Cliente';
+          const mensaje = `¡Hola ${nombreCliente}! Te confirmamos tu cita en Lycos Team 🔧
+
+📅 Fecha: ${fechaLegible}
+⏰ Hora: ${cita.hora}
+🚗 Servicio: ${cita.descripcion || 'Servicio automotriz'}
+
+Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
+
+— Lycos Team, San Antonio de los Altos`;
+          try {
+            await fetch('/api/whatsapp/send', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ to: telefono, message: mensaje }),
+            });
+          } catch (sendErr) {
+            console.error('Error enviando confirmación WhatsApp:', sendErr);
+          }
+        }
+      }
+
       loadData();
     } catch {
       alert('Error al actualizar el estado');
@@ -318,7 +347,7 @@ export default function AgendaPage() {
                         <StatusBadge status={cita.tipo_servicio} type="tipo" />
                       </td>
                       <td className="p-3">
-                        <Select value={cita.estado} onValueChange={v => changeEstado(cita.id, v)}>
+                          <Select value={cita.estado} onValueChange={v => changeEstado(cita.id, v, cita)}>
                           <SelectTrigger className="h-7 border-0 bg-transparent p-0 w-28 focus:ring-0">
                             <StatusBadge status={cita.estado} />
                           </SelectTrigger>

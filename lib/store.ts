@@ -23,12 +23,8 @@ export const useAppStore = create<AppStore>((set) => ({
     created_at: new Date().toISOString(),
   },
   sidebarOpen: true,
-  notifications: [
-    { id: '1', tipo: 'info', titulo: 'Nuevo mensaje', mensaje: 'Carlos R. pregunta sobre cambio de aceite', leida: false, created_at: new Date().toISOString() },
-    { id: '2', tipo: 'success', titulo: 'Servicio completado', mensaje: 'Chevrolet Aveo listo para entrega', leida: false, created_at: new Date().toISOString() },
-    { id: '3', tipo: 'warning', titulo: 'Cita pendiente', mensaje: 'Recordatorio: Cita mañana 9:00 AM', leida: true, created_at: new Date().toISOString() },
-  ],
-  unreadCount: 2,
+  notifications: [],
+  unreadCount: 0,
 
   setUser: (user) => set({ user }),
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),

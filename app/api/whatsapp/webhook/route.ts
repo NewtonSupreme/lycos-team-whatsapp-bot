@@ -185,39 +185,6 @@ function formatVzlaDateTime(): string {
     month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit',
   }).format(new Date());
 }
-function isSunday(dateStr: string): boolean {
-  return new Date(dateStr + 'T12:00:00').getDay() === 0;
-}
-function getNextWorkingDay(fromDateStr: string): string {
-  const d = new Date(fromDateStr + 'T12:00:00');
-  d.setDate(d.getDate() + 1);
-  while (d.getDay() === 0) d.setDate(d.getDate() + 1);
-  return d.toISOString().split('T')[0];
-}
-function resolveRelativeDate(text: string): string | null {
-  const lower = text.toLowerCase();
-  const today = getVzlaDate();
-  const todayStr = today.toISOString().split('T')[0];
-  if (lower.includes('hoy')) return todayStr;
-  if (lower.includes('mañana')) {
-    const t = new Date(today); t.setDate(t.getDate() + 1);
-    return t.toISOString().split('T')[0];
-  }
-  const dayMap: Record<string, number> = {
-    domingo: 0, lunes: 1, martes: 2, miércoles: 3, miercoles: 3,
-    jueves: 4, viernes: 5, sábado: 6, sabado: 6,
-  };
-  for (const [name, target] of Object.entries(dayMap)) {
-    if (lower.includes(name)) {
-      const d = new Date(today);
-      let diff = target - d.getDay();
-      if (diff <= 0) diff += 7;
-      d.setDate(d.getDate() + diff);
-      return d.toISOString().split('T')[0];
-    }
-  }
-  return null;
-}
 
 // ─── KNOWLEDGE BASE ────────────────────────────────────────────────────────────
 const LYCOS_KNOWLEDGE = `
@@ -305,10 +272,14 @@ Pide el nivel PRIMERO → Nivel 1: 60% | Nivel 2: 50% | Niveles 3-6: 40%
 Resto en 3 cuotas cada 14 días. Pago en caja.
 
 CITAS:
-Pedir: nombre, vehículo (marca/modelo/año), servicio, día y hora (L-S, 8AM-5PM).
-Calcula fecha desde hoy en Venezuela. Nunca agendes domingos. Confirma: día + fecha completa.
-VERIFICA estrictamente si tiene citas registradas o si la IA conoce de un horario ocupado globalmente. NUNCA agendes si choca.
-
+Pedir: nombre, vehículo (marca/modelo/año), servicio, día y hora exacta (Lunes-Sábados, 8AM-5PM).
+Calcula la fecha exacta desde hoy usando FECHA/HORA VENEZUELA. Nunca agendes domingos.
+VERIFICA estrictamente si tiene citas registradas o si el horario está ocupado globalmente. NUNCA agendes si choca.
+ORDEN DEL SISTEMA (CRÍTICO): Cuando tú y el cliente ya acordaron de forma exitosa el día y la hora de la cita, DEBES obligatoriamente imprimir la siguiente etiqueta oculta de sistema AL FINAL de tu respuesta:
+[CITA: AAAA-MM-DD HH:MM]
+Ejemplo: "Perfecto Carlos, tu cita quedó para este martes a las 10:00 AM. ¡Te esperamos! 😊 [CITA: 2026-03-31 10:00]"
+Asegúrate de poner la hora en formato militar 24h dentro de la etiqueta (ejemplo 02:30 PM es 14:30).
+Si el cliente todavía no ha confirmado la hora y día, NO imprimas la etiqueta.
 ASESOR: Solo mencionarlo si el cliente lo pide explícitamente, para concretar RCV, hay queja compleja, o el bot no puede resolver.
 Cuando corresponda di: "Te envío el contacto de nuestro asesor 👇" (sistema envía la tarjeta).
 
@@ -549,7 +520,32 @@ export async function POST(request: NextRequest) {
       const aiResponse = await getAIResponse(messageBody, ctx, rates);
 
       if (aiResponse) {
-        const cleanedAi = cleanForWhatsApp(aiResponse);
+        let cleanedAi = cleanForWhatsApp(aiResponse);
+
+        // ── Appointment Parsing ──
+        const citaMatch = cleanedAi.match(/\[CITA:\s*(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\]/);
+        if (citaMatch) {
+          const fecha = citaMatch[1];
+          const hora = citaMatch[2];
+          cleanedAi = cleanedAi.replace(/\[CITA:[^\]]+\]/g, '').trim();
+
+          try {
+            if (db) {
+              const userName = ctx.memoria?.nombre || 'Cliente WhatsApp';
+              const veh = ctx.memoria?.vehiculos?.[0] ? `${ctx.memoria.vehiculos[0].marca} ${ctx.memoria.vehiculos[0].modelo}` : '';
+              await db.from('citas').insert({
+                fecha,
+                hora,
+                telefono: from,
+                tipo_servicio: 'otro',
+                descripcion: `Agendado por Bot - ${userName} ${veh}`.trim(),
+                estado: 'pendiente',
+                duracion_minutos: 60
+              });
+              console.log(`📅 AUTO-CITA IA: ${fecha} ${hora} para ${from}`);
+            }
+          } catch (e) { console.error('Error insertando cita automatica:', e); }
+        }
 
         // (Logic for images was removed)
 
@@ -866,10 +862,7 @@ async function processIntents(
     if (!exists) { newMemoria.vehiculos.push(v); memChanged = true; }
   }
 
-  const bookingKw = ['cita', 'agendar', 'reservar', 'cuando puedo', 'quiero ir'];
-  if (bookingKw.some(k => userMsg.toLowerCase().includes(k))) {
-    await tryBookAppointment(db, from, userMsg);
-  }
+  // (Booking logic removed here to rely strictly on AI output parsing below)
 
   if (memChanged) {
     try {
@@ -886,44 +879,7 @@ async function processIntents(
 }
 
 // ─── Appointment Booking ───────────────────────────────────────────────────────
-async function tryBookAppointment(db: ReturnType<typeof getDb>, from: string, userMsg: string): Promise<void> {
-  if (!db) return;
-  let fecha = resolveRelativeDate(userMsg);
-  if (!fecha) {
-    const m = userMsg.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
-    if (m) {
-      const y = m[3] ? (m[3].length === 2 ? '20' + m[3] : m[3]) : getVzlaDate().getFullYear().toString();
-      fecha = `${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
-    }
-  }
-  if (!fecha) return;
-  if (isSunday(fecha)) { console.log(`⛔ Domingo bloqueado: ${fecha} → ${getNextWorkingDay(fecha)}`); return; }
-
-  const tm = userMsg.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|AM|PM)/);
-  let hora = '08:00';
-  if (tm) {
-    let h = parseInt(tm[1]);
-    const m = tm[2] ? parseInt(tm[2]) : 0;
-    const mer = tm[3]?.toLowerCase();
-    if (mer === 'pm' && h < 12) h += 12;
-    if (mer === 'am' && h === 12) h = 0;
-    hora = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
-  }
-
-  try {
-    // Check strictly the exact exact same hour
-    const { data: conflicts } = await db.from('citas')
-      .select('hora')
-      .eq('fecha', fecha)
-      .eq('hora', hora)
-      .neq('estado', 'cancelada')
-      .limit(1);
-    if (conflicts && conflicts.length > 0) { console.log(`⚠️ Conflicto cita exacta ${fecha} ${hora}`); return; }
-    const sm = userMsg.match(/(?:para|quiero|necesito)\s+([a-záéíóúñA-ZÁÉÍÓÚÑ\s]{3,40})/i);
-    await db.from('citas').insert({ fecha, hora, telefono: from, tipo_servicio: 'otro', descripcion: sm?.[1]?.trim() || 'Servicio por WhatsApp', estado: 'pendiente', duracion_minutos: 60 });
-    console.log(`📅 Cita: ${fecha} ${hora} para ${from}`);
-  } catch (e) { console.error('Error booking:', e); }
-}
+// (Deprecated: `tryBookAppointment` parsing was removed in favor of `[CITA:]` tag generated by AI)
 
 // ─── Update conversation row ───────────────────────────────────────────────────
 async function updateConversation(db: ReturnType<typeof getDb>, from: string, lastMsg: string, memoria: Memoria): Promise<void> {

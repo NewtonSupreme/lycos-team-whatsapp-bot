@@ -1,5 +1,5 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Bell, Search, Menu, X } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { Button } from '@/components/ui/button';
@@ -8,11 +8,34 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 // import { Badge } from '@/components/ui/badge';
 import { cn, getInitials } from '@/lib/utils';
 import { ThemeToggle } from './ThemeToggle';
+import { supabase } from '@/lib/supabase';
 
 export default function Header() {
-  const { user, sidebarOpen, toggleSidebar, notifications, unreadCount, markAllRead } = useAppStore();
+  const { user, sidebarOpen, toggleSidebar, notifications, unreadCount, markAllRead, addNotification } = useAppStore();
   const [showNotifs, setShowNotifs] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+
+  // ── Realtime: escucha nuevas citas agendadas (por el bot o manualmente) ──
+  useEffect(() => {
+    if (!supabase) return;
+    const channel = supabase
+      .channel('header-citas-notifs')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'citas' },
+        (payload) => {
+          const cita = payload.new as { fecha?: string; hora?: string; telefono?: string; descripcion?: string };
+          const titulo = '📅 Nueva cita agendada';
+          const mensaje = `Cita el ${cita.fecha ?? ''} a las ${cita.hora ?? ''} — Tel: ${cita.telefono ?? 'desconocido'}`;
+          addNotification({ tipo: 'success', titulo, mensaje, leida: false });
+          if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification(titulo, { body: mensaje, icon: '/favicon.ico' });
+          }
+        }
+      )
+      .subscribe();
+    return () => { supabase?.removeChannel(channel); };
+  }, [addNotification]);
 
   return (
     <header suppressHydrationWarning className="h-14 flex items-center gap-3 px-4 border-b border-border/30 bg-card/40 backdrop-blur-xl sticky top-0 z-20">
