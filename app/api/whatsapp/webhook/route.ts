@@ -1023,3 +1023,4 @@ function isContactRequest(lower: string): boolean {
     'quiero hablar con', 'necesito hablar con'].some(k => lower.includes(k));
 }
 function delay(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
+// Trigger Vercel Deploy
