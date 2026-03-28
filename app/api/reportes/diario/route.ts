@@ -461,3 +461,4 @@ export async function GET() {
     return NextResponse.json({ error: 'Hubo un error al generar el reporte' }, { status: 500 });
   }
 }
+
