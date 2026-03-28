@@ -80,6 +80,7 @@ export default function WhatsAppPage() {
   const [showQuickReplies, setShowQuickReplies] = useState(false);
   const [showMobileChat, setShowMobileChat] = useState(false);
   const [togglingMode, setTogglingMode] = useState(false);
+  const [isScrolledUp, setIsScrolledUp] = useState(false);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -90,16 +91,21 @@ export default function WhatsAppPage() {
   selectedRef.current = selected;
   msgsRef.current = msgs;
 
-  // Always scroll to the very bottom of the chat
-  const scrollToBottom = useCallback((instant = false) => {
+  // Scroll handler to detect if the user is reading upwards
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    setIsScrolledUp(!atBottom);
+  }, []);
+
+  // Smart scroll to bottom
+  const scrollToBottom = useCallback((force = false) => {
     const el = chatScrollRef.current;
     if (!el) return;
-    if (instant) {
-      el.scrollTop = el.scrollHeight;
-    } else {
+    if (force || !isScrolledUp) {
       requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
     }
-  }, []);
+  }, [isScrolledUp]);
 
   useEffect(() => {
     scrollToBottom();
@@ -220,6 +226,7 @@ export default function WhatsAppPage() {
     setSelected(conv);
     setShowMobileChat(true);
     setMsgs([]); // clear old chat first
+    setIsScrolledUp(false);
     await loadAllMsgs(conv.telefono);
     // Mark as read
     if (supabase && (conv.mensajes_sin_leer ?? 0) > 0) {
@@ -236,7 +243,9 @@ export default function WhatsAppPage() {
     const body = message.trim();
     setMessage('');
     setSending(true);
+    setIsScrolledUp(false);
     inputRef.current?.focus();
+    scrollToBottom(true);
 
     // Optimistic message — shown immediately
     const optimisticId = `tmp-${Date.now()}`;
@@ -488,7 +497,8 @@ export default function WhatsAppPage() {
               {/* Messages area */}
               <div
                 ref={chatScrollRef}
-                className="flex-1 overflow-y-auto px-4 py-4 space-y-1"
+                onScroll={handleScroll}
+                className="flex-1 overflow-y-auto px-4 py-4 space-y-1 w-full"
                 style={{
                   minHeight: 0,
                   backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Crect width='400' height='400' fill='%230b141a'/%3E%3C/svg%3E")`,
@@ -524,9 +534,9 @@ export default function WhatsAppPage() {
                         </div>
                       )}
 
-                      <div className={cn('flex', isOut ? 'justify-end' : 'justify-start')} style={{ marginBottom: '2px' }}>
+                      <div className={cn('flex w-full', isOut ? 'justify-end' : 'justify-start')} style={{ marginBottom: '2px' }}>
                         <div
-                          className="relative max-w-[70%] rounded-lg px-3 py-2 shadow-sm"
+                          className="relative max-w-[88%] md:max-w-[75%] rounded-lg px-3 py-2 shadow-sm flex flex-col min-w-0"
                           style={{
                             background: isOut ? '#005c4b' : '#202c33',
                             opacity: isOptimistic ? 0.75 : 1,
@@ -541,11 +551,11 @@ export default function WhatsAppPage() {
                             </div>
                           )}
                           {/* Message text */}
-                          <p className="text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: '#e9edef' }}>
+                          <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: '#e9edef', wordBreak: 'break-word' }}>
                             {msg.body}
                           </p>
                           {/* Time + status */}
-                          <div className="flex items-center gap-1 justify-end mt-1" style={{ marginRight: '-2px' }}>
+                          <div className="flex items-center gap-1 justify-end mt-1 flex-shrink-0" style={{ marginRight: '-2px' }}>
                             <span className="text-[10px]" style={{ color: 'rgba(233,237,239,0.6)' }}>
                               {formatTime(msg.created_at)}
                             </span>
