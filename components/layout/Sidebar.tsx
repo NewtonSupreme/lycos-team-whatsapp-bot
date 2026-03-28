@@ -56,7 +56,7 @@ export default function Sidebar() {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      supabase?.removeChannel(channel);
     };
   }, []);
 
