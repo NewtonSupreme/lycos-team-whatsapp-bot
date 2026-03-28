@@ -45,17 +45,21 @@ export default function AgendaPage() {
   const [form, setForm] = React.useState({ cliente_id: '', vehiculo_id: '', fecha: '', hora: '09:00', tipo_servicio: 'mecanica', descripcion: '', estado: 'pendiente', notas: '' });
 
   useEffect(() => {
-    setMounted(true);
     const today = new Date();
     setCurrentYear(today.getFullYear());
     setCurrentMonth(today.getMonth());
     const dateStr = today.toISOString().split('T')[0];
     setSelectedDate(dateStr);
-    loadData();
+    setMounted(true);
   }, []);
 
+  // Cargar datos sólo después de que el componente esté montado en cliente
+  useEffect(() => {
+    if (mounted) loadData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted]);
+
   async function loadData() {
-    if (!mounted) return;
     setLoading(true);
     try {
       const [cData, clData, vData] = await Promise.all([
@@ -67,8 +71,7 @@ export default function AgendaPage() {
       if (clData) setClientes(clData);
       if (vData) setVehiculos(vData);
     } catch {
-      console.error('Error updating status');
-      alert('Error al actualizar el estado');
+      console.error('Error cargando agenda');
     } finally {
       setLoading(false);
     }
