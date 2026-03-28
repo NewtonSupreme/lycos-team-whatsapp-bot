@@ -147,7 +147,7 @@ Sigue ESTRICTAMENTE estas reglas para dar precios al cliente:
    - PRECIO: Debes mostrar DOS montos en dólares:
      a) "Promocion en divisas: $[MontoOriginal]"
      b) "Precio: $[MontoConvertido] a tasa BCV"
-   - CONVERSIÓN: El MontoConvertido se calcula como: MontoOriginal * ${multiplier.toFixed(4)}. IMPORTANTE: Si el resultado tiene decimales, REDONDEA SIEMPRE HACIA ARRIBA al número entero más cercano (ej. si da 41.2, cóbralo a 42) para que el precio sea exacto y a favor del taller.
+   - CONVERSIÓN: El MontoConvertido se calcula como: MontoOriginal * ${multiplier.toFixed(4)}. IMPORTANTE: Redondea siempre el resultado final HACIA ARRIBA al múltiplo de 5 más cercano para que los precios terminen estrictamente en 0 o en 5, a favor del taller (Ejemplos: matemática da 41, 42 o 43 -> súbelo a 45. Si da 46, 48 o 49 -> súbelo a 50).
    - REGLA DE ORO: ¡PROHIBIDO! NUNCA menciones "Binance", "P2P", "paralela", "externa", ni des el precio en bolívares (Bs.) bajo ninguna circunstancia.
    - MENSAJE OBLIGATORIO: "Se trabaja a tasa BCV de el momento a pagar, en caja le darán el monto exacto a pagar en bolívares."
 
