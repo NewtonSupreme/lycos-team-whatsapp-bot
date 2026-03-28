@@ -1,13 +1,13 @@
 'use client';
 import React, { useState } from 'react';
-import { FileText, Download, TrendingUp, DollarSign, Wrench, Users, Car, BarChart2, PieChart as PieIcon } from 'lucide-react';
+import { Download, TrendingUp, DollarSign, Wrench, Users } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, RadialBarChart, RadialBar, Legend
+  Legend
 } from 'recharts';
 import { mockDashboardStats, chartDataIngresos, chartDataServicios } from '@/lib/mockData';
 import { formatCurrency } from '@/lib/utils';
@@ -71,8 +71,13 @@ export default function ReportesPage() {
               <button key={p} onClick={() => setPeriod(p)} className={`px-3 py-1.5 text-xs font-medium transition-colors ${period === p ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-white/5'}`}>{p}</button>
             ))}
           </div>
-          <Button variant="outline" size="sm" className="gap-1.5">
-            <Download className="w-3.5 h-3.5" /> Exportar
+          <Button 
+            variant="outline" 
+            size="sm" 
+            className="gap-1.5"
+            onClick={() => { window.location.href = '/api/reportes/diario'; }}
+          >
+            <Download className="w-3.5 h-3.5" /> Exportar Diario
           </Button>
         </div>
       </div>

@@ -258,11 +258,8 @@ SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gr
 - Tubo silenciador/cola: Primer metro $35, metros adicionales $20/metro, soldadura $15, gomas $7
 - Colas cromadas: B55 $25, Camioneta $35, Curba $30
 - Cola de sistema de escape: depende del vehiculo, responder: "Depende del vehiculo, debes traerlo para darte el precio exacto"
-Presupuesto válido 2 días. Pide marca/modelo/año/cilindraje para recomendar el código.
-- Presupuesto aproximado/Precios aproximados de sistemas de escape: si piden un aproximado o precio aproximado para un trabajo, debes hacer el calculo correspondiente a la investigacion del vehiculo pero tomando unicamente los datos y precios de lycos team, por jemplo para un presupuesto de silenciadores debes tomar en cuenta el precio del silenciador, el precio por metro de tuberia, el precio de la soldadura y el precio de las gomas, y debes investigar cuanto mide la tuberia para dar un rango de precio estimado.
-- IMÁGENES DE SILENCIADORES Y EJEMPLOS: Si el cliente pregunta específicamente por un silenciador para su vehículo, pide ver una foto, o quiere ver un ejemplo de nuestro trabajo (fabricación propia), DEBES incluir la etiqueta [IMG:nombre] en tu respuesta para que el sistema le envíe la foto real automáticamente.
-  Nombres válidos para la etiqueta: cl 27, cl 30, cl 40, clh 40, cl 60, clc 60, clp 60, clk 60.
-  EJEMPLO: "Fabricamos silenciadores a medida de excelente calidad. Aquí tienes un ejemplo del modelo que usaría tu vehículo: [IMG:cl 60]"
+- REGLA DE PRESUPUESTOS Y PRECIOS APROXIMADOS: **PROHIBIDO** dar presupuestos, cálculos o precios aproximados de trabajos completos (escapes, mecánica, etc.). Si el cliente pide precio o presupuesto estimado de una reparación o trabajo, **INVÍTALO A UNA REVISIÓN FÍSICA GRATUITA EN EL TALLER**. Explícale amablemente que para darle un presupuesto exacto y decirle con exactitud qué hay que reparar, cambiar o mantener, es necesario revisar el carro personalmente, ya que a veces el cliente puede creer que es una cosa y en realidad es otra. El enganche principal para atraer clientes son los silenciadores, así que evita dar cifras por chat para no asustarlos con los precios.
+
 
 MECANICA Y FRENOS:
 - Mecánica ligera, limpieza de inyectores
@@ -552,16 +549,9 @@ export async function POST(request: NextRequest) {
       const aiResponse = await getAIResponse(messageBody, ctx, rates);
 
       if (aiResponse) {
-        let cleanedAi = cleanForWhatsApp(aiResponse);
+        const cleanedAi = cleanForWhatsApp(aiResponse);
 
-        // Fetch extracted IMG tags
-        const imgRegex = /\[IMG:(.+?)\]/gi;
-        const imgMatches: string[] = [];
-        let match;
-        while ((match = imgRegex.exec(cleanedAi)) !== null) {
-          imgMatches.push(match[1].trim());
-        }
-        cleanedAi = cleanedAi.replace(imgRegex, '').trim();
+        // (Logic for images was removed)
 
         const needsAsesor = aiNeedsAsesor(cleanedAi);
 
@@ -586,20 +576,7 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Send images if Gemini added the tags
-        if (imgMatches.length > 0) {
-          const host = request.headers.get('x-forwarded-host') || request.headers.get('host');
-          const proto = request.headers.get('x-forwarded-proto') || 'https';
-          const origin = `${proto}://${host}`;
-          
-          for (const imgName of imgMatches) {
-            await delay(800);
-            const encodedName = encodeURIComponent(imgName.toUpperCase());
-            const imgUrl = `${origin}/Silenciadores/${encodedName}.jpg`;
-            console.log(`Intentando enviar imagen desde URL: ${imgUrl}`);
-            await sendImage(from, imgUrl);
-          }
-        }
+
 
         void processIntents(db, from, messageBody, ctx);
       }
