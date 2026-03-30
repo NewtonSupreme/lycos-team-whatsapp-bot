@@ -23,7 +23,7 @@ async function firePushNotification(payload: {
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
+const GEMINI_MODEL = 'gemini-1.5-flash-lite';
 const ASESOR_PHONE = '584123343519';
 const ASESOR_DISPLAY_NAME = 'Asesor Lycos Team';
 const IG_LINK = 'https://www.instagram.com/lycos.team?igsh=MzVwZ3NkbnN2OHk=';
