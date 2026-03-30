@@ -26,6 +26,15 @@ export default function LoginPage() {
       });
 
       if (res.ok) {
+        const data = await res.json();
+        // Store user info in session storage so layout can pick it up
+        if (data.nombre) {
+          sessionStorage.setItem('lycos_user', JSON.stringify({
+            username: data.username || email,
+            nombre: data.nombre,
+            rol: data.rol || 'usuario',
+          }));
+        }
         const searchParams = new URLSearchParams(window.location.search);
         const from = searchParams.get('from') || '/dashboard';
         router.push(from);

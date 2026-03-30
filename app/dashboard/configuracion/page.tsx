@@ -1,6 +1,7 @@
 'use client';
-import React, { useState } from 'react';
-import { Settings, User, Bell, Bot, MessageSquare, Shield, Zap, Save, Eye, EyeOff, Phone, Mail, MapPin, Clock, Globe } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Settings, User, Bell,Bot, MessageSquare, Shield, Zap, Save, Eye, EyeOff, Phone, Mail, MapPin, Clock, Globe, Lock, Trash2, Smartphone, Monitor } from 'lucide-react';
+import { useAppStore } from '@/lib/store';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,6 +31,7 @@ function Toggle({ checked, onChange, label, description }: ToggleProps) {
 }
 
 export default function ConfiguracionPage() {
+  const { user } = useAppStore();
   const [saved, setSaved] = useState(false);
   const [showKey, setShowKey] = useState(false);
 
@@ -38,6 +40,51 @@ export default function ConfiguracionPage() {
   const [ia, setIa] = useState({ activo: true, respuesta_automatica: true, escalar_humano: true, aprendizaje: false, respuestas_nocturnas: true, max_intentos: '3' });
   const [apiKeys, setApiKeys] = useState({ gemini: 'AIza••••••••••••••••••••••••', whatsapp_token: 'EAAxxxxxxx••••••••', whatsapp_phone_id: '123456789', supabase_url: 'https://xxx.supabase.co', supabase_anon: 'eyJhbGci••••••••' });
   const [seguridad, setSeguridad] = useState({ dos_factores: false, sesiones_activas: true, logs_auditoria: true, backups_automaticos: true });
+
+  // Pwd change
+  const [pwdForm, setPwdForm] = useState({ current: '', new: '' });
+  const [pwdStatus, setPwdStatus] = useState({ loading: false, success: false, error: '' });
+
+  // Sessions
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [loadingSessions, setLoadingSessions] = useState(false);
+
+  useEffect(() => {
+    if (user?.rol === 'admin') {
+      setLoadingSessions(true);
+      fetch('/api/auth/sessions')
+        .then(res => res.json())
+        .then(data => setSessions(data.sessions || []))
+        .finally(() => setLoadingSessions(false));
+    }
+  }, [user]);
+
+  const handleChangePwd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwdStatus({ loading: true, success: false, error: '' });
+    const res = await fetch('/api/auth/me', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword: pwdForm.current, newPassword: pwdForm.new }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setPwdStatus({ loading: false, success: true, error: '' });
+      setPwdForm({ current: '', new: '' });
+      setTimeout(() => setPwdStatus(p => ({ ...p, success: false })), 3000);
+    } else {
+      setPwdStatus({ loading: false, success: false, error: data.error });
+    }
+  };
+
+  const handleRevokeSession = async (id: string) => {
+    await fetch('/api/auth/sessions', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    setSessions(prev => prev.filter(s => s.id !== id));
+  };
 
   const handleSave = () => { setSaved(true); setTimeout(() => setSaved(false), 2500); };
 
@@ -249,6 +296,61 @@ export default function ConfiguracionPage() {
         {/* Seguridad */}
         <TabsContent value="seguridad">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {user?.rol !== 'admin' && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-primary" /> Cambiar Contraseña
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Actualiza la contraseña de tu cuenta temporal
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleChangePwd} className="space-y-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground">Contraseña actual</label>
+                      <Input
+                        type="password"
+                        required
+                        value={pwdForm.current}
+                        onChange={e => setPwdForm(p => ({ ...p, current: e.target.value }))}
+                        placeholder="••••••••"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground">Nueva contraseña</label>
+                      <Input
+                        type="password"
+                        required
+                        minLength={6}
+                        value={pwdForm.new}
+                        onChange={e => setPwdForm(p => ({ ...p, new: e.target.value }))}
+                        placeholder="••••••••"
+                      />
+                    </div>
+                    
+                    {pwdStatus.error && (
+                      <div className="p-2.5 rounded-lg bg-destructive/10 border border-destructive/20 text-xs text-destructive flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-destructive flex-shrink-0" />
+                        {pwdStatus.error}
+                      </div>
+                    )}
+                    {pwdStatus.success && (
+                      <div className="p-2.5 rounded-lg bg-green-500/10 border border-green-500/20 text-xs text-green-500 flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
+                        Contraseña actualizada exitosamente.
+                      </div>
+                    )}
+
+                    <Button type="submit" disabled={pwdStatus.loading} className="w-full">
+                      {pwdStatus.loading ? 'Guardando...' : 'Actualizar contraseña'}
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+            )}
+
             <Card>
               <CardHeader>
                 <CardTitle className="text-base flex items-center gap-2">
@@ -257,34 +359,60 @@ export default function ConfiguracionPage() {
               </CardHeader>
               <CardContent className="space-y-2">
                 <Toggle checked={seguridad.dos_factores} onChange={v => setSeguridad(p => ({ ...p, dos_factores: v }))} label="Autenticación 2 Factores" description="Requiere código OTP al iniciar sesión" />
-                <Toggle checked={seguridad.sesiones_activas} onChange={v => setSeguridad(p => ({ ...p, sesiones_activas: v }))} label="Sesiones activas" description="Monitorear dispositivos conectados" />
-                <Toggle checked={seguridad.logs_auditoria} onChange={v => setSeguridad(p => ({ ...p, logs_auditoria: v }))} label="Log de auditoría" description="Registrar todas las acciones del sistema" />
-                <Toggle checked={seguridad.backups_automaticos} onChange={v => setSeguridad(p => ({ ...p, backups_automaticos: v }))} label="Backups automáticos" description="Respaldo de base de datos cada 24h" />
+                <Toggle checked={seguridad.sesiones_activas} onChange={v => setSeguridad(p => ({ ...p, sesiones_activas: v }))} label="Recibir alertas de logueo" description="Avisar por nuevos dispositivos" />
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Información del Sistema</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {[
-                    { label: 'Versión', value: 'v1.0.0', color: 'text-foreground' },
-                    { label: 'Autor', value: 'Leandro Márquez', color: 'text-primary' },
-                    { label: 'Framework', value: 'Next.js 14 + Supabase', color: 'text-blue-400' },
-                    { label: 'IA', value: 'Google Gemini 1.5', color: 'text-violet-400' },
-                    { label: 'Hosting', value: 'Vercel + Supabase', color: 'text-green-400' },
-                    { label: 'Último backup', value: 'Hoy 06:00 AM', color: 'text-muted-foreground' },
-                  ].map(({ label, value, color }) => (
-                    <div key={label} className="flex items-center justify-between py-2 border-b border-border/20 last:border-0">
-                      <span className="text-xs text-muted-foreground">{label}</span>
-                      <span className={`text-xs font-medium ${color}`}>{value}</span>
+            {user?.rol === 'admin' && (
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Monitor className="w-4 h-4 text-blue-400" /> Dispositivos Conectados
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Sesiones activas en la plataforma. Revoca accesos sospechosos.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {loadingSessions ? (
+                    <div className="text-center py-4 text-xs text-muted-foreground animate-pulse">Cargando sesiones...</div>
+                  ) : sessions.length === 0 ? (
+                    <div className="text-center py-4 text-xs text-muted-foreground">No hay sesiones activas registradas o no hay acceso a la BD.</div>
+                  ) : (
+                    <div className="space-y-2 rounded-xl border border-border/30 divide-y divide-border/20 overflow-hidden">
+                      {sessions.map(s => (
+                        <div key={s.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-card/50 gap-3">
+                          <div className="flex items-start gap-3 flex-1 min-w-0">
+                            <div className="mt-1 p-2 rounded-lg bg-primary/10 text-primary">
+                              {s.device_type === 'Móvil' ? <Smartphone className="w-4 h-4" /> : <Monitor className="w-4 h-4" />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium leading-none mb-1 text-foreground flex items-center gap-2">
+                                {s.username}
+                                {new Date(s.expires_at).getTime() < new Date().getTime() && <span className="text-[9px] px-1.5 py-0.5 rounded bg-destructive/20 text-destructive uppercase">Expirada</span>}
+                              </p>
+                              <p className="text-[11px] text-muted-foreground font-mono">{s.ip_address} • {s.browser} en {s.os}</p>
+                              <p className="text-[10px] text-muted-foreground/60 mt-1">
+                                Creada: {new Date(s.created_at).toLocaleString('es-VE')}
+                              </p>
+                            </div>
+                          </div>
+                          <Button
+                            variant="destructive"
+                            size="icon"
+                            className="w-8 h-8 self-end sm:self-center bg-destructive/10 text-destructive hover:bg-destructive hover:text-white"
+                            onClick={() => handleRevokeSession(s.id)}
+                            title="Desconectar"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+                  )}
+                </CardContent>
+              </Card>
+            )}
           </div>
         </TabsContent>
       </Tabs>

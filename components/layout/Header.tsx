@@ -1,41 +1,234 @@
 'use client';
-import React, { useState, useEffect } from 'react';
-import { Bell, Search, Menu, X } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Bell, Search, Menu, X, MessageSquare, Calendar, Wrench } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-// import { Badge } from '@/components/ui/badge';
 import { cn, getInitials } from '@/lib/utils';
 import { ThemeToggle } from './ThemeToggle';
 import { supabase } from '@/lib/supabase';
 
+// ── Helpers ──────────────────────────────────────────────────
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+function detectMediaType(body: string): 'imagen' | 'video' | 'audio' | 'documento' | 'texto' {
+  if (!body) return 'texto';
+  const lower = body.toLowerCase();
+  if (lower.includes('imagen') || lower.includes('image') || lower.match(/\.(jpg|jpeg|png|gif|webp)/)) return 'imagen';
+  if (lower.includes('video') || lower.match(/\.(mp4|mov|avi|mkv)/)) return 'video';
+  if (lower.includes('audio') || lower.includes('voz') || lower.match(/\.(mp3|ogg|m4a|opus)/)) return 'audio';
+  if (lower.includes('documento') || lower.match(/\.(pdf|doc|xlsx|csv)/)) return 'documento';
+  return 'texto';
+}
+
+function buildWaNotifBody(body: string, senderName?: string): { title: string; mensaje: string } {
+  const sender = senderName ? `${senderName}` : 'Cliente';
+  const mediaType = detectMediaType(body);
+  const mediaEmojis = { imagen: '🖼️', video: '🎥', audio: '🎤', documento: '📄', texto: '' };
+  const mediaLabels = { imagen: 'envió una imagen', video: 'envió un video', audio: 'envió un audio', documento: 'envió un documento', texto: '' };
+
+  if (mediaType !== 'texto') {
+    return {
+      title: `📱 ${sender} ${mediaLabels[mediaType]}`,
+      mensaje: `${mediaEmojis[mediaType]} ${mediaLabels[mediaType].charAt(0).toUpperCase() + mediaLabels[mediaType].slice(1)}`,
+    };
+  }
+
+  const isContactRequest = body.toLowerCase().includes('asesor') || body.toLowerCase().includes('hablar') || body.toLowerCase().includes('agente') || body.toLowerCase().includes('humano');
+  if (isContactRequest) {
+    return {
+      title: `🆘 ${sender} quiere hablar con un asesor`,
+      mensaje: body.slice(0, 80),
+    };
+  }
+
+  return {
+    title: `💬 Nuevo mensaje de ${sender}`,
+    mensaje: body.slice(0, 80) + (body.length > 80 ? '...' : ''),
+  };
+}
+
+// ── Push notification helper ──────────────────────────────────
+async function sendPushNotification(payload: {
+  title: string;
+  body: string;
+  type: string;
+  url?: string;
+  tag?: string;
+}) {
+  try {
+    await fetch('/api/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch { /* silent */ }
+}
+
 export default function Header() {
-  const { user, sidebarOpen, toggleSidebar, notifications, unreadCount, markAllRead, addNotification } = useAppStore();
+  const { user, sidebarOpen, toggleSidebar, notifications, unreadCount, markAllRead, addNotification, pushRegistered, setPushRegistered } = useAppStore();
   const [showNotifs, setShowNotifs] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
 
-  // ── Realtime: escucha nuevas citas agendadas (por el bot o manualmente) ──
+  // ── Registrar Service Worker + Push ──────────────────────────
+  const registerPush = useCallback(async () => {
+    if (pushRegistered || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
+
+    try {
+      const reg = await navigator.serviceWorker.register('/sw.js');
+      await navigator.serviceWorker.ready;
+
+      let permission = Notification.permission;
+      if (permission === 'default') {
+        permission = await Notification.requestPermission();
+      }
+      if (permission !== 'granted') return;
+
+      const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+      if (!vapidKey) return;
+
+      const existing = await reg.pushManager.getSubscription();
+      const sub = existing || await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidKey),
+      });
+
+      await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sub.toJSON()),
+      });
+
+      setPushRegistered(true);
+    } catch (err) {
+      console.warn('Push registration failed:', err);
+    }
+  }, [pushRegistered, setPushRegistered]);
+
+  useEffect(() => {
+    registerPush();
+  }, [registerPush]);
+
+  // ── Realtime: mensajes WhatsApp entrantes ────────────────────
+  useEffect(() => {
+    if (!supabase) return;
+    const channel = supabase
+      .channel('header-wa-notifs')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mensajes_whatsapp' }, async (payload) => {
+        const msg = payload.new as { tipo: string; body: string; from_number: string };
+        if (msg.tipo !== 'entrante') return;
+
+        // Lookup sender name from conversaciones
+        let senderName: string | undefined;
+        try {
+          const { data } = await supabase!
+            .from('conversaciones')
+            .select('datos_cliente')
+            .eq('telefono', msg.from_number)
+            .single();
+          senderName = (data?.datos_cliente as { nombre?: string } | null)?.nombre;
+        } catch { /* ignore */ }
+
+        const { title, mensaje } = buildWaNotifBody(msg.body, senderName || msg.from_number);
+        const mediaType = detectMediaType(msg.body);
+
+        addNotification({
+          tipo: 'info',
+          titulo: title,
+          mensaje,
+          leida: false,
+        });
+
+        // Notificación nativa del browser
+        if (Notification.permission === 'granted') {
+          new Notification(title, { body: mensaje, icon: '/logo-icon-white.png', tag: 'wa-msg' });
+        }
+
+        // Push background (para cuando el teléfono no tiene la app abierta)
+        sendPushNotification({
+          title,
+          body: mensaje,
+          type: mediaType !== 'texto' ? `whatsapp-${mediaType}` : 'whatsapp-message',
+          url: '/dashboard/whatsapp',
+          tag: 'whatsapp',
+        });
+      })
+      .subscribe();
+
+    return () => { supabase?.removeChannel(channel); };
+  }, [addNotification]);
+
+  // ── Realtime: nuevas citas ────────────────────────────────────
   useEffect(() => {
     if (!supabase) return;
     const channel = supabase
       .channel('header-citas-notifs')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'citas' },
-        (payload) => {
-          const cita = payload.new as { fecha?: string; hora?: string; telefono?: string; descripcion?: string };
-          const titulo = '📅 Nueva cita agendada';
-          const mensaje = `Cita el ${cita.fecha ?? ''} a las ${cita.hora ?? ''} — Tel: ${cita.telefono ?? 'desconocido'}`;
-          addNotification({ tipo: 'success', titulo, mensaje, leida: false });
-          if ('Notification' in window && Notification.permission === 'granted') {
-            new Notification(titulo, { body: mensaje, icon: '/favicon.ico' });
-          }
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'citas' }, (payload) => {
+        const cita = payload.new as { fecha?: string; hora?: string; telefono?: string; descripcion?: string; nombre_cliente?: string };
+        const titulo = '📅 Nueva cita agendada';
+        const mensaje = `${cita.nombre_cliente || cita.telefono || 'Cliente'} — ${cita.fecha ?? ''} a las ${cita.hora ?? ''}${cita.descripcion ? ` · ${cita.descripcion}` : ''}`;
+
+        addNotification({ tipo: 'success', titulo, mensaje, leida: false });
+
+        if (Notification.permission === 'granted') {
+          new Notification(titulo, { body: mensaje, icon: '/logo-icon-white.png', tag: 'cita' });
         }
-      )
+
+        sendPushNotification({ title: titulo, body: mensaje, type: 'cita', url: '/dashboard/agenda', tag: 'cita' });
+      })
       .subscribe();
+
     return () => { supabase?.removeChannel(channel); };
   }, [addNotification]);
+
+  // ── Realtime: servicios asignados o actualizados ─────────────
+  useEffect(() => {
+    if (!supabase) return;
+    const channel = supabase
+      .channel('header-servicios-notifs')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'servicios' }, (payload) => {
+        const srv = payload.new as { nombre?: string; descripcion?: string; estado?: string; tecnico?: string };
+        const titulo = '🔧 Nuevo servicio asignado';
+        const mensaje = `${srv.nombre || srv.descripcion || 'Servicio'}${srv.tecnico ? ` → ${srv.tecnico}` : ''} · Estado: ${srv.estado || 'pendiente'}`;
+
+        addNotification({ tipo: 'warning', titulo, mensaje, leida: false });
+
+        if (Notification.permission === 'granted') {
+          new Notification(titulo, { body: mensaje, icon: '/logo-icon-white.png', tag: 'servicio' });
+        }
+
+        sendPushNotification({ title: titulo, body: mensaje, type: 'servicio', url: '/dashboard/servicios', tag: 'servicio' });
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'servicios' }, (payload) => {
+        const srv = payload.new as { nombre?: string; estado?: string };
+        const old = payload.old as { estado?: string };
+        if (srv.estado === old.estado) return; // solo notificar si cambia estado
+        const titulo = '🔄 Servicio actualizado';
+        const mensaje = `${srv.nombre || 'Servicio'} cambió a: ${srv.estado}`;
+        addNotification({ tipo: 'info', titulo, mensaje, leida: false });
+        if (Notification.permission === 'granted') {
+          new Notification(titulo, { body: mensaje, icon: '/logo-icon-white.png', tag: 'servicio-update' });
+        }
+        sendPushNotification({ title: titulo, body: mensaje, type: 'servicio', url: '/dashboard/servicios', tag: 'servicio' });
+      })
+      .subscribe();
+
+    return () => { supabase?.removeChannel(channel); };
+  }, [addNotification]);
+
+  const notifIcons: Record<string, React.ReactNode> = {
+    'whatsapp': <MessageSquare className="w-3.5 h-3.5 text-green-400" />,
+    'cita': <Calendar className="w-3.5 h-3.5 text-blue-400" />,
+    'servicio': <Wrench className="w-3.5 h-3.5 text-orange-400" />,
+  };
 
   return (
     <header suppressHydrationWarning className="h-14 flex items-center gap-3 px-4 border-b border-border/30 bg-card/40 backdrop-blur-xl sticky top-0 z-20">
@@ -68,7 +261,7 @@ export default function Header() {
       {/* Theme Toggle & Notifications */}
       <div className="flex items-center gap-1">
         <ThemeToggle />
-        
+
         <div className="relative">
           <Button
             variant="ghost"
@@ -76,47 +269,85 @@ export default function Header() {
             className="relative"
             onClick={() => { setShowNotifs(!showNotifs); if (!showNotifs) markAllRead(); }}
           >
-            <Bell className="w-4 h-4" />
+            <Bell className={cn('w-4 h-4', unreadCount > 0 && 'animate-[bell_0.5s_ease-in-out]')} />
             {unreadCount > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 w-4 h-4 flex items-center justify-center rounded-full bg-primary text-[9px] text-primary-foreground font-bold">
-                {unreadCount}
+              <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 flex items-center justify-center px-1 rounded-full bg-primary text-[9px] text-primary-foreground font-bold">
+                {unreadCount > 99 ? '99+' : unreadCount}
               </span>
             )}
           </Button>
 
-        {showNotifs && (
-          <div className="absolute right-0 top-10 w-80 rounded-xl border border-border bg-card shadow-2xl z-50 overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border/30">
-              <span className="text-sm font-semibold">Notificaciones</span>
-              <span className="text-[10px] text-muted-foreground">{notifications.length} total</span>
-            </div>
-            <div className="max-h-72 overflow-y-auto">
-              {notifications.map((n) => (
-                <div
-                  key={n.id}
-                  className={cn(
-                    'px-4 py-3 border-b border-border/20 hover:bg-white/3 transition-colors',
-                    !n.leida && 'bg-primary/3'
+          {showNotifs && (
+            <div className="absolute right-0 top-10 w-80 rounded-xl border border-border bg-card shadow-2xl z-50 overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border/30">
+                <span className="text-sm font-semibold">Notificaciones</span>
+                <div className="flex items-center gap-2">
+                  {pushRegistered && (
+                    <span className="text-[9px] text-green-400 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-400" />Push activo
+                    </span>
                   )}
-                >
-                  <div className="flex items-start gap-2">
-                    <div className={cn(
-                      'mt-0.5 w-1.5 h-1.5 rounded-full flex-shrink-0',
-                      n.tipo === 'success' ? 'bg-green-400' :
-                      n.tipo === 'warning' ? 'bg-yellow-400' :
-                      n.tipo === 'error' ? 'bg-red-400' : 'bg-blue-400'
-                    )} />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium">{n.titulo}</p>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">{n.mensaje}</p>
-                    </div>
-                  </div>
+                  <span className="text-[10px] text-muted-foreground">{notifications.length} total</span>
                 </div>
-              ))}
+              </div>
+              <div className="max-h-80 overflow-y-auto">
+                {notifications.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
+                    <Bell className="w-6 h-6 text-muted-foreground mb-2" />
+                    <p className="text-xs text-muted-foreground">Sin notificaciones</p>
+                  </div>
+                )}
+                {notifications.map((n) => {
+                  const typeKey = n.titulo.includes('💬') || n.titulo.includes('📱') || n.titulo.includes('🆘') ? 'whatsapp'
+                    : n.titulo.includes('📅') ? 'cita'
+                    : n.titulo.includes('🔧') || n.titulo.includes('🔄') ? 'servicio'
+                    : 'general';
+                  return (
+                    <div
+                      key={n.id}
+                      className={cn(
+                        'px-4 py-3 border-b border-border/20 hover:bg-white/3 transition-colors',
+                        !n.leida && 'bg-primary/5'
+                      )}
+                    >
+                      <div className="flex items-start gap-2.5">
+                        <div className="mt-0.5 flex-shrink-0">
+                          {notifIcons[typeKey] || (
+                            <div className={cn(
+                              'w-2 h-2 rounded-full mt-1',
+                              n.tipo === 'success' ? 'bg-green-400' :
+                              n.tipo === 'warning' ? 'bg-yellow-400' :
+                              n.tipo === 'error' ? 'bg-red-400' : 'bg-blue-400'
+                            )} />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium leading-snug">{n.titulo}</p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{n.mensaje}</p>
+                          <p className="text-[10px] text-muted-foreground/60 mt-1">
+                            {new Date(n.created_at).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' })}
+                          </p>
+                        </div>
+                        {!n.leida && <div className="w-2 h-2 rounded-full bg-primary flex-shrink-0 mt-1" />}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {notifications.length > 0 && (
+                <div className="px-4 py-2 border-t border-border/30 text-center">
+                  <button
+                    onClick={markAllRead}
+                    className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Marcar todas como leídas
+                  </button>
+                </div>
+              )}
             </div>
-          </div>
-        )}
-      </div></div>
+          )}
+        </div>
+      </div>
 
       {/* User */}
       <div className="flex items-center gap-2 pl-2 border-l border-border/30">
@@ -127,7 +358,7 @@ export default function Header() {
         </Avatar>
         <div className="hidden sm:flex flex-col">
           <span className="text-xs font-medium leading-none">{user?.nombre || 'Admin'}</span>
-          <span className="text-[10px] text-muted-foreground mt-0.5">Administrador</span>
+          <span className="text-[10px] text-muted-foreground mt-0.5 capitalize">{user?.rol === 'admin' ? 'Administrador' : (user?.rol || 'Administrador')}</span>
         </div>
       </div>
     </header>

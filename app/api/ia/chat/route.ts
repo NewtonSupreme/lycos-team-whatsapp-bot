@@ -221,8 +221,10 @@ export async function POST(request: NextRequest) {
             maxOutputTokens: 2048,
           },
           safetySettings: [
-            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
           ],
         }),
       }
@@ -237,10 +239,17 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await apiResponse.json();
-    const rawText: string = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    
+    // Safely extract text from all parts
+    const parts = data.candidates?.[0]?.content?.parts || [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rawText: string = parts.map((p: any) => p.text).join('') || '';
 
     if (!rawText) {
-      console.error('[IA] Empty response from Gemini. Full data:', JSON.stringify(data).slice(0, 500));
+      console.error('[IA] Empty response from Gemini. Full data:', JSON.stringify(data).slice(0, 1000));
+      if (data.candidates?.[0]?.finishReason) {
+        console.error('[IA] Finish Reason:', data.candidates[0].finishReason);
+      }
       return NextResponse.json({ response: 'No pude procesar eso ahora. Intenta de nuevo.' });
     }
 

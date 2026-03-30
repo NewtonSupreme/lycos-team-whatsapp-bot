@@ -2,7 +2,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   MessageSquare, Send, Bot, User,
-  Smile, CheckCheck, Check, X, RefreshCw, UserCheck, Wifi, WifiOff, Search, Clock
+  Smile, CheckCheck, Check, X, RefreshCw, UserCheck, Wifi, WifiOff, Search, Clock,
+  Image as ImageIcon, Video, Volume2, FileText, ChevronDown
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { cn, formatRelativeTime } from '@/lib/utils';
@@ -37,6 +38,7 @@ interface RawConv {
   datos_cliente?: { nombre?: string } | null;
 }
 
+// ── Helpers ──────────────────────────────────────────────────
 function formatTime(ts: string) {
   try {
     return new Date(ts).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' });
@@ -59,7 +61,6 @@ function displayName(conv: RawConv): string {
   return conv.datos_cliente?.nombre || conv.telefono || 'Desconocido';
 }
 
-// Merge two arrays of messages deduplicating by id
 function mergeMessages(existing: RawMsg[], incoming: RawMsg[]): RawMsg[] {
   const map = new Map(existing.map(m => [m.id, m]));
   for (const m of incoming) map.set(m.id, m);
@@ -68,6 +69,51 @@ function mergeMessages(existing: RawMsg[], incoming: RawMsg[]): RawMsg[] {
   );
 }
 
+// ── Detect media type in message body ────────────────────────
+function detectMediaType(body: string): 'image' | 'video' | 'audio' | 'document' | null {
+  if (!body) return null;
+  const lower = body.toLowerCase();
+  if (lower.match(/\.(jpg|jpeg|png|gif|webp)(\?|$)/) || lower.includes('[imagen]') || lower.includes('[image]')) return 'image';
+  if (lower.match(/\.(mp4|mov|avi|mkv)(\?|$)/) || lower.includes('[video]')) return 'video';
+  if (lower.match(/\.(mp3|ogg|m4a|opus|aac)(\?|$)/) || lower.includes('[audio]') || lower.includes('[voz]')) return 'audio';
+  if (lower.match(/\.(pdf|doc|docx|xlsx|csv)(\?|$)/) || lower.includes('[documento]')) return 'document';
+  return null;
+}
+
+function MediaBubble({ body, isOut }: { body: string; isOut: boolean }) {
+  const type = detectMediaType(body);
+  if (!type) return <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: '#e9edef', wordBreak: 'break-word' }}>{body}</p>;
+
+  const icons = {
+    image: <ImageIcon className="w-8 h-8" />,
+    video: <Video className="w-8 h-8" />,
+    audio: <Volume2 className="w-8 h-8" />,
+    document: <FileText className="w-8 h-8" />,
+  };
+  const labels = { image: 'Imagen', video: 'Video', audio: 'Audio', document: 'Documento' };
+
+  // Check if body is a URL we can render
+  const isUrl = body.startsWith('http');
+  const color = isOut ? '#00a884' : '#2a3942';
+
+  return (
+    <div className="flex flex-col gap-1">
+      {type === 'image' && isUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={body} alt="Imagen" className="rounded-lg max-w-full max-h-48 object-cover" style={{ border: `1px solid ${color}` }} />
+      ) : type === 'video' && isUrl ? (
+        <video src={body} controls className="rounded-lg max-w-full max-h-48" />
+      ) : (
+        <div className="flex items-center gap-2 px-2 py-1 rounded-lg" style={{ background: 'rgba(255,255,255,0.08)' }}>
+          <div style={{ color: isOut ? '#25d366' : '#8696a0' }}>{icons[type]}</div>
+          <span className="text-sm" style={{ color: '#e9edef' }}>{labels[type]}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main Component ────────────────────────────────────────────
 export default function WhatsAppPage() {
   const [convs, setConvs] = useState<RawConv[]>([]);
   const [selected, setSelected] = useState<RawConv | null>(null);
@@ -83,24 +129,25 @@ export default function WhatsAppPage() {
   const [isScrolledUp, setIsScrolledUp] = useState(false);
   const [timeLeftStr, setTimeLeftStr] = useState<string | null>(null);
   const [isWindowOpen, setIsWindowOpen] = useState<boolean>(true);
+  const [hasMoreAbove, setHasMoreAbove] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  // Stable refs used inside Realtime + polling closures
   const selectedRef = useRef<RawConv | null>(null);
   const msgsRef = useRef<RawMsg[]>([]);
+  const realtimeConnectedRef = useRef(false);
 
   selectedRef.current = selected;
   msgsRef.current = msgs;
 
-  // Scroll handler to detect if the user is reading upwards
+  // ── Scroll detection ──────────────────────────────────────
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
     setIsScrolledUp(!atBottom);
   }, []);
 
-  // Smart scroll to bottom
   const scrollToBottom = useCallback((force = false) => {
     const el = chatScrollRef.current;
     if (!el) return;
@@ -113,7 +160,7 @@ export default function WhatsAppPage() {
     scrollToBottom();
   }, [msgs, scrollToBottom]);
 
-  // ── Load conversations ──────────────────────────────────────────────────────
+  // ── Load conversations ──────────────────────────────────────
   const loadConvs = useCallback(async () => {
     if (!supabase) return;
     const { data } = await supabase
@@ -123,76 +170,125 @@ export default function WhatsAppPage() {
       .limit(50);
     if (!data) return;
     setConvs(data as RawConv[]);
-    // Keep selected in sync with fresh estado/datos
     if (selectedRef.current) {
       const fresh = (data as RawConv[]).find(c => c.id === selectedRef.current!.id);
       if (fresh) setSelected(fresh);
     }
   }, []);
 
-  // ── Full load: replaces all messages (only called when switching chats) ─────
-  const loadAllMsgs = useCallback(async (telefono: string) => {
+  // ── OPTIMIZED: Load messages newest-first, show immediately ──
+  // Loads DESC (newest first), reverses for display → user sees newest right away
+  const loadInitialMsgs = useCallback(async (telefono: string) => {
     if (!supabase) return;
     setLoadingMsgs(true);
+    setHasMoreAbove(false);
+
+
     const { data } = await supabase
       .from('mensajes_whatsapp')
       .select('*')
       .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
-      .order('created_at', { ascending: true })
-      .limit(150);
+      .order('created_at', { ascending: false }) // newest first
+      .limit(60);
+
     setLoadingMsgs(false);
-    if (data) setMsgs(data as RawMsg[]);
+
+    if (!data) return;
+
+    const sorted = [...data].reverse() as RawMsg[]; // display oldest→newest
+    setMsgs(sorted);
+    setHasMoreAbove(data.length === 60);
+
+    // Scroll to bottom AFTER paint
+    requestAnimationFrame(() => {
+      const el = chatScrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
   }, []);
 
-  // ── Incremental load: only fetch messages NEWER than what we have ──────────
-  // This never wipes existing messages — it only adds new ones.
+  // ── Load older messages (scroll up) ──────────────────────────
+  const loadOlderMsgs = useCallback(async () => {
+    if (!supabase || !selected || loadingMore || !hasMoreAbove || msgs.length === 0) return;
+    setLoadingMore(true);
+
+    const oldest = msgs[0].created_at;
+    const { data } = await supabase
+      .from('mensajes_whatsapp')
+      .select('*')
+      .or(`from_number.eq.${selected.telefono},to_number.eq.${selected.telefono}`)
+      .lt('created_at', oldest)
+      .order('created_at', { ascending: false })
+      .limit(40);
+
+    setLoadingMore(false);
+
+    if (!data || data.length === 0) {
+      setHasMoreAbove(false);
+      return;
+    }
+
+    const olderSorted = [...data].reverse() as RawMsg[];
+    // Remember current scroll height before prepending
+    const el = chatScrollRef.current;
+    const prevScrollHeight = el?.scrollHeight ?? 0;
+
+    setMsgs(prev => [...olderSorted, ...prev]);
+    setHasMoreAbove(data.length === 40);
+
+    // Maintain scroll position after prepend
+    requestAnimationFrame(() => {
+      if (el) {
+        el.scrollTop = el.scrollHeight - prevScrollHeight;
+      }
+    });
+  }, [selected, loadingMore, hasMoreAbove, msgs]);
+
+  // ── Scroll up trigger for loading older messages ──────────────
+  const handleScrollEvents = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    handleScroll(e);
+    const el = e.currentTarget;
+    if (el.scrollTop < 100 && hasMoreAbove && !loadingMore) {
+      loadOlderMsgs();
+    }
+  }, [handleScroll, hasMoreAbove, loadingMore, loadOlderMsgs]);
+
+  // ── Incremental: only fetch messages NEWER than last ──────────
   const fetchNewMsgs = useCallback(async (telefono: string) => {
     if (!supabase) return;
     const latest = msgsRef.current;
-    const lastTs = latest.length
-      ? latest[latest.length - 1].created_at
-      : new Date(0).toISOString();
+    const realMsgs = latest.filter(m => !m.id.startsWith('tmp-'));
+    const lastTs = realMsgs.length ? realMsgs[realMsgs.length - 1].created_at : new Date(0).toISOString();
+
     const { data } = await supabase
       .from('mensajes_whatsapp')
       .select('*')
       .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
       .gt('created_at', lastTs)
       .order('created_at', { ascending: true })
-      .limit(50);
+      .limit(20);
+
     if (data && data.length > 0) {
       setMsgs(prev => mergeMessages(prev, data as RawMsg[]));
     }
   }, []);
 
-  // ── Initial load & Permissions ─────────────────────────────────────────────
+  // ── Initial setup ────────────────────────────────────────────
   useEffect(() => {
     loadConvs();
-    if ('Notification' in window && Notification.permission !== 'granted' && Notification.permission !== 'denied') {
-      Notification.requestPermission();
-    }
   }, [loadConvs]);
 
-  // ── Timer Logic (24h WhatsApp Window) ──────────────────────────────────────
+  // ── 24h WhatsApp timer ────────────────────────────────────────
   useEffect(() => {
-    if (!selected || msgs.length === 0) {
-      setTimeLeftStr(null);
-      return;
-    }
+    if (!selected || msgs.length === 0) { setTimeLeftStr(null); return; }
     const lastIncoming = [...msgs].reverse().find(m => m.tipo === 'entrante');
-    if (!lastIncoming) {
-      setTimeLeftStr('Vencido');
-      setIsWindowOpen(false);
-      return;
-    }
+    if (!lastIncoming) { setTimeLeftStr('Vencido'); setIsWindowOpen(false); return; }
+
     const updateTimer = () => {
       const now = new Date().getTime();
-      const lastTime = new Date(lastIncoming.created_at).getTime();
-      const expiresAt = lastTime + 24 * 60 * 60 * 1000;
+      const expiresAt = new Date(lastIncoming.created_at).getTime() + 24 * 60 * 60 * 1000;
       const diff = expiresAt - now;
-      if (diff <= 0) {
-        setTimeLeftStr('Vencido');
-        setIsWindowOpen(false);
-      } else {
+      if (diff <= 0) { setTimeLeftStr('Vencido'); setIsWindowOpen(false); }
+      else {
         setIsWindowOpen(true);
         const h = Math.floor(diff / (1000 * 60 * 60));
         const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
@@ -205,25 +301,19 @@ export default function WhatsAppPage() {
     return () => clearInterval(interval);
   }, [selected, msgs]);
 
-  // ── Realtime + incremental polling ─────────────────────────────────────────
+  // ── Realtime subscription ─────────────────────────────────────
   useEffect(() => {
     if (!supabase) return;
     const sb = supabase;
 
     const channel = sb
       .channel('crm-wa-live')
-      // New message arrives → append it (no full reload)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'mensajes_whatsapp',
-      }, (payload) => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mensajes_whatsapp' }, (payload) => {
         const newMsg = payload.new as RawMsg;
         const cur = selectedRef.current;
         if (cur) {
           const phone = cur.telefono;
           if (newMsg.from_number === phone || newMsg.to_number === phone) {
-            // Remove any optimistic placeholder that matches this body+tipo
             setMsgs(prev => {
               const withoutOptimistic = prev.filter(m =>
                 !(m.id.startsWith('tmp-') && m.body === newMsg.body && m.tipo === newMsg.tipo)
@@ -232,37 +322,29 @@ export default function WhatsAppPage() {
             });
           }
         }
-        // Native browser notification for incoming messages
-        if (newMsg.tipo === 'entrante') {
-          if ('Notification' in window && Notification.permission === 'granted') {
-            new Notification('Lycos Team - Nuevo Mensaje', {
-              body: newMsg.body,
-              icon: '/favicon.ico',
-            });
-          }
-        }
-        // Always refresh conv list
         loadConvs();
       })
-      // Conversation updated → refresh sidebar + selected header
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'conversaciones',
-      }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversaciones' }, () => {
         loadConvs();
       })
       .subscribe((status) => {
-        setIsConnected(status === 'SUBSCRIBED');
+        const connected = status === 'SUBSCRIBED';
+        setIsConnected(connected);
+        realtimeConnectedRef.current = connected;
       });
 
-    // Incremental poll every 3s — guarantees we catch messages even if WS drops.
-    // Uses fetchNewMsgs so it NEVER overwrites existing messages.
+    // Only poll if WS is down; if connected, poll less aggressively
     const poll = setInterval(() => {
       const cur = selectedRef.current;
-      if (cur) fetchNewMsgs(cur.telefono);
-      loadConvs();
-    }, 3000);
+      // If realtime is live, only do a light conv refresh every 10s
+      if (realtimeConnectedRef.current) {
+        loadConvs();
+      } else {
+        // Fallback: aggressive polling when WS is down
+        if (cur) fetchNewMsgs(cur.telefono);
+        loadConvs();
+      }
+    }, 10000);
 
     return () => {
       sb.removeChannel(channel);
@@ -270,14 +352,13 @@ export default function WhatsAppPage() {
     };
   }, [loadConvs, fetchNewMsgs]);
 
-  // ── Select a conversation ──────────────────────────────────────────────────
+  // ── Select conversation ───────────────────────────────────────
   const selectConv = async (conv: RawConv) => {
     setSelected(conv);
     setShowMobileChat(true);
-    setMsgs([]); // clear old chat first
+    setMsgs([]);
     setIsScrolledUp(false);
-    await loadAllMsgs(conv.telefono);
-    // Mark as read
+    await loadInitialMsgs(conv.telefono);
     if (supabase && (conv.mensajes_sin_leer ?? 0) > 0) {
       supabase.from('conversaciones')
         .update({ mensajes_sin_leer: 0 })
@@ -286,7 +367,7 @@ export default function WhatsAppPage() {
     }
   };
 
-  // ── Send message ───────────────────────────────────────────────────────────
+  // ── Send message ──────────────────────────────────────────────
   const handleSend = async () => {
     if (!message.trim() || !selected || sending) return;
     const body = message.trim();
@@ -296,7 +377,6 @@ export default function WhatsAppPage() {
     inputRef.current?.focus();
     scrollToBottom(true);
 
-    // Optimistic message — shown immediately
     const optimisticId = `tmp-${Date.now()}`;
     const optimistic: RawMsg = {
       id: optimisticId,
@@ -320,19 +400,16 @@ export default function WhatsAppPage() {
       console.error('Error enviando:', e);
     } finally {
       setSending(false);
-      // Remove optimistic + fetch actual from DB (incremental)
       await fetchNewMsgs(selected.telefono);
       await loadConvs();
     }
   };
 
-  // ── Mode toggle ────────────────────────────────────────────────────────────
+  // ── Mode toggle ───────────────────────────────────────────────
   const setMode = async (mode: 'bot' | 'humano') => {
     if (!selected || !supabase || togglingMode) return;
     setTogglingMode(true);
-    await supabase.from('conversaciones')
-      .update({ estado: mode })
-      .eq('telefono', selected.telefono);
+    await supabase.from('conversaciones').update({ estado: mode }).eq('telefono', selected.telefono);
     await loadConvs();
     setTogglingMode(false);
   };
@@ -345,7 +422,6 @@ export default function WhatsAppPage() {
   const isHumano = selected?.estado === 'humano';
   const totalUnread = convs.reduce((s, c) => s + (c.mensajes_sin_leer ?? 0), 0);
 
-  // ── Render ─────────────────────────────────────────────────────────────────
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   if (!mounted) return null;
@@ -360,8 +436,8 @@ export default function WhatsAppPage() {
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5 flex items-center gap-1.5">
             {isConnected
-              ? <><Wifi className="w-3 h-3 text-green-400" /> En vivo{totalUnread > 0 ? ` · ${totalUnread} sin leer` : ''}</>
-              : <><WifiOff className="w-3 h-3 text-yellow-400 animate-pulse" /> Conectando...</>}
+              ? <><Wifi className="w-3 h-3 text-green-400" />En vivo{totalUnread > 0 ? ` · ${totalUnread} sin leer` : ''}</>
+              : <><WifiOff className="w-3 h-3 text-yellow-400 animate-pulse" />Conectando...</>}
           </p>
         </div>
         <button onClick={loadConvs} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg hover:bg-white/5">
@@ -369,16 +445,12 @@ export default function WhatsAppPage() {
         </button>
       </div>
 
-      {/* ── Chat layout — mimics WhatsApp Web ── */}
+      {/* Chat layout */}
       <div
         className="flex rounded-2xl overflow-hidden border border-white/8"
-        style={{
-          height: 'calc(100vh - 180px)',
-          minHeight: '560px',
-          background: '#111b21',
-        }}
+        style={{ height: 'calc(100vh - 180px)', minHeight: '560px', background: '#111b21' }}
       >
-        {/* ── Left panel: conversation list ── */}
+        {/* ── Left: conversation list ── */}
         <div
           className={cn(
             'flex flex-col flex-shrink-0 w-full md:w-[340px] border-r border-white/6',
@@ -386,7 +458,6 @@ export default function WhatsAppPage() {
           )}
           style={{ background: '#202c33' }}
         >
-          {/* Search bar */}
           <div className="px-3 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
             <div className="flex items-center gap-2 rounded-lg px-3 py-2" style={{ background: '#2a3942' }}>
               <Search className="w-4 h-4 text-white/40 flex-shrink-0" />
@@ -399,7 +470,6 @@ export default function WhatsAppPage() {
             </div>
           </div>
 
-          {/* Conversation items */}
           <div className="flex-1 overflow-y-auto">
             {filtered.length === 0 && (
               <div className="flex flex-col items-center justify-center h-40 text-center p-4">
@@ -416,32 +486,19 @@ export default function WhatsAppPage() {
                   key={conv.id}
                   onClick={() => selectConv(conv)}
                   className="flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors"
-                  style={{
-                    background: isActive ? '#2a3942' : 'transparent',
-                    borderBottom: '1px solid rgba(255,255,255,0.04)',
-                  }}
+                  style={{ background: isActive ? '#2a3942' : 'transparent', borderBottom: '1px solid rgba(255,255,255,0.04)' }}
                   onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = '#202c33'; }}
                   onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
                 >
-                  {/* Avatar */}
                   <div className="relative flex-shrink-0">
-                    <div
-                      className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold"
-                      style={{ background: '#2a3942', color: '#e9edef' }}
-                    >
+                    <div className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: '#2a3942', color: '#e9edef' }}>
                       {avatarLetters(conv)}
                     </div>
-                    <div
-                      className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2"
-                      style={{ background: dotColor, borderColor: '#202c33' }}
-                    />
+                    <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2" style={{ background: dotColor, borderColor: '#202c33' }} />
                   </div>
-                  {/* Info */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium truncate" style={{ color: '#e9edef' }}>
-                        {displayName(conv)}
-                      </span>
+                      <span className="text-sm font-medium truncate" style={{ color: '#e9edef' }}>{displayName(conv)}</span>
                       <span className="text-[11px] flex-shrink-0 ml-2" style={{ color: '#8696a0' }}>
                         {conv.ultimo_mensaje_at ? formatRelativeTime(conv.ultimo_mensaje_at) : ''}
                       </span>
@@ -463,7 +520,7 @@ export default function WhatsAppPage() {
           </div>
         </div>
 
-        {/* ── Right panel: chat window ── */}
+        {/* ── Right: chat window ── */}
         <div
           className={cn('flex-1 flex flex-col min-h-0', !showMobileChat && 'hidden md:flex')}
           style={{ background: '#0b141a' }}
@@ -471,28 +528,18 @@ export default function WhatsAppPage() {
           {selected ? (
             <>
               {/* Chat header */}
-              <div
-                className="flex items-center gap-3 px-4 py-2.5 flex-shrink-0"
-                style={{ background: '#202c33', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
-              >
-                <button
-                  onClick={() => setShowMobileChat(false)}
-                  className="md:hidden w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/5"
-                >
+              <div className="flex items-center gap-3 px-4 py-2.5 flex-shrink-0" style={{ background: '#202c33', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                <button onClick={() => setShowMobileChat(false)} className="md:hidden w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/5">
                   <X className="w-4 h-4" style={{ color: '#aebac1' }} />
                 </button>
-                {/* Avatar */}
                 <div className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0" style={{ background: '#2a3942', color: '#e9edef' }}>
                   {avatarLetters(selected)}
                 </div>
-                {/* Name + phone */}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium" style={{ color: '#e9edef' }}>{displayName(selected)}</p>
                   <p className="text-[11px]" style={{ color: '#8696a0' }}>{selected.telefono}</p>
                 </div>
-                {/* Mode buttons & Timer */}
                 <div className="flex items-center gap-1.5 flex-wrap md:flex-nowrap justify-end">
-                  {/* Timer UI */}
                   {timeLeftStr && (
                     <div className={cn(
                       'flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium mr-1',
@@ -502,21 +549,11 @@ export default function WhatsAppPage() {
                       <span className="whitespace-nowrap tabular-nums">{timeLeftStr}</span>
                     </div>
                   )}
-
                   <button
                     onClick={() => setMode('bot')}
                     disabled={togglingMode || selected.estado === 'bot'}
-                    className={cn(
-                      'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all',
-                      selected.estado === 'bot'
-                        ? 'cursor-default'
-                        : 'hover:opacity-80'
-                    )}
-                    style={{
-                      background: selected.estado === 'bot' ? 'rgba(167,139,250,0.2)' : 'rgba(255,255,255,0.06)',
-                      color: selected.estado === 'bot' ? '#a78bfa' : '#8696a0',
-                      border: `1px solid ${selected.estado === 'bot' ? 'rgba(167,139,250,0.4)' : 'rgba(255,255,255,0.08)'}`,
-                    }}
+                    className={cn('flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all', selected.estado === 'bot' ? 'cursor-default' : 'hover:opacity-80')}
+                    style={{ background: selected.estado === 'bot' ? 'rgba(167,139,250,0.2)' : 'rgba(255,255,255,0.06)', color: selected.estado === 'bot' ? '#a78bfa' : '#8696a0', border: `1px solid ${selected.estado === 'bot' ? 'rgba(167,139,250,0.4)' : 'rgba(255,255,255,0.08)'}` }}
                   >
                     <Bot className="w-3.5 h-3.5 flex-shrink-0" />
                     <span className="hidden md:inline">Bot IA</span>
@@ -524,15 +561,8 @@ export default function WhatsAppPage() {
                   <button
                     onClick={() => setMode('humano')}
                     disabled={togglingMode || selected.estado === 'humano'}
-                    className={cn(
-                      'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all',
-                      selected.estado === 'humano' ? 'cursor-default' : 'hover:opacity-80'
-                    )}
-                    style={{
-                      background: selected.estado === 'humano' ? 'rgba(251,146,60,0.2)' : 'rgba(255,255,255,0.06)',
-                      color: selected.estado === 'humano' ? '#fb923c' : '#8696a0',
-                      border: `1px solid ${selected.estado === 'humano' ? 'rgba(251,146,60,0.4)' : 'rgba(255,255,255,0.08)'}`,
-                    }}
+                    className={cn('flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all', selected.estado === 'humano' ? 'cursor-default' : 'hover:opacity-80')}
+                    style={{ background: selected.estado === 'humano' ? 'rgba(251,146,60,0.2)' : 'rgba(255,255,255,0.06)', color: selected.estado === 'humano' ? '#fb923c' : '#8696a0', border: `1px solid ${selected.estado === 'humano' ? 'rgba(251,146,60,0.4)' : 'rgba(255,255,255,0.08)'}` }}
                   >
                     <UserCheck className="w-3.5 h-3.5 flex-shrink-0" />
                     <span className="hidden md:inline">Humano</span>
@@ -540,33 +570,43 @@ export default function WhatsAppPage() {
                 </div>
               </div>
 
-              {/* Mode status strip */}
+              {/* Mode strip */}
               <div
                 className="flex items-center gap-2 px-4 py-1.5 text-[11px] flex-shrink-0"
-                style={{
-                  background: isHumano ? 'rgba(251,146,60,0.08)' : 'rgba(167,139,250,0.08)',
-                  color: isHumano ? '#fb923c' : '#a78bfa',
-                  borderBottom: `1px solid ${isHumano ? 'rgba(251,146,60,0.15)' : 'rgba(167,139,250,0.15)'}`,
-                }}
+                style={{ background: isHumano ? 'rgba(251,146,60,0.08)' : 'rgba(167,139,250,0.08)', color: isHumano ? '#fb923c' : '#a78bfa', borderBottom: `1px solid ${isHumano ? 'rgba(251,146,60,0.15)' : 'rgba(167,139,250,0.15)'}` }}
               >
-                {isHumano
-                  ? <><UserCheck className="w-3 h-3" /> Modo humano — bot pausado, respondes tú</>
-                  : <><Bot className="w-3 h-3" /> Modo Bot IA — respondiendo automáticamente</>}
+                {isHumano ? <><UserCheck className="w-3 h-3" />Modo humano — bot pausado, respondes tú</> : <><Bot className="w-3 h-3" />Modo Bot IA — respondiendo automáticamente</>}
               </div>
 
               {/* Messages area */}
               <div
                 ref={chatScrollRef}
-                onScroll={handleScroll}
+                onScroll={handleScrollEvents}
                 className="flex-1 overflow-y-auto px-4 py-4 space-y-1 w-full"
-                style={{
-                  minHeight: 0,
-                  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Crect width='400' height='400' fill='%230b141a'/%3E%3C/svg%3E")`,
-                }}
+                style={{ minHeight: 0, background: '#0b141a' }}
               >
+                {/* Load more above */}
+                {loadingMore && (
+                  <div className="flex justify-center py-2">
+                    <span className="text-[11px] animate-pulse" style={{ color: '#8696a0' }}>Cargando mensajes anteriores...</span>
+                  </div>
+                )}
+                {hasMoreAbove && !loadingMore && (
+                  <div className="flex justify-center py-2">
+                    <button
+                      onClick={loadOlderMsgs}
+                      className="flex items-center gap-1 text-[11px] px-3 py-1 rounded-full transition-colors hover:opacity-80"
+                      style={{ background: '#2a3942', color: '#8696a0' }}
+                    >
+                      <ChevronDown className="w-3 h-3 rotate-180" /> Ver mensajes anteriores
+                    </button>
+                  </div>
+                )}
+
                 {loadingMsgs && (
-                  <div className="flex justify-center py-8">
-                    <span className="text-xs animate-pulse" style={{ color: '#8696a0' }}>Cargando mensajes...</span>
+                  <div className="flex flex-col items-center justify-center h-40 gap-2">
+                    <div className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: '#2a3942', borderTopColor: '#00a884' }} />
+                    <span className="text-xs" style={{ color: '#8696a0' }}>Cargando mensajes...</span>
                   </div>
                 )}
                 {!loadingMsgs && msgs.length === 0 && (
@@ -593,44 +633,28 @@ export default function WhatsAppPage() {
                           </span>
                         </div>
                       )}
-
                       <div className={cn('flex w-full', isOut ? 'justify-end' : 'justify-start')} style={{ marginBottom: '2px' }}>
                         <div
                           className="relative max-w-[88%] md:max-w-[75%] rounded-lg px-3 py-2 shadow-sm flex flex-col min-w-0"
-                          style={{
-                            background: isOut ? '#005c4b' : '#202c33',
-                            opacity: isOptimistic ? 0.75 : 1,
-                            borderRadius: isOut ? '8px 8px 2px 8px' : '8px 8px 8px 2px',
-                          }}
+                          style={{ background: isOut ? '#005c4b' : '#202c33', opacity: isOptimistic ? 0.75 : 1, borderRadius: isOut ? '8px 8px 2px 8px' : '8px 8px 8px 2px' }}
                         >
-                          {/* Bot badge */}
                           {msg.es_ia && (
                             <div className="flex items-center gap-1 mb-1" style={{ color: '#a78bfa' }}>
                               <Bot className="w-3 h-3" />
                               <span className="text-[10px] font-medium">Bot IA</span>
                             </div>
                           )}
-                          {/* Message text */}
-                          <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: '#e9edef', wordBreak: 'break-word' }}>
-                            {msg.body}
-                          </p>
-                          {/* Time + status */}
+                          <MediaBubble body={msg.body} isOut={isOut} />
                           <div className="flex items-center gap-1 justify-end mt-1 flex-shrink-0" style={{ marginRight: '-2px' }}>
-                            <span className="text-[10px]" style={{ color: 'rgba(233,237,239,0.6)' }}>
-                              {formatTime(msg.created_at)}
-                            </span>
+                            <span className="text-[10px]" style={{ color: 'rgba(233,237,239,0.6)' }}>{formatTime(msg.created_at)}</span>
                             {isOut && (
                               isOptimistic ? <Check className="w-3 h-3" style={{ color: 'rgba(233,237,239,0.5)' }} /> :
                               msg.estado === 'leido' ? <CheckCheck className="w-3.5 h-3.5" style={{ color: '#53bdeb' }} /> :
                               msg.estado === 'entregado' ? <CheckCheck className="w-3.5 h-3.5" style={{ color: 'rgba(233,237,239,0.5)' }} /> :
                               <Check className="w-3 h-3" style={{ color: 'rgba(233,237,239,0.5)' }} />
                             )}
-                            {!isOut && msg.es_ia && (
-                              <Bot className="w-3 h-3 ml-0.5" style={{ color: 'rgba(167,139,250,0.6)' }} />
-                            )}
-                            {isOut && !msg.es_ia && !isOptimistic && (
-                              <User className="w-2.5 h-2.5" style={{ color: 'rgba(233,237,239,0.4)' }} />
-                            )}
+                            {!isOut && msg.es_ia && <Bot className="w-3 h-3 ml-0.5" style={{ color: 'rgba(167,139,250,0.6)' }} />}
+                            {isOut && !msg.es_ia && !isOptimistic && <User className="w-2.5 h-2.5" style={{ color: 'rgba(233,237,239,0.4)' }} />}
                           </div>
                         </div>
                       </div>
@@ -640,12 +664,22 @@ export default function WhatsAppPage() {
                 <div style={{ height: '4px' }} />
               </div>
 
+              {/* Scroll to bottom button */}
+              {isScrolledUp && (
+                <div className="absolute bottom-24 right-6 z-10">
+                  <button
+                    onClick={() => scrollToBottom(true)}
+                    className="w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all hover:scale-110"
+                    style={{ background: '#2a3942', border: '1px solid rgba(255,255,255,0.1)' }}
+                  >
+                    <ChevronDown className="w-4 h-4" style={{ color: '#e9edef' }} />
+                  </button>
+                </div>
+              )}
+
               {/* Quick replies */}
               {showQuickReplies && (
-                <div
-                  className="flex gap-2 overflow-x-auto px-3 py-2 flex-shrink-0"
-                  style={{ background: '#202c33', borderTop: '1px solid rgba(255,255,255,0.06)' }}
-                >
+                <div className="flex gap-2 overflow-x-auto px-3 py-2 flex-shrink-0" style={{ background: '#202c33', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
                   {QUICK_REPLIES.map((r, i) => (
                     <button
                       key={i}
@@ -660,14 +694,8 @@ export default function WhatsAppPage() {
               )}
 
               {/* Input area */}
-              <div
-                className="flex items-center gap-2 px-3 py-3 flex-shrink-0"
-                style={{ background: '#202c33', borderTop: '1px solid rgba(255,255,255,0.06)' }}
-              >
-                <button
-                  onClick={() => setShowQuickReplies(!showQuickReplies)}
-                  className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors flex-shrink-0"
-                >
+              <div className="flex items-center gap-2 px-3 py-3 flex-shrink-0" style={{ background: '#202c33', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                <button onClick={() => setShowQuickReplies(!showQuickReplies)} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors flex-shrink-0">
                   <Smile className="w-5 h-5" style={{ color: '#aebac1' }} />
                 </button>
                 <input
@@ -675,40 +703,27 @@ export default function WhatsAppPage() {
                   value={message}
                   onChange={e => setMessage(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-                  placeholder="Escribe un mensaje"
+                  placeholder={isWindowOpen ? 'Escribe un mensaje' : 'Ventana de 24h cerrada'}
                   className="flex-1 py-2 px-4 rounded-lg text-sm outline-none"
-                  style={{
-                    background: '#2a3942',
-                    color: '#e9edef',
-                    border: 'none',
-                  }}
+                  style={{ background: '#2a3942', color: '#e9edef', border: 'none' }}
                 />
                 <button
                   onClick={handleSend}
                   disabled={!message.trim() || sending}
                   className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-all"
-                  style={{
-                    background: message.trim() && !sending ? '#00a884' : '#2a3942',
-                    opacity: !message.trim() || sending ? 0.5 : 1,
-                  }}
+                  style={{ background: message.trim() && !sending ? '#00a884' : '#2a3942', opacity: !message.trim() || sending ? 0.5 : 1 }}
                 >
                   <Send className={cn('w-4 h-4', sending && 'animate-pulse')} style={{ color: '#e9edef' }} />
                 </button>
               </div>
             </>
           ) : (
-            /* No conversation selected */
             <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-              <div
-                className="w-20 h-20 rounded-full flex items-center justify-center mb-4"
-                style={{ background: 'rgba(0,168,132,0.1)', border: '2px solid rgba(0,168,132,0.2)' }}
-              >
+              <div className="w-20 h-20 rounded-full flex items-center justify-center mb-4" style={{ background: 'rgba(0,168,132,0.1)', border: '2px solid rgba(0,168,132,0.2)' }}>
                 <MessageSquare className="w-9 h-9" style={{ color: '#00a884' }} />
               </div>
               <h3 className="font-medium mb-1 text-base" style={{ color: '#e9edef' }}>WhatsApp CRM</h3>
-              <p className="text-sm" style={{ color: '#8696a0' }}>
-                Selecciona una conversación para ver los mensajes en tiempo real
-              </p>
+              <p className="text-sm" style={{ color: '#8696a0' }}>Selecciona una conversación para ver los mensajes en tiempo real</p>
             </div>
           )}
         </div>

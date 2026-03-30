@@ -2,6 +2,24 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'lycos_webhook_token_2026';
+
+// ─── Fire push notification to all subscribed devices ──────────────────────────
+async function firePushNotification(payload: {
+  title: string;
+  body: string;
+  type: string;
+  url?: string;
+  tag?: string;
+}): Promise<void> {
+  try {
+    const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000';
+    await fetch(`${baseUrl}/api/push/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch { /* never block webhook processing */ }
+}
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
@@ -432,6 +450,18 @@ export async function POST(request: NextRequest) {
             body: messageBody, tipo: 'entrante', wa_message_id,
           }).select('created_at').single();
           if (data?.created_at) insertedTimestamp = data.created_at;
+
+          // ── Push notification: new WhatsApp message ──────────────────────
+          const isImage = message.type === 'image';
+          const isVideo = message.type === 'video';
+          const isAudio = message.type === 'audio';
+          let pushTitle = `📱 Nuevo mensaje de ${from}`;
+          let pushBody = messageBody.slice(0, 100);
+          let pushType = 'whatsapp-message';
+          if (isImage) { pushTitle = `🖼️ ${from} envió una imagen`; pushBody = 'El cliente envió una foto'; pushType = 'whatsapp-image'; }
+          else if (isVideo) { pushTitle = `🎥 ${from} envió un video`; pushBody = 'El cliente envió un video'; pushType = 'whatsapp-video'; }
+          else if (isAudio) { pushTitle = `🎤 ${from} envió un audio`; pushBody = 'Nota de voz recibida'; pushType = 'whatsapp-audio'; }
+          void firePushNotification({ title: pushTitle, body: pushBody, type: pushType, url: '/dashboard/whatsapp', tag: 'whatsapp' });
         } catch (e) { console.error('Error guardando entrante:', e); }
 
         // Debounce to group multiple images or chopped messages
@@ -465,6 +495,14 @@ export async function POST(request: NextRequest) {
               ultimo_mensaje_at: new Date().toISOString(),
               mensajes_sin_leer: 1,
             }).eq('telefono', from);
+            // Extra push: human mode means you MUST respond manually
+            void firePushNotification({
+              title: `🆘 Respuesta manual requerida`,
+              body: `${from}: ${messageBody.slice(0, 80)}`,
+              type: 'whatsapp-human',
+              url: '/dashboard/whatsapp',
+              tag: 'whatsapp-human',
+            });
             continue; // Skip AI response
           }
         } catch { /* no conversation row yet — proceed with bot */ }
@@ -536,6 +574,10 @@ export async function POST(request: NextRequest) {
           try {
             if (db) {
               const userName = ctx.memoria?.nombre || '';
+              const vehiculoInfo = vehiculo || ctx.memoria?.vehiculos?.map(v => `${v.marca} ${v.modelo}${v.anio ? ' ' + v.anio : ''}`).join(', ') || '';
+              const placaMatch = messageBody.match(/[A-Z]{2,3}\s*[-]?\s*\d{2,3}\s*[-]?\s*[A-Z0-9]{0,3}/i);
+              const placa = placaMatch ? placaMatch[0].toUpperCase().replace(/\s+/g, '') : (ctx.memoria as { placa?: string })?.placa || '';
+
               // Check dedup first: same phone + date + hour (non-cancelled)
               const { data: existing } = await db.from('citas')
                 .select('id').eq('telefono', from).eq('fecha', fecha).eq('hora', hora)
@@ -545,7 +587,7 @@ export async function POST(request: NextRequest) {
               } else {
                 const descripcionFinal = [
                   servicio || 'Servicio por WhatsApp',
-                  vehiculo ? `(${vehiculo})` : '',
+                  vehiculoInfo ? `(${vehiculoInfo})` : '',
                   userName ? `- ${userName}` : '',
                 ].filter(Boolean).join(' ');
                 await db.from('citas').insert({
@@ -555,9 +597,12 @@ export async function POST(request: NextRequest) {
                   tipo_servicio: 'otro',
                   descripcion: descripcionFinal,
                   estado: 'pendiente',
-                  duracion_minutos: 60
+                  duracion_minutos: 60,
+                  nombre_cliente: userName || null,
+                  vehiculo_info: vehiculoInfo || null,
+                  placa: placa || null,
                 });
-                console.log(`📅 AUTO-CITA IA: ${fecha} ${hora} | ${descripcionFinal} | ${from}`);
+                console.log(`📅 AUTO-CITA IA: ${fecha} ${hora} | ${descripcionFinal} | ${from} | cliente: ${userName} | veh: ${vehiculoInfo} | placa: ${placa}`);
               }
             }
           } catch (e) { console.error('Error insertando cita automatica:', e); }
@@ -862,13 +907,15 @@ async function processIntents(
   ctx: ConversationContext
 ): Promise<void> {
   if (!db) return;
-  const newMemoria: Memoria = { ...ctx.memoria };
+  const newMemoria: Memoria & { placa?: string } = { ...ctx.memoria };
   let memChanged = false;
 
-  const nameMatch = userMsg.match(/(?:soy|me llamo|mi nombre es)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ\s]{1,30})/i);
+  // Extract name
+  const nameMatch = userMsg.match(/(?:soy|me llamo|mi nombre es|llámame|llamame)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ\s]{1,30})/i);
   if (nameMatch && !newMemoria.nombre) { newMemoria.nombre = nameMatch[1].trim(); memChanged = true; }
 
-  const vehicleMatch = userMsg.match(/\b(toyota|ford|chevrolet|hyundai|kia|honda|nissan|mazda|volkswagen|corsa|aveo|spark|cruze|sail|captiva|tucson|sportage|yaris|hilux|ranger|sentra|tiida|versa|frontier|civic|fit|crv|gol|bora|jetta|polo|peugeot|renault|mitsubishi|suzuki|isuzu|fiesta|caliber|dodge|lancer|accent|elantra)[^\n,]{0,25}/i);
+  // Extract vehicle
+  const vehicleMatch = userMsg.match(/\b(toyota|ford|chevrolet|hyundai|kia|honda|nissan|mazda|volkswagen|corsa|aveo|spark|cruze|sail|captiva|tucson|sportage|yaris|hilux|ranger|sentra|tiida|versa|frontier|civic|fit|crv|gol|bora|jetta|polo|peugeot|renault|mitsubishi|suzuki|isuzu|fiesta|caliber|dodge|lancer|accent|elantra|malibú|malibu|camaro|silverado|traverse|trailblazer|trax|equinox|colorado|tahoe|suburban|orlando|sonic|onix)[^\n,]{0,25}/i);
   const yearMatch = userMsg.match(/\b(19[8-9]\d|20[0-2]\d)\b/);
   if (vehicleMatch) {
     const parts = vehicleMatch[0].trim().split(/\s+/);
@@ -878,7 +925,12 @@ async function processIntents(
     if (!exists) { newMemoria.vehiculos.push(v); memChanged = true; }
   }
 
-  // (Booking logic removed here to rely strictly on AI output parsing below)
+  // Extract plate number (Venezuelan format: AB123DC or AB-123-DC)
+  const placaMatch = userMsg.match(/\b([A-Z]{2,3}[-\s]?\d{2,3}[-\s]?[A-Z0-9]{0,3})\b/i);
+  if (placaMatch && !newMemoria.placa) {
+    const placa = placaMatch[1].toUpperCase().replace(/[-\s]/g, '');
+    if (placa.length >= 4) { newMemoria.placa = placa; memChanged = true; }
+  }
 
   if (memChanged) {
     try {
@@ -889,6 +941,10 @@ async function processIntents(
       if (!existing || existing.length === 0) {
         const parts = (newMemoria.nombre || 'Cliente').split(' ');
         await db.from('clientes').insert({ nombre: parts[0], apellido: parts.slice(1).join(' ') || 'WhatsApp', telefono: from });
+      } else if (newMemoria.nombre) {
+        // Update name if we just learned it
+        const parts = newMemoria.nombre.split(' ');
+        await db.from('clientes').update({ nombre: parts[0], apellido: parts.slice(1).join(' ') || '' }).eq('telefono', from);
       }
     } catch (e) { console.error('Error upsert cliente:', e); }
   }
