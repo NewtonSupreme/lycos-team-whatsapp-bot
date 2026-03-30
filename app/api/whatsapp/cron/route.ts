@@ -47,7 +47,7 @@ export async function GET() {
     }
 
     let retried = 0;
-    const webhookUrl = `${process.env.NEXTAUTH_URL || 'https://lycos-team.vercel.app'}/api/whatsapp/webhook`;
+    const webhookUrl = `${process.env.NEXTAUTH_URL || 'https://lycos-team-whatsapp-bot.vercel.app'}/api/whatsapp/webhook`;
 
     for (const [phone, msg] of latestByPhone.entries()) {
       // Doble verificación: ¿Acaso ya respondimos a este cliente o él mandó un mensaje más actual que todavía no cumple 3 minutos?
