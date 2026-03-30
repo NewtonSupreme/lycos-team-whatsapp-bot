@@ -289,11 +289,12 @@ Ejemplo: $100 + 16% IVA = $116 total → el cliente paga su inicial sobre $116.
 Pide el nivel PRIMERO → Nivel 1: 60% | Nivel 2: 50% | Niveles 3-6: 40%
 Resto en 3 cuotas cada 14 días. Pago en caja.
 
-CITAS:
-Pedir: nombre, vehículo (marca/modelo/año), servicio, día y hora exacta (Lunes-Sábados, 8AM-5PM).
-Calcula la fecha exacta desde hoy usando FECHA/HORA VENEZUELA. Nunca agendes domingos.
-VERIFICA estrictamente si tiene citas registradas o si el horario está ocupado globalmente. NUNCA agendes si choca.
-ORDEN DEL SISTEMA (CRÍTICO): Cuando tú y el cliente ya acordaron de forma exitosa el día y la hora de la cita, DEBES obligatoriamente imprimir la siguiente etiqueta oculta de sistema AL FINAL de tu respuesta (solo UNA vez):
+292: CITAS:
+293: Pedir obligatoriamente antes de confirmar la cita: nombre completo, placa del vehículo (si la tiene), marca/modelo del vehículo, servicio, día y hora exacta (Lunes-Sábados, 8AM-5PM).
+294: REGLA DE ORO DE CITAS: No confirmes la cita ni imprimas la etiqueta [CITA] si el cliente no te ha dado su nombre y al menos el modelo del vehículo. Si no da la placa, insiste una vez amablemente, si sigue sin darla procede solo con nombre y modelo.
+295: Calcula la fecha exacta desde hoy usando FECHA/HORA VENEZUELA. Nunca agendes domingos.
+296: VERIFICA estrictamente si tiene citas registradas o si el horario está ocupado globalmente. NUNCA agendes si choca.
+297: ORDEN DEL SISTEMA (CRÍTICO): Cuando tú y el cliente ya acordaron de forma exitosa los datos (Nombre, Vehículo, Placa, Día y Hora), DEBES obligatoriamente imprimir la siguiente etiqueta oculta de sistema AL FINAL de tu respuesta (solo UNA vez):
 [CITA: AAAA-MM-DD HH:MM | descripcion breve del servicio | marca modelo del vehiculo]
 Ejemplo: "Perfecto Carlos, tu cita quedó para el martes a las 10:00 AM. ¡Te esperamos! 😊 [CITA: 2026-03-31 10:00 | Cambio de aceite y filtro | Toyota Hilux]"
 La descripción debe ser breve (el servicio que quiere el cliente). El vehículo toma la forma Marca Modelo.
@@ -574,9 +575,14 @@ export async function POST(request: NextRequest) {
           try {
             if (db) {
               const userName = ctx.memoria?.nombre || '';
-              const vehiculoInfo = vehiculo || ctx.memoria?.vehiculos?.map(v => `${v.marca} ${v.modelo}${v.anio ? ' ' + v.anio : ''}`).join(', ') || '';
-              const placaMatch = messageBody.match(/[A-Z]{2,3}\s*[-]?\s*\d{2,3}\s*[-]?\s*[A-Z0-9]{0,3}/i);
-              const placa = placaMatch ? placaMatch[0].toUpperCase().replace(/\s+/g, '') : (ctx.memoria as { placa?: string })?.placa || '';
+              const vehiculoMatchFromTag = vehiculo || '';
+              const placaMatch = messageBody.match(/\b([A-Z]{2,3}[-\s]?\d{2,3}[-\s]?[A-Z0-9]{0,3})\b/i);
+              const placa = placaMatch ? placaMatch[1].toUpperCase().replace(/[-\s]/g, '') : (ctx.memoria as { placa?: string })?.placa || '';
+
+              // ─── Get or Create Client & Vehicle ───
+              const { clientId, vehicleId } = await getOrCreateClientAndVehicle(db, from, userName, vehiculoMatchFromTag, placa);
+
+              const vehiculoInfo = vehiculoMatchFromTag || ctx.memoria?.vehiculos?.map(v => `${v.marca} ${v.modelo}${v.anio ? ' ' + v.anio : ''}`).join(', ') || '';
 
               // Check dedup first: same phone + date + hour (non-cancelled)
               const { data: existing } = await db.from('citas')
@@ -590,10 +596,13 @@ export async function POST(request: NextRequest) {
                   vehiculoInfo ? `(${vehiculoInfo})` : '',
                   userName ? `- ${userName}` : '',
                 ].filter(Boolean).join(' ');
+
                 await db.from('citas').insert({
                   fecha,
                   hora,
                   telefono: from,
+                  cliente_id: clientId,
+                  vehiculo_id: vehicleId,
                   tipo_servicio: 'otro',
                   descripcion: descripcionFinal,
                   estado: 'pendiente',
@@ -602,7 +611,7 @@ export async function POST(request: NextRequest) {
                   vehiculo_info: vehiculoInfo || null,
                   placa: placa || null,
                 });
-                console.log(`📅 AUTO-CITA IA: ${fecha} ${hora} | ${descripcionFinal} | ${from} | cliente: ${userName} | veh: ${vehiculoInfo} | placa: ${placa}`);
+                console.log(`📅 AUTO-CITA IA: ${fecha} ${hora} | ${descripcionFinal} | client_id: ${clientId} | veh_id: ${vehicleId}`);
               }
             }
           } catch (e) { console.error('Error insertando cita automatica:', e); }
@@ -635,11 +644,11 @@ export async function POST(request: NextRequest) {
 
 
 
-        void processIntents(db, from, messageBody, ctx);
-      }
+        await processIntents(db, from, messageBody, ctx);
+      } // end if (aiResponse)
 
       await updateConversation(db, from, messageBody, ctx.memoria);
-    }
+    } // end for loop
 
     return NextResponse.json({ status: 'ok' });
   } catch (error) {
@@ -905,8 +914,8 @@ async function processIntents(
   from: string,
   userMsg: string,
   ctx: ConversationContext
-): Promise<void> {
-  if (!db) return;
+): Promise<{ clientId?: string; vehicleId?: string }> {
+  if (!db) return {};
   const newMemoria: Memoria & { placa?: string } = { ...ctx.memoria };
   let memChanged = false;
 
@@ -917,37 +926,124 @@ async function processIntents(
   // Extract vehicle
   const vehicleMatch = userMsg.match(/\b(toyota|ford|chevrolet|hyundai|kia|honda|nissan|mazda|volkswagen|corsa|aveo|spark|cruze|sail|captiva|tucson|sportage|yaris|hilux|ranger|sentra|tiida|versa|frontier|civic|fit|crv|gol|bora|jetta|polo|peugeot|renault|mitsubishi|suzuki|isuzu|fiesta|caliber|dodge|lancer|accent|elantra|malibú|malibu|camaro|silverado|traverse|trailblazer|trax|equinox|colorado|tahoe|suburban|orlando|sonic|onix)[^\n,]{0,25}/i);
   const yearMatch = userMsg.match(/\b(19[8-9]\d|20[0-2]\d)\b/);
+  let detectedVeh = '';
   if (vehicleMatch) {
     const parts = vehicleMatch[0].trim().split(/\s+/);
     const v = { marca: parts[0], modelo: parts.slice(1).join(' ') || parts[0], anio: yearMatch?.[1] };
+    detectedVeh = `${v.marca} ${v.modelo}`;
     if (!newMemoria.vehiculos) newMemoria.vehiculos = [];
     const exists = newMemoria.vehiculos.some(x => x.marca.toLowerCase() === v.marca.toLowerCase() && x.modelo.toLowerCase() === v.modelo.toLowerCase());
     if (!exists) { newMemoria.vehiculos.push(v); memChanged = true; }
   }
 
-  // Extract plate number (Venezuelan format: AB123DC or AB-123-DC)
+  // Extract plate number
   const placaMatch = userMsg.match(/\b([A-Z]{2,3}[-\s]?\d{2,3}[-\s]?[A-Z0-9]{0,3})\b/i);
-  if (placaMatch && !newMemoria.placa) {
-    const placa = placaMatch[1].toUpperCase().replace(/[-\s]/g, '');
-    if (placa.length >= 4) { newMemoria.placa = placa; memChanged = true; }
+  let detectedPlaca = '';
+  if (placaMatch) {
+    detectedPlaca = placaMatch[1].toUpperCase().replace(/[-\s]/g, '');
+    if (detectedPlaca.length >= 4 && detectedPlaca !== newMemoria.placa) {
+      newMemoria.placa = detectedPlaca;
+      memChanged = true;
+    }
   }
 
+  // Sync memory to DB
   if (memChanged) {
+    ctx.memoria = newMemoria; // update in-place for this run
     try {
       await db.from('conversaciones').upsert({ telefono: from, memoria: newMemoria }, { onConflict: 'telefono' });
     } catch (e) { console.error('Error saving memoria:', e); }
-    try {
-      const { data: existing } = await db.from('clientes').select('id').eq('telefono', from).limit(1);
-      if (!existing || existing.length === 0) {
-        const parts = (newMemoria.nombre || 'Cliente').split(' ');
-        await db.from('clientes').insert({ nombre: parts[0], apellido: parts.slice(1).join(' ') || 'WhatsApp', telefono: from });
-      } else if (newMemoria.nombre) {
-        // Update name if we just learned it
-        const parts = newMemoria.nombre.split(' ');
-        await db.from('clientes').update({ nombre: parts[0], apellido: parts.slice(1).join(' ') || '' }).eq('telefono', from);
-      }
-    } catch (e) { console.error('Error upsert cliente:', e); }
   }
+
+  // Get or Create record IDs
+  const { clientId, vehicleId } = await getOrCreateClientAndVehicle(
+    db, from, newMemoria.nombre || '', detectedVeh, detectedPlaca || newMemoria.placa || ''
+  );
+
+  return { clientId, vehicleId };
+}
+
+async function getOrCreateClientAndVehicle(
+  db: ReturnType<typeof getDb>,
+  phone: string,
+  name: string,
+  vehicleInfo: string,
+  placa: string
+): Promise<{ clientId?: string; vehicleId?: string }> {
+  if (!db) return {};
+  let clientId: string | undefined;
+  let vehicleId: string | undefined;
+
+  try {
+    // 1. Client
+    const { data: client } = await db.from('clientes').select('id').eq('telefono', phone).limit(1).maybeSingle();
+    if (client) {
+      clientId = client.id;
+      // Update name if we have it and it's currently generic
+      if (name && name.toLowerCase() !== 'cliente') {
+        const parts = name.split(' ');
+        await db.from('clientes').update({ nombre: parts[0], apellido: parts.slice(1).join(' ') || '' }).eq('id', clientId);
+      }
+    } else {
+      const parts = (name || 'Cliente').split(' ');
+      const { data: newClient } = await db.from('clientes').insert({
+        nombre: parts[0],
+        apellido: parts.slice(1).join(' ') || 'WhatsApp',
+        telefono: phone
+      }).select('id').single();
+      clientId = newClient?.id;
+    }
+
+    // 2. Vehicle
+    if (clientId) {
+      // Try by plate first
+      if (placa) {
+        const { data: veh } = await db.from('vehiculos').select('id').eq('placa', placa).limit(1).maybeSingle();
+        if (veh) {
+          vehicleId = veh.id;
+          // Ensure it's linked to this client
+          await db.from('vehiculos').update({ cliente_id: clientId }).eq('id', vehicleId);
+        } else {
+          // Create new vehicle with plate
+          const parts = (vehicleInfo || 'Vehículo').split(' ');
+          const { data: newVeh } = await db.from('vehiculos').insert({
+            cliente_id: clientId,
+            placa: placa,
+            marca: parts[0] || 'Desconocida',
+            modelo: parts.slice(1).join(' ') || 'Modelo',
+            estado: 'activo'
+          }).select('id').single();
+          vehicleId = newVeh?.id;
+        }
+      } else if (vehicleInfo) {
+        // Try by description for this client
+        const parts = vehicleInfo.split(' ');
+        const marca = parts[0];
+        const { data: veh } = await db.from('vehiculos')
+          .select('id').eq('cliente_id', clientId).ilike('marca', `%${marca}%`).limit(1).maybeSingle();
+        if (veh) {
+          vehicleId = veh.id;
+        } else {
+          // Create without plate
+          const { data: newVeh } = await db.from('vehiculos').insert({
+            cliente_id: clientId,
+            marca: parts[0],
+            modelo: parts.slice(1).join(' ') || 'Modelo',
+            estado: 'activo'
+          }).select('id').single();
+          vehicleId = newVeh?.id;
+        }
+      }
+    }
+
+    // 3. Link back to conversation if needed
+    if (clientId) {
+      await db.from('conversaciones').update({ cliente_id: clientId }).eq('telefono', phone);
+    }
+
+  } catch (e) { console.error('Error in getOrCreateClientAndVehicle:', e); }
+
+  return { clientId, vehicleId };
 }
 
 // ─── Appointment Booking ───────────────────────────────────────────────────────
