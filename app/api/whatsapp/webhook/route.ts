@@ -322,6 +322,37 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+
+    if (body.object === 'whatsapp_cron_retry') {
+      const { from, messageBody, insertedTimestamp, wa_message_id } = body;
+      const db = getDb();
+      if (!db || !WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return NextResponse.json({ status: 'ok' });
+
+      try {
+        const { data: newer } = await db.from('mensajes_whatsapp')
+          .select('id')
+          .eq('from_number', 'system')
+          .eq('to_number', from)
+          .eq('tipo', 'saliente')
+          .gt('created_at', insertedTimestamp)
+          .limit(1);
+        if (newer && newer.length > 0) {
+          console.log(`⏩ [CRON] Ignorando retry ${wa_message_id} porque ya se respondio (carrera)`);
+          return NextResponse.json({ status: 'already_replied' });
+        }
+      } catch (e) { }
+
+      try {
+        const { data: convData } = await db.from('conversaciones').select('estado').eq('telefono', from).single();
+        if (convData?.estado === 'humano') {
+          return NextResponse.json({ status: 'ignored_human' });
+        }
+      } catch { }
+
+      await processCoreLogic(db, from, messageBody, wa_message_id);
+      return NextResponse.json({ status: 'ok' });
+    }
+
     if (body.object !== 'whatsapp_business_account') {
       return NextResponse.json({ status: 'ignored' });
     }
@@ -511,143 +542,7 @@ export async function POST(request: NextRequest) {
 
       if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) continue;
 
-      // Load context + exchange rates in parallel
-      const [ctx, rates] = await Promise.all([
-        loadConversationContext(db, from, messageBody),
-        fetchExchangeRates(),
-      ]);
-
-      const lowerBody = messageBody.toLowerCase();
-
-      // Location intent
-      if (isLocationRequest(lowerBody)) {
-        await sendMsg(from, '📍 Estamos en San Antonio de los Altos, Miranda. Te mando el mapa y un video de cómo llegar 👇');
-        await delay(700);
-        await sendMsg(from, 'https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
-        await delay(600);
-        await sendMsg(from, 'https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
-        await delay(600);
-        await sendMsg(from, 'Siguenos en nuestras redes 📱👇');
-        await delay(400);
-        await sendMsg(from, IG_LINK, true);
-        await delay(500);
-        await sendMsg(from, TT_LINK, true);
-        await updateConversation(db, from, messageBody, ctx.memoria);
-        continue;
-      }
-
-      // Social media intent
-      if (isSocialRequest(lowerBody)) {
-        await sendMsg(from, 'Aqui te van nuestras redes sociales 📱 Siguenos para tips, novedades y promos 🔧');
-        await delay(500);
-        await sendMsg(from, IG_LINK, true);
-        await delay(500);
-        await sendMsg(from, TT_LINK, true);
-        await updateConversation(db, from, messageBody, ctx.memoria);
-        continue;
-      }
-
-      // Asesor contact intent (explicit)
-      if (isContactRequest(lowerBody)) {
-        await sendMsg(from, 'Con gusto 😊 Te comparto el contacto directo de nuestro asesor:');
-        await delay(600);
-        await sendContactCard(from, ASESOR_PHONE, ASESOR_DISPLAY_NAME);
-        await updateConversation(db, from, messageBody, ctx.memoria);
-        continue;
-      }
-
-      // AI response
-      const aiResponse = await getAIResponse(messageBody, ctx, rates);
-
-      if (aiResponse) {
-        let cleanedAi = cleanForWhatsApp(aiResponse);
-
-        // ── Appointment Parsing ──
-        // Format: [CITA: AAAA-MM-DD HH:MM | descripcion | marca modelo]
-        const citaMatch = cleanedAi.match(/\[CITA:\s*(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?:\s*\|\s*([^|\]]+?))?(?:\s*\|\s*([^\]]+?))?\s*\]/);
-        if (citaMatch) {
-          const fecha = citaMatch[1];
-          const hora = citaMatch[2];
-          const servicio = citaMatch[3]?.trim() || '';
-          const vehiculo = citaMatch[4]?.trim() || '';
-          cleanedAi = cleanedAi.replace(/\[CITA:[^\]]+\]/g, '').trim();
-
-          try {
-            if (db) {
-              const userName = ctx.memoria?.nombre || '';
-              const vehiculoMatchFromTag = vehiculo || '';
-              const placaMatch = messageBody.match(/\b([A-Z]{2,3}[-\s]?\d{2,3}[-\s]?[A-Z0-9]{0,3})\b/i);
-              const placa = placaMatch ? placaMatch[1].toUpperCase().replace(/[-\s]/g, '') : (ctx.memoria as { placa?: string })?.placa || '';
-
-              // ─── Get or Create Client & Vehicle ───
-              const { clientId, vehicleId } = await getOrCreateClientAndVehicle(db, from, userName, vehiculoMatchFromTag, placa);
-
-              const vehiculoInfo = vehiculoMatchFromTag || ctx.memoria?.vehiculos?.map(v => `${v.marca} ${v.modelo}${v.anio ? ' ' + v.anio : ''}`).join(', ') || '';
-
-              // Check dedup first: same phone + date + hour (non-cancelled)
-              const { data: existing } = await db.from('citas')
-                .select('id').eq('telefono', from).eq('fecha', fecha).eq('hora', hora)
-                .neq('estado', 'cancelada').limit(1);
-              if (existing && existing.length > 0) {
-                console.log(`⚠️ Cita duplicada ignorada: ${fecha} ${hora} para ${from}`);
-              } else {
-                const descripcionFinal = [
-                  servicio || 'Servicio por WhatsApp',
-                  vehiculoInfo ? `(${vehiculoInfo})` : '',
-                  userName ? `- ${userName}` : '',
-                ].filter(Boolean).join(' ');
-
-                await db.from('citas').insert({
-                  fecha,
-                  hora,
-                  telefono: from,
-                  cliente_id: clientId,
-                  vehiculo_id: vehicleId,
-                  tipo_servicio: 'otro',
-                  descripcion: descripcionFinal,
-                  estado: 'pendiente',
-                  duracion_minutos: 60,
-                  nombre_cliente: userName || null,
-                  vehiculo_info: vehiculoInfo || null,
-                  placa: placa || null,
-                });
-                console.log(`📅 AUTO-CITA IA: ${fecha} ${hora} | ${descripcionFinal} | client_id: ${clientId} | veh_id: ${vehicleId}`);
-              }
-            }
-          } catch (e) { console.error('Error insertando cita automatica:', e); }
-        }
-
-        // (Logic for images was removed)
-
-        const needsAsesor = aiNeedsAsesor(cleanedAi);
-
-        if (needsAsesor) {
-          const withoutPhone = cleanedAi
-            .replace(/https?:\/\/wa\.me\/\S+/gi, '')
-            .replace(/wa\.me\/\S+/gi, '')
-            .replace(/\+?58\s?412[\s\-]?334[\s\-]?3519/g, '')
-            .trim();
-          if (withoutPhone) { await sendMsg(from, withoutPhone); await delay(700); }
-          await sendContactCard(from, ASESOR_PHONE, ASESOR_DISPLAY_NAME);
-        } else {
-          // TikTok links — send separately with preview
-          const tiktokMatch = cleanedAi.match(/https?:\/\/(?:vt\.tiktok\.com|tiktok\.com)\/\S+/i);
-          if (tiktokMatch) {
-            const textWithout = cleanedAi.replace(tiktokMatch[0], '').trim();
-            if (textWithout) { await sendMsg(from, textWithout); await delay(500); }
-            await sendMsg(from, tiktokMatch[0], true);
-          } else {
-            const hasUrl = /https?:\/\//.test(cleanedAi);
-            await sendMsg(from, cleanedAi, hasUrl);
-          }
-        }
-
-
-
-        await processIntents(db, from, messageBody, ctx);
-      } // end if (aiResponse)
-
-      await updateConversation(db, from, messageBody, ctx.memoria);
+      await processCoreLogic(db, from, messageBody, wa_message_id);
     } // end for loop
 
     return NextResponse.json({ status: 'ok' });
@@ -1146,3 +1041,145 @@ function isContactRequest(lower: string): boolean {
     'quiero hablar con', 'necesito hablar con'].some(k => lower.includes(k));
 }
 function delay(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
+
+
+export async function processCoreLogic(db: ReturnType<typeof getDb>, from: string, messageBody: string, wa_message_id: string | null) {
+      // Load context + exchange rates in parallel
+      const [ctx, rates] = await Promise.all([
+        loadConversationContext(db, from, messageBody),
+        fetchExchangeRates(),
+      ]);
+
+      const lowerBody = messageBody.toLowerCase();
+
+      // Location intent
+      if (isLocationRequest(lowerBody)) {
+        await sendMsg(from, '📍 Estamos en San Antonio de los Altos, Miranda. Te mando el mapa y un video de cómo llegar 👇');
+        await delay(700);
+        await sendMsg(from, 'https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
+        await delay(600);
+        await sendMsg(from, 'https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
+        await delay(600);
+        await sendMsg(from, 'Siguenos en nuestras redes 📱👇');
+        await delay(400);
+        await sendMsg(from, IG_LINK, true);
+        await delay(500);
+        await sendMsg(from, TT_LINK, true);
+        await updateConversation(db, from, messageBody, ctx.memoria);
+        return;
+      }
+
+      // Social media intent
+      if (isSocialRequest(lowerBody)) {
+        await sendMsg(from, 'Aqui te van nuestras redes sociales 📱 Siguenos para tips, novedades y promos 🔧');
+        await delay(500);
+        await sendMsg(from, IG_LINK, true);
+        await delay(500);
+        await sendMsg(from, TT_LINK, true);
+        await updateConversation(db, from, messageBody, ctx.memoria);
+        return;
+      }
+
+      // Asesor contact intent (explicit)
+      if (isContactRequest(lowerBody)) {
+        await sendMsg(from, 'Con gusto 😊 Te comparto el contacto directo de nuestro asesor:');
+        await delay(600);
+        await sendContactCard(from, ASESOR_PHONE, ASESOR_DISPLAY_NAME);
+        await updateConversation(db, from, messageBody, ctx.memoria);
+        return;
+      }
+
+      // AI response
+      const aiResponse = await getAIResponse(messageBody, ctx, rates);
+
+      if (aiResponse) {
+        let cleanedAi = cleanForWhatsApp(aiResponse);
+
+        // ── Appointment Parsing ──
+        // Format: [CITA: AAAA-MM-DD HH:MM | descripcion | marca modelo]
+        const citaMatch = cleanedAi.match(/\[CITA:\s*(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?:\s*\|\s*([^|\]]+?))?(?:\s*\|\s*([^\]]+?))?\s*\]/);
+        if (citaMatch) {
+          const fecha = citaMatch[1];
+          const hora = citaMatch[2];
+          const servicio = citaMatch[3]?.trim() || '';
+          const vehiculo = citaMatch[4]?.trim() || '';
+          cleanedAi = cleanedAi.replace(/\[CITA:[^\]]+\]/g, '').trim();
+
+          try {
+            if (db) {
+              const userName = ctx.memoria?.nombre || '';
+              const vehiculoMatchFromTag = vehiculo || '';
+              const placaMatch = messageBody.match(/\b([A-Z]{2,3}[-\s]?\d{2,3}[-\s]?[A-Z0-9]{0,3})\b/i);
+              const placa = placaMatch ? placaMatch[1].toUpperCase().replace(/[-\s]/g, '') : (ctx.memoria as { placa?: string })?.placa || '';
+
+              // ─── Get or Create Client & Vehicle ───
+              const { clientId, vehicleId } = await getOrCreateClientAndVehicle(db, from, userName, vehiculoMatchFromTag, placa);
+
+              const vehiculoInfo = vehiculoMatchFromTag || ctx.memoria?.vehiculos?.map(v => `${v.marca} ${v.modelo}${v.anio ? ' ' + v.anio : ''}`).join(', ') || '';
+
+              // Check dedup first: same phone + date + hour (non-cancelled)
+              const { data: existing } = await db.from('citas')
+                .select('id').eq('telefono', from).eq('fecha', fecha).eq('hora', hora)
+                .neq('estado', 'cancelada').limit(1);
+              if (existing && existing.length > 0) {
+                console.log(`⚠️ Cita duplicada ignorada: ${fecha} ${hora} para ${from}`);
+              } else {
+                const descripcionFinal = [
+                  servicio || 'Servicio por WhatsApp',
+                  vehiculoInfo ? `(${vehiculoInfo})` : '',
+                  userName ? `- ${userName}` : '',
+                ].filter(Boolean).join(' ');
+
+                await db.from('citas').insert({
+                  fecha,
+                  hora,
+                  telefono: from,
+                  cliente_id: clientId,
+                  vehiculo_id: vehicleId,
+                  tipo_servicio: 'otro',
+                  descripcion: descripcionFinal,
+                  estado: 'pendiente',
+                  duracion_minutos: 60,
+                  nombre_cliente: userName || null,
+                  vehiculo_info: vehiculoInfo || null,
+                  placa: placa || null,
+                });
+                console.log(`📅 AUTO-CITA IA: ${fecha} ${hora} | ${descripcionFinal} | client_id: ${clientId} | veh_id: ${vehicleId}`);
+              }
+            }
+          } catch (e) { console.error('Error insertando cita automatica:', e); }
+        }
+
+        // (Logic for images was removed)
+
+        const needsAsesor = aiNeedsAsesor(cleanedAi);
+
+        if (needsAsesor) {
+          const withoutPhone = cleanedAi
+            .replace(/https?:\/\/wa\.me\/\S+/gi, '')
+            .replace(/wa\.me\/\S+/gi, '')
+            .replace(/\+?58\s?412[\s\-]?334[\s\-]?3519/g, '')
+            .trim();
+          if (withoutPhone) { await sendMsg(from, withoutPhone); await delay(700); }
+          await sendContactCard(from, ASESOR_PHONE, ASESOR_DISPLAY_NAME);
+        } else {
+          // TikTok links — send separately with preview
+          const tiktokMatch = cleanedAi.match(/https?:\/\/(?:vt\.tiktok\.com|tiktok\.com)\/\S+/i);
+          if (tiktokMatch) {
+            const textWithout = cleanedAi.replace(tiktokMatch[0], '').trim();
+            if (textWithout) { await sendMsg(from, textWithout); await delay(500); }
+            await sendMsg(from, tiktokMatch[0], true);
+          } else {
+            const hasUrl = /https?:\/\//.test(cleanedAi);
+            await sendMsg(from, cleanedAi, hasUrl);
+          }
+        }
+
+
+
+        await processIntents(db, from, messageBody, ctx);
+      } // end if (aiResponse)
+
+      await updateConversation(db, from, messageBody, ctx.memoria);
+
+}
