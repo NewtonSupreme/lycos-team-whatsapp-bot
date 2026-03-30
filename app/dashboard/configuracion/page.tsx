@@ -1,12 +1,11 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { Settings, User, Bell,Bot, MessageSquare, Shield, Zap, Save, Eye, EyeOff, Phone, Mail, MapPin, Clock, Globe, Lock, Trash2, Smartphone, Monitor } from 'lucide-react';
+import { User, Bell, Bot, Shield, Zap, Save, Eye, EyeOff, Phone, Mail, MapPin, Clock, Globe, Lock, Trash2, Smartphone, Monitor } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
 interface ToggleProps { checked: boolean; onChange: (v: boolean) => void; label: string; description?: string; }
@@ -46,16 +45,34 @@ export default function ConfiguracionPage() {
   const [pwdStatus, setPwdStatus] = useState({ loading: false, success: false, error: '' });
 
   // Sessions
-  const [sessions, setSessions] = useState<any[]>([]);
+  interface Session {
+    id: string;
+    username: string;
+    ip_address: string;
+    browser: string;
+    os: string;
+    device_type: string;
+    expires_at: string;
+    created_at: string;
+  }
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(false);
 
   useEffect(() => {
     if (user?.rol === 'admin') {
-      setLoadingSessions(true);
-      fetch('/api/auth/sessions')
-        .then(res => res.json())
-        .then(data => setSessions(data.sessions || []))
-        .finally(() => setLoadingSessions(false));
+      const fetchSessions = async () => {
+        setLoadingSessions(true);
+        try {
+          const res = await fetch('/api/auth/sessions');
+          const data = await res.json();
+          setSessions(data.sessions || []);
+        } catch (err) {
+          console.error('Failed to fetch sessions:', err);
+        } finally {
+          setLoadingSessions(false);
+        }
+      };
+      fetchSessions();
     }
   }, [user]);
 
@@ -126,7 +143,7 @@ export default function ConfiguracionPage() {
                 ].map(f => (
                   <div key={f.key} className="space-y-1.5">
                     <label className="text-xs font-medium text-muted-foreground">{f.label}</label>
-                    <Input icon={<f.icon />} value={(empresa as any)[f.key]} onChange={e => setEmpresa(p => ({ ...p, [f.key]: e.target.value }))} placeholder={f.placeholder} type={(f as any).type} />
+                    <Input icon={<f.icon />} value={(empresa as Record<string, string>)[f.key]} onChange={e => setEmpresa(p => ({ ...p, [f.key]: e.target.value }))} placeholder={f.placeholder} type={(f as any).type} />
                   </div>
                 ))}
                 <div className="space-y-1.5">
