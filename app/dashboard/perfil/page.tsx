@@ -185,12 +185,12 @@ export default function PerfilPage() {
         setAvatarUrl(data.avatar_url || null);
       }
 
-      // Check biometry
-      const { count } = await sb
+      // Check biometry - buscar por usuario_id
+      const { data: credData } = await sb
         .from('webauthn_credentials')
-        .select('*', { count: 'exact', head: true })
-        .eq('username', user.username);
-      setHasBiometry((count || 0) > 0);
+        .select('id')
+        .eq('usuario_id', user.id);
+      setHasBiometry((credData?.length || 0) > 0);
     };
     fetchProfile();
   }, [user]);
