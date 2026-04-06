@@ -24,7 +24,7 @@ export async function GET() {
 
     const { data: user } = await db
       .from('usuarios')
-      .select('username, nombre, email, rol')
+      .select('id, username, nombre, email, rol')
       .eq('username', username)
       .single();
 

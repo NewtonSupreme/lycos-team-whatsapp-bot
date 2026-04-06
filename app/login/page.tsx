@@ -18,6 +18,7 @@ export default function LoginPage() {
   const onSuccess = (data: any) => {
     if (data.nombre) {
       sessionStorage.setItem('lycos_user', JSON.stringify({
+        id: data.id,
         username: data.username,
         nombre: data.nombre,
         rol: data.rol || 'usuario',

@@ -109,12 +109,13 @@ export async function POST(req: NextRequest) {
 
       const { data: user } = await db
         .from('usuarios')
-        .select('nombre, username, rol')
+        .select('id, nombre, username, rol')
         .eq('username', username)
         .single();
 
       return NextResponse.json({
         success: true,
+        id: user?.id,
         nombre: user?.nombre || username,
         username: user?.username || username,
         rol: user?.rol || 'usuario',
