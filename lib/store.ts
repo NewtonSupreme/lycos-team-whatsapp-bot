@@ -19,6 +19,7 @@ interface AppStore {
 export const useAppStore = create<AppStore>((set) => ({
   user: {
     id: '1',
+    username: 'admin',
     email: 'admin@lycosteam.com',
     nombre: 'Administrador',
     rol: 'admin',

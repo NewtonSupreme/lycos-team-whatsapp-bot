@@ -29,7 +29,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       const cached = sessionStorage.getItem('lycos_user');
       if (cached) {
         const u = JSON.parse(cached);
-        setUser({ id: u.username, email: `${u.username}@lycosteam.com`, nombre: u.nombre, rol: u.rol, created_at: '' });
+        setUser({ id: u.username, username: u.username, email: `${u.username}@lycosteam.com`, nombre: u.nombre, rol: u.rol, created_at: '' });
         return;
       }
     } catch { /* ignore */ }
@@ -39,7 +39,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       .then(r => r.json())
       .then(({ user }) => {
         if (user) {
-          setUser({ id: user.username, email: user.email || `${user.username}@lycosteam.com`, nombre: user.nombre, rol: user.rol, created_at: '' });
+          setUser({ id: user.username, username: user.username, email: user.email || `${user.username}@lycosteam.com`, nombre: user.nombre, rol: user.rol, created_at: '' });
           sessionStorage.setItem('lycos_user', JSON.stringify(user));
         }
       })
