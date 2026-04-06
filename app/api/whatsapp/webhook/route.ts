@@ -204,6 +204,13 @@ function formatVzlaDateTime(): string {
   }).format(new Date());
 }
 
+function getSaludoApropiado(): string {
+  const hour = getVzlaDate().getHours();
+  if (hour < 12) return "¡Buenos días!";
+  if (hour < 19) return "¡Buenas tardes!";
+  return "¡Buenas noches!";
+}
+
 // ─── KNOWLEDGE BASE ────────────────────────────────────────────────────────────
 const LYCOS_KNOWLEDGE = `
 IDENTIDAD:
@@ -214,7 +221,8 @@ COMPORTAMIENTO Y TONO:
 ES MUY IMPORTANTE QUE VARÍES TUS RESPUESTAS PARA SONAR MÁS HUMANO. NO SEAS REPETITIVO.
 - Español venezolano, amigable, máximo 4-5 líneas, no improvises precios, texto plano sin asteriscos.
 - Usa al menos 1 emoji por respuesta, pero sin saturar. Ejemplos: 🔧 🚗 💰 📅 😊.
-- SALUDO INICIAL (solo sesión NUEVA): "Bienvenido a Lycos Team 🔧 Soy tu asistente virtual y estoy aquí para ayudarte con servicios, precios, citas, inventario y lo que necesites. Cuéntame, en que te puedo ayudar? 😊"
+- SALUDO INICIAL (solo sesión NUEVA): Usa SIEMPRE el saludo apropiado según la hora del día indicada en SALUDO_APROPIADO más abajo, seguido de "Bienvenido a Lycos Team 🔧 Soy tu asistente virtual y estoy aquí para ayudarte con servicios, precios, citas, inventario y lo que necesites. ¿En qué te puedo ayudar? 😊"
+- SALUDO_APROPIADO: ${getSaludoApropiado()}
 - REVISIÓN GRATIS: La revisión visual del vehículo al traerlo al taller es totalmente gratuita. Menciónalo SOLO UNA VEZ cuando trates de convencer al cliente de ir al taller para revisar un presupuesto que no puedes darle por chat. ESTÁ ESTRICTAMENTE PROHIBIDO repetir que la revisión es gratis en varios de tus mensajes (suena aburrido y repetitivo). Dilo en el momento exacto y una sola vez.
 - REDES SOCIALES: Instagram y TikTok @lycos.team (el sistema envía la tarjeta/enlace nativo automáticamente si el cliente pide seguir en redes). Enlace perfil general: https://www.lycos.team
 - RECORDATORIOS DE CITA: Menciónalos SOLO si el cliente pregunta por su cita o están tratando de agendar, pero no en cada mensaje.
@@ -289,12 +297,16 @@ Ejemplo: $100 + 16% IVA = $116 total → el cliente paga su inicial sobre $116.
 Pide el nivel PRIMERO → Nivel 1: 60% | Nivel 2: 50% | Niveles 3-6: 40%
 Resto en 3 cuotas cada 14 días. Pago en caja.
 
-292: CITAS:
-293: Pedir obligatoriamente antes de confirmar la cita: nombre completo, placa del vehículo (si la tiene), marca/modelo del vehículo, servicio, día y hora exacta (Lunes-Sábados, 8AM-5PM).
-294: REGLA DE ORO DE CITAS: No confirmes la cita ni imprimas la etiqueta [CITA] si el cliente no te ha dado su nombre y al menos el modelo del vehículo. Si no da la placa, insiste una vez amablemente, si sigue sin darla procede solo con nombre y modelo.
-295: Calcula la fecha exacta desde hoy usando FECHA/HORA VENEZUELA. Nunca agendes domingos.
-296: VERIFICA estrictamente si tiene citas registradas o si el horario está ocupado globalmente. NUNCA agendes si choca.
-297: ORDEN DEL SISTEMA (CRÍTICO): Cuando tú y el cliente ya acordaron de forma exitosa los datos (Nombre, Vehículo, Placa, Día y Hora), DEBES obligatoriamente imprimir la siguiente etiqueta oculta de sistema AL FINAL de tu respuesta (solo UNA vez):
+CITAS — REGLAS ABSOLUTAS:
+Pedir OBLIGATORIAMENTE antes de confirmar la cita: nombre completo, placa del vehículo (si la tiene), MARCA Y MODELO del vehículo, servicio, día y hora exacta (Lunes-Sábados, 8AM-5PM).
+REGLA DE ORO ABSOLUTA DE CITAS: ESTÁ TERMINANTEMENTE PROHIBIDO imprimir la etiqueta [CITA] si el cliente NO te ha dado:
+  1. Su NOMBRE COMPLETO
+  2. La MARCA Y MODELO del vehículo
+Si no tienes estos dos datos, DEBES pedírselos primero sin excepción. No hay ninguna excepción a esta regla.
+Si no da la placa, insiste una vez amablemente, si sigue sin darla procede con nombre y modelo.
+Calcula la fecha exacta desde hoy usando FECHA/HORA VENEZUELA. Nunca agendes domingos.
+VERIFICA estrictamente si tiene citas registradas o si el horario está ocupado globalmente. NUNCA agendes si choca.
+ORDEN DEL SISTEMA (CRÍTICO): Cuando tú y el cliente ya acordaron de forma exitosa los datos (Nombre, Vehículo, Placa, Día y Hora), DEBES obligatoriamente imprimir la siguiente etiqueta oculta de sistema AL FINAL de tu respuesta (solo UNA vez):
 [CITA: AAAA-MM-DD HH:MM | descripcion breve del servicio | marca modelo del vehiculo]
 Ejemplo: "Perfecto Carlos, tu cita quedó para el martes a las 10:00 AM. ¡Te esperamos! 😊 [CITA: 2026-03-31 10:00 | Cambio de aceite y filtro | Toyota Hilux]"
 La descripción debe ser breve (el servicio que quiere el cliente). El vehículo toma la forma Marca Modelo.
@@ -595,8 +607,16 @@ async function loadConversationContext(
       historia = filtered.map(m => ({ role: m.tipo === 'entrante' ? 'user' : 'model', parts: [{ text: m.body }] }));
       const latest = msgs[0];
       if (latest?.created_at) {
-        const diffH = (Date.now() - new Date(latest.created_at).getTime()) / 3600000;
-        if (diffH < 12) isNewSession = false;
+        // Session is NEW if last message was on a DIFFERENT calendar day in Venezuela
+        const lastMsgDate = new Date(latest.created_at);
+        const lastMsgVzla = new Date(lastMsgDate.getTime() + lastMsgDate.getTimezoneOffset() * 60000 + (-4 * 60) * 60000);
+        const lastDayStr = lastMsgVzla.toISOString().split('T')[0];
+        const todayStr = getVzlaDateString();
+        if (lastDayStr === todayStr) {
+          // Same calendar day → continue session (no greeting)
+          isNewSession = false;
+        }
+        // Different day → isNewSession stays true → bot will greet
       }
     }
   } catch (e) { console.error('Error loading history:', e); }
@@ -657,6 +677,15 @@ async function loadConversationContext(
 }
 
 // ─── AI Response ───────────────────────────────────────────────────────────────
+// ─── Greeting by Venezuela time ───────────────────────────────────────────────
+function getVzlaGreeting(): string {
+  const vzla = getVzlaDate();
+  const hour = vzla.getHours();
+  if (hour >= 5 && hour < 12) return 'Buenos días';
+  if (hour >= 12 && hour < 19) return 'Buenas tardes';
+  return 'Buenas noches';
+}
+
 async function getAIResponse(
   userMessage: string,
   ctx: ConversationContext,
@@ -669,6 +698,7 @@ async function getAIResponse(
   const dayNum = getVzlaDayOfWeek();
   const dayNames = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
   const dayName = dayNames[dayNum];
+  const greeting = getVzlaGreeting();
 
   const memoriaStr = Object.keys(ctx.memoria).length > 0
     ? `\nMEMORIA DEL CLIENTE:\n- Nombre: ${ctx.memoria.nombre || 'no registrado'}\n- Vehiculos: ${ctx.memoria.vehiculos?.map(v => `${v.marca} ${v.modelo}${v.anio ? ' ' + v.anio : ''}`).join(', ') || 'no registrado'}\n- Notas: ${ctx.memoria.notas || 'ninguna'}`
@@ -681,12 +711,20 @@ async function getAIResponse(
 FECHA/HORA VENEZUELA: ${vzlaDateTime}
 HOY ES: ${dayName} ${vzlaDateStr}
 ${dayNum === 0 ? 'HOY ES DOMINGO — Taller CERRADO. Informa y sugiere mañana (lunes).' : ''}
-SESION: ${ctx.isNewSession ? 'NUEVA — usa el saludo de bienvenida' : 'CONTINUA — ve al tema, sin repetir saludo'}
+SALUDO_APROPIADO: ${greeting} — USA ESTE SALUDO EXACTO al inicio cuando sea sesión nueva. NO uses otro.
+SESION: ${ctx.isNewSession ? `NUEVA — saluda con "${greeting}" + mensaje de bienvenida` : 'CONTINUA — ve al tema, sin repetir saludo ni bienvenida'}
 ${memoriaStr}
 ${ctx.citasInfo}
 ${ctx.inventarioInfo}
 ${ctx.agendaOcupada}
 ${ratesCtx}
+
+⚠️ REGLA CRITICA DE FECHAS — LEE CON ATENCION:
+La fecha de HOY es ${vzlaDateStr} (${dayName}). Esta es la UNICA referencia válida para calcular fechas.
+PROHIBIDO: Usar cualquier fecha mencionada en el historial de conversación anterior para calcular "mañana", "pasado mañana", "la próxima semana", etc.
+SIEMPRE: Calcula "mañana" sumando 1 día a ${vzlaDateStr}. "La próxima semana" = los 7 días desde hoy.
+NUNCA registres una cita en una fecha que ya pasó. Si el cálculo da una fecha anterior a ${vzlaDateStr}, es un error, recalcula.
+Ejemplo correcto: Si hoy es ${vzlaDateStr} y el cliente dice "para mañana", la cita es ${new Date(new Date().getTime() + 86400000).toISOString().split('T')[0]}. NUNCA uses la fecha de mensajes viejos del historial.
 
 REGLAS CRITICAS:
 - NUNCA uses asteriscos (*) en tus respuestas. Texto plano siempre. Listas con - o numeradas.
@@ -814,9 +852,28 @@ async function processIntents(
   const newMemoria: Memoria & { placa?: string } = { ...ctx.memoria };
   let memChanged = false;
 
-  // Extract name
-  const nameMatch = userMsg.match(/(?:soy|me llamo|mi nombre es|llámame|llamame)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ\s]{1,30})/i);
-  if (nameMatch && !newMemoria.nombre) { newMemoria.nombre = nameMatch[1].trim(); memChanged = true; }
+  // Extract name — with blacklist to avoid capturing service words as names
+  const NAME_BLACKLIST = [
+    'nivel', 'cashea', 'cliente', 'usuario', 'hola', 'buenas', 'buenos',
+    'dias', 'noches', 'tardes', 'gracias', 'okay', 'bueno', 'bien',
+    'precio', 'cita', 'servicio', 'taller', 'carro', 'vehiculo', 'favor'
+  ];
+  const nameMatch = userMsg.match(/(?:soy|me llamo|mi nombre es|mi nombre|llámame|llamame)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ]{1,}(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ]{1,})?)/i);
+  if (nameMatch) {
+    const extractedName = nameMatch[1].trim();
+    const isBlacklisted = NAME_BLACKLIST.some(w => extractedName.toLowerCase().startsWith(w));
+    const isRealName = extractedName.length >= 3 && !isBlacklisted;
+    // Always overwrite if we get a real name, even if one was stored before
+    if (isRealName) {
+      const currentIsGeneric = !newMemoria.nombre ||
+        NAME_BLACKLIST.some(w => newMemoria.nombre!.toLowerCase().startsWith(w));
+      if (currentIsGeneric || newMemoria.nombre !== extractedName) {
+        newMemoria.nombre = extractedName;
+        memChanged = true;
+        console.log(`👤 Nombre detectado y actualizado: "${extractedName}"`);
+      }
+    }
+  }
 
   // Extract vehicle
   const vehicleMatch = userMsg.match(/\b(toyota|ford|chevrolet|hyundai|kia|honda|nissan|mazda|volkswagen|corsa|aveo|spark|cruze|sail|captiva|tucson|sportage|yaris|hilux|ranger|sentra|tiida|versa|frontier|civic|fit|crv|gol|bora|jetta|polo|peugeot|renault|mitsubishi|suzuki|isuzu|fiesta|caliber|dodge|lancer|accent|elantra|malibú|malibu|camaro|silverado|traverse|trailblazer|trax|equinox|colorado|tahoe|suburban|orlando|sonic|onix)[^\n,]{0,25}/i);
@@ -863,82 +920,127 @@ async function getOrCreateClientAndVehicle(
   phone: string,
   name: string,
   vehicleInfo: string,
-  placa: string
-): Promise<{ clientId?: string; vehicleId?: string }> {
+  placa: string,
+  anio?: string
+): Promise<{ clientId?: string; vehicleId?: string; isNew?: boolean }> {
   if (!db) return {};
   let clientId: string | undefined;
   let vehicleId: string | undefined;
+  let isNew = false;
 
   try {
-    // 1. Client
-    const { data: client } = await db.from('clientes').select('id').eq('telefono', phone).limit(1).maybeSingle();
+    // 1. Client — search by phone first
+    const { data: client } = await db.from('clientes').select('id, nombre, apellido').eq('telefono', phone).limit(1).maybeSingle();
     if (client) {
       clientId = client.id;
-      // Update name if we have it and it's currently generic
-      if (name && name.toLowerCase() !== 'cliente') {
-        const parts = name.split(' ');
-        await db.from('clientes').update({ nombre: parts[0], apellido: parts.slice(1).join(' ') || '' }).eq('id', clientId);
+      // Update name if we now have a REAL name and the stored one is generic/wrong
+      if (name && name.toLowerCase() !== 'cliente' && name.trim() !== '') {
+        const storedIsGeneric = !client.nombre || client.nombre === phone ||
+          client.apellido === 'WhatsApp' || client.apellido === '(WhatsApp)' ||
+          ['nivel', 'cashea', 'cliente', 'usuario'].some(w => client.nombre?.toLowerCase().startsWith(w));
+        // Always update if current name is generic/bad, or if we explicitly have a new confirmed name
+        if (storedIsGeneric) {
+          const parts = name.split(' ');
+          await db.from('clientes').update({
+            nombre: parts[0],
+            apellido: parts.slice(1).join(' ') || '(WhatsApp)',
+            updated_at: new Date().toISOString()
+          }).eq('id', clientId);
+          console.log(`👤 Nombre cliente actualizado: ${name}`);
+        }
       }
+      console.log(`👤 Cliente existente: ${clientId} | ${phone}`);
     } else {
-      const parts = (name || 'Cliente').split(' ');
-      const { data: newClient } = await db.from('clientes').insert({
+      // New client — register them
+      isNew = true;
+      const hasRealName = name && name.toLowerCase() !== 'cliente' && name.trim() !== '';
+      const parts = hasRealName ? name.split(' ') : [phone];
+      const { data: newClient, error: clientErr } = await db.from('clientes').insert({
         nombre: parts[0],
-        apellido: parts.slice(1).join(' ') || 'WhatsApp',
+        apellido: parts.slice(1).join(' ') || '(WhatsApp)',
         telefono: phone
       }).select('id').single();
+      if (clientErr) { console.error('Error creando cliente:', clientErr.message); }
       clientId = newClient?.id;
+      console.log(`👤 Nuevo cliente registrado: ${clientId} | ${phone} | ${parts[0]}`);
     }
 
-    // 2. Vehicle
-    if (clientId) {
-      // Try by plate first
-      if (placa) {
-        const { data: veh } = await db.from('vehiculos').select('id').eq('placa', placa).limit(1).maybeSingle();
-        if (veh) {
-          vehicleId = veh.id;
-          // Ensure it's linked to this client
-          await db.from('vehiculos').update({ cliente_id: clientId }).eq('id', vehicleId);
+    // 2. Vehicle — search by plate if available, then by client+marca
+    if (clientId && (vehicleInfo || placa)) {
+      const vehParts = (vehicleInfo || '').split(' ').filter(Boolean);
+      const marca = vehParts[0] || '';
+      const modelo = vehParts.slice(1).join(' ') || '';
+
+      if (placa && placa.length >= 4) {
+        // Try exact plate match (global — could be shared vehicle)
+        const { data: vehByPlaca } = await db.from('vehiculos').select('id, cliente_id').eq('placa', placa).limit(1).maybeSingle();
+        if (vehByPlaca) {
+          vehicleId = vehByPlaca.id;
+          // Link to this client if not already done
+          if (vehByPlaca.cliente_id !== clientId) {
+            await db.from('vehiculos').update({ cliente_id: clientId }).eq('id', vehicleId);
+          }
+          // Update marca/modelo if we now have them and they were unknown
+          if (marca) {
+            await db.from('vehiculos').update({
+              marca: marca || undefined,
+              modelo: modelo || undefined,
+              ...(anio ? { anio: parseInt(anio) } : {})
+            }).eq('id', vehicleId).eq('marca', 'Desconocida');
+          }
+          console.log(`🚗 Vehículo existente (por placa): ${vehicleId}`);
         } else {
           // Create new vehicle with plate
-          const parts = (vehicleInfo || 'Vehículo').split(' ');
-          const { data: newVeh } = await db.from('vehiculos').insert({
+          const { data: newVeh, error: vehErr } = await db.from('vehiculos').insert({
             cliente_id: clientId,
-            placa: placa,
-            marca: parts[0] || 'Desconocida',
-            modelo: parts.slice(1).join(' ') || 'Modelo',
+            placa: placa.toUpperCase(),
+            marca: marca || 'Desconocida',
+            modelo: modelo || 'Modelo',
+            ...(anio ? { anio: parseInt(anio) } : {}),
             estado: 'activo'
           }).select('id').single();
+          if (vehErr) { console.error('Error creando vehiculo con placa:', vehErr.message); }
           vehicleId = newVeh?.id;
+          console.log(`🚗 Nuevo vehículo con placa: ${vehicleId} | ${placa} | ${marca} ${modelo}`);
         }
-      } else if (vehicleInfo) {
-        // Try by description for this client
-        const parts = vehicleInfo.split(' ');
-        const marca = parts[0];
-        const { data: veh } = await db.from('vehiculos')
+      } else if (marca) {
+        // No plate — search by client + marca
+        const { data: vehByMarca } = await db.from('vehiculos')
           .select('id').eq('cliente_id', clientId).ilike('marca', `%${marca}%`).limit(1).maybeSingle();
-        if (veh) {
-          vehicleId = veh.id;
+        if (vehByMarca) {
+          vehicleId = vehByMarca.id;
+          // Update modelo/anio if missing
+          if (modelo || anio) {
+            await db.from('vehiculos').update({
+              ...(modelo ? { modelo } : {}),
+              ...(anio ? { anio: parseInt(anio) } : {})
+            }).eq('id', vehicleId);
+          }
+          console.log(`🚗 Vehículo existente (por marca): ${vehicleId}`);
         } else {
           // Create without plate
-          const { data: newVeh } = await db.from('vehiculos').insert({
+          const { data: newVeh, error: vehErr } = await db.from('vehiculos').insert({
             cliente_id: clientId,
-            marca: parts[0],
-            modelo: parts.slice(1).join(' ') || 'Modelo',
+            marca: marca,
+            modelo: modelo || 'Modelo',
+            ...(anio ? { anio: parseInt(anio) } : {}),
             estado: 'activo'
           }).select('id').single();
+          if (vehErr) { console.error('Error creando vehiculo sin placa:', vehErr.message); }
           vehicleId = newVeh?.id;
+          console.log(`🚗 Nuevo vehículo sin placa: ${vehicleId} | ${marca} ${modelo}`);
         }
       }
     }
 
-    // 3. Link back to conversation if needed
+    // 3. Link back to conversation
     if (clientId) {
       await db.from('conversaciones').update({ cliente_id: clientId }).eq('telefono', phone);
     }
 
   } catch (e) { console.error('Error in getOrCreateClientAndVehicle:', e); }
 
-  return { clientId, vehicleId };
+  return { clientId, vehicleId, isNew };
 }
 
 // ─── Appointment Booking ───────────────────────────────────────────────────────
@@ -1029,7 +1131,9 @@ async function sendContactCard(to: string, phone: string, displayName: string): 
 
 // ─── Intent Detection ──────────────────────────────────────────────────────────
 function isLocationRequest(lower: string): boolean {
-  return ['ubicacion', 'ubicación', 'donde est', 'dirección', 'direccion', 'llegar', 'ubicado', 'gps', 'mapa'].some(k => lower.includes(k));
+  const locKeywords = ['ubicacion', 'ubicación', 'donde est', 'dirección', 'direccion', 'llegar', 'ubicado', 'gps', 'mapa', 'como llegar', 'cómo llegar'];
+  const certKeywords = ['certificado medico', 'certificado médico', 'cert medico', 'cert médico', 'certificado med'];
+  return locKeywords.some(k => lower.includes(k)) || certKeywords.some(k => lower.includes(k));
 }
 function isSocialRequest(lower: string): boolean {
   return ['instagram', 'tiktok', 'redes sociales', 'redes', 'sigueme', 'seguir', 'perfil redes', '@lycos'].some(k => lower.includes(k));
@@ -1107,44 +1211,57 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
           try {
             if (db) {
+              // ── Extract all available data ──────────────────────────────────
               const userName = ctx.memoria?.nombre || '';
-              const vehiculoMatchFromTag = vehiculo || '';
+              const vehiculoFromTag = vehiculo || '';
+              // Plate: from current message > memoria
               const placaMatch = messageBody.match(/\b([A-Z]{2,3}[-\s]?\d{2,3}[-\s]?[A-Z0-9]{0,3})\b/i);
               const placa = placaMatch ? placaMatch[1].toUpperCase().replace(/[-\s]/g, '') : (ctx.memoria as { placa?: string })?.placa || '';
+              // Year from message or memoria
+              const anioMatch = messageBody.match(/\b(19[8-9]\d|20[0-2]\d)\b/);
+              const anio = anioMatch?.[1] || ctx.memoria?.vehiculos?.[0]?.anio || '';
+              // Best vehicle info: from [CITA] tag > first memoria vehicle
+              const vehiculoFromMem = ctx.memoria?.vehiculos?.map(v =>
+                `${v.marca} ${v.modelo}${v.anio ? ' ' + v.anio : ''}`).join(', ') || '';
+              const vehiculoInfo = vehiculoFromTag || vehiculoFromMem;
 
-              // ─── Get or Create Client & Vehicle ───
-              const { clientId, vehicleId } = await getOrCreateClientAndVehicle(db, from, userName, vehiculoMatchFromTag, placa);
+              // ── Get or Create Client & Vehicle ─────────────────────────────
+              const { clientId, vehicleId, isNew } = await getOrCreateClientAndVehicle(
+                db, from, userName, vehiculoInfo, placa, anio?.toString()
+              );
 
-              const vehiculoInfo = vehiculoMatchFromTag || ctx.memoria?.vehiculos?.map(v => `${v.marca} ${v.modelo}${v.anio ? ' ' + v.anio : ''}`).join(', ') || '';
+              // ── Composed description with client name + (WhatsApp) ──────────
+              const clientLabel = userName
+                ? `${userName} (WhatsApp)`
+                : `${from} (WhatsApp)`;
+              const descripcionFinal = [
+                servicio || 'Servicio por WhatsApp',
+                vehiculoInfo ? `| ${vehiculoInfo}` : '',
+                `| ${clientLabel}`,
+              ].filter(Boolean).join(' ');
 
-              // Check dedup first: same phone + date + hour (non-cancelled)
+              // ── Deduplicate ──────────────────────────────────────────────────
               const { data: existing } = await db.from('citas')
                 .select('id').eq('telefono', from).eq('fecha', fecha).eq('hora', hora)
                 .neq('estado', 'cancelada').limit(1);
               if (existing && existing.length > 0) {
                 console.log(`⚠️ Cita duplicada ignorada: ${fecha} ${hora} para ${from}`);
               } else {
-                const descripcionFinal = [
-                  servicio || 'Servicio por WhatsApp',
-                  vehiculoInfo ? `(${vehiculoInfo})` : '',
-                  userName ? `- ${userName}` : '',
-                ].filter(Boolean).join(' ');
-
                 await db.from('citas').insert({
                   fecha,
                   hora,
                   telefono: from,
-                  cliente_id: clientId,
-                  vehiculo_id: vehicleId,
+                  cliente_id: clientId || null,
+                  vehiculo_id: vehicleId || null,
                   tipo_servicio: 'otro',
                   descripcion: descripcionFinal,
                   estado: 'pendiente',
                   duracion_minutos: 60,
-                  nombre_cliente: userName || null,
+                  nombre_cliente: userName || from,
                   vehiculo_info: vehiculoInfo || null,
                   placa: placa || null,
                 });
-                console.log(`📅 AUTO-CITA IA: ${fecha} ${hora} | ${descripcionFinal} | client_id: ${clientId} | veh_id: ${vehicleId}`);
+                console.log(`📅 AUTO-CITA IA: ${fecha} ${hora} | ${descripcionFinal} | client_id: ${clientId} | veh_id: ${vehicleId} | isNew: ${isNew}`);
               }
             }
           } catch (e) { console.error('Error insertando cita automatica:', e); }

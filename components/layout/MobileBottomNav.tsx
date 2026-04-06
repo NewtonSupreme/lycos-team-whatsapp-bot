@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, MessageSquare, Calendar, Wrench,
-  MoreHorizontal, Users, Car, Bot, FileText, Activity, Settings, X
+  MoreHorizontal, Users, Car, Bot, FileText, Activity, Settings, X, TrendingUp
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -21,6 +21,7 @@ const PRIMARY_NAV = [
 const MORE_NAV = [
   { href: '/dashboard/clientes', icon: Users, label: 'Clientes' },
   { href: '/dashboard/vehiculos', icon: Car, label: 'Vehículos' },
+  { href: '/dashboard/leads', icon: TrendingUp, label: 'Leads' },
   { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente' },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes' },
   { href: '/dashboard/actividad', icon: Activity, label: 'Actividad' },

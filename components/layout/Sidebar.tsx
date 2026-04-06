@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Users, Car, Wrench, Calendar, MessageSquare,
   Bot, FileText, Settings, ChevronLeft, ChevronRight,
-  Activity, LogOut
+  Activity, LogOut, TrendingUp, UserCircle
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -20,6 +20,7 @@ const navItemsConfig = [
   { href: '/dashboard/servicios', icon: Wrench, label: 'Servicios', badge: null },
   { href: '/dashboard/agenda', icon: Calendar, label: 'Agenda', badge: null },
   { href: '/dashboard/whatsapp', icon: MessageSquare, label: 'WhatsApp', badge: null },
+  { href: '/dashboard/leads', icon: TrendingUp, label: 'Leads', badge: null },
   { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente', badge: null },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', badge: null },
   { href: '/dashboard/actividad', icon: Activity, label: 'Actividad', badge: null },
@@ -27,6 +28,7 @@ const navItemsConfig = [
 
 const bottomItems = [
   { href: '/dashboard/configuracion', icon: Settings, label: 'Configuración' },
+  { href: '/dashboard/perfil', icon: UserCircle, label: 'Mi Perfil' },
 ];
 
 export default function Sidebar() {
