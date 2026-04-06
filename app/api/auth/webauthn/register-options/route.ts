@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { generateRegistrationOptions } from '@simplewebauthn/server';
 import { createClient } from '@supabase/supabase-js';
@@ -10,9 +10,8 @@ const db = createClient(url, key);
 // RP = Relying Party
 const rpName = 'Lycos Team CRM';
 const rpID = process.env.NODE_ENV === 'production' ? 'lycosteam.com' : 'localhost';
-const origin = process.env.NODE_ENV === 'production' ? 'https://lycosteam.com' : 'http://localhost:3000';
 
-export async function POST(req: NextRequest) {
+export async function POST() {
   try {
     const cookieStore = await cookies();
     const username = cookieStore.get('lycos_session')?.value;
@@ -35,8 +34,8 @@ export async function POST(req: NextRequest) {
       userDisplayName: username,
       attestationType: 'none',
       excludeCredentials: (credentials || []).map(c => ({
-        id: c.credential_id, // Pass as string (base64)
-        type: 'public-key',
+        id: c.credential_id as string,
+        type: 'public-key' as const,
       })),
       authenticatorSelection: {
         residentKey: 'preferred',

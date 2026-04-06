@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { generateAuthenticationOptions } from '@simplewebauthn/server';
+import { generateAuthenticationOptions, AuthenticatorTransportFuture } from '@simplewebauthn/server';
 import { createClient } from '@supabase/supabase-js';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -32,9 +32,9 @@ export async function POST(req: NextRequest) {
     const options = await generateAuthenticationOptions({
       rpID,
       allowCredentials: (credentials || []).map(c => ({
-        id: c.credential_id, // Pass as string (base64)
-        type: 'public-key',
-        transports: c.transports,
+        id: c.credential_id as string,
+        type: 'public-key' as const,
+        transports: (c.transports as AuthenticatorTransportFuture[]) || undefined,
       })),
       userVerification: 'preferred',
     });

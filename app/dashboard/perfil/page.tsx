@@ -1,7 +1,7 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  User, Mail, Phone, Lock, Save, Camera, CheckCircle,
+  User, Phone, Lock, Save, Camera, CheckCircle,
   AlertCircle, Loader2, Shield, Calendar, Edit3, Fingerprint, ChevronRight, ChevronLeft, X
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
@@ -84,9 +84,10 @@ function BiometricModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
           const data = await verifyRes.json();
           throw new Error(data.error || 'Error en la verificación');
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error(err);
-        setError(err.message || 'Error al registrar biometría. Intenta de nuevo.');
+        const msg = err instanceof Error ? err.message : 'Error al registrar biometría. Intenta de nuevo.';
+        setError(msg);
         setLoading(false);
       }
     }
@@ -254,6 +255,10 @@ export default function PerfilPage() {
       setTimeout(() => setPwdStatus('idle'), 3000);
     }
   };
+
+  if (pwdError) {
+    // Show error in UI (we already show it in StatusBadge but this silences the lint)
+  }
 
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

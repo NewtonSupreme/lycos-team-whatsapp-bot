@@ -4,6 +4,7 @@ export interface User {
   id: string;
   email: string;
   nombre: string;
+  username: string; // Required for WebAuthn/Login
   rol: UserRole;
   avatar_url?: string;
   telefono?: string;

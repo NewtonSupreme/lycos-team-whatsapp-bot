@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { verifyRegistrationResponse } from '@simplewebauthn/server';
+import { verifyRegistrationResponse, AuthenticatorTransportFuture } from '@simplewebauthn/server';
 import { createClient } from '@supabase/supabase-js';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
 
       // Save new credential to DB (credential ID comes as Base64URL from SimpleWebAuthn, convert if needed)
       const credentialIDBase64 = Buffer.from(id).toString('base64');
-      const transports = body.response.transports || [];
+      const transports = (body.response.transports || []) as AuthenticatorTransportFuture[];
       
       const { error: saveError } = await db.from('webauthn_credentials').insert({
         username,
