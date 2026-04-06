@@ -39,10 +39,11 @@ export async function POST(req: NextRequest) {
 
     const userId = userData.id;
 
-    // Get user's credentials - include transports if available
+    // Get user's credentials
     const { data: credentials, error: credError } = await db
       .from('webauthn_credentials')
-      .select('credential_id, transports');
+      .select('credential_id')
+      .eq('usuario_id', userId);
 
     if (credError) {
       console.error('Error fetching credentials:', credError);
@@ -53,7 +54,7 @@ export async function POST(req: NextRequest) {
     console.log('User ID:', userId);
     console.log('Credentials:', credentials?.map(c => ({
       credential_id: c.credential_id,
-      transports: c.transports
+      credential_id_length: c.credential_id?.length,
     })));
 
     if (!credentials || credentials.length === 0) {
@@ -65,7 +66,6 @@ export async function POST(req: NextRequest) {
       allowCredentials: credentials.map(c => ({
         id: c.credential_id,
         type: 'public-key' as const,
-        transports: c.transports ? ['hybrid', 'internal'] : undefined,
       })),
       userVerification: 'preferred',
     });

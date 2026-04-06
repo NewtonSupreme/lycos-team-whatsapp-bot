@@ -60,7 +60,12 @@ export async function POST(req: NextRequest) {
     console.log('Username:', username);
     console.log('User ID:', userId);
     console.log('Response body ID:', responseBody.id);
+    console.log('Response body ID length:', responseBody.id?.length);
     console.log('Credentials found:', credentials?.length);
+    console.log('Credentials:', credentials?.map(c => ({
+      credential_id: c.credential_id,
+      credential_id_length: c.credential_id?.length
+    })));
     
     if (!credentials?.length) {
       return NextResponse.json({ error: 'No tienes biometría configurada. Por favor configura la biometría primero en tu perfil.' }, { status: 404 });
