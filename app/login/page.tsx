@@ -73,10 +73,12 @@ export default function LoginPage() {
 
       if (!optionsRes.ok) {
         const err = await optionsRes.json();
-        throw new Error(err.error || 'Error al obtener opciones');
+        console.error('Login options error:', err);
+        throw new Error(err.error || err.message || 'Error al obtener opciones');
       }
 
       const options = await optionsRes.json();
+      console.log('Login options received:', options);
 
       // 2. Start browser authentication
       const asseResp = await startAuthentication(options);
@@ -92,7 +94,8 @@ export default function LoginPage() {
         onSuccess(await verifyRes.json());
       } else {
         const err = await verifyRes.json();
-        throw new Error(err.error || 'Fallo biometría');
+        console.error('Login verify error:', err);
+        throw new Error(err.error || err.message || 'Fallo biometría');
       }
 
     } catch (err: any) {

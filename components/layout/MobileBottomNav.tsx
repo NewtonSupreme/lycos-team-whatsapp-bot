@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, MessageSquare, Calendar, Wrench,
-  MoreHorizontal, Users, Car, Bot, FileText, Activity, Settings, X, TrendingUp
+  MoreHorizontal, Users, Car, Bot, FileText, Activity, Settings, X, TrendingUp, LogOut
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -93,6 +93,23 @@ export default function MobileBottomNav() {
                 </Link>
               );
             })}
+
+            {/* Logout Button */}
+            <button
+              onClick={async () => {
+                setShowMore(false);
+                await fetch('/api/auth/logout', { method: 'POST' });
+                // Optional: clear local session cache if any
+                sessionStorage.removeItem('lycos_user');
+                window.location.href = '/login';
+              }}
+              className="flex flex-col items-center gap-2 rounded-2xl p-4 transition-all duration-200 bg-red-500/10 hover:bg-red-500/20 border border-transparent group"
+            >
+              <LogOut className="w-5 h-5 text-red-400 group-hover:scale-110 transition-transform" />
+              <span className="text-[11px] font-medium text-center leading-tight text-red-400">
+                Cerrar Sesión
+              </span>
+            </button>
           </div>
         </div>
       </div>

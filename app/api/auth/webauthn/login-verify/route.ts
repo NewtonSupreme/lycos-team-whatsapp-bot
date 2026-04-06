@@ -57,12 +57,16 @@ export async function POST(req: NextRequest) {
     }
 
     console.log('=== Login Verify Debug ===');
+    console.log('Username:', username);
     console.log('User ID:', userId);
-    console.log('Credentials found:', credentials?.length);
     console.log('Response body ID:', responseBody.id);
+    console.log('Credentials found:', credentials?.length);
+    
+    if (!credentials?.length) {
+      return NextResponse.json({ error: 'No tienes biometría configurada. Por favor configura la biometría primero en tu perfil.' }, { status: 404 });
+    }
     
     let cred = credentials?.find(c => {
-      // El credential_id en DB puede estar en base64 o base64url
       let credIdBase64URL: string;
       try {
         credIdBase64URL = Buffer.from(c.credential_id).toString('base64url');

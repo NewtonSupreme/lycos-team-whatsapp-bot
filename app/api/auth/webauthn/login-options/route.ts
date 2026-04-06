@@ -47,7 +47,15 @@ export async function POST(req: NextRequest) {
 
     if (credError) {
       console.error('Error fetching credentials:', credError);
-      return NextResponse.json({ error: 'Error al verificar credenciales', details: credError.message, code: credError.code }, { status: 500 });
+      return NextResponse.json({ error: 'Error al verificar credenciales', message: credError.message, code: credError.code }, { status: 500 });
+    }
+
+    console.log('=== Login Options Debug ===');
+    console.log('User ID:', userId);
+    console.log('Credentials found:', credentials?.length);
+
+    if (!credentials || credentials.length === 0) {
+      return NextResponse.json({ error: 'No tienes biometría configurada. Inicia sesión con contraseña y actívala.' }, { status: 404 });
     }
 
     if (!credentials || credentials.length === 0) {
@@ -63,10 +71,10 @@ export async function POST(req: NextRequest) {
 
     const options = await generateAuthenticationOptions({
       rpID,
-      allowCredentials: credentials ? credentials.map(c => ({
+      allowCredentials: credentials.map(c => ({
         id: Buffer.from(c.credential_id).toString('base64url'),
         type: 'public-key' as const,
-      })) : [],
+      })),
       userVerification: 'preferred',
     });
 

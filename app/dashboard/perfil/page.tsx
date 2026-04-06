@@ -186,10 +186,12 @@ export default function PerfilPage() {
       }
 
       // Check biometry - buscar por usuario_id
-      const { data: credData } = await sb
+      console.log('Checking biometry for user.id:', user.id);
+      const { data: credData, error: credErr } = await sb
         .from('webauthn_credentials')
         .select('id')
         .eq('usuario_id', user.id);
+      console.log('Biometry check result:', { credData, credErr });
       setHasBiometry((credData?.length || 0) > 0);
     };
     fetchProfile();
