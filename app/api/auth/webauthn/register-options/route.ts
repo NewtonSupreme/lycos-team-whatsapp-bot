@@ -29,10 +29,18 @@ export async function POST() {
     }
 
     // Get current credentials to avoid registering the same device twice
-    const { data: credentials } = await db
+    console.log('Checking existing credentials for username:', username);
+    const { data: credentials, error: credError } = await db
       .from('webauthn_credentials')
       .select('credential_id')
       .eq('username', username);
+    
+    if (credError) {
+      console.error('Error fetching credentials:', credError);
+      return NextResponse.json({ error: 'Error al verificar credenciales', details: credError.message }, { status: 500 });
+    }
+    
+    console.log('Found credentials:', credentials);
 
     const options = await generateRegistrationOptions({
       rpName,

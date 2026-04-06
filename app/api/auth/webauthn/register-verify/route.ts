@@ -28,6 +28,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Base de datos no configurada' }, { status: 500 });
     }
 
+    // Verificar que las tablas existan
+    console.log('Checking webauthn_credentials table...');
+    const { data: tableCheck, error: tableError } = await db
+      .from('webauthn_credentials')
+      .select('id')
+      .limit(1);
+    
+    if (tableError) {
+      console.error('Table check error - Table might not exist:', tableError);
+      return NextResponse.json({ 
+        error: 'Tabla de credenciales no existe', 
+        details: tableError.message,
+        hint: 'Crear tabla webauthn_credentials en Supabase' 
+      }, { status: 500 });
+    }
+    
+    console.log('Table exists, proceeding...');
+
     const { data: challengeData } = await db
       .from('webauthn_challenges')
       .select('challenge')
@@ -53,6 +71,8 @@ export async function POST(req: NextRequest) {
       const credentialIDBase64URL = Buffer.from(id).toString('base64url');
       const transports = (body.response.transports || []) as AuthenticatorTransportFuture[];
       
+      console.log('Inserting credential:', { username, credentialIDBase64URL, counter, transports });
+      
       const { error: saveError } = await db.from('webauthn_credentials').insert({
         username,
         credential_id: credentialIDBase64URL,
@@ -63,7 +83,8 @@ export async function POST(req: NextRequest) {
 
       if (saveError) {
           console.error('Save WebAuthn Error:', saveError);
-          return NextResponse.json({ error: 'Error al guardar credencial', details: saveError.message }, { status: 500 });
+          console.error('Full error details:', JSON.stringify(saveError));
+          return NextResponse.json({ error: 'Error al guardar credencial', details: saveError.message, code: saveError.code }, { status: 500 });
       }
 
       // Cleanup challenge
