@@ -41,13 +41,13 @@ export async function POST(req: NextRequest) {
       const { credential } = verification.registrationInfo;
       const { publicKey, id, counter } = credential;
 
-      // Save new credential to DB (credential ID comes as Base64URL from SimpleWebAuthn, convert if needed)
-      const credentialIDBase64 = Buffer.from(id).toString('base64');
+      // Save new credential to DB (credential ID must be Base64URL for SimpleWebAuthn)
+      const credentialIDBase64URL = Buffer.from(id).toString('base64url');
       const transports = (body.response.transports || []) as AuthenticatorTransportFuture[];
       
       const { error: saveError } = await db.from('webauthn_credentials').insert({
         username,
-        credential_id: credentialIDBase64,
+        credential_id: credentialIDBase64URL,
         public_key: Buffer.from(publicKey),
         counter: BigInt(counter),
         transports,

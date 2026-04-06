@@ -43,10 +43,10 @@ export async function POST(req: NextRequest) {
       expectedChallenge: challengeData.challenge,
       expectedOrigin: origin,
       expectedRPID: rpID,
-      authenticator: {
-        credentialID: new Uint8Array(Buffer.from(cred.credential_id, 'base64')),
-        credentialPublicKey: new Uint8Array(Buffer.from(cred.public_key.toString().replace('\\x', ''), 'hex')),
-        counter: Number(cred.counter),
+      credential: {
+        id: cred.credential_id,
+        publicKey: new Uint8Array(Buffer.from(cred.public_key.toString().replace('\\x', ''), 'hex')),
+        counter: Number(cred.counter || 0),
       },
     });
 
