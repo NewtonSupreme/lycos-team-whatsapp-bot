@@ -9,7 +9,7 @@ const db = createClient(url, key);
 
 // RP = Relying Party
 const rpName = 'Lycos Team CRM';
-const rpID = process.env.NODE_ENV === 'production' ? 'lycosteam.com' : 'localhost';
+const rpID = process.env.NODE_ENV === 'production' ? 'lycos-team-whatsapp-bot.vercel.app' : 'localhost';
 
 export async function POST() {
   try {

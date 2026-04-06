@@ -7,8 +7,8 @@ const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const db = createClient(url, key);
 
-const rpID = process.env.NODE_ENV === 'production' ? 'lycosteam.com' : 'localhost';
-const origin = process.env.NODE_ENV === 'production' ? 'https://lycosteam.com' : 'http://localhost:3000';
+const rpID = process.env.NODE_ENV === 'production' ? 'lycos-team-whatsapp-bot.vercel.app' : 'localhost';
+const origin = process.env.NODE_ENV === 'production' ? 'https://lycos-team-whatsapp-bot.vercel.app' : 'http://localhost:3000';
 
 export async function POST(req: NextRequest) {
   try {
