@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
         username,
         credential_id: credentialIDBase64URL,
         public_key: Buffer.from(publicKey),
-        counter: BigInt(counter),
+        counter: counter,
         transports,
       });
 

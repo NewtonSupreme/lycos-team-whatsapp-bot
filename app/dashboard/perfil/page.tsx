@@ -65,7 +65,11 @@ function BiometricModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
       try {
         // 1. Get options from server
         const optionsRes = await fetch('/api/auth/webauthn/register-options', { method: 'POST' });
-        if (!optionsRes.ok) throw new Error('No se pudieron obtener las opciones de registro');
+        if (!optionsRes.ok) {
+          const errData = await optionsRes.json();
+          console.error('Register options error:', errData);
+          throw new Error(errData.error || errData.details || 'No se pudieron obtener las opciones de registro');
+        }
         const options = await optionsRes.json();
 
         // 2. Start browser registration
@@ -82,7 +86,8 @@ function BiometricModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
           onSuccess();
         } else {
           const data = await verifyRes.json();
-          throw new Error(data.error || 'Error en la verificación');
+          console.error('Register verify error:', data);
+          throw new Error(data.error || data.details || 'Error en la verificación');
         }
       } catch (err: unknown) {
         console.error(err);
