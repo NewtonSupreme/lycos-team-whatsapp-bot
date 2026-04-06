@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
 
     if (credError) {
       console.error('Error fetching credentials:', credError);
-      return NextResponse.json({ error: 'Error al verificar credenciales', details: credError.message }, { status: 500 });
+      return NextResponse.json({ error: 'Error al verificar credenciales', details: credError.message, code: credError.code }, { status: 500 });
     }
 
     if (!credentials || credentials.length === 0) {

@@ -28,11 +28,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Base de datos no configurada' }, { status: 500 });
     }
 
-    const { data: challengeData } = await db
+    const { data: challengeData, error: challengeError } = await db
       .from('webauthn_challenges')
       .select('challenge')
       .eq('username', username)
       .single();
+
+    if (challengeError) {
+      console.error('Error fetching challenge:', challengeError);
+      return NextResponse.json({ error: 'Error al buscar challenge', details: challengeError.message }, { status: 500 });
+    }
 
     if (!challengeData) {
       return NextResponse.json({ error: 'Reto no encontrado. Intenta de nuevo.' }, { status: 400 });
