@@ -28,24 +28,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Base de datos no configurada' }, { status: 500 });
     }
 
-    // Verificar que las tablas existan
-    console.log('Checking webauthn_credentials table...');
-    const { data: tableCheck, error: tableError } = await db
-      .from('webauthn_credentials')
-      .select('id')
-      .limit(1);
-    
-    if (tableError) {
-      console.error('Table check error - Table might not exist:', tableError);
-      return NextResponse.json({ 
-        error: 'Tabla de credenciales no existe', 
-        details: tableError.message,
-        hint: 'Crear tabla webauthn_credentials en Supabase' 
-      }, { status: 500 });
-    }
-    
-    console.log('Table exists, proceeding...');
-
     const { data: challengeData } = await db
       .from('webauthn_challenges')
       .select('challenge')
@@ -67,18 +49,18 @@ export async function POST(req: NextRequest) {
       const { credential } = verification.registrationInfo;
       const { publicKey, id, counter } = credential;
 
-      // Save new credential to DB (credential ID must be Base64URL for SimpleWebAuthn)
       const credentialIDBase64URL = Buffer.from(id).toString('base64url');
+      const publicKeyBase64 = Buffer.from(publicKey).toString('base64');
       const transports = (body.response.transports || []) as AuthenticatorTransportFuture[];
       
       console.log('Inserting credential:', { username, credentialIDBase64URL, counter, transports });
       
       const { error: saveError } = await db.from('webauthn_credentials').insert({
-        username,
+        user_id: username,
         credential_id: credentialIDBase64URL,
-        public_key: Buffer.from(publicKey),
-        counter: counter,
-        transports,
+        public_key: publicKeyBase64,
+        sign_count: counter,
+        transports: JSON.stringify(transports),
       });
 
       if (saveError) {
@@ -87,7 +69,6 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: 'Error al guardar credencial', details: saveError.message, code: saveError.code }, { status: 500 });
       }
 
-      // Cleanup challenge
       await db.from('webauthn_challenges').delete().eq('username', username);
 
       return NextResponse.json({ success: true });

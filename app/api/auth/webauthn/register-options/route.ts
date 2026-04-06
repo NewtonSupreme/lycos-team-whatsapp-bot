@@ -29,11 +29,11 @@ export async function POST() {
     }
 
     // Get current credentials to avoid registering the same device twice
-    console.log('Checking existing credentials for username:', username);
+    console.log('Checking existing credentials for user_id:', username);
     const { data: credentials, error: credError } = await db
       .from('webauthn_credentials')
       .select('credential_id')
-      .eq('username', username);
+      .eq('user_id', username);
     
     if (credError) {
       console.error('Error fetching credentials:', credError);
