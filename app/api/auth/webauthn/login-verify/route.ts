@@ -48,16 +48,28 @@ export async function POST(req: NextRequest) {
 
     const { data: credentials, error: credError } = await db
       .from('webauthn_credentials')
-      .select('*')
+      .select('id, credential_id, public_key, counter')
       .eq('usuario_id', userId);
 
     if (credError) {
       console.error('Error fetching credentials:', credError);
-      return NextResponse.json({ error: 'Error al buscar credenciales', details: credError.message }, { status: 500 });
+      return NextResponse.json({ error: 'Error al buscar credenciales', message: credError.message, code: credError.code }, { status: 500 });
     }
 
+    console.log('=== Login Verify Debug ===');
+    console.log('User ID:', userId);
+    console.log('Credentials found:', credentials?.length);
+    console.log('Response body ID:', responseBody.id);
+    
     let cred = credentials?.find(c => {
-      const credIdBase64URL = Buffer.from(c.credential_id).toString('base64url');
+      // El credential_id en DB puede estar en base64 o base64url
+      let credIdBase64URL: string;
+      try {
+        credIdBase64URL = Buffer.from(c.credential_id).toString('base64url');
+      } catch {
+        credIdBase64URL = c.credential_id;
+      }
+      console.log('Comparing:', credIdBase64URL, '===', responseBody.id, '=', credIdBase64URL === responseBody.id);
       return credIdBase64URL === responseBody.id;
     });
 

@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     // Get user's credentials
     const { data: credentials, error: credError } = await db
       .from('webauthn_credentials')
-      .select('credential_id, transports')
+      .select('credential_id')
       .eq('usuario_id', userId);
 
     if (credError) {
@@ -54,12 +54,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No tienes biometría configurada. Inicia sesión con contraseña y actívala.' }, { status: 404 });
     }
 
+    console.log('=== Login Options Debug ===');
+    console.log('User ID:', userId);
+    console.log('Credentials:', credentials.map(c => ({
+      credential_id: c.credential_id,
+      credential_id_base64url: Buffer.from(c.credential_id).toString('base64url')
+    })));
+
     const options = await generateAuthenticationOptions({
       rpID,
       allowCredentials: credentials ? credentials.map(c => ({
         id: Buffer.from(c.credential_id).toString('base64url'),
         type: 'public-key' as const,
-        transports: c.transports ? JSON.parse(c.transports as string) : undefined,
       })) : [],
       userVerification: 'preferred',
     });
