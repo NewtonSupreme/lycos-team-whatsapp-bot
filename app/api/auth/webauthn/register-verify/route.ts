@@ -3,9 +3,12 @@ import { cookies } from 'next/headers';
 import { verifyRegistrationResponse, AuthenticatorTransportFuture } from '@simplewebauthn/server';
 import { createClient } from '@supabase/supabase-js';
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const db = createClient(url, key);
+function getDb() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key);
+}
 
 const rpID = process.env.NODE_ENV === 'production' ? 'lycos-team-whatsapp-bot.vercel.app' : 'localhost';
 const origin = process.env.NODE_ENV === 'production' ? 'https://lycos-team-whatsapp-bot.vercel.app' : 'http://localhost:3000';
@@ -17,7 +20,12 @@ export async function POST(req: NextRequest) {
     const username = cookieStore.get('lycos_session')?.value;
 
     if (!username) {
-      return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+      return NextResponse.json({ error: 'No autorizado. Sesión no encontrada.' }, { status: 401 });
+    }
+
+    const db = getDb();
+    if (!db) {
+      return NextResponse.json({ error: 'Base de datos no configurada' }, { status: 500 });
     }
 
     const { data: challengeData } = await db
@@ -27,7 +35,7 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (!challengeData) {
-      return NextResponse.json({ error: 'Reto no encontrado' }, { status: 400 });
+      return NextResponse.json({ error: 'Reto no encontrado. Intenta de nuevo.' }, { status: 400 });
     }
 
     const verification = await verifyRegistrationResponse({
@@ -55,7 +63,7 @@ export async function POST(req: NextRequest) {
 
       if (saveError) {
           console.error('Save WebAuthn Error:', saveError);
-          return NextResponse.json({ error: 'Error al guardar credencial' }, { status: 500 });
+          return NextResponse.json({ error: 'Error al guardar credencial', details: saveError.message }, { status: 500 });
       }
 
       // Cleanup challenge
@@ -68,6 +76,7 @@ export async function POST(req: NextRequest) {
 
   } catch (error) {
     console.error('WebAuthn Reg Verify Error:', error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    const msg = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: 'Internal Server Error', details: msg }, { status: 500 });
   }
 }

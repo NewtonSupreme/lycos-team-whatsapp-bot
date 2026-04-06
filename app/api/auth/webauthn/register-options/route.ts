@@ -3,9 +3,12 @@ import { cookies } from 'next/headers';
 import { generateRegistrationOptions } from '@simplewebauthn/server';
 import { createClient } from '@supabase/supabase-js';
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const db = createClient(url, key);
+function getDb() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key);
+}
 
 // RP = Relying Party
 const rpName = 'Lycos Team CRM';
@@ -17,7 +20,12 @@ export async function POST() {
     const username = cookieStore.get('lycos_session')?.value;
 
     if (!username) {
-      return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+      return NextResponse.json({ error: 'No autorizado. Sesión no encontrada.' }, { status: 401 });
+    }
+
+    const db = getDb();
+    if (!db) {
+      return NextResponse.json({ error: 'Base de datos no configurada' }, { status: 500 });
     }
 
     // Get current credentials to avoid registering the same device twice
@@ -53,6 +61,7 @@ export async function POST() {
     return NextResponse.json(options);
   } catch (error) {
     console.error('WebAuthn Reg Options Error:', error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    const msg = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: 'Internal Server Error', details: msg }, { status: 500 });
   }
 }
