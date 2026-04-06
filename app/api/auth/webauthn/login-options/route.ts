@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     const { data: credentials, error: credError } = await db
       .from('webauthn_credentials')
       .select('credential_id, transports')
-      .eq('user_id', username);
+      .eq('username', username);
 
     if (credError) {
       console.error('Error fetching credentials:', credError);

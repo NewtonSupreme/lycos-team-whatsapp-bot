@@ -35,13 +35,16 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (challengeError) {
-      console.error('Error fetching challenge:', challengeError);
-      return NextResponse.json({ error: 'Error al buscar challenge', details: challengeError.message }, { status: 500 });
+      console.error('ChallengeError:', challengeError);
+      return NextResponse.json({ error: 'Error al buscar challenge', details: challengeError.message, code: challengeError.code }, { status: 500 });
     }
 
     if (!challengeData) {
       return NextResponse.json({ error: 'Reto no encontrado. Intenta de nuevo.' }, { status: 400 });
     }
+
+    console.log('=== WebAuthn Register Verify Debug ===');
+    console.log('Challenge found:', challengeData ? 'yes' : 'no');
 
     const verification = await verifyRegistrationResponse({
       response: body,
@@ -60,12 +63,12 @@ export async function POST(req: NextRequest) {
       
       console.log('Inserting credential:', { username, credentialIDBase64URL, counter, transports });
       
+      // Insertar - solo campos básicos
       const { error: saveError } = await db.from('webauthn_credentials').insert({
-        user_id: username,
+        username: username,
         credential_id: credentialIDBase64URL,
         public_key: publicKeyBase64,
-        sign_count: counter,
-        transports: JSON.stringify(transports),
+        counter: counter,
       });
 
       if (saveError) {

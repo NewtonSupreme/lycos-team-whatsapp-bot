@@ -10,7 +10,6 @@ function getDb() {
   return createClient(url, key);
 }
 
-// RP = Relying Party
 const rpName = 'Lycos Team CRM';
 const rpID = process.env.NODE_ENV === 'production' ? 'lycos-team-whatsapp-bot.vercel.app' : 'localhost';
 
@@ -28,29 +27,29 @@ export async function POST() {
       return NextResponse.json({ error: 'Base de datos no configurada' }, { status: 500 });
     }
 
-    // Get current credentials to avoid registering the same device twice
-    console.log('Checking existing credentials for user_id:', username);
-    const { data: credentials, error: credError } = await db
+    const { data: credData, error: credErr } = await db
       .from('webauthn_credentials')
-      .select('credential_id')
-      .eq('user_id', username);
+      .select('id, credential_id, username')
+      .eq('username', username);
     
-    if (credError) {
-      console.error('Error fetching credentials:', credError);
-      return NextResponse.json({ error: 'Error al verificar credenciales', details: credError.message, code: credError.code }, { status: 500 });
+    if (credErr) {
+      return NextResponse.json({ 
+        error: 'Error_DB_Credentials', 
+        message: credErr.message,
+        code: credErr.code,
+        details: credErr.details
+      }, { status: 500 });
     }
-    
-    console.log('Found credentials:', credentials);
 
     const options = await generateRegistrationOptions({
       rpName,
       rpID,
-      userID: new TextEncoder().encode(username), // Encode as Uint8Array
+      userID: new TextEncoder().encode(username),
       userName: username,
       userDisplayName: username,
       attestationType: 'none',
-      excludeCredentials: (credentials || []).map(c => ({
-        id: c.credential_id as string,
+      excludeCredentials: (credData || []).map(c => ({
+        id: c.credential_id,
         type: 'public-key' as const,
       })),
       authenticatorSelection: {
@@ -59,12 +58,19 @@ export async function POST() {
       },
     });
 
-    // Save challenge to verify later
-    await db.from('webauthn_challenges').upsert({
+    const { error: challengeErr } = await db.from('webauthn_challenges').upsert({
       username,
       challenge: options.challenge,
       created_at: new Date().toISOString()
     });
+    
+    if (challengeErr) {
+      return NextResponse.json({ 
+        error: 'Error_DB_Challenge', 
+        message: challengeErr.message,
+        code: challengeErr.code
+      }, { status: 500 });
+    }
 
     return NextResponse.json(options);
   } catch (error) {
