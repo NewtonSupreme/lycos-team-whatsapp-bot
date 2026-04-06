@@ -66,15 +66,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No tienes biometría configurada. Por favor configura la biometría primero en tu perfil.' }, { status: 404 });
     }
     
+    // El credential_id ya está en base64url, comparar directamente
     let cred = credentials?.find(c => {
-      let credIdBase64URL: string;
-      try {
-        credIdBase64URL = Buffer.from(c.credential_id).toString('base64url');
-      } catch {
-        credIdBase64URL = c.credential_id;
-      }
-      console.log('Comparing:', credIdBase64URL, '===', responseBody.id, '=', credIdBase64URL === responseBody.id);
-      return credIdBase64URL === responseBody.id;
+      const match = c.credential_id === responseBody.id;
+      console.log('Comparing:', c.credential_id, '===', responseBody.id, '=', match);
+      return match;
     });
 
     if (!cred) {

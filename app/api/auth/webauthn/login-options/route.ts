@@ -39,11 +39,10 @@ export async function POST(req: NextRequest) {
 
     const userId = userData.id;
 
-    // Get user's credentials
+    // Get user's credentials - include transports if available
     const { data: credentials, error: credError } = await db
       .from('webauthn_credentials')
-      .select('credential_id')
-      .eq('usuario_id', userId);
+      .select('credential_id, transports');
 
     if (credError) {
       console.error('Error fetching credentials:', credError);
@@ -52,28 +51,21 @@ export async function POST(req: NextRequest) {
 
     console.log('=== Login Options Debug ===');
     console.log('User ID:', userId);
-    console.log('Credentials found:', credentials?.length);
-
-    if (!credentials || credentials.length === 0) {
-      return NextResponse.json({ error: 'No tienes biometría configurada. Inicia sesión con contraseña y actívala.' }, { status: 404 });
-    }
-
-    if (!credentials || credentials.length === 0) {
-      return NextResponse.json({ error: 'No tienes biometría configurada. Inicia sesión con contraseña y actívala.' }, { status: 404 });
-    }
-
-    console.log('=== Login Options Debug ===');
-    console.log('User ID:', userId);
-    console.log('Credentials:', credentials.map(c => ({
+    console.log('Credentials:', credentials?.map(c => ({
       credential_id: c.credential_id,
-      credential_id_base64url: Buffer.from(c.credential_id).toString('base64url')
+      transports: c.transports
     })));
+
+    if (!credentials || credentials.length === 0) {
+      return NextResponse.json({ error: 'No tienes biometría configurada. Inicia sesión con contraseña y actívala.' }, { status: 404 });
+    }
 
     const options = await generateAuthenticationOptions({
       rpID,
       allowCredentials: credentials.map(c => ({
-        id: Buffer.from(c.credential_id).toString('base64url'),
+        id: c.credential_id,
         type: 'public-key' as const,
+        transports: c.transports ? ['hybrid', 'internal'] : undefined,
       })),
       userVerification: 'preferred',
     });
