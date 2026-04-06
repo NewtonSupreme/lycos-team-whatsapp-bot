@@ -16,13 +16,25 @@ const origin = process.env.NODE_ENV === 'production' ? 'https://lycos-team-whats
 export async function POST(req: NextRequest) {
   try {
     const { email, responseBody } = await req.json();
-
     const username = email.toLowerCase().trim().replace('@lycosteam.com', '');
 
     const db = getDb();
     if (!db) {
       return NextResponse.json({ error: 'Base de datos no configurada' }, { status: 500 });
     }
+
+    // Get user ID
+    const { data: userData, error: userErr } = await db
+      .from('usuarios')
+      .select('id')
+      .eq('username', username)
+      .single();
+    
+    if (userErr || !userData?.id) {
+      return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
+    }
+
+    const userId = userData.id;
 
     const { data: challengeData } = await db
       .from('webauthn_challenges')
@@ -37,7 +49,7 @@ export async function POST(req: NextRequest) {
     const { data: credentials, error: credError } = await db
       .from('webauthn_credentials')
       .select('*')
-      .eq('username', username);
+      .eq('usuario_id', userId);
 
     if (credError) {
       console.error('Error fetching credentials:', credError);
@@ -65,7 +77,7 @@ export async function POST(req: NextRequest) {
       credential: {
         id: cred.credential_id,
         publicKey: new Uint8Array(publicKeyBuffer),
-        counter: Number(cred.sign_count || 0),
+        counter: Number(cred.counter || 0),
       },
     });
 
@@ -74,7 +86,7 @@ export async function POST(req: NextRequest) {
 
       await db
         .from('webauthn_credentials')
-        .update({ sign_count: newCounter, last_used_at: new Date().toISOString() })
+        .update({ counter: newCounter })
         .eq('id', cred.id);
 
       const cookieStore = await cookies();

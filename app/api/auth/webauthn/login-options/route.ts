@@ -26,11 +26,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Base de datos no configurada' }, { status: 500 });
     }
 
+    // Buscar el usuario para obtener su ID
+    const { data: userData, error: userErr } = await db
+      .from('usuarios')
+      .select('id')
+      .eq('username', username)
+      .single();
+    
+    if (userErr || !userData?.id) {
+      return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
+    }
+
+    const userId = userData.id;
+
     // Get user's credentials
     const { data: credentials, error: credError } = await db
       .from('webauthn_credentials')
       .select('credential_id, transports')
-      .eq('username', username);
+      .eq('usuario_id', userId);
 
     if (credError) {
       console.error('Error fetching credentials:', credError);
@@ -43,11 +56,11 @@ export async function POST(req: NextRequest) {
 
     const options = await generateAuthenticationOptions({
       rpID,
-      allowCredentials: (credentials || []).map(c => ({
-        id: c.credential_id as string,
+      allowCredentials: credentials ? credentials.map(c => ({
+        id: Buffer.from(c.credential_id).toString('base64url'),
         type: 'public-key' as const,
-        transports: c.transports ? JSON.parse(c.transports as string) as AuthenticatorTransportFuture[] : undefined,
-      })),
+        transports: c.transports ? JSON.parse(c.transports as string) : undefined,
+      })) : [],
       userVerification: 'preferred',
     });
 

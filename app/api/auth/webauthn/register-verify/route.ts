@@ -28,6 +28,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Base de datos no configurada' }, { status: 500 });
     }
 
+    // Buscar el usuario para obtener su ID
+    const { data: userData, error: userErr } = await db
+      .from('usuarios')
+      .select('id')
+      .eq('username', username)
+      .single();
+    
+    if (userErr || !userData?.id) {
+      return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
+    }
+
+    const userId = userData.id;
+
     const { data: challengeData, error: challengeError } = await db
       .from('webauthn_challenges')
       .select('challenge')
@@ -63,9 +76,9 @@ export async function POST(req: NextRequest) {
       
       console.log('Inserting credential:', { username, credentialIDBase64URL, counter, transports });
       
-      // Insertar - solo campos básicos
+      // Insertar con usuario_id
       const { error: saveError } = await db.from('webauthn_credentials').insert({
-        username: username,
+        usuario_id: userId,
         credential_id: credentialIDBase64URL,
         public_key: publicKeyBase64,
         counter: counter,

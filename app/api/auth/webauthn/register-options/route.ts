@@ -27,10 +27,32 @@ export async function POST() {
       return NextResponse.json({ error: 'Base de datos no configurada' }, { status: 500 });
     }
 
+    // Buscar el usuario para obtener su ID
+    const { data: userData, error: userErr } = await db
+      .from('usuarios')
+      .select('id')
+      .eq('username', username)
+      .single();
+    
+    if (userErr) {
+      return NextResponse.json({ 
+        error: 'Error_DB_User', 
+        message: userErr.message,
+        code: userErr.code
+      }, { status: 500 });
+    }
+
+    if (!userData?.id) {
+      return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
+    }
+
+    const userId = userData.id;
+
+    // Verificar credenciales existentes
     const { data: credData, error: credErr } = await db
       .from('webauthn_credentials')
-      .select('id, credential_id, username')
-      .eq('username', username);
+      .select('id, credential_id')
+      .eq('usuario_id', userId);
     
     if (credErr) {
       return NextResponse.json({ 
@@ -48,10 +70,10 @@ export async function POST() {
       userName: username,
       userDisplayName: username,
       attestationType: 'none',
-      excludeCredentials: (credData || []).map(c => ({
-        id: c.credential_id,
+      excludeCredentials: credData ? credData.map(c => ({
+        id: Buffer.from(c.credential_id).toString('base64url'),
         type: 'public-key' as const,
-      })),
+      })) : [],
       authenticatorSelection: {
         residentKey: 'preferred',
         userVerification: 'preferred',
