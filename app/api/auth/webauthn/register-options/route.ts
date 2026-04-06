@@ -30,12 +30,12 @@ export async function POST(req: NextRequest) {
     const options = await generateRegistrationOptions({
       rpName,
       rpID,
-      userID: Buffer.from(username),
+      userID: new TextEncoder().encode(username), // Encode as Uint8Array
       userName: username,
       userDisplayName: username,
       attestationType: 'none',
       excludeCredentials: (credentials || []).map(c => ({
-        id: Buffer.from(c.credential_id, 'base64'),
+        id: c.credential_id, // Pass as string (base64)
         type: 'public-key',
       })),
       authenticatorSelection: {
