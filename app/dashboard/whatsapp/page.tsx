@@ -25,6 +25,10 @@ interface RawMsg {
   tipo: 'entrante' | 'saliente';
   estado?: string;
   es_ia?: boolean;
+  media_url?: string | null;
+  media_type?: string | null;
+  reaccion?: string | null;
+  wa_message_id?: string | null;
   created_at: string;
 }
 
@@ -80,34 +84,54 @@ function detectMediaType(body: string): 'image' | 'video' | 'audio' | 'document'
   return null;
 }
 
-function MediaBubble({ body, isOut }: { body: string; isOut: boolean }) {
-  const type = detectMediaType(body);
-  if (!type) return <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: '#e9edef', wordBreak: 'break-word' }}>{body}</p>;
+function MediaBubble({ msg, isOut }: { msg: RawMsg; isOut: boolean }) {
+  const { body, media_url, media_type } = msg;
+  
+  // Si tenemos media_url (ID de Meta), usamos nuestro Proxy
+  const proxyUrl = media_url ? `/api/whatsapp/media/${media_url}` : null;
+  const type = media_type || detectMediaType(body);
+
+  if (!type && !proxyUrl) {
+    return <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: '#e9edef', wordBreak: 'break-word' }}>{body}</p>;
+  }
 
   const icons = {
     image: <ImageIcon className="w-8 h-8" />,
     video: <Video className="w-8 h-8" />,
     audio: <Volume2 className="w-8 h-8" />,
     document: <FileText className="w-8 h-8" />,
+    sticker: <ImageIcon className="w-8 h-8 opacity-50" />,
   };
-  const labels = { image: 'Imagen', video: 'Video', audio: 'Audio', document: 'Documento' };
+  const labels = { image: 'Imagen', video: 'Video', audio: 'Audio', document: 'Documento', sticker: 'Sticker' };
 
-  // Check if body is a URL we can render
-  const isUrl = body.startsWith('http');
   const color = isOut ? '#00a884' : '#2a3942';
 
   return (
     <div className="flex flex-col gap-1">
-      {type === 'image' && isUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={body} alt="Imagen" className="rounded-lg max-w-full max-h-48 object-cover" style={{ border: `1px solid ${color}` }} />
-      ) : type === 'video' && isUrl ? (
-        <video src={body} controls className="rounded-lg max-w-full max-h-48" />
+      {type === 'image' && proxyUrl ? (
+        <img src={proxyUrl} alt="Imagen" className="rounded-lg max-w-full max-h-64 object-cover cursor-pointer hover:opacity-90 transition-opacity" style={{ border: `1px solid ${color}` }} onClick={() => window.open(proxyUrl, '_blank')} />
+      ) : type === 'video' && proxyUrl ? (
+        <video src={proxyUrl} controls className="rounded-lg max-w-full max-h-64" style={{ border: `1px solid ${color}` }} />
+      ) : type === 'audio' && proxyUrl ? (
+        <audio src={proxyUrl} controls className="w-full max-w-[240px] h-8 mt-1" />
+      ) : type === 'sticker' && proxyUrl ? (
+        <div className="flex justify-center p-1">
+          <img src={proxyUrl} alt="Sticker" className="w-32 h-32 object-contain" />
+        </div>
       ) : (
         <div className="flex items-center gap-2 px-2 py-1 rounded-lg" style={{ background: 'rgba(255,255,255,0.08)' }}>
-          <div style={{ color: isOut ? '#25d366' : '#8696a0' }}>{icons[type]}</div>
-          <span className="text-sm" style={{ color: '#e9edef' }}>{labels[type]}</span>
+          <div style={{ color: isOut ? '#25d366' : '#8696a0' }}>{icons[type as keyof typeof icons] || <FileText className="w-8 h-8" />}</div>
+          <div className="flex flex-col">
+            <span className="text-sm font-medium" style={{ color: '#e9edef' }}>{labels[type as keyof typeof labels] || 'Archivo'}</span>
+            {body && !['[image]', '[imagen]', '[audio]', '[video]', '[sticker]'].includes(body.toLowerCase()) && (
+              <span className="text-xs opacity-70" style={{ color: '#e9edef' }}>{body}</span>
+            )}
+          </div>
         </div>
+      )}
+      {/* Texto debajo de media si existe y no es el placeholder */}
+      {media_url && body && !['[image]', '[imagen]', '[audio]', '[video]', '[sticker]'].includes(body.toLowerCase()) && (
+         <p className="text-[13px] mt-1" style={{ color: '#e9edef' }}>{body}</p>
       )}
     </div>
   );
@@ -414,6 +438,36 @@ export default function WhatsAppPage() {
     setTogglingMode(false);
   };
 
+  // ── Reactions ──────────────────────────────────────────────────
+  const handleReact = async (msg: RawMsg, emoji: string) => {
+    if (!selected || !msg.wa_message_id || sending) return;
+    
+    // Si es el mismo emoji, lo quitamos (WhatsApp lo soporta enviando emoji vacío)
+    const newEmoji = msg.reaccion === emoji ? '' : emoji;
+
+    // Actualización optimista en el UI
+    setMsgs(prev => prev.map(m => m.id === msg.id ? { ...m, reaccion: newEmoji || null } : m));
+
+    try {
+      const resp = await fetch('/api/whatsapp/react', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: selected.telefono,
+          messageId: msg.wa_message_id,
+          emoji: newEmoji
+        }),
+      });
+      if (!resp.ok) {
+        console.error('Error en la API de reacción');
+      }
+    } catch (e) {
+      console.error('Error reaccionando:', e);
+      // En caso de error crítico, refrescamos para sincronizar
+      fetchNewMsgs(selected.telefono);
+    }
+  };
+
   const filtered = convs.filter(c => {
     const q = search.toLowerCase();
     return (displayName(c) + c.telefono + (c.ultimo_mensaje || '')).toLowerCase().includes(q);
@@ -633,9 +687,27 @@ export default function WhatsAppPage() {
                           </span>
                         </div>
                       )}
-                      <div className={cn('flex w-full', isOut ? 'justify-end' : 'justify-start')} style={{ marginBottom: '2px' }}>
+                      <div className={cn('flex w-full group relative', isOut ? 'justify-end' : 'justify-start')} style={{ marginBottom: '2px' }}>
+                        {/* Reaction Picker Popover (Desktop only on hover) */}
+                        {!isOptimistic && (
+                          <div className={cn(
+                            "absolute top-0 z-50 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 p-1 rounded-full shadow-xl border border-white/10",
+                            isOut ? "-left-20" : "-right-20"
+                          )} style={{ background: '#202c33' }}>
+                            {['❤️', '👍', '😂', '😮', '🙏'].map(emoji => (
+                              <button
+                                key={emoji}
+                                onClick={() => handleReact(msg, emoji)}
+                                className="hover:scale-125 transition-transform p-0.5"
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
                         <div
-                          className="relative max-w-[88%] md:max-w-[75%] rounded-lg px-3 py-2 shadow-sm flex flex-col min-w-0"
+                          className="relative max-w-[88%] md:max-w-[75%] rounded-lg px-3 py-2 shadow-sm flex flex-col min-w-[60px]"
                           style={{ background: isOut ? '#005c4b' : '#202c33', opacity: isOptimistic ? 0.75 : 1, borderRadius: isOut ? '8px 8px 2px 8px' : '8px 8px 8px 2px' }}
                         >
                           {msg.es_ia && (
@@ -644,7 +716,7 @@ export default function WhatsAppPage() {
                               <span className="text-[10px] font-medium">Bot IA</span>
                             </div>
                           )}
-                          <MediaBubble body={msg.body} isOut={isOut} />
+                          <MediaBubble msg={msg} isOut={isOut} />
                           <div className="flex items-center gap-1 justify-end mt-1 flex-shrink-0" style={{ marginRight: '-2px' }}>
                             <span className="text-[10px]" style={{ color: 'rgba(233,237,239,0.6)' }}>{formatTime(msg.created_at)}</span>
                             {isOut && (
@@ -656,6 +728,16 @@ export default function WhatsAppPage() {
                             {!isOut && msg.es_ia && <Bot className="w-3 h-3 ml-0.5" style={{ color: 'rgba(167,139,250,0.6)' }} />}
                             {isOut && !msg.es_ia && !isOptimistic && <User className="w-2.5 h-2.5" style={{ color: 'rgba(233,237,239,0.4)' }} />}
                           </div>
+
+                          {/* Render Reaction if exists */}
+                          {msg.reaccion && (
+                            <div className={cn(
+                              "absolute -bottom-2 px-1.5 py-0.5 rounded-full text-xs shadow-md border border-white/10",
+                              isOut ? "left-0" : "right-0"
+                            )} style={{ background: '#374045' }}>
+                              {msg.reaccion}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </React.Fragment>

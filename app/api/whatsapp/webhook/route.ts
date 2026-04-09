@@ -409,6 +409,10 @@ export async function POST(request: NextRequest) {
       // ── Mark as read immediately ───────────────────────────────────────────
       void markMessageAsRead(wa_message_id);
       const db = getDb();
+      if (!db) {
+        console.error('❌ Database connection not available.');
+        continue;
+      }
 
       // Deduplication
       if (db && wa_message_id) {
@@ -419,12 +423,64 @@ export async function POST(request: NextRequest) {
         } catch { /* ok */ }
       }
 
+      if (message.type === 'reaction') {
+        const targetWaId = message.reaction?.message_id;
+        const emoji = message.reaction?.emoji;
+        console.log(`❤️ [${from}] Reacción recibida: ${emoji} para ${targetWaId}`);
+        if (targetWaId && db) {
+          try {
+            await db.from('mensajes_whatsapp')
+              .update({ reaccion: emoji || null })
+              .eq('wa_message_id', targetWaId);
+          } catch (e) {
+            console.error('Error actualizando reacción entrante:', e);
+          }
+        }
+        continue; // No hay texto que procesar
+      }
+
       let messageBody = '';
       if (message.type === 'text') {
         messageBody = message.text.body;
       } else if (message.type === 'sticker') {
-        console.log(`🖼️ [${from}] Recibido sticker: ${message.sticker?.id}`);
+        const stickerId = message.sticker?.id;
+        console.log(`🖼️ [${from}] Recibido sticker: ${stickerId}`);
         messageBody = '[Sticker]';
+        // Save ID as media_url for the proxy
+        if (stickerId) {
+          try {
+            await db.from('mensajes_whatsapp').update({
+              media_url: stickerId,
+              media_type: 'sticker'
+            }).eq('wa_message_id', wa_message_id);
+          } catch (e) { console.error('Error actualizando sticker metadata:', e); }
+        }
+      } else if (message.type === 'video') {
+        const videoId = message.video?.id;
+        const caption = message.video?.caption || '';
+        console.log(`🎥 [${from}] Recibido video: ${videoId}`);
+        messageBody = caption || '[Video]';
+        if (videoId) {
+          try {
+            await db.from('mensajes_whatsapp').update({
+              media_url: videoId,
+              media_type: 'video'
+            }).eq('wa_message_id', wa_message_id);
+          } catch (e) { console.error('Error actualizando video metadata:', e); }
+        }
+      } else if (message.type === 'document') {
+        const docId = message.document?.id;
+        const filename = message.document?.filename || 'Documento';
+        console.log(`📄 [${from}] Recibido documento: ${filename}`);
+        messageBody = `[Documento: ${filename}]`;
+        if (docId) {
+          try {
+            await db.from('mensajes_whatsapp').update({
+              media_url: docId,
+              media_type: 'document'
+            }).eq('wa_message_id', wa_message_id);
+          } catch (e) { console.error('Error actualizando doc metadata:', e); }
+        }
       } else if (message.type === 'image') {
         const imageId = message.image?.id;
         const rawCaption = message.image?.caption || '';
@@ -563,14 +619,19 @@ export async function POST(request: NextRequest) {
           }
         } catch (e) { console.error('Error consultando mensajes recientes:', e); }
 
-        // ─── Human takeover check ───────────────────────────────────────────
-        // If an admin has taken manual control of this chat, skip bot response
+        // ─── Human takeover & Concurrent processing check ─────────────────
         try {
           const { data: convData } = await db.from('conversaciones')
-            .select('estado')
+            .select('estado, is_processing')
             .eq('telefono', from)
             .limit(1)
             .single();
+
+          if (convData?.is_processing) {
+            console.log(`⏳ [${from}] Bot ya está procesando otro mensaje. Saltando para evitar bloqueos.`);
+            continue;
+          }
+
           if (convData?.estado === 'humano') {
             console.log(`👤 [${from}] Conversación en control humano — bot silenciado.`);
             // Update last message in CRM so admin sees it, incrementing unread count
@@ -598,7 +659,15 @@ export async function POST(request: NextRequest) {
       }
 
       console.log(`🤖 [${from}] Entering processCoreLogic...`);
-      await processCoreLogic(db, from, messageBody, wa_message_id);
+      // Update is_processing to true
+      await db.from('conversaciones').update({ is_processing: true }).eq('telefono', from);
+
+      try {
+        await processCoreLogic(db, from, messageBody, wa_message_id);
+      } finally {
+        // Always reset processing flag
+        await db.from('conversaciones').update({ is_processing: false }).eq('telefono', from);
+      }
       console.log(`✅ [${from}] processCoreLogic finished.`);
     } // end for loop
 
@@ -1133,31 +1202,58 @@ async function updateConversation(db: ReturnType<typeof getDb>, from: string, la
 }
 
 // ─── Send WhatsApp Text ────────────────────────────────────────────────────────
-async function sendMsg(to: string, text: string, previewUrl = false): Promise<void> {
+async function sendMsg(to: string, body: string, preview: boolean = false, replyToId?: string | null) {
   if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
   try {
+    const payload: any = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: to.replace(/[^0-9]/g, ''),
+      type: 'text',
+      text: { preview_url: preview, body },
+    };
+
+    if (replyToId) {
+      payload.context = { message_id: replyToId };
+    }
+
     const resp = await fetch(`https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp', recipient_type: 'individual',
-        to: to.replace(/[^0-9]/g, ''), type: 'text',
-        text: { preview_url: previewUrl, body: text },
-      }),
+      headers: {
+        'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
     });
-    if (!resp.ok) { console.error('❌ sendMsg error:', (await resp.text()).substring(0, 200)); return; }
+
+    if (!resp.ok) {
+      console.error('❌ Error enviando mensaje WhatsApp:', await resp.text());
+      return;
+    }
+
     const data = await resp.json();
     const wa_id = data.messages?.[0]?.id;
-    console.log(`📤 Sent to ${to}. ID: ${wa_id}`);
+    console.log(`📤 Enviado a ${to}. ID: ${wa_id} ${replyToId ? '(Reply)' : ''}`);
+
     const db = getDb();
     if (db) {
-      void (async () => {
-        try {
-          await db.from('mensajes_whatsapp').insert({ from_number: 'system', to_number: to, body: text, tipo: 'saliente', wa_message_id: wa_id, es_ia: true });
-        } catch (e) { console.error('Error saving saliente:', e); }
-      })();
+      // Intento guardar en DB sin bloquear la respuesta
+      try {
+        await db.from('mensajes_whatsapp').insert({
+          from_number: 'system',
+          to_number: to.replace(/[^0-9]/g, ''),
+          body,
+          tipo: 'saliente',
+          wa_message_id: wa_id,
+          es_ia: true
+        });
+      } catch (e) {
+        console.error('Error guardando mensaje saliente en DB:', e);
+      }
     }
-  } catch (e) { console.error('❌ sendMsg exception:', e); }
+  } catch (e) {
+    console.error('❌ Error en sendMsg:', e);
+  }
 }
 
 // ─── Send WhatsApp Image ───────────────────────────────────────────────────────
@@ -1350,18 +1446,18 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             .replace(/wa\.me\/\S+/gi, '')
             .replace(/\+?58\s?412[\s\-]?334[\s\-]?3519/g, '')
             .trim();
-          if (withoutPhone) { await sendMsg(from, withoutPhone); await delay(700); }
+          if (withoutPhone) { await sendMsg(from, withoutPhone, false, wa_message_id); await delay(700); }
           await sendContactCard(from, ASESOR_PHONE, ASESOR_DISPLAY_NAME);
         } else {
           // TikTok links — send separately with preview
           const tiktokMatch = cleanedAi.match(/https?:\/\/(?:vt\.tiktok\.com|tiktok\.com)\/\S+/i);
           if (tiktokMatch) {
             const textWithout = cleanedAi.replace(tiktokMatch[0], '').trim();
-            if (textWithout) { await sendMsg(from, textWithout); await delay(500); }
-            await sendMsg(from, tiktokMatch[0], true);
+            if (textWithout) { await sendMsg(from, textWithout, false, wa_message_id); await delay(500); }
+            await sendMsg(from, tiktokMatch[0], true, wa_message_id);
           } else {
             const hasUrl = /https?:\/\//.test(cleanedAi);
-            await sendMsg(from, cleanedAi, hasUrl);
+            await sendMsg(from, cleanedAi, hasUrl, wa_message_id);
           }
         }
 
