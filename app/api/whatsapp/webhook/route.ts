@@ -73,6 +73,7 @@ const RATES_TTL = 30 * 60 * 1000; // 30 minutes
 
 async function fetchExchangeRates(): Promise<ExchangeRates | null> {
   if (ratesCache && Date.now() - ratesCacheTime < RATES_TTL) return ratesCache;
+  console.log('📈 Fetching fresh exchange rates...');
   try {
     let bcvRate = 0;
     try {
@@ -123,7 +124,10 @@ async function fetchExchangeRates(): Promise<ExchangeRates | null> {
       } catch (e) { }
     }
 
-    if (!bcvRate || !binanceRate) return ratesCache;
+    if (!bcvRate || !binanceRate) {
+      console.warn('⚠️ Could not fetch some rates, using cache if available');
+      return ratesCache;
+    }
 
     ratesCache = {
       bcv: bcvRate,
@@ -360,6 +364,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    console.log('📬 Webhook POST received:', JSON.stringify(body).substring(0, 100));
 
     if (body.object === 'whatsapp_cron_retry') {
       const { from, messageBody, insertedTimestamp, wa_message_id } = body;
@@ -535,6 +540,7 @@ export async function POST(request: NextRequest) {
         } catch (e) { console.error('Error guardando entrante:', e); }
 
         // Debounce to group multiple images or chopped messages
+        console.log(`⏳ [${from}] Waiting 4s for potential grouping...`);
         await delay(4000); // 4 seconds debounce
         try {
           const { data: newer } = await db.from('mensajes_whatsapp')
@@ -544,7 +550,7 @@ export async function POST(request: NextRequest) {
             .gt('created_at', insertedTimestamp)
             .limit(1);
           if (newer && newer.length > 0) {
-            console.log(`⏩ Ignorando respuesta IA de ${wa_message_id} porque hay mensajes más recientes (agrupación de imágenes/mensajes).`);
+            console.log(`⏩ [${from}] Ignorando respuesta IA de ${wa_message_id} porque hay mensajes más recientes.`);
             continue; // Skip AI response, letting the newer message handle it
           }
         } catch (e) { console.error('Error consultando mensajes recientes:', e); }
@@ -578,9 +584,14 @@ export async function POST(request: NextRequest) {
         } catch { /* no conversation row yet — proceed with bot */ }
       }
 
-      if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) continue;
+      if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) {
+        console.warn('⚠️ Missing WHATSAPP_TOKEN or PHONE_ID. Cannot respond.');
+        continue;
+      }
 
+      console.log(`🤖 [${from}] Entering processCoreLogic...`);
       await processCoreLogic(db, from, messageBody, wa_message_id);
+      console.log(`✅ [${from}] processCoreLogic finished.`);
     } // end for loop
 
     return NextResponse.json({ status: 'ok' });
@@ -764,6 +775,7 @@ REGLAS CRITICAS:
 
   const contents = [...ctx.historia, { role: 'user', parts: [{ text: userMessage }] }];
 
+  console.log(`🧠 Calling Gemini with model: ${GEMINI_MODEL}`);
   try {
     const resp = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
@@ -781,7 +793,11 @@ REGLAS CRITICAS:
         }),
       }
     );
-    if (!resp.ok) { console.error(`❌ Gemini ${resp.status}:`, (await resp.text()).substring(0, 200)); return null; }
+    if (!resp.ok) { 
+      const errText = await resp.text();
+      console.error(`❌ Gemini Error [${resp.status}]:`, errText.substring(0, 500)); 
+      return null; 
+    }
     const data = await resp.json();
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text || null;
     if (text) console.log(`✅ Gemini: "${text.substring(0, 70)}..."`);
