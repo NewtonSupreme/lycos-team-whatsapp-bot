@@ -4,9 +4,9 @@ const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { mediaId: string } }
+  { params }: { params: Promise<{ mediaId: string }> }
 ) {
-  const mediaId = params.mediaId;
+  const { mediaId } = await params;
 
   if (!WHATSAPP_TOKEN) {
     return new NextResponse('Configuration Error', { status: 500 });
