@@ -440,49 +440,32 @@ export async function POST(request: NextRequest) {
       }
 
       let messageBody = '';
+      let currentMediaId: string | null = null;
+      let currentMediaType: string | null = null;
+
       if (message.type === 'text') {
         messageBody = message.text.body;
       } else if (message.type === 'sticker') {
-        const stickerId = message.sticker?.id;
-        console.log(`🖼️ [${from}] Recibido sticker: ${stickerId}`);
+        currentMediaId = message.sticker?.id || null;
+        currentMediaType = 'sticker';
+        console.log(`🖼️ [${from}] Recibido sticker: ${currentMediaId}`);
         messageBody = '[Sticker]';
-        // Save ID as media_url for the proxy
-        if (stickerId) {
-          try {
-            await db.from('mensajes_whatsapp').update({
-              media_url: stickerId,
-              media_type: 'sticker'
-            }).eq('wa_message_id', wa_message_id);
-          } catch (e) { console.error('Error actualizando sticker metadata:', e); }
-        }
       } else if (message.type === 'video') {
-        const videoId = message.video?.id;
+        currentMediaId = message.video?.id || null;
+        currentMediaType = 'video';
         const caption = message.video?.caption || '';
-        console.log(`🎥 [${from}] Recibido video: ${videoId}`);
+        console.log(`🎥 [${from}] Recibido video: ${currentMediaId}`);
         messageBody = caption || '[Video]';
-        if (videoId) {
-          try {
-            await db.from('mensajes_whatsapp').update({
-              media_url: videoId,
-              media_type: 'video'
-            }).eq('wa_message_id', wa_message_id);
-          } catch (e) { console.error('Error actualizando video metadata:', e); }
-        }
       } else if (message.type === 'document') {
-        const docId = message.document?.id;
+        currentMediaId = message.document?.id || null;
+        currentMediaType = 'document';
         const filename = message.document?.filename || 'Documento';
         console.log(`📄 [${from}] Recibido documento: ${filename}`);
         messageBody = `[Documento: ${filename}]`;
-        if (docId) {
-          try {
-            await db.from('mensajes_whatsapp').update({
-              media_url: docId,
-              media_type: 'document'
-            }).eq('wa_message_id', wa_message_id);
-          } catch (e) { console.error('Error actualizando doc metadata:', e); }
-        }
       } else if (message.type === 'image') {
         const imageId = message.image?.id;
+        currentMediaId = imageId || null;
+        currentMediaType = 'image';
         const rawCaption = message.image?.caption || '';
         const captionStr = rawCaption ? ` - Mensaje del cliente adjunto: "${rawCaption}"` : '';
         if (imageId && WHATSAPP_TOKEN) {
@@ -528,6 +511,8 @@ export async function POST(request: NextRequest) {
         }
       } else if (message.type === 'audio') {
         const audioId = message.audio?.id;
+        currentMediaId = audioId || null;
+        currentMediaType = 'audio';
         if (audioId && WHATSAPP_TOKEN) {
           try {
             const mediaUrlResp = await fetch(`https://graph.facebook.com/v18.0/${audioId}`, {
@@ -569,8 +554,6 @@ export async function POST(request: NextRequest) {
         } else {
           messageBody = '[Cliente envió audio]';
         }
-      } else if (message.type === 'document') {
-        messageBody = '[Cliente envió documento]';
       } else if (message.type === 'location') {
         const loc = message.location;
         messageBody = `[Cliente compartió ubicación: ${loc?.latitude}, ${loc?.longitude}]`;
@@ -583,8 +566,13 @@ export async function POST(request: NextRequest) {
       if (db) {
         try {
           const { data } = await db.from('mensajes_whatsapp').insert({
-            from_number: from, to_number: 'system',
-            body: messageBody, tipo: 'entrante', wa_message_id,
+            from_number: from,
+            to_number: 'system',
+            body: messageBody,
+            tipo: 'entrante',
+            wa_message_id,
+            media_url: currentMediaId,
+            media_type: currentMediaType
           }).select('created_at').single();
           if (data?.created_at) insertedTimestamp = data.created_at;
 
