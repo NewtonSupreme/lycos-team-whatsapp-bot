@@ -318,16 +318,42 @@ Cuando corresponda di: "Te envío el contacto de nuestro asesor 👇" (sistema e
 FILTROS E INVENTARIO: Refrigerantes y líquidos Dr Care | Filtros aceite/gasolina CARDOC para múltiples vehículos. Stock en tiempo real en el sistema.
 `;
 
+export const dynamic = 'force-dynamic';
+
 // ─── GET: Webhook verification ─────────────────────────────────────────────────
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
+  const { searchParams } = request.nextUrl;
   const mode = searchParams.get('hub.mode');
   const token = searchParams.get('hub.verify_token');
   const challenge = searchParams.get('hub.challenge');
-  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-    return new NextResponse(challenge, { status: 200 });
+
+  console.log('🔍 [Webhook Verification Attempt]');
+  console.log('Mode:', mode);
+  console.log('Token received:', token);
+  console.log('Expected token (from env):', VERIFY_TOKEN);
+
+  if (!mode || !token) {
+    console.warn('⚠️ Webhook attempt missing parameters');
+    return NextResponse.json({ 
+      error: 'Missing parameters', 
+      message: 'To test in browser, use: ?hub.mode=subscribe&hub.verify_token=YOUR_TOKEN&hub.challenge=CHALLENGE' 
+    }, { status: 400 });
   }
-  return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+  // Normalize tokens to avoid whitespace issues
+  const normalizedToken = token?.trim();
+  const normalizedExpected = VERIFY_TOKEN?.trim();
+
+  if (mode === 'subscribe' && normalizedToken === normalizedExpected) {
+    console.log('✅ Webhook verified successfully');
+    return new Response(challenge, { status: 200 });
+  }
+
+  console.error('❌ Webhook verification failed: Token mismatch or invalid mode');
+  return NextResponse.json({ 
+    error: 'Forbidden', 
+    reason: normalizedToken !== normalizedExpected ? 'Token mismatch' : 'Invalid mode' 
+  }, { status: 403 });
 }
 
 // ─── POST: Receive messages ────────────────────────────────────────────────────
