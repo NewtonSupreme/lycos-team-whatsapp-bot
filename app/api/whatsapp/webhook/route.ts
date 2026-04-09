@@ -405,6 +405,9 @@ export async function POST(request: NextRequest) {
     for (const message of value.messages) {
       const from: string = message.from;
       const wa_message_id: string = message.id;
+
+      // ── Mark as read immediately ───────────────────────────────────────────
+      void markMessageAsRead(wa_message_id);
       const db = getDb();
 
       // Deduplication
@@ -418,7 +421,10 @@ export async function POST(request: NextRequest) {
 
       let messageBody = '';
       if (message.type === 'text') {
-        messageBody = message.text?.body || '';
+        messageBody = message.text.body;
+      } else if (message.type === 'sticker') {
+        console.log(`🖼️ [${from}] Recibido sticker: ${message.sticker?.id}`);
+        messageBody = '[Sticker]';
       } else if (message.type === 'image') {
         const imageId = message.image?.id;
         const rawCaption = message.image?.caption || '';
@@ -600,6 +606,28 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('❌ Webhook error:', error);
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
+  }
+}
+
+// ─── WhatsApp Helpers ──────────────────────────────────────────────────────────
+async function markMessageAsRead(messageId: string) {
+  if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
+  try {
+    await fetch(`https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        status: 'read',
+        message_id: messageId,
+      }),
+    });
+    console.log(`🔵 [Leído] Mensaje marcado: ${messageId}`);
+  } catch (e) {
+    console.error('❌ Error en markMessageAsRead:', e);
   }
 }
 
