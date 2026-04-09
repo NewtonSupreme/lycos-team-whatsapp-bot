@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
       console.warn('[send] Sin TOKEN de WhatsApp — modo demo.');
     } else {
       const response = await fetch(
-        `https://graph.facebook.com/v19.0/${phoneId}/messages`,
+        `https://graph.facebook.com/v18.0/${phoneId}/messages`,
         {
           method: 'POST',
           headers: {
@@ -38,6 +38,7 @@ export async function POST(request: NextRequest) {
 
       if (!response.ok) {
         const err = await response.json();
+        console.error('❌ Meta API Error (Manual Send):', JSON.stringify(err));
         return NextResponse.json({ error: err.error?.message || 'Error enviando mensaje' }, { status: 400 });
       }
 

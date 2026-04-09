@@ -34,6 +34,7 @@ interface PushPayload {
 export async function POST(req: NextRequest) {
   try {
     if (!initWebPush()) {
+      console.warn('⚠️ Push notifications not configured (missing VAPID keys)');
       return NextResponse.json({ error: 'Push notifications not configured' }, { status: 500 });
     }
 

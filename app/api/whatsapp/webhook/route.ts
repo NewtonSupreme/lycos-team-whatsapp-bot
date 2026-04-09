@@ -540,8 +540,10 @@ export async function POST(request: NextRequest) {
         } catch (e) { console.error('Error guardando entrante:', e); }
 
         // Debounce to group multiple images or chopped messages
-        console.log(`⏳ [${from}] Waiting 4s for potential grouping...`);
-        await delay(4000); // 4 seconds debounce
+        const isVercel = process.env.VERCEL === '1';
+        const delayMs = isVercel ? 0 : 4000;
+        console.log(`⏳ [${from}] Waiting ${delayMs}ms for potential grouping...`);
+        await delay(delayMs); 
         try {
           const { data: newer } = await db.from('mensajes_whatsapp')
             .select('id')
@@ -600,6 +602,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
 }
+
 
 // ─── Context Loading ───────────────────────────────────────────────────────────
 interface Memoria {
