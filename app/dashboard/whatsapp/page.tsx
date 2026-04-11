@@ -199,6 +199,9 @@ export default function WhatsAppPage() {
   const [isWindowOpen, setIsWindowOpen] = useState<boolean>(true);
   const [hasMoreAbove, setHasMoreAbove] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editName, setEditName] = useState({ nombre: '', apellido: '' });
+  const [savingName, setSavingName] = useState(false);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -518,6 +521,51 @@ export default function WhatsAppPage() {
     await loadConvs();
     setTogglingMode(false);
   };
+  
+  // ── Edit Name ─────────────────────────────────────────────────
+  const startEditingName = () => {
+    if (!selected) return;
+    const c = selected.clientes;
+    const nombre = c?.nombre || selected.datos_cliente?.nombre || '';
+    const apellido = c?.apellido || '';
+    setEditName({ nombre, apellido });
+    setIsEditingName(true);
+  };
+
+  const handleSaveName = async () => {
+    if (!selected || !supabase || savingName) return;
+    setSavingName(true);
+    try {
+      const { nombre, apellido } = editName;
+      const fullName = `${nombre} ${apellido}`.trim();
+
+      // 1. Update clientes
+      if (selected.cliente_id) {
+        await supabase.from('clientes').update({ nombre, apellido }).eq('id', selected.cliente_id);
+      }
+
+      // 2. Update conversaciones
+      await supabase.from('conversaciones').update({
+        datos_cliente: {
+          ...selected.datos_cliente,
+          nombre: fullName
+        },
+        memoria: {
+          ...selected.memoria,
+          nombre: fullName
+        }
+      }).eq('telefono', selected.telefono);
+
+      // Refresh data
+      await loadConvs();
+      setIsEditingName(false);
+    } catch (e) {
+      console.error('Error saving name:', e);
+      alert('Error al guardar el nombre');
+    } finally {
+      setSavingName(false);
+    }
+  };
 
   // ── Reactions ──────────────────────────────────────────────────
   const handleReact = async (msg: RawMsg, emoji: string) => {
@@ -669,7 +717,12 @@ export default function WhatsAppPage() {
                   </button>
                   <UserAvatar conv={selected} className="w-9 h-9" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium" style={{ color: '#e9edef' }}>{displayName(selected)}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium" style={{ color: '#e9edef' }}>{displayName(selected)}</p>
+                      <button onClick={startEditingName} className="p-1 hover:bg-white/5 rounded transition-colors text-white/40 hover:text-green-400">
+                        <User className="w-3 h-3" />
+                      </button>
+                    </div>
                     <p className="text-[11px]" style={{ color: '#8696a0' }}>{selected.telefono}</p>
                   </div>
                   <div className="flex items-center gap-1.5 flex-wrap md:flex-nowrap justify-end">
@@ -926,10 +979,13 @@ export default function WhatsAppPage() {
                        <span className="text-[11px]" style={{ color: '#8696a0' }}>ID Cliente</span>
                        <span className="text-[10px] font-mono opacity-40">{selected.cliente_id?.slice(0,8) || 'N/A'}</span>
                     </div>
-                    <div className="flex items-center justify-between py-1 border-t border-white/5 mt-1 pt-1">
-                       <span className="text-[11px]" style={{ color: '#8696a0' }}>Nombre CRM</span>
-                       <span className="text-[10px]" style={{ color: '#e9edef' }}>{selected.datos_cliente?.nombre || 'No registrado'}</span>
-                    </div>
+                     <div className="flex items-center justify-between py-1 border-t border-white/5 mt-1 pt-1">
+                        <span className="text-[11px]" style={{ color: '#8696a0' }}>Nombre CRM</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px]" style={{ color: '#e9edef' }}>{selected.datos_cliente?.nombre || 'No registrado'}</span>
+                          <button onClick={startEditingName} className="p-1 hover:bg-white/5 rounded text-white/30 hover:text-green-400"><User className="w-2.5 h-2.5" /></button>
+                        </div>
+                     </div>
                     <div className="flex items-center justify-between py-1">
                        <span className="text-[11px]" style={{ color: '#8696a0' }}>Perfil WhatsApp</span>
                        <span className="text-[10px]" style={{ color: '#e9edef' }}>{selected.datos_cliente?.wa_name || 'Desconocido'}</span>
@@ -949,6 +1005,55 @@ export default function WhatsAppPage() {
           )}
         </div>
       </div>
+      {/* Edit Name Modal */}
+      {isEditingName && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 shadow-2xl p-6" style={{ background: '#202c33' }}>
+            <h3 className="text-lg font-bold mb-4" style={{ color: '#e9edef' }}>Editar Contacto</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="text-[11px] font-bold uppercase tracking-wider mb-1.5 block" style={{ color: '#8696a0' }}>Nombre</label>
+                <input
+                  value={editName.nombre}
+                  onChange={e => setEditName(prev => ({ ...prev, nombre: e.target.value }))}
+                  className="w-full py-2 px-3 rounded-lg text-sm outline-none"
+                  style={{ background: '#2a3942', color: '#e9edef', border: '1px solid rgba(255,255,255,0.06)' }}
+                  placeholder="Ej: Juan"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-bold uppercase tracking-wider mb-1.5 block" style={{ color: '#8696a0' }}>Apellido</label>
+                <input
+                  value={editName.apellido}
+                  onChange={e => setEditName(prev => ({ ...prev, apellido: e.target.value }))}
+                  className="w-full py-2 px-3 rounded-lg text-sm outline-none"
+                  style={{ background: '#2a3942', color: '#e9edef', border: '1px solid rgba(255,255,255,0.06)' }}
+                  placeholder="Ej: Perez"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-3 mt-8">
+              <button 
+                onClick={() => setIsEditingName(false)}
+                className="px-4 py-2 text-sm font-medium rounded-lg hover:bg-white/5 transition-colors"
+                style={{ color: '#8696a0' }}
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={handleSaveName}
+                disabled={savingName || !editName.nombre.trim()}
+                className="px-4 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-2"
+                style={{ background: '#00a884', color: '#111b21', opacity: savingName ? 0.7 : 1 }}
+              >
+                {savingName && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                Guardar Cambios
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1036,21 +1036,43 @@ async function processIntents(
   const newMemoria: Memoria & { placa?: string } = { ...ctx.memoria };
   let memChanged = false;
 
-  // Extract name — with blacklist to avoid capturing service words as names
+  // Extract name — with blacklist and more flexible patterns
   const NAME_BLACKLIST = [
     'nivel', 'cashea', 'cliente', 'usuario', 'hola', 'buenas', 'buenos',
     'dias', 'noches', 'tardes', 'gracias', 'okay', 'bueno', 'bien',
-    'precio', 'cita', 'servicio', 'taller', 'carro', 'vehiculo', 'favor'
+    'precio', 'cita', 'servicio', 'taller', 'carro', 'vehiculo', 'favor',
+    'presupuesto', 'ubicacion', 'donde', 'dirección', 'direccion', 'llegar',
+    'metro', 'silenciador', 'resonador', 'flexible', 'cola', 'filtro', 'aceite'
   ];
+  
+  // 1. Pattern with prefix (Soy Juan, Me llamo Pedro...)
   const nameMatch = userMsg.match(/(?:soy|me llamo|mi nombre es|mi nombre|llámame|llamame)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ]{1,}(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ]{1,})?)/i);
+  
+  // 2. Fallback: if message is very short (1-3 words) and starts with capitalized words, it might be just a name
+  // But ONLY if it's not a common command or service
+  let extractedName = '';
   if (nameMatch) {
-    const extractedName = nameMatch[1].trim();
-    const isBlacklisted = NAME_BLACKLIST.some(w => extractedName.toLowerCase().startsWith(w));
+    extractedName = nameMatch[1].trim();
+  } else if (userMsg.trim().length <= 30 && userMsg.trim().length > 3) {
+    // Check if it's 1-3 capitalized words
+    const words = userMsg.trim().split(/\s+/);
+    const isAllCapitalized = words.every(w => /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]/.test(w));
+    const hasNumbers = /\d/.test(userMsg);
+    if (isAllCapitalized && !hasNumbers && words.length <= 3) {
+      extractedName = userMsg.trim();
+    }
+  }
+
+  if (extractedName) {
+    const isBlacklisted = NAME_BLACKLIST.some(w => extractedName.toLowerCase().startsWith(w) || extractedName.toLowerCase() === w);
     const isRealName = extractedName.length >= 3 && !isBlacklisted;
+    
     // Always overwrite if we get a real name, even if one was stored before
     if (isRealName) {
-      const currentIsGeneric = !newMemoria.nombre ||
-        NAME_BLACKLIST.some(w => newMemoria.nombre!.toLowerCase().startsWith(w));
+      const currentIsGeneric = !newMemoria.nombre || 
+        newMemoria.nombre === from ||
+        NAME_BLACKLIST.some(w => newMemoria.nombre!.toLowerCase().includes(w));
+        
       if (currentIsGeneric || newMemoria.nombre !== extractedName) {
         newMemoria.nombre = extractedName;
         memChanged = true;
@@ -1449,6 +1471,15 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         return;
       }
 
+      // ─── Intent Detection & Data Processing ──────────────────────────
+      // We process intents FIRST so that the AI response can Use the new data (like a newly detected name)
+      const r = await processIntents(db, from, messageBody, ctx, waProfileName);
+      
+      // Update ctx.memoria if a name was found so the AI sees it in this same turn
+      if (ctx.memoria.nombre) {
+        // Already updated inside processIntents, but ensuring context for AI is fresh
+      }
+
       // AI response
       const aiResponse = await getAIResponse(messageBody, ctx, rates);
 
@@ -1549,6 +1580,5 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         }
       }
 
-      const r = await processIntents(db, from, messageBody, ctx, waProfileName);
       await updateConversation(db, from, messageBody, ctx.memoria, r?.clientId);
 }
