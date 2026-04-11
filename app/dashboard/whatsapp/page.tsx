@@ -45,6 +45,12 @@ interface RawConv {
     nombre?: string;
     wa_name?: string;
   } | null;
+  clientes?: {
+    id: string;
+    nombre: string;
+    apellido?: string;
+    telefono?: string;
+  } | null;
   memoria?: {
     vehiculos?: Array<{ marca?: string; modelo?: string; anio?: string; placa?: string }>;
     nombre?: string;
@@ -60,10 +66,10 @@ function formatTime(ts: string) {
 }
 
 function avatarLetters(conv: RawConv): string {
-  const name = conv.datos_cliente?.nombre || conv.datos_cliente?.wa_name;
+  const name = conv.clientes?.nombre || conv.datos_cliente?.nombre || conv.datos_cliente?.wa_name;
   if (name) {
     const parts = name.trim().split(' ');
-    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    if (parts.length >= 2) return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
     return parts[0].substring(0, 2).toUpperCase();
   }
   return '??';
@@ -96,7 +102,9 @@ const UserAvatar = ({ conv, className }: { conv: RawConv, className?: string }) 
 };
 
 function displayName(conv: RawConv): string {
-  return conv.datos_cliente?.nombre || conv.telefono || 'Desconocido';
+  const c = conv.clientes;
+  const fullName = c ? `${c.nombre} ${c.apellido || ''}`.trim() : null;
+  return fullName || conv.datos_cliente?.nombre || conv.telefono || 'Desconocido';
 }
 
 function mergeMessages(existing: RawMsg[], incoming: RawMsg[]): RawMsg[] {
@@ -225,13 +233,13 @@ export default function WhatsAppPage() {
     if (!supabase) return;
     const { data } = await supabase
       .from('conversaciones')
-      .select('*')
+      .select('*, clientes(id, nombre, apellido, telefono)')
       .order('ultimo_mensaje_at', { ascending: false })
       .limit(50);
     if (!data) return;
-    setConvs(data as RawConv[]);
+    setConvs(data as unknown as RawConv[]);
     if (selectedRef.current) {
-      const fresh = (data as RawConv[]).find(c => c.id === selectedRef.current!.id);
+      const fresh = (data as unknown as RawConv[]).find(c => c.id === selectedRef.current!.id);
       if (fresh) setSelected(fresh);
     }
   }, []);
@@ -343,6 +351,14 @@ export default function WhatsAppPage() {
     }
   }, []);
 
+  const loadVehicles = useCallback(async (clientId: string) => {
+    if (!supabase) return;
+    setLoadingVehicles(true);
+    const { data } = await supabase.from('vehiculos').select('*').eq('cliente_id', clientId).eq('estado', 'activo');
+    setSelectedVehicles(data || []);
+    setLoadingVehicles(false);
+  }, []);
+
   // ── Initial setup ────────────────────────────────────────────
   useEffect(() => {
     loadConvs();
@@ -398,6 +414,16 @@ export default function WhatsAppPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'conversaciones' }, () => {
         loadConvs();
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clientes' }, () => {
+        loadConvs();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'vehiculos' }, (payload) => {
+        const cur = selectedRef.current;
+        const affected: any = payload.new || payload.old;
+        if (cur?.cliente_id && affected?.cliente_id === cur.cliente_id) {
+          loadVehicles(cur.cliente_id);
+        }
+      })
       .subscribe((status) => {
         const connected = status === 'SUBSCRIBED';
         setIsConnected(connected);
@@ -421,7 +447,7 @@ export default function WhatsAppPage() {
       sb.removeChannel(channel);
       clearInterval(poll);
     };
-  }, [loadConvs, fetchNewMsgs]);
+  }, [loadConvs, fetchNewMsgs, loadVehicles]);
 
   // ── Select conversation ───────────────────────────────────────
   const selectConv = async (conv: RawConv) => {
@@ -432,11 +458,8 @@ export default function WhatsAppPage() {
     await loadInitialMsgs(conv.telefono);
     
     // Fetch vehicles
-    if (conv.cliente_id && supabase) {
-      setLoadingVehicles(true);
-      const { data } = await supabase.from('vehiculos').select('*').eq('cliente_id', conv.cliente_id).eq('estado', 'activo');
-      setSelectedVehicles(data || []);
-      setLoadingVehicles(false);
+    if (conv.cliente_id) {
+      await loadVehicles(conv.cliente_id);
     } else {
       setSelectedVehicles([]);
     }
