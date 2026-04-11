@@ -3,7 +3,8 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   MessageSquare, Send, Bot, User,
   Smile, CheckCheck, Check, X, RefreshCw, UserCheck, Wifi, WifiOff, Search, Clock,
-  Image as ImageIcon, Video, Volume2, FileText, ChevronDown
+  Image as ImageIcon, Video, Volume2, FileText, ChevronDown, Car, Calendar, Hash, Info,
+  Copy, Trash
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { cn, formatRelativeTime } from '@/lib/utils';
@@ -35,11 +36,20 @@ interface RawMsg {
 interface RawConv {
   id: string;
   telefono: string;
+  cliente_id?: string | null;
   ultimo_mensaje: string | null;
   ultimo_mensaje_at: string | null;
   mensajes_sin_leer: number | null;
   estado: string | null;
-  datos_cliente?: { nombre?: string } | null;
+  datos_cliente?: { 
+    nombre?: string;
+    wa_name?: string;
+  } | null;
+  memoria?: {
+    vehiculos?: Array<{ marca?: string; modelo?: string; anio?: string; placa?: string }>;
+    nombre?: string;
+    placa?: string;
+  } | null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -50,16 +60,40 @@ function formatTime(ts: string) {
 }
 
 function avatarLetters(conv: RawConv): string {
-  const name = conv.datos_cliente?.nombre;
+  const name = conv.datos_cliente?.nombre || conv.datos_cliente?.wa_name;
   if (name) {
     const parts = name.trim().split(' ');
-    return parts.length >= 2
-      ? (`${parts[0]?.charAt(0) || ''}${parts[1]?.charAt(0) || ''}`).toUpperCase()
-      : parts[0]?.slice(0, 2).toUpperCase() || '';
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return parts[0].substring(0, 2).toUpperCase();
   }
-  const num = conv.telefono?.replace(/[^0-9]/g, '') || '';
-  return num.slice(-2);
+  return '??';
 }
+
+function getAvatarColor(id: string) {
+  const colors = [
+    'linear-gradient(135deg, #00a884 0%, #008069 100%)',
+    'linear-gradient(135deg, #53bdeb 0%, #2094c4 100%)',
+    'linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%)',
+    'linear-gradient(135deg, #fb923c 0%, #ea580c 100%)',
+    'linear-gradient(135deg, #f472b6 0%, #db2777 100%)',
+    'linear-gradient(135deg, #4ade80 0%, #16a34a 100%)',
+  ];
+  let hash = 0;
+  for (let i = 0; i < (id || '').length; i++) hash = id.charCodeAt(i) + ((hash << 5) - hash);
+  return colors[Math.abs(hash) % colors.length];
+}
+
+const UserAvatar = ({ conv, className }: { conv: RawConv, className?: string }) => {
+  if (!conv) return null;
+  return (
+    <div 
+      className={cn("rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 shadow-lg border border-white/10", className)}
+      style={{ background: getAvatarColor(conv.id), color: '#fff' }}
+    >
+      {avatarLetters(conv)}
+    </div>
+  );
+};
 
 function displayName(conv: RawConv): string {
   return conv.datos_cliente?.nombre || conv.telefono || 'Desconocido';
@@ -150,6 +184,8 @@ export default function WhatsAppPage() {
   const [showQuickReplies, setShowQuickReplies] = useState(false);
   const [showMobileChat, setShowMobileChat] = useState(false);
   const [togglingMode, setTogglingMode] = useState(false);
+  const [selectedVehicles, setSelectedVehicles] = useState<any[]>([]);
+  const [loadingVehicles, setLoadingVehicles] = useState(false);
   const [isScrolledUp, setIsScrolledUp] = useState(false);
   const [timeLeftStr, setTimeLeftStr] = useState<string | null>(null);
   const [isWindowOpen, setIsWindowOpen] = useState<boolean>(true);
@@ -229,6 +265,17 @@ export default function WhatsAppPage() {
       if (el) el.scrollTop = el.scrollHeight;
     });
   }, []);
+
+  const deleteMsg = async (id: string) => {
+    if (!confirm('¿Seguro que deseas eliminar este mensaje?')) return;
+    const { error } = await supabase!.from('mensajes_whatsapp').delete().eq('id', id);
+    if (!error) setMsgs(prev => prev.filter(m => m.id !== id));
+    else alert('Error al eliminar mensaje');
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+  };
 
   // ── Load older messages (scroll up) ──────────────────────────
   const loadOlderMsgs = useCallback(async () => {
@@ -383,6 +430,17 @@ export default function WhatsAppPage() {
     setMsgs([]);
     setIsScrolledUp(false);
     await loadInitialMsgs(conv.telefono);
+    
+    // Fetch vehicles
+    if (conv.cliente_id && supabase) {
+      setLoadingVehicles(true);
+      const { data } = await supabase.from('vehiculos').select('*').eq('cliente_id', conv.cliente_id).eq('estado', 'activo');
+      setSelectedVehicles(data || []);
+      setLoadingVehicles(false);
+    } else {
+      setSelectedVehicles([]);
+    }
+
     if (supabase && (conv.mensajes_sin_leer ?? 0) > 0) {
       supabase.from('conversaciones')
         .update({ mensajes_sin_leer: 0 })
@@ -545,9 +603,7 @@ export default function WhatsAppPage() {
                   onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
                 >
                   <div className="relative flex-shrink-0">
-                    <div className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: '#2a3942', color: '#e9edef' }}>
-                      {avatarLetters(conv)}
-                    </div>
+                    <UserAvatar conv={conv} className="w-10 h-10" />
                     <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2" style={{ background: dotColor, borderColor: '#202c33' }} />
                   </div>
                   <div className="flex-1 min-w-0">
@@ -580,225 +636,285 @@ export default function WhatsAppPage() {
           style={{ background: '#0b141a' }}
         >
           {selected ? (
-            <>
-              {/* Chat header */}
-              <div className="flex items-center gap-3 px-4 py-2.5 flex-shrink-0" style={{ background: '#202c33', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                <button onClick={() => setShowMobileChat(false)} className="md:hidden w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/5">
-                  <X className="w-4 h-4" style={{ color: '#aebac1' }} />
-                </button>
-                <div className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0" style={{ background: '#2a3942', color: '#e9edef' }}>
-                  {avatarLetters(selected)}
+            <div className="flex-1 flex overflow-hidden">
+              {/* Chat Main Area */}
+              <div className="flex-1 flex flex-col min-w-0" style={{ background: '#0b141a' }}>
+                {/* Chat header */}
+                <div className="flex items-center gap-3 px-4 py-2.5 flex-shrink-0" style={{ background: '#202c33', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                  <button onClick={() => setShowMobileChat(false)} className="md:hidden w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/5">
+                    <X className="w-4 h-4" style={{ color: '#aebac1' }} />
+                  </button>
+                  <UserAvatar conv={selected} className="w-9 h-9" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium" style={{ color: '#e9edef' }}>{displayName(selected)}</p>
+                    <p className="text-[11px]" style={{ color: '#8696a0' }}>{selected.telefono}</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap md:flex-nowrap justify-end">
+                    {timeLeftStr && (
+                      <div className={cn(
+                        'flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium mr-1',
+                        isWindowOpen ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'
+                      )}>
+                        <Clock className="w-3.5 h-3.5 flex-shrink-0" />
+                        <span className="whitespace-nowrap tabular-nums">{timeLeftStr}</span>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setMode('bot')}
+                      disabled={togglingMode || selected.estado === 'bot'}
+                      className={cn('flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all', selected.estado === 'bot' ? 'cursor-default' : 'hover:opacity-80')}
+                      style={{ background: selected.estado === 'bot' ? 'rgba(167,139,250,0.2)' : 'rgba(255,255,255,0.06)', color: selected.estado === 'bot' ? '#a78bfa' : '#8696a0', border: `1px solid ${selected.estado === 'bot' ? 'rgba(167,139,250,0.4)' : 'rgba(255,255,255,0.08)'}` }}
+                    >
+                      <Bot className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span className="hidden md:inline">Bot IA</span>
+                    </button>
+                    <button
+                      onClick={() => setMode('humano')}
+                      disabled={togglingMode || selected.estado === 'humano'}
+                      className={cn('flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all', selected.estado === 'humano' ? 'cursor-default' : 'hover:opacity-80')}
+                      style={{ background: selected.estado === 'humano' ? 'rgba(251,146,60,0.2)' : 'rgba(255,255,255,0.06)', color: selected.estado === 'humano' ? '#fb923c' : '#8696a0', border: `1px solid ${selected.estado === 'humano' ? 'rgba(251,146,60,0.4)' : 'rgba(255,255,255,0.08)'}` }}
+                    >
+                      <UserCheck className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span className="hidden md:inline">Humano</span>
+                    </button>
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium" style={{ color: '#e9edef' }}>{displayName(selected)}</p>
-                  <p className="text-[11px]" style={{ color: '#8696a0' }}>{selected.telefono}</p>
+
+                {/* Mode strip */}
+                <div
+                  className="flex items-center gap-2 px-4 py-1.5 text-[11px] flex-shrink-0"
+                  style={{ background: isHumano ? 'rgba(251,146,60,0.08)' : 'rgba(167,139,250,0.08)', color: isHumano ? '#fb923c' : '#a78bfa', borderBottom: `1px solid ${isHumano ? 'rgba(251,146,60,0.15)' : 'rgba(167,139,250,0.15)'}` }}
+                >
+                  {isHumano ? <><UserCheck className="w-3 h-3" />Modo humano — bot pausado, respondes tú</> : <><Bot className="w-3 h-3" />Modo Bot IA — respondiendo automáticamente</>}
                 </div>
-                <div className="flex items-center gap-1.5 flex-wrap md:flex-nowrap justify-end">
-                  {timeLeftStr && (
-                    <div className={cn(
-                      'flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium mr-1',
-                      isWindowOpen ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'
-                    )}>
-                      <Clock className="w-3.5 h-3.5 flex-shrink-0" />
-                      <span className="whitespace-nowrap tabular-nums">{timeLeftStr}</span>
+
+                {/* Messages area */}
+                <div
+                  ref={chatScrollRef}
+                  onScroll={handleScrollEvents}
+                  className="flex-1 overflow-y-auto px-4 pt-14 pb-4 space-y-1 w-full"
+                  style={{ minHeight: 0, background: '#0b141a' }}
+                >
+                  {/* Load more above */}
+                  {loadingMore && (
+                    <div className="flex justify-center py-2">
+                      <span className="text-[11px] animate-pulse" style={{ color: '#8696a0' }}>Cargando mensajes anteriores...</span>
                     </div>
                   )}
-                  <button
-                    onClick={() => setMode('bot')}
-                    disabled={togglingMode || selected.estado === 'bot'}
-                    className={cn('flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all', selected.estado === 'bot' ? 'cursor-default' : 'hover:opacity-80')}
-                    style={{ background: selected.estado === 'bot' ? 'rgba(167,139,250,0.2)' : 'rgba(255,255,255,0.06)', color: selected.estado === 'bot' ? '#a78bfa' : '#8696a0', border: `1px solid ${selected.estado === 'bot' ? 'rgba(167,139,250,0.4)' : 'rgba(255,255,255,0.08)'}` }}
-                  >
-                    <Bot className="w-3.5 h-3.5 flex-shrink-0" />
-                    <span className="hidden md:inline">Bot IA</span>
-                  </button>
-                  <button
-                    onClick={() => setMode('humano')}
-                    disabled={togglingMode || selected.estado === 'humano'}
-                    className={cn('flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all', selected.estado === 'humano' ? 'cursor-default' : 'hover:opacity-80')}
-                    style={{ background: selected.estado === 'humano' ? 'rgba(251,146,60,0.2)' : 'rgba(255,255,255,0.06)', color: selected.estado === 'humano' ? '#fb923c' : '#8696a0', border: `1px solid ${selected.estado === 'humano' ? 'rgba(251,146,60,0.4)' : 'rgba(255,255,255,0.08)'}` }}
-                  >
-                    <UserCheck className="w-3.5 h-3.5 flex-shrink-0" />
-                    <span className="hidden md:inline">Humano</span>
-                  </button>
-                </div>
-              </div>
+                  {hasMoreAbove && !loadingMore && (
+                    <div className="flex justify-center py-2">
+                      <button
+                        onClick={loadOlderMsgs}
+                        className="flex items-center gap-1 text-[11px] px-3 py-1 rounded-full transition-colors hover:opacity-80"
+                        style={{ background: '#2a3942', color: '#8696a0' }}
+                      >
+                        <ChevronDown className="w-3 h-3 rotate-180" /> Ver mensajes anteriores
+                      </button>
+                    </div>
+                  )}
 
-              {/* Mode strip */}
-              <div
-                className="flex items-center gap-2 px-4 py-1.5 text-[11px] flex-shrink-0"
-                style={{ background: isHumano ? 'rgba(251,146,60,0.08)' : 'rgba(167,139,250,0.08)', color: isHumano ? '#fb923c' : '#a78bfa', borderBottom: `1px solid ${isHumano ? 'rgba(251,146,60,0.15)' : 'rgba(167,139,250,0.15)'}` }}
-              >
-                {isHumano ? <><UserCheck className="w-3 h-3" />Modo humano — bot pausado, respondes tú</> : <><Bot className="w-3 h-3" />Modo Bot IA — respondiendo automáticamente</>}
-              </div>
+                  {loadingMsgs && (
+                    <div className="flex flex-col items-center justify-center h-40 gap-2">
+                      <div className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: '#2a3942', borderTopColor: '#00a884' }} />
+                      <span className="text-xs" style={{ color: '#8696a0' }}>Cargando mensajes...</span>
+                    </div>
+                  )}
+                  {!loadingMsgs && msgs.length === 0 && (
+                    <div className="flex flex-col items-center justify-center h-40 text-center">
+                      <MessageSquare className="w-8 h-8 mb-2" style={{ color: 'rgba(255,255,255,0.15)' }} />
+                      <p className="text-xs" style={{ color: '#8696a0' }}>Sin mensajes en este chat aún</p>
+                    </div>
+                  )}
 
-              {/* Messages area */}
-              <div
-                ref={chatScrollRef}
-                onScroll={handleScrollEvents}
-                className="flex-1 overflow-y-auto px-4 py-4 space-y-1 w-full"
-                style={{ minHeight: 0, background: '#0b141a' }}
-              >
-                {/* Load more above */}
-                {loadingMore && (
-                  <div className="flex justify-center py-2">
-                    <span className="text-[11px] animate-pulse" style={{ color: '#8696a0' }}>Cargando mensajes anteriores...</span>
-                  </div>
-                )}
-                {hasMoreAbove && !loadingMore && (
-                  <div className="flex justify-center py-2">
-                    <button
-                      onClick={loadOlderMsgs}
-                      className="flex items-center gap-1 text-[11px] px-3 py-1 rounded-full transition-colors hover:opacity-80"
-                      style={{ background: '#2a3942', color: '#8696a0' }}
-                    >
-                      <ChevronDown className="w-3 h-3 rotate-180" /> Ver mensajes anteriores
-                    </button>
-                  </div>
-                )}
+                  {msgs.map((msg, i) => {
+                    const isOut = msg.tipo === 'saliente';
+                    const prevMsg = msgs[i - 1];
+                    const thisDay = new Date(msg.created_at).toLocaleDateString('es-VE');
+                    const prevDay = prevMsg ? new Date(prevMsg.created_at).toLocaleDateString('es-VE') : null;
+                    const showDivider = thisDay !== prevDay;
+                    const isOptimistic = msg.id.startsWith('tmp-');
 
-                {loadingMsgs && (
-                  <div className="flex flex-col items-center justify-center h-40 gap-2">
-                    <div className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: '#2a3942', borderTopColor: '#00a884' }} />
-                    <span className="text-xs" style={{ color: '#8696a0' }}>Cargando mensajes...</span>
-                  </div>
-                )}
-                {!loadingMsgs && msgs.length === 0 && (
-                  <div className="flex flex-col items-center justify-center h-40 text-center">
-                    <MessageSquare className="w-8 h-8 mb-2" style={{ color: 'rgba(255,255,255,0.15)' }} />
-                    <p className="text-xs" style={{ color: '#8696a0' }}>Sin mensajes en este chat aún</p>
-                  </div>
-                )}
-
-                {msgs.map((msg, i) => {
-                  const isOut = msg.tipo === 'saliente';
-                  const prevMsg = msgs[i - 1];
-                  const thisDay = new Date(msg.created_at).toLocaleDateString('es-VE');
-                  const prevDay = prevMsg ? new Date(prevMsg.created_at).toLocaleDateString('es-VE') : null;
-                  const showDivider = thisDay !== prevDay;
-                  const isOptimistic = msg.id.startsWith('tmp-');
-
-                  return (
-                    <React.Fragment key={msg.id}>
-                      {showDivider && (
-                        <div className="flex justify-center my-3">
-                          <span className="text-[11px] px-3 py-1 rounded-full" style={{ background: '#182229', color: '#8696a0' }}>
-                            {thisDay === new Date().toLocaleDateString('es-VE') ? 'Hoy' : thisDay}
-                          </span>
-                        </div>
-                      )}
-                      <div className={cn('flex w-full group relative', isOut ? 'justify-end' : 'justify-start')} style={{ marginBottom: '2px' }}>
-                        {/* Reaction Picker Popover (Desktop only on hover) */}
-                        {!isOptimistic && (
-                          <div className={cn(
-                            "absolute top-0 z-50 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 p-1 rounded-full shadow-xl border border-white/10",
-                            isOut ? "-left-20" : "-right-20"
-                          )} style={{ background: '#202c33' }}>
-                            {['❤️', '👍', '😂', '😮', '🙏'].map(emoji => (
-                              <button
-                                key={emoji}
-                                onClick={() => handleReact(msg, emoji)}
-                                className="hover:scale-125 transition-transform p-0.5"
-                              >
-                                {emoji}
-                              </button>
-                            ))}
+                    return (
+                      <React.Fragment key={msg.id}>
+                        {showDivider && (
+                          <div className="flex justify-center my-3">
+                            <span className="text-[11px] px-3 py-1 rounded-full" style={{ background: '#182229', color: '#8696a0' }}>
+                              {thisDay === new Date().toLocaleDateString('es-VE') ? 'Hoy' : thisDay}
+                            </span>
                           </div>
                         )}
-
-                        <div
-                          className="relative max-w-[88%] md:max-w-[75%] rounded-lg px-3 py-2 shadow-sm flex flex-col min-w-[60px]"
-                          style={{ background: isOut ? '#005c4b' : '#202c33', opacity: isOptimistic ? 0.75 : 1, borderRadius: isOut ? '8px 8px 2px 8px' : '8px 8px 8px 2px' }}
-                        >
-                          {msg.es_ia && (
-                            <div className="flex items-center gap-1 mb-1" style={{ color: '#a78bfa' }}>
-                              <Bot className="w-3 h-3" />
-                              <span className="text-[10px] font-medium">Bot IA</span>
-                            </div>
-                          )}
-                          <MediaBubble msg={msg} isOut={isOut} />
-                          <div className="flex items-center gap-1 justify-end mt-1 flex-shrink-0" style={{ marginRight: '-2px' }}>
-                            <span className="text-[10px]" style={{ color: 'rgba(233,237,239,0.6)' }}>{formatTime(msg.created_at)}</span>
-                            {isOut && (
-                              isOptimistic ? <Check className="w-3 h-3" style={{ color: 'rgba(233,237,239,0.5)' }} /> :
-                              msg.estado === 'leido' ? <CheckCheck className="w-3.5 h-3.5" style={{ color: '#53bdeb' }} /> :
-                              msg.estado === 'entregado' ? <CheckCheck className="w-3.5 h-3.5" style={{ color: 'rgba(233,237,239,0.5)' }} /> :
-                              <Check className="w-3 h-3" style={{ color: 'rgba(233,237,239,0.5)' }} />
+                        <div className={cn('flex w-full group relative', isOut ? 'justify-end' : 'justify-start')} style={{ marginBottom: '2px' }}>
+                          <div
+                            className="relative max-w-[88%] md:max-w-[75%] rounded-lg px-3 py-2 shadow-sm flex flex-col min-w-[60px]"
+                            style={{ background: isOut ? '#005c4b' : '#202c33', opacity: isOptimistic ? 0.75 : 1, borderRadius: isOut ? '8px 8px 2px 8px' : '8px 8px 8px 2px' }}
+                          >
+                            {/* Reaction Picker Popover (Responsive Position) */}
+                            {!isOptimistic && (
+                              <div className={cn(
+                                "absolute -top-12 z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all flex items-center gap-1 p-1 rounded-full shadow-2xl border border-white/10 scale-90 group-hover:scale-100 backdrop-blur-md",
+                                isOut ? "right-0" : "left-0"
+                              )} style={{ background: 'rgba(32, 44, 51, 0.9)' }}>
+                                <div className="flex gap-1 pr-2 border-r border-white/10 mr-1">
+                                  {['❤️', '👍', '😂', '😮', '🙏'].map(emoji => (
+                                    <button key={emoji} onClick={() => handleReact(msg, emoji)} className="hover:scale-125 transition-transform p-0.5">{emoji}</button>
+                                  ))}
+                                </div>
+                                <button onClick={() => copyToClipboard(msg.body)} className="p-1.5 hover:bg-white/10 rounded-full text-white/60 hover:text-white" title="Copiar">
+                                  <Copy className="w-3.5 h-3.5" />
+                                </button>
+                                <button onClick={() => deleteMsg(msg.id)} className="p-1.5 hover:bg-red-500/20 rounded-full text-red-500/60 hover:text-red-500" title="Eliminar">
+                                  <Trash className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             )}
-                            {!isOut && msg.es_ia && <Bot className="w-3 h-3 ml-0.5" style={{ color: 'rgba(167,139,250,0.6)' }} />}
-                            {isOut && !msg.es_ia && !isOptimistic && <User className="w-2.5 h-2.5" style={{ color: 'rgba(233,237,239,0.4)' }} />}
-                          </div>
-
-                          {/* Render Reaction if exists */}
-                          {msg.reaccion && (
-                            <div className={cn(
-                              "absolute -bottom-2 px-1.5 py-0.5 rounded-full text-xs shadow-md border border-white/10",
-                              isOut ? "left-0" : "right-0"
-                            )} style={{ background: '#374045' }}>
-                              {msg.reaccion}
+                            {msg.es_ia && (
+                              <div className="flex items-center gap-1 mb-1" style={{ color: '#a78bfa' }}>
+                                <Bot className="w-3 h-3" />
+                                <span className="text-[10px] font-medium">Bot IA</span>
+                              </div>
+                            )}
+                            <MediaBubble msg={msg} isOut={isOut} />
+                            <div className="flex items-center gap-1 justify-end mt-1 flex-shrink-0" style={{ marginRight: '-2px' }}>
+                              <span className="text-[10px]" style={{ color: 'rgba(233,237,239,0.6)' }}>{formatTime(msg.created_at)}</span>
+                              {isOut && (
+                                isOptimistic ? <Check className="w-3 h-3" style={{ color: 'rgba(233,237,239,0.5)' }} /> :
+                                msg.estado === 'leido' ? <CheckCheck className="w-3.5 h-3.5" style={{ color: '#53bdeb' }} /> :
+                                msg.estado === 'entregado' ? <CheckCheck className="w-3.5 h-3.5" style={{ color: 'rgba(233,237,239,0.5)' }} /> :
+                                <Check className="w-3 h-3" style={{ color: 'rgba(233,237,239,0.5)' }} />
+                              )}
                             </div>
-                          )}
+                            {msg.reaccion && (
+                              <div className={cn("absolute -bottom-2 px-1.5 py-0.5 rounded-full text-xs shadow-md border border-white/10", isOut ? "left-0" : "right-0")} style={{ background: '#374045' }}>{msg.reaccion}</div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    </React.Fragment>
-                  );
-                })}
-                <div style={{ height: '4px' }} />
-              </div>
+                      </React.Fragment>
+                    );
+                  })}
+                  <div style={{ height: '4px' }} />
+                </div>
 
-              {/* Scroll to bottom button */}
-              {isScrolledUp && (
-                <div className="absolute bottom-24 right-6 z-10">
-                  <button
-                    onClick={() => scrollToBottom(true)}
-                    className="w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all hover:scale-110"
-                    style={{ background: '#2a3942', border: '1px solid rgba(255,255,255,0.1)' }}
-                  >
-                    <ChevronDown className="w-4 h-4" style={{ color: '#e9edef' }} />
+                {/* Quick replies */}
+                {showQuickReplies && (
+                  <div className="flex gap-2 overflow-x-auto px-3 py-2 flex-shrink-0" style={{ background: '#202c33', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                    {QUICK_REPLIES.map((r, i) => (
+                      <button
+                        key={i}
+                        onClick={() => { setMessage(r); setShowQuickReplies(false); inputRef.current?.focus(); }}
+                        className="flex-shrink-0 text-[11px] px-2.5 py-1.5 rounded-lg whitespace-nowrap transition-colors hover:opacity-80"
+                        style={{ background: '#2a3942', color: '#8696a0', border: '1px solid rgba(255,255,255,0.06)' }}
+                      >
+                        {r.length > 38 ? r.slice(0, 38) + '…' : r}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Input area */}
+                <div className="flex items-center gap-2 px-3 py-3 flex-shrink-0" style={{ background: '#202c33', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                  <button onClick={() => setShowQuickReplies(!showQuickReplies)} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors flex-shrink-0">
+                    <Smile className="w-5 h-5" style={{ color: '#aebac1' }} />
+                  </button>
+                  <input
+                    ref={inputRef} value={message} onChange={e => setMessage(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                    placeholder={isWindowOpen ? 'Escribe un mensaje' : 'Ventana de 24h cerrada'}
+                    className="flex-1 py-2 px-4 rounded-lg text-sm outline-none"
+                    style={{ background: '#2a3942', color: '#e9edef', border: 'none' }}
+                  />
+                  <button onClick={handleSend} disabled={!message.trim() || sending} className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-all" style={{ background: message.trim() && !sending ? '#00a884' : '#2a3942', opacity: !message.trim() || sending ? 0.5 : 1 }}>
+                    <Send className={cn('w-4 h-4', sending && 'animate-pulse')} style={{ color: '#e9edef' }} />
                   </button>
                 </div>
-              )}
-
-              {/* Quick replies */}
-              {showQuickReplies && (
-                <div className="flex gap-2 overflow-x-auto px-3 py-2 flex-shrink-0" style={{ background: '#202c33', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                  {QUICK_REPLIES.map((r, i) => (
-                    <button
-                      key={i}
-                      onClick={() => { setMessage(r); setShowQuickReplies(false); inputRef.current?.focus(); }}
-                      className="flex-shrink-0 text-[11px] px-2.5 py-1.5 rounded-lg whitespace-nowrap transition-colors hover:opacity-80"
-                      style={{ background: '#2a3942', color: '#8696a0', border: '1px solid rgba(255,255,255,0.06)' }}
-                    >
-                      {r.length > 38 ? r.slice(0, 38) + '…' : r}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Input area */}
-              <div className="flex items-center gap-2 px-3 py-3 flex-shrink-0" style={{ background: '#202c33', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                <button onClick={() => setShowQuickReplies(!showQuickReplies)} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors flex-shrink-0">
-                  <Smile className="w-5 h-5" style={{ color: '#aebac1' }} />
-                </button>
-                <input
-                  ref={inputRef}
-                  value={message}
-                  onChange={e => setMessage(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-                  placeholder={isWindowOpen ? 'Escribe un mensaje' : 'Ventana de 24h cerrada'}
-                  className="flex-1 py-2 px-4 rounded-lg text-sm outline-none"
-                  style={{ background: '#2a3942', color: '#e9edef', border: 'none' }}
-                />
-                <button
-                  onClick={handleSend}
-                  disabled={!message.trim() || sending}
-                  className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-all"
-                  style={{ background: message.trim() && !sending ? '#00a884' : '#2a3942', opacity: !message.trim() || sending ? 0.5 : 1 }}
-                >
-                  <Send className={cn('w-4 h-4', sending && 'animate-pulse')} style={{ color: '#e9edef' }} />
-                </button>
               </div>
-            </>
+
+              {/* ── Right Sidebar: Client Details & Garage ── */}
+              <div className="hidden lg:flex flex-col w-72 border-l border-white/6 overflow-y-auto" style={{ background: '#0b141a' }}>
+                <div className="p-4" style={{ background: '#202c33', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                   <h2 className="text-sm font-semibold flex items-center gap-2" style={{ color: '#e9edef' }}>
+                     <Info className="w-4 h-4 text-green-400" /> Información
+                   </h2>
+                </div>
+                
+                <div className="p-4 space-y-6">
+                  {/* Garage Section */}
+                  <div>
+                    <h3 className="text-[11px] font-bold uppercase tracking-wider mb-3 flex items-center gap-2" style={{ color: '#8696a0' }}>
+                      <Car className="w-3.5 h-3.5" /> Garage del Cliente
+                    </h3>
+                    <div className="space-y-2.5">
+                      {loadingVehicles ? (
+                        <div className="flex items-center gap-2 py-2 opacity-50">
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          <span className="text-xs">Buscando vehículos...</span>
+                        </div>
+                      ) : selectedVehicles.length > 0 ? (
+                        selectedVehicles.map((v, idx) => (
+                          <div key={v.id || idx} className="p-3 rounded-xl border border-white/5 transition-all hover:bg-white/5" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                            <div className="flex items-start justify-between mb-1">
+                              <span className="text-sm font-semibold truncate pr-2" style={{ color: '#e9edef' }}>
+                                {v.marca} {v.modelo}
+                              </span>
+                              {v.anio && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-white/40 border border-white/5">
+                                  {v.anio}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 mt-2">
+                               <div className="flex items-center gap-1 text-[11px]" style={{ color: '#8696a0' }}>
+                                 <Hash className="w-3 h-3 opacity-50" />
+                                 <span className="font-mono text-green-400/80">{v.placa || 'SIN PLACA'}</span>
+                               </div>
+                               <div className="w-1 h-1 rounded-full bg-white/10" />
+                               <div className="flex items-center gap-1 text-[11px]" style={{ color: '#8696a0' }}>
+                                 <Calendar className="w-3 h-3 opacity-50" />
+                                 <span>{v.created_at ? new Date(v.created_at).getFullYear() : 'N/A'}</span>
+                               </div>
+                            </div>
+                          </div>
+                        ))
+                      ) : (selected.memoria?.vehiculos && selected.memoria.vehiculos.length > 0) ? (
+                        selected.memoria.vehiculos.map((v: any, idx: number) => (
+                          <div key={idx} className="p-3 rounded-xl border border-dashed border-white/10 transition-all hover:bg-white/5" style={{ background: 'rgba(255,255,255,0.02)' }}>
+                            <div className="flex items-start justify-between mb-1">
+                              <span className="text-sm font-medium truncate pr-2" style={{ color: '#e9edef' }}>
+                                {v.marca || 'Marca?'} {v.modelo || 'Modelo?'}
+                              </span>
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500/80 border border-amber-500/10">
+                                Por confirmar
+                              </span>
+                            </div>
+                            <p className="text-[10px] italic" style={{ color: '#8696a0' }}>Detectado en conversación</p>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="p-4 rounded-xl border border-dashed border-white/10 text-center">
+                          <Car className="w-6 h-6 mx-auto mb-2 opacity-10" />
+                          <p className="text-[11px]" style={{ color: '#8696a0' }}>No hay vehículos registrados</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Quick Metadata */}
+                  <div className="pt-4 border-t border-white/5">
+                    <div className="flex items-center justify-between py-1">
+                       <span className="text-[11px]" style={{ color: '#8696a0' }}>ID Cliente</span>
+                       <span className="text-[10px] font-mono opacity-40">{selected.cliente_id?.slice(0,8) || 'N/A'}</span>
+                    </div>
+                    <div className="flex items-center justify-between py-1 border-t border-white/5 mt-1 pt-1">
+                       <span className="text-[11px]" style={{ color: '#8696a0' }}>Nombre CRM</span>
+                       <span className="text-[10px]" style={{ color: '#e9edef' }}>{selected.datos_cliente?.nombre || 'No registrado'}</span>
+                    </div>
+                    <div className="flex items-center justify-between py-1">
+                       <span className="text-[11px]" style={{ color: '#8696a0' }}>Perfil WhatsApp</span>
+                       <span className="text-[10px]" style={{ color: '#e9edef' }}>{selected.datos_cliente?.wa_name || 'Desconocido'}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
               <div className="w-20 h-20 rounded-full flex items-center justify-center mb-4" style={{ background: 'rgba(0,168,132,0.1)', border: '2px solid rgba(0,168,132,0.2)' }}>

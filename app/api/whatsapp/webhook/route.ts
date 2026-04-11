@@ -229,6 +229,7 @@ ES MUY IMPORTANTE QUE VARÍES TUS RESPUESTAS PARA SONAR MÁS HUMANO. NO SEAS REP
 - SALUDO_APROPIADO: ${getSaludoApropiado()}
 - REVISIÓN GRATIS: La revisión visual del vehículo al traerlo al taller es totalmente gratuita. Menciónalo SOLO UNA VEZ cuando trates de convencer al cliente de ir al taller para revisar un presupuesto que no puedes darle por chat. ESTÁ ESTRICTAMENTE PROHIBIDO repetir que la revisión es gratis en varios de tus mensajes (suena aburrido y repetitivo). Dilo en el momento exacto y una sola vez.
 - REDES SOCIALES: Instagram y TikTok @lycos.team (el sistema envía la tarjeta/enlace nativo automáticamente si el cliente pide seguir en redes). Enlace perfil general: https://www.lycos.team
+- CLIENTES SEGUIDORES: Si el cliente menciona que ya nos sigue en Instagram o TikTok, agradécele con mucho entusiasmo, dile que nos motiva mucho su apoyo y anímalo a visitarnos o consultar cualquier duda sobre su vehículo.
 - RECORDATORIOS DE CITA: Menciónalos SOLO si el cliente pregunta por su cita o están tratando de agendar, pero no en cada mensaje.
 
 HORARIO: Lunes a Sábado 8:00 AM – 5:00 PM. DOMINGOS: CERRADO sin excepciones.
@@ -237,9 +238,10 @@ UBICACION: San Antonio de los Altos, Altos Mirandinos, Miranda.
 SERVICIOS Y PRECIOS:
 
 SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gruesa. PROMOCIÓN EN DIVISAS con instalación:
-- REGLA DE PRESUPUESTO DE SISTEMA DE ESCAPE: **PROHIBIDO** dar presupuestos completos o cálculos matemáticos si el cliente pide reemplazar todo el sistema de escape. En lugar de darle el precio total por chat, **INVÍTALO AL TALLER PARA UNA REVISIÓN**, porque somos fabricantes propios y muchas veces el cliente no necesita todo nuevo sino una reparación más sencilla y económica.
-- "Intermedio": significa resonador o resonador con tubería. Varia el precio. Da precio del resonador + precio por metro de tubería. El total exacto depende de condiciones (debe venir al taller).
-- El Sistema de Escape Completo Incluye: Silenciador, Resonador, Tubería, Flexible (si aplica), Bajante (depende del caso si es reparar o cambiar tubería), gomas y Empacaduras (requiere venir directamente al taller para comprobar todo y dar el precio).
+- REGLA DE PRESUPUESTO DE SISTEMA DE ESCAPE: **SOLO SE PROHIBE** dar presupuestos completos de "punta a punta" o tuberías exactas a medida por chat. Para estos casos, **INVÍTALO AL TALLER PARA UNA REVISIÓN GRATUITA**.
+- **REGLA DE PIEZAS INDIVIDUALES**: Para silenciadores, resonadores, colas, flexibles y Flowmaster, **SÍ DEBES DAR EL PRECIO DIRECTAMENTE** usando la lista de abajo. No lo mandes al taller sin antes darle el precio de la pieza que busca.
+- "Intermedio": significa resonador. Da el precio del resonador ($40) y menciona que si requiere tubería adicional, el metro sale en $35 (hierro) o $50 (aluminizado/especial según catálogo).
+- El Sistema de Escape Completo Incluye: Silenciador, Resonador, Tubería, Flexible, Bajante, gomas y Empacaduras. En este caso específico de sistema completo, debe venir al taller para el precio exacto.
 - Silenciadores PLANOS (Ej. Malibú): NO TENEMOS DISPONIBILIDAD de planos. Solo vendemos silenciadores Redondos. PERO, hay carros planos que sí tienen espacio para adaptar uno redondo, si el cliente tiene duda pídele que nos visite para revisión de espacio y envíale nuestra ubicación.
 - CL27: hasta 1.3L → $40
 - CL30: hasta 1.3L → $40
@@ -255,7 +257,7 @@ SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gr
 - Tubo silenciador/cola: Primer metro $35, metros adicionales $20/metro, soldadura $15, gomas $7
 - Colas cromadas: B55 $25, Camioneta $35, Curba $30
 - Cola de sistema de escape: depende del vehiculo, responder: "Depende del vehiculo, debes traerlo para darte el precio exacto"
-- REGLA DE PRESUPUESTOS Y PRECIOS APROXIMADOS: **PROHIBIDO** dar presupuestos, cálculos o precios aproximados de trabajos completos. Si el cliente pide un estimado de reparación o reemplazo complejo, **INVÍTALO DIRECTAMENTE A UNA REVISIÓN FÍSICA GRATUITA EN EL TALLER**. Evita dar cálculos por chat para promover siempre la visita presencial de forma natural y amable, sin dar explicaciones ni decir que no puedes enviar o recibir cosas por el chat.
+- REGLA DE PRESUPUESTOS Y PRECIOS APROXIMADOS: **PROHIBIDO** dar presupuestos de reparaciones complejas o reconstrucciones totales sin ver el carro. Sin embargo, para la venta e instalación de piezas individuales del catálogo (Silenciadores, Resonadores, Flowmaster, etc.), **DEBES DAR EL PRECIO SIEMPRE**. Evita la evasiva de "debe venir al taller" cuando se trate de estas piezas solas.
 
 
 MECANICA Y FRENOS:
@@ -400,6 +402,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ status: 'ignored' });
     }
     const value = body.entry?.[0]?.changes?.[0]?.value;
+    const waProfileName = value?.contacts?.[0]?.profile?.name || '';
+
     if (!value?.messages?.length) return NextResponse.json({ status: 'no_messages' });
 
     for (const message of value.messages) {
@@ -646,18 +650,19 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      console.log(`🤖 [${from}] Entering processCoreLogic...`);
-      // Update is_processing to true
-      await db.from('conversaciones').update({ is_processing: true }).eq('telefono', from);
+        console.log(`🤖 [${from}] Entering processCoreLogic...`);
+        const phone = from.replace(/[^0-9]/g, ''); // Normalize
+        // Update is_processing to true
+        await db.from('conversaciones').update({ is_processing: true }).eq('telefono', phone);
 
-      try {
-        await processCoreLogic(db, from, messageBody, wa_message_id);
-      } finally {
-        // Always reset processing flag
-        await db.from('conversaciones').update({ is_processing: false }).eq('telefono', from);
-      }
-      console.log(`✅ [${from}] processCoreLogic finished.`);
-    } // end for loop
+        try {
+          await processCoreLogic(db, phone, messageBody, wa_message_id, waProfileName);
+        } finally {
+          // Always reset processing flag
+          await db.from('conversaciones').update({ is_processing: false }).eq('telefono', phone);
+        }
+        console.log(`✅ [${phone}] processCoreLogic finished.`);
+      } // end for loop
 
     return NextResponse.json({ status: 'ok' });
   } catch (error) {
@@ -702,6 +707,7 @@ interface ConversationContext {
   inventarioInfo: string;
   isNewSession: boolean;
   agendaOcupada: string;
+  historialTecnico: string;
 }
 
 async function loadConversationContext(
@@ -713,9 +719,12 @@ async function loadConversationContext(
   let memoria: Memoria = {};
   let citasInfo = '';
   let inventarioInfo = '';
+  let historialTecnico = '';
   let agendaOcupada = '';
   let isNewSession = true;
-  if (!db) return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada };
+  if (!db) return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico };
+
+  const phone = from.replace(/[^0-9]/g, '');
 
   // Message history
   try {
@@ -748,9 +757,41 @@ async function loadConversationContext(
 
   // Memoria
   try {
-    const { data: convRows } = await db.from('conversaciones').select('memoria').eq('telefono', from).limit(1);
+    const { data: convRows } = await db.from('conversaciones').select('memoria, cliente_id').eq('telefono', phone).limit(1);
     if (convRows?.[0]?.memoria) memoria = convRows[0].memoria as Memoria;
-  } catch (e) { console.error('Error loading memoria:', e); }
+    
+    // Technical History (Services & Revisions)
+    const clientId = convRows?.[0]?.cliente_id;
+    if (clientId) {
+      const { data: vehs } = await db.from('vehiculos').select('id, marca, modelo, placa').eq('cliente_id', clientId);
+      if (vehs && vehs.length > 0) {
+        const vehIds = vehs.map(v => v.id);
+        const [servs, revs] = await Promise.all([
+          db.from('servicios').select('id, vehiculo_id, tipo_servicio, descripcion, fecha, costo, estado').in('vehiculo_id', vehIds).order('fecha', { ascending: false }).limit(10),
+          db.from('revisiones').select('id, vehiculo_id, detalles, presupuesto, created_at').in('vehiculo_id', vehIds).order('created_at', { ascending: false }).limit(5)
+        ]);
+
+        if ((servs.data && servs.data.length > 0) || (revs.data && revs.data.length > 0)) {
+          historialTecnico = '\n--- HISTORIAL TÉCNICO DEL CLIENTE ---\n';
+          vehs.forEach(v => {
+            const vServs = servs.data?.filter(s => s.vehiculo_id === v.id) || [];
+            const vRevs = revs.data?.filter(r => r.vehiculo_id === v.id) || [];
+            if (vServs.length > 0 || vRevs.length > 0) {
+              historialTecnico += `VEHÍCULO: ${v.marca} ${v.modelo} (Placa: ${v.placa || 'N/A'})\n`;
+              vServs.forEach(s => {
+                historialTecnico += `  - SERVICIO [${s.fecha}]: ${s.tipo_servicio} - ${s.descripcion} (${s.estado}) | Costo: $${s.costo}\n`;
+              });
+              vRevs.forEach(r => {
+                const date = new Date(r.created_at).toISOString().split('T')[0];
+                historialTecnico += `  - REVISIÓN [${date}]: ${r.detalles} | Presupuesto: $${r.presupuesto}\n`;
+              });
+            }
+          });
+          historialTecnico += '-------------------------------------\n';
+        }
+      }
+    }
+  } catch (e) { console.error('Error loading memoria/historial:', e); }
 
   // Appointments
   try {
@@ -798,7 +839,7 @@ async function loadConversationContext(
     }
   } catch (e) { }
 
-  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada };
+  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico };
 }
 
 // ─── AI Response ───────────────────────────────────────────────────────────────
@@ -840,6 +881,7 @@ SALUDO_APROPIADO: ${greeting} — USA ESTE SALUDO EXACTO al inicio cuando sea se
 SESION: ${ctx.isNewSession ? `NUEVA — saluda con "${greeting}" + mensaje de bienvenida` : 'CONTINUA — ve al tema, sin repetir saludo ni bienvenida'}
 ${memoriaStr}
 ${ctx.citasInfo}
+${(ctx as any).historialTecnico || ''}
 ${ctx.inventarioInfo}
 ${ctx.agendaOcupada}
 ${ratesCtx}
@@ -976,7 +1018,8 @@ async function processIntents(
   db: ReturnType<typeof getDb>,
   from: string,
   userMsg: string,
-  ctx: ConversationContext
+  ctx: ConversationContext,
+  waProfileName?: string
 ): Promise<{ clientId?: string; vehicleId?: string }> {
   if (!db) return {};
   const newMemoria: Memoria & { placa?: string } = { ...ctx.memoria };
@@ -1005,13 +1048,30 @@ async function processIntents(
     }
   }
 
-  // Extract vehicle
-  const vehicleMatch = userMsg.match(/\b(toyota|ford|chevrolet|hyundai|kia|honda|nissan|mazda|volkswagen|corsa|aveo|spark|cruze|sail|captiva|tucson|sportage|yaris|hilux|ranger|sentra|tiida|versa|frontier|civic|fit|crv|gol|bora|jetta|polo|peugeot|renault|mitsubishi|suzuki|isuzu|fiesta|caliber|dodge|lancer|accent|elantra|malibú|malibu|camaro|silverado|traverse|trailblazer|trax|equinox|colorado|tahoe|suburban|orlando|sonic|onix)[^\n,]{0,25}/i);
+  // Extract vehicle - much more robust list
+  const brandKeywords = [
+    'toyota', 'ford', 'chevrolet', 'hyundai', 'kia', 'honda', 'nissan', 'mazda', 'volkswagen',
+    'mitsubishi', 'suzuki', 'isuzu', 'peugeot', 'renault', 'fiat', 'jeep', 'dodge', 'chrysler',
+    'mercedes', 'bmw', 'audi', 'volvo', 'chery', 'dongfeng', 'saic', 'mg', 'jac', 'great wall',
+    'geely', 'byd', 'hafei', 'zotye', 'lifan', 'faw', 'venirauto', 'turpial', 'centauro', 'arauca', 'orinoco',
+    'twingo', 'corsa', 'aveo', 'spark', 'optra', 'cruze', 'hilux', 'corolla', 'yaris', 'fortuner',
+    'explorer', 'fiesta', 'focus', 'fusion', 'ranger', 'ecoport', 'silverado', 'tahoe', 'blazer',
+    'grand vitara', 'lancer', 'montero', 'signo', 'sentra', 'tiida', 'versa', 'march', 'civic',
+    'accent', 'elantra', 'tucson', 'sportage', 'getz', 'rio', 'picanto', 'ara'
+  ];
+  const brandRegex = new RegExp(`\\b(${brandKeywords.join('|')})\\b`, 'i');
+  
+  const vehicleMatch = userMsg.match(brandRegex);
   const yearMatch = userMsg.match(/\b(19[8-9]\d|20[0-2]\d)\b/);
   let detectedVeh = '';
   if (vehicleMatch) {
-    const parts = vehicleMatch[0].trim().split(/\s+/);
-    const v = { marca: parts[0], modelo: parts.slice(1).join(' ') || parts[0], anio: yearMatch?.[1] };
+    // Attempt to capture 1-2 words after the brand as the model
+    const fullMatch = userMsg.match(new RegExp(`\\b${vehicleMatch[0]}\\b\\s*([A-Z0-9]{1,}(?:\\s+[A-Z0-9]{1,})?)`, 'i'));
+    const marca = vehicleMatch[1].charAt(0).toUpperCase() + vehicleMatch[1].slice(1).toLowerCase();
+    const modelo = fullMatch ? fullMatch[1].trim() : 'Modelo';
+    const anio = yearMatch?.[1] || '';
+    
+    const v = { marca, modelo, anio };
     detectedVeh = `${v.marca} ${v.modelo}`;
     if (!newMemoria.vehiculos) newMemoria.vehiculos = [];
     const exists = newMemoria.vehiculos.some(x => x.marca.toLowerCase() === v.marca.toLowerCase() && x.modelo.toLowerCase() === v.modelo.toLowerCase());
@@ -1039,7 +1099,7 @@ async function processIntents(
 
   // Get or Create record IDs
   const { clientId, vehicleId } = await getOrCreateClientAndVehicle(
-    db, from, newMemoria.nombre || '', detectedVeh, detectedPlaca || newMemoria.placa || ''
+    db, from, newMemoria.nombre || '', detectedVeh, detectedPlaca || newMemoria.placa || '', undefined, waProfileName
   );
 
   return { clientId, vehicleId };
@@ -1051,7 +1111,8 @@ async function getOrCreateClientAndVehicle(
   name: string,
   vehicleInfo: string,
   placa: string,
-  anio?: string
+  anio?: string,
+  waProfileName?: string
 ): Promise<{ clientId?: string; vehicleId?: string; isNew?: boolean }> {
   if (!db) return {};
   let clientId: string | undefined;
@@ -1165,7 +1226,17 @@ async function getOrCreateClientAndVehicle(
 
     // 3. Link back to conversation
     if (clientId) {
-      await db.from('conversaciones').update({ cliente_id: clientId }).eq('telefono', phone);
+      // Sync names to conversation metadata
+      const { data: clientData } = await db.from('clientes').select('nombre, apellido').eq('id', clientId).single();
+      const fullName = clientData ? `${clientData.nombre || ''} ${clientData.apellido || ''}`.trim() : name;
+      
+      await db.from('conversaciones').update({ 
+        cliente_id: clientId,
+        datos_cliente: {
+          nombre: fullName || name,
+          wa_name: waProfileName || undefined
+        }
+      }).eq('telefono', phone);
     }
 
   } catch (e) { console.error('Error in getOrCreateClientAndVehicle:', e); }
@@ -1177,14 +1248,30 @@ async function getOrCreateClientAndVehicle(
 // (Deprecated: `tryBookAppointment` parsing was removed in favor of `[CITA:]` tag generated by AI)
 
 // ─── Update conversation row ───────────────────────────────────────────────────
-async function updateConversation(db: ReturnType<typeof getDb>, from: string, lastMsg: string, memoria: Memoria): Promise<void> {
+async function updateConversation(db: ReturnType<typeof getDb>, from: string, lastMsg: string, memoria: Memoria, clientId?: string): Promise<void> {
   if (!db) return;
+  
+  // Link by phone if clientId is missing
+  let linkedClientId = clientId;
+  if (!linkedClientId) {
+    try {
+      const { data: client } = await db.from('clientes').select('id').eq('telefono', from).maybeSingle();
+      if (client) linkedClientId = client.id;
+    } catch (e) {}
+  }
+
   void (async () => {
     try {
-      await db.from('conversaciones').upsert({
-        telefono: from, ultimo_mensaje: lastMsg.substring(0, 100),
-        ultimo_mensaje_at: new Date().toISOString(), memoria,
-      }, { onConflict: 'telefono' });
+      const updateData: any = {
+        telefono: from, 
+        ultimo_mensaje: lastMsg.substring(0, 100),
+        ultimo_mensaje_at: new Date().toISOString(), 
+        memoria,
+        updated_at: new Date().toISOString()
+      };
+      if (linkedClientId) updateData.cliente_id = linkedClientId;
+
+      await db.from('conversaciones').upsert(updateData, { onConflict: 'telefono' });
     } catch (e) { console.error('Error update conversacion:', e); }
   })();
 }
@@ -1293,6 +1380,7 @@ function isLocationRequest(lower: string): boolean {
   return locKeywords.some(k => lower.includes(k)) || certKeywords.some(k => lower.includes(k));
 }
 function isSocialRequest(lower: string): boolean {
+  if (['ya los sigo', 'ya lo sigo', 'ya te sigo', 'los sigo', 'lo sigo'].some(k => lower.includes(k))) return false;
   return ['instagram', 'tiktok', 'redes sociales', 'redes', 'sigueme', 'seguir', 'perfil redes', '@lycos'].some(k => lower.includes(k));
 }
 function isContactRequest(lower: string): boolean {
@@ -1304,7 +1392,7 @@ function isContactRequest(lower: string): boolean {
 function delay(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
 
 
-export async function processCoreLogic(db: ReturnType<typeof getDb>, from: string, messageBody: string, wa_message_id: string | null) {
+export async function processCoreLogic(db: ReturnType<typeof getDb>, from: string, messageBody: string, wa_message_id: string | null, waProfileName?: string) {
       // Load context + exchange rates in parallel
       const [ctx, rates] = await Promise.all([
         loadConversationContext(db, from, messageBody),
@@ -1327,7 +1415,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         await delay(500);
         await sendMsg(from, TT_LINK, true);
         await updateConversation(db, from, messageBody, ctx.memoria);
-        return;
+        // Continue to AI response in case there are more questions in the message
       }
 
       // Social media intent
@@ -1338,7 +1426,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         await delay(500);
         await sendMsg(from, TT_LINK, true);
         await updateConversation(db, from, messageBody, ctx.memoria);
-        return;
+        // Continue to AI response/intents
       }
 
       // Asesor contact intent (explicit)
@@ -1384,7 +1472,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
               // ── Get or Create Client & Vehicle ─────────────────────────────
               const { clientId, vehicleId, isNew } = await getOrCreateClientAndVehicle(
-                db, from, userName, vehiculoInfo, placa, anio?.toString()
+                db, from, userName, vehiculoInfo, placa, anio?.toString(), waProfileName
               );
 
               // ── Composed description with client name + (WhatsApp) ──────────
@@ -1448,12 +1536,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             await sendMsg(from, cleanedAi, hasUrl, wa_message_id);
           }
         }
+      }
 
-
-
-        await processIntents(db, from, messageBody, ctx);
-      } // end if (aiResponse)
-
-      await updateConversation(db, from, messageBody, ctx.memoria);
-
+      const r = await processIntents(db, from, messageBody, ctx, waProfileName);
+      await updateConversation(db, from, messageBody, ctx.memoria, r?.clientId);
 }
