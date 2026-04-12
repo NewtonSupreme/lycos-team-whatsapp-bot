@@ -711,64 +711,73 @@ export default function WhatsAppPage() {
               {/* Chat Main Area */}
               <div className="flex-1 flex flex-col min-w-0" style={{ background: '#0b141a' }}>
                 {/* Chat header */}
-                <div className="flex items-center gap-3 px-4 py-2.5 flex-shrink-0" style={{ background: '#202c33', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                  <button onClick={() => setShowMobileChat(false)} className="md:hidden w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/5">
-                    <X className="w-4 h-4" style={{ color: '#aebac1' }} />
-                  </button>
-                  <UserAvatar conv={selected} className="w-9 h-9" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium" style={{ color: '#e9edef' }}>{displayName(selected)}</p>
-                      <button onClick={startEditingName} className="p-1 hover:bg-white/5 rounded transition-colors text-white/40 hover:text-green-400">
-                        <User className="w-3 h-3" />
-                      </button>
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 md:gap-4 px-3 md:px-4 py-3 md:py-2.5 flex-shrink-0" style={{ background: '#202c33', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                  {/* Identity Row */}
+                  <div className="flex items-center gap-3 min-w-0">
+                    <button onClick={() => setShowMobileChat(false)} className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/5 transition-colors flex-shrink-0">
+                      <X className="w-5 h-5" style={{ color: '#aebac1' }} />
+                    </button>
+                    <UserAvatar conv={selected} className="w-10 h-10 md:w-11 md:h-11 flex-shrink-0 shadow-xl" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-[15px] md:text-base font-bold text-[#e9edef] leading-tight break-words">{displayName(selected)}</p>
+                        <button onClick={startEditingName} className="p-1.5 hover:bg-white/5 rounded-full transition-colors text-white/20 hover:text-green-400 flex-shrink-0">
+                          <User className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <p className="text-[12px] opacity-50 text-[#8696a0] tabular-nums">{selected.telefono}</p>
                     </div>
-                    <p className="text-[11px]" style={{ color: '#8696a0' }}>{selected.telefono}</p>
                   </div>
-                  <div className="flex items-center gap-1.5 flex-wrap md:flex-nowrap justify-end">
+
+                  {/* Actions Row (Mobile: New line with space; Desktop: Inline) */}
+                  <div className="flex items-center justify-between md:justify-end gap-3 w-full md:w-auto md:border-t-0 border-t border-white/5 pt-3 md:pt-0">
                     {timeLeftStr && (
                       <div className={cn(
-                        'flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium mr-1',
-                        isWindowOpen ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'
+                        'flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[10px] md:text-xs font-semibold flex-shrink-0 shadow-sm',
+                        isWindowOpen ? 'bg-green-500/5 text-green-400 border border-green-500/10' : 'bg-red-500/5 text-red-400 border border-red-500/10'
                       )}>
-                        <Clock className="w-3.5 h-3.5 flex-shrink-0" />
-                        <span className="whitespace-nowrap tabular-nums">{timeLeftStr}</span>
+                        <Clock className="w-3.5 h-3.5" />
+                        <span className="tabular-nums tracking-tight">{timeLeftStr}</span>
                       </div>
                     )}
-                    <button
-                      onClick={() => setMode('bot')}
-                      disabled={togglingMode || selected.estado === 'bot'}
-                      className={cn('flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all', selected.estado === 'bot' ? 'cursor-default' : 'hover:opacity-80')}
-                      style={{ background: selected.estado === 'bot' ? 'rgba(167,139,250,0.2)' : 'rgba(255,255,255,0.06)', color: selected.estado === 'bot' ? '#a78bfa' : '#8696a0', border: `1px solid ${selected.estado === 'bot' ? 'rgba(167,139,250,0.4)' : 'rgba(255,255,255,0.08)'}` }}
-                    >
-                      <Bot className="w-3.5 h-3.5 flex-shrink-0" />
-                      <span className="hidden md:inline">Bot IA</span>
-                    </button>
-                    <button
-                      onClick={() => setMode('humano')}
-                      disabled={togglingMode || selected.estado === 'humano'}
-                      className={cn('flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all', selected.estado === 'humano' ? 'cursor-default' : 'hover:opacity-80')}
-                      style={{ background: selected.estado === 'humano' ? 'rgba(251,146,60,0.2)' : 'rgba(255,255,255,0.06)', color: selected.estado === 'humano' ? '#fb923c' : '#8696a0', border: `1px solid ${selected.estado === 'humano' ? 'rgba(251,146,60,0.4)' : 'rgba(255,255,255,0.08)'}` }}
-                    >
-                      <UserCheck className="w-3.5 h-3.5 flex-shrink-0" />
-                      <span className="hidden md:inline">Humano</span>
-                    </button>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => setMode('bot')}
+                        disabled={togglingMode || selected.estado === 'bot'}
+                        className={cn('flex items-center justify-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all min-w-[75px] shadow-sm', selected.estado === 'bot' ? 'bg-[#a78bfa]/20 text-[#a78bfa] border border-[#a78bfa]/30' : 'bg-white/5 text-white/40 border border-white/10 hover:bg-white/10')}
+                      >
+                        <Bot className="w-4 h-4" />
+                        <span>Bot</span>
+                      </button>
+                      <button
+                        onClick={() => setMode('humano')}
+                        disabled={togglingMode || selected.estado === 'humano'}
+                        className={cn('flex items-center justify-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all min-w-[75px] shadow-sm', selected.estado === 'humano' ? 'bg-[#fb923c]/20 text-[#fb923c] border border-[#fb923c]/30' : 'bg-white/5 text-white/40 border border-white/10 hover:bg-white/10')}
+                      >
+                        <UserCheck className="w-4 h-4" />
+                        <span>Tú</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
                 {/* Mode strip */}
                 <div
-                  className="flex items-center gap-2 px-4 py-1.5 text-[11px] flex-shrink-0"
-                  style={{ background: isHumano ? 'rgba(251,146,60,0.08)' : 'rgba(167,139,250,0.08)', color: isHumano ? '#fb923c' : '#a78bfa', borderBottom: `1px solid ${isHumano ? 'rgba(251,146,60,0.15)' : 'rgba(167,139,250,0.15)'}` }}
+                  className="flex items-center gap-2 px-4 py-2 text-[10px] md:text-[11px] flex-shrink-0"
+                  style={{ background: isHumano ? 'rgba(251,146,60,0.06)' : 'rgba(167,139,250,0.06)', color: isHumano ? '#fb923c' : '#a78bfa', borderBottom: `1px solid ${isHumano ? 'rgba(251,146,60,0.1)' : 'rgba(167,139,250,0.1)'}` }}
                 >
-                  {isHumano ? <><UserCheck className="w-3 h-3" />Modo humano — bot pausado, respondes tú</> : <><Bot className="w-3 h-3" />Modo Bot IA — respondiendo automáticamente</>}
+                  {isHumano ? (
+                    <><UserCheck className="w-3.5 h-3.5 flex-shrink-0 opacity-80" /><span>Modo humano activo — respondes tú</span></>
+                  ) : (
+                    <><Bot className="w-3.5 h-3.5 flex-shrink-0 opacity-80" /><span>Modo Bot IA activo — respondiendo automáticamente</span></>
+                  )}
                 </div>
 
                 {/* Messages area */}
                 <div
                   ref={chatScrollRef}
                   onScroll={handleScrollEvents}
-                  className="flex-1 overflow-y-auto px-4 pt-14 pb-4 space-y-1 w-full"
+                  className="flex-1 overflow-y-auto px-4 pt-4 pb-4 space-y-1 w-full"
                   style={{ minHeight: 0, background: '#0b141a' }}
                 >
                   {/* Load more above */}
