@@ -1408,7 +1408,7 @@ async function sendContactCard(to: string, phone: string, displayName: string): 
 
 // ─── Intent Detection ──────────────────────────────────────────────────────────
 function isLocationRequest(lower: string): boolean {
-  const locKeywords = ['ubicacion', 'ubicación', 'donde est', 'dirección', 'direccion', 'llegar', 'ubicado', 'gps', 'mapa', 'como llegar', 'cómo llegar'];
+  const locKeywords = ['ubicacion', 'ubicación', 'donde est', 'dónde est', 'donde quedan', 'dónde quedan', 'ubica', 'ubican', 'dirección', 'direccion', 'llegar', 'ubicado', 'gps', 'mapa', 'como llegar', 'cómo llegar'];
   return locKeywords.some(k => lower.includes(k));
 }
 function isCertRequest(lower: string): boolean {
