@@ -20,6 +20,7 @@ const navItemsConfig = [
   { href: '/dashboard/servicios', icon: Wrench, label: 'Servicios', badge: null },
   { href: '/dashboard/agenda', icon: Calendar, label: 'Agenda', badge: null },
   { href: '/dashboard/whatsapp', icon: MessageSquare, label: 'WhatsApp', badge: null },
+  { href: '/dashboard/instagram', icon: MessageSquare, label: 'Instagram', badge: null },
   { href: '/dashboard/leads', icon: TrendingUp, label: 'Leads', badge: null },
   { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente', badge: null },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', badge: null },
@@ -36,6 +37,7 @@ export default function Sidebar() {
   const { sidebarOpen, toggleSidebar, user } = useAppStore();
   const [mounted, setMounted] = React.useState(false);
   const [unreadWa, setUnreadWa] = React.useState(0);
+  const [unreadIg, setUnreadIg] = React.useState(0);
 
   React.useEffect(() => {
     setMounted(true);
@@ -43,28 +45,42 @@ export default function Sidebar() {
     // Fetch unread messages
     const fetchUnread = async () => {
       if (!supabase) return;
-      const { data } = await supabase.from('conversaciones').select('mensajes_sin_leer');
-      if (data) {
-        setUnreadWa(data.reduce((acc, row) => acc + (row.mensajes_sin_leer || 0), 0));
+      const { data: waData } = await supabase.from('conversaciones').select('mensajes_sin_leer');
+      if (waData) {
+        setUnreadWa(waData.reduce((acc, row) => acc + (row.mensajes_sin_leer || 0), 0));
+      }
+      const { data: igData } = await supabase.from('conversaciones_instagram').select('mensajes_sin_leer');
+      if (igData) {
+        setUnreadIg(igData.reduce((acc, row) => acc + (row.mensajes_sin_leer || 0), 0));
       }
     };
     fetchUnread();
 
     if (!supabase) return;
-    const channel = supabase.channel('sidebar-unread')
+    const channel1 = supabase.channel('sidebar-unread')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'conversaciones' }, () => {
+        fetchUnread();
+      })
+      .subscribe();
+    
+    const channel2 = supabase.channel('sidebar-unread-ig')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversaciones_instagram' }, () => {
         fetchUnread();
       })
       .subscribe();
 
     return () => {
-      supabase?.removeChannel(channel);
+      supabase?.removeChannel(channel1);
+      supabase?.removeChannel(channel2);
     };
   }, []);
 
   const navItems = navItemsConfig.map(item => {
     if (item.label === 'WhatsApp') {
       return { ...item, badge: unreadWa > 0 ? unreadWa.toString() : null };
+    }
+    if (item.label === 'Instagram') {
+      return { ...item, badge: unreadIg > 0 ? unreadIg.toString() : null };
     }
     return item;
   });
