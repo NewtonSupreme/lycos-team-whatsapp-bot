@@ -250,14 +250,13 @@ SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gr
 - "Intermedio": significa resonador. Da el precio del resonador ($40) y menciona que si requiere tubería adicional, el metro sale en $35 (hierro) o $50 (aluminizado/especial según catálogo).
 - El Sistema de Escape Completo Incluye: Silenciador, Resonador, Tubería, Flexible, Bajante, gomas y Empacaduras. En este caso específico de sistema completo, debe venir al taller para el precio exacto.
 - Silenciadores PLANOS (Ej. Malibú): NO TENEMOS DISPONIBILIDAD de planos. Solo vendemos silenciadores Redondos. PERO, hay carros planos que sí tienen espacio para adaptar uno redondo, si el cliente tiene duda pídele que nos visite para revisión de espacio y envíale nuestra ubicación.
-- CL27: hasta 1.3L → $40
-- CL30: hasta 1.3L → $40
-- CL40: hasta 1.5L → $50
-- CLH40: hasta 2.0L → $60
-- CL60: desde 3.8L → $90
-- CLC60: camión → $90
-- CLCP60/CLP60: platanero → $90
-- CLK60: fabricación especial $100 — SOLO para Kia Sportage, Hyundai Tucson y Dodge Caliber
+- **REGLA OBLIGATORIA DE CILINDRAJE**: Si el cliente pregunta por el precio de un silenciador para su carro (ej: Aveo, Corolla, etc.), **DEBES preguntarle OBLIGATORIAMENTE el cilindraje o versión del motor** (ej: 1.6, 2.0, 1.4...) si no lo ha mencionado. Explícale que hay versiones "grande" o "pequeño" y el silenciador cambia según el motor y le das luego los precios para las diferentes versiones.
+- **LISTA DE PRECIOS POR MOTOR** (instalación incluida):
+  - CL27 / CL30: Motores hasta 1.3L → $40
+  - CL40: Motores hasta 1.5L → $50
+  - CLH40: Motores 1.6L hasta 2.0L (Caso común: Aveo 1.6) → $60
+  - CL60: Motores desde 3.8L → $90
+  - CLK60: Fabricación especial $100 — SOLO para Kia Sportage, Hyundai Tucson y Dodge Caliber
 - Resonador: $40
 - Flowmaster Serie 40: $140 (instalación incluida, flexibles doble malla)
 - Flexibles doble malla: $40
@@ -315,20 +314,21 @@ CASHEA:
 - PAGOS: Aclara que la inicial se paga únicamente en el taller y el resto de las cuotas a través de la plataforma de Cashea cada 14 días.
 
 CITAS — REGLAS ABSOLUTAS:
-Pedir OBLIGATORIAMENTE antes de confirmar la cita: nombre completo, placa del vehículo (si la tiene), MARCA Y MODELO del vehículo, servicio, día y hora exacta (Lunes-Sábados, 8AM-5PM).
+Pedir OBLIGATORIAMENTE antes de confirmar la cita: nombre completo, placa del vehículo (si la tiene), MARCA Y MODELO del vehículo, servicio y el DÍA exacto (Lunes-Sábados). **La hora es opcional**, si el cliente no la da, asúmela a las 08:00 AM por defecto.
 REGLA DE ORO ABSOLUTA DE CITAS: ESTÁ TERMINANTEMENTE PROHIBIDO imprimir la etiqueta [CITA] si el cliente NO te ha dado:
   1. Su NOMBRE COMPLETO
   2. La MARCA Y MODELO del vehículo
-Si no tienes estos dos datos, DEBES pedírselos primero sin excepción. No hay ninguna excepción a esta regla.
+  3. El DÍA de la cita
+Si no tienes estos datos, DEBES pedírselos primero sin excepción.
 Si no da la placa, insiste una vez amablemente, si sigue sin darla procede con nombre y modelo.
 Calcula la fecha exacta desde hoy usando FECHA/HORA VENEZUELA. Nunca agendes domingos.
-VERIFICA estrictamente si tiene citas registradas o si el horario está ocupado globalmente. NUNCA agendes si choca.
-ORDEN DEL SISTEMA (CRÍTICO): Cuando tú y el cliente ya acordaron de forma exitosa los datos (Nombre, Vehículo, Placa, Día y Hora), DEBES obligatoriamente imprimir la siguiente etiqueta oculta de sistema AL FINAL de tu respuesta (solo UNA vez):
-[CITA: AAAA-MM-DD HH:MM | descripcion breve del servicio | marca modelo del vehiculo]
-Ejemplo: "Perfecto Carlos, tu cita quedó para el martes a las 10:00 AM. ¡Te esperamos! 😊 [CITA: 2026-03-31 10:00 | Cambio de aceite y filtro | Toyota Hilux]"
-La descripción debe ser breve (el servicio que quiere el cliente). El vehículo toma la forma Marca Modelo.
+VERIFICA estrictamente si tiene citas registradas o si el horario está ocupado globalmente.
+ORDEN DEL SISTEMA (CRÍTICO): Cuando tú y el cliente ya acordaron de forma exitosa los datos (Nombre, Vehículo y Día), DEBES obligatoriamente imprimir la siguiente etiqueta oculta de sistema AL FINAL de tu respuesta (solo UNA vez):
+[CITA: AAAA-MM-DD HH:MM | descripción breve | marca modelo]
+(Si el cliente no dio la hora, usa 08:00 de forma predeterminada en la etiqueta o pones no especificada).
+La descripción debe ser breve. El vehículo toma la forma Marca Modelo.
 Hora en formato 24h (ejemplo: 02:30 PM es 14:30).
-Si el cliente todavía NO ha confirmado el día y la hora exacta, NO imprimas la etiqueta.
+Si el cliente todavía NO ha confirmado el día, NO imprimas la etiqueta.
 ASESOR: Solo mencionarlo si el cliente lo pide explícitamente, para concretar RCV, hay queja compleja, o el bot no puede resolver.
 Cuando corresponda di: "Te envío el contacto de nuestro asesor 👇" (sistema envía la tarjeta).
 
@@ -1409,8 +1409,11 @@ async function sendContactCard(to: string, phone: string, displayName: string): 
 // ─── Intent Detection ──────────────────────────────────────────────────────────
 function isLocationRequest(lower: string): boolean {
   const locKeywords = ['ubicacion', 'ubicación', 'donde est', 'dirección', 'direccion', 'llegar', 'ubicado', 'gps', 'mapa', 'como llegar', 'cómo llegar'];
+  return locKeywords.some(k => lower.includes(k));
+}
+function isCertRequest(lower: string): boolean {
   const certKeywords = ['certificado medico', 'certificado médico', 'cert medico', 'cert médico', 'certificado med'];
-  return locKeywords.some(k => lower.includes(k)) || certKeywords.some(k => lower.includes(k));
+  return certKeywords.some(k => lower.includes(k));
 }
 function isSocialRequest(lower: string): boolean {
   if (['ya los sigo', 'ya lo sigo', 'ya te sigo', 'los sigo', 'lo sigo'].some(k => lower.includes(k))) return false;
@@ -1434,21 +1437,29 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
       const lowerBody = messageBody.toLowerCase();
 
-      // Location intent
+      // Location intent (GPS + Video)
       if (isLocationRequest(lowerBody)) {
-        await sendMsg(from, '📍 Estamos en San Antonio de los Altos, Miranda. Te mando el mapa y un video de cómo llegar 👇');
-        await delay(700);
-        await sendMsg(from, 'https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
-        await delay(600);
-        await sendMsg(from, 'https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
-        await delay(600);
-        await sendMsg(from, 'Siguenos en nuestras redes 📱👇');
-        await delay(400);
-        await sendMsg(from, IG_LINK, true);
-        await delay(500);
-        await sendMsg(from, TT_LINK, true);
+        console.log(`📍 [${from}] Intento de ubicación detectado. Enviando secuencia...`);
+        await sendMsg(from, '¡Con gusto! 📍 Aquí tienes nuestra ubicación exacta en San Antonio de los Altos y un video de cómo llegar desde la Panamericana 👇');
+        await delay(800);
+        // Map Link
+        await sendMsg(from, '📍 *Google Maps:* https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
+        await delay(1000);
+        // Video Link
+        await sendMsg(from, '🎥 *Video de cómo llegar:* https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
+        await delay(800);
+        await sendMsg(from, '¿Tienes alguna otra duda o quieres agendar una cita? 😊');
+        
         await updateConversation(db, from, messageBody, ctx.memoria);
-        // Continue to AI response in case there are more questions in the message
+        
+        // Append system note to avoid AI redundancy
+        messageBody += '\n[SISTEMA: Ya se le envió la ubicación y el video de cómo llegar al cliente automáticamente. NO los repitas en tu respuesta.]';
+      }
+
+      // Medical certificate intent (Handled by AI, but we prevent location trigger)
+      if (isCertRequest(lowerBody)) {
+        // Just let it pass to AI, which has the prices and information.
+        // The separate detection ensures it doesn't enter the location block above.
       }
 
       // Social media intent
@@ -1486,12 +1497,12 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       if (aiResponse) {
         let cleanedAi = cleanForWhatsApp(aiResponse);
 
-        // ── Appointment Parsing ──
         // Format: [CITA: AAAA-MM-DD HH:MM | descripcion | marca modelo]
-        const citaMatch = cleanedAi.match(/\[CITA:\s*(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?:\s*\|\s*([^|\]]+?))?(?:\s*\|\s*([^\]]+?))?\s*\]/);
+        // Now time is optional: [CITA: AAAA-MM-DD | descripcion | marca modelo]
+        const citaMatch = cleanedAi.match(/\[CITA:\s*(\d{4}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}))?(?:\s*\|\s*([^|\]]+?))?(?:\s*\|\s*([^\]]+?))?\s*\]/);
         if (citaMatch) {
           const fecha = citaMatch[1];
-          const hora = citaMatch[2];
+          const hora = citaMatch[2] || '08:00'; // Default to 8 AM if not provided
           const servicio = citaMatch[3]?.trim() || '';
           const vehiculo = citaMatch[4]?.trim() || '';
           cleanedAi = cleanedAi.replace(/\[CITA:[^\]]+\]/g, '').trim();

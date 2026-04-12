@@ -100,7 +100,7 @@ async function loadDbContext(): Promise<string> {
         `=== INVENTARIO (${inventario.length} productos) ===\n` +
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         inventario.map((i: any) =>
-          `• ID:${i.id} | Categoría: ${i.categoria} | ${i.nombre}${i.codigo ? ' [' + i.codigo + ']' : ''} | Stock: ${i.stock}${i.stock_minimo != null ? ' (mín:' + i.stock_minimo + ')' : ''} | Precio: $${i.precio_usd ?? '-'} | ${i.unidad || ''}`
+          `• ID:${i.id} | Categoría: ${i.categoria} | ${i.nombre}${i.codigo ? ' [' + i.codigo + ']' : ''} | Stock: ${i.stock}${i.stock_minimo != null ? ' (mín:' + i.stock_minimo + ')' : ''} | Precio: $${i.precio_usd ?? '-'} | ${i.unidad || ''}${i.notas ? ' | Notas: ' + i.notas : ''}`
         ).join('\n')
       );
     } else {
