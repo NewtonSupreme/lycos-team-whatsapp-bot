@@ -50,7 +50,7 @@ export default function TallerPage() {
       })
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    return () => { supabase?.removeChannel(channel); };
   }, [fetchTrabajos]);
 
   const handleRegister = async (e: React.FormEvent) => {
