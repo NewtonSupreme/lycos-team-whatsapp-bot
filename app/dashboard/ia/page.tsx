@@ -12,10 +12,10 @@ interface Message { id: string; role: 'user' | 'assistant'; content: string; tim
 const DEMO_QUESTIONS = [
   '¿Cuántos clientes tenemos registrados?',
   '¿Cuáles son las citas de hoy?',
+  'Registrar venta de 1 silenciador CL40',
+  'Registra un nuevo trabajo: Cambio de aceite y filtro, tipo mecanica',
+  '¿Cuántos silenciadores hemos vendido?',
   '¿Qué productos tenemos en inventario y cuál es el stock?',
-  '¿Qué servicios están activos actualmente?',
-  '¿Cuáles citas están pendientes?',
-  '¿Qué vehículos tenemos registrados?',
 ];
 
 export default function IAPage() {

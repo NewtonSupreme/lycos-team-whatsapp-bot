@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer,
+  Tooltip, ResponsiveContainer, BarChart, Bar
 } from 'recharts';
 import StatCard from '@/components/dashboard/StatCard';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -50,6 +50,16 @@ interface WaChartPoint {
   mensajes: number;
 }
 
+interface SilenciadoresChartPoint {
+  fecha: string;
+  vendidos: number;
+}
+
+interface ServiciosChartPoint {
+  fecha: string;
+  trabajos: number;
+}
+
 const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: unknown[]; label?: string }) => {
   if (active && payload && (payload as { value: number }[]).length) {
     return (
@@ -80,6 +90,8 @@ export default function DashboardPage() {
   const [recentServicios, setRecentServicios] = useState<RecentServicio[]>([]);
   const [recentConvs, setRecentConvs] = useState<RecentConv[]>([]);
   const [waChart, setWaChart] = useState<WaChartPoint[]>([]);
+  const [silenciadoresChart, setSilenciadoresChart] = useState<SilenciadoresChartPoint[]>([]);
+  const [serviciosChart, setServiciosChart] = useState<ServiciosChartPoint[]>([]);
   const [loading, setLoading] = useState(true);
 
   const loadData = useCallback(async () => {
@@ -114,6 +126,10 @@ export default function DashboardPage() {
       supabase.from('conversaciones').select('id, telefono, ultimo_mensaje, ultimo_mensaje_at, mensajes_sin_leer, estado, datos_cliente').order('ultimo_mensaje_at', { ascending: false }).limit(6),
       // WA messages today per hour
       supabase.from('mensajes_whatsapp').select('created_at').gte('created_at', `${today}T00:00:00`).lt('created_at', `${today}T23:59:59`).eq('tipo', 'entrante'),
+      // Silenciadores ultimos 7 dias
+      supabase.from('ventas_silenciadores').select('fecha, cantidad').gte('fecha', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()),
+      // Servicios registrados ultimos 7 dias
+      supabase.from('servicios').select('created_at').gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()),
     ]);
 
     setStats({
@@ -143,18 +159,61 @@ export default function DashboardPage() {
       setWaChart(Object.entries(hourMap).map(([hora, mensajes]) => ({ hora, mensajes })));
     }
 
+    // Build daily chart for Silenciadores and Servicios
+    const silMap: Record<string, number> = {};
+    const servMap: Record<string, number> = {};
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 86400000);
+      const dateKey = d.toISOString().split('T')[0];
+      silMap[dateKey] = 0;
+      servMap[dateKey] = 0;
+    }
+    
+    // Extracted Silenciadores
+    const dataSilenciadores = await supabase.from('ventas_silenciadores').select('fecha, cantidad').gte('fecha', new Date(Date.now() - 7 * 86400000).toISOString());
+    if (dataSilenciadores.data) {
+      dataSilenciadores.data.forEach((v: { fecha: string; cantidad: number }) => {
+        const dateKey = v.fecha.split('T')[0];
+        if (silMap[dateKey] !== undefined) {
+          silMap[dateKey] += v.cantidad;
+        }
+      });
+    }
+    
+    // Extracted Servicios
+    const dataServicios = await supabase.from('servicios').select('created_at').gte('created_at', new Date(Date.now() - 7 * 86400000).toISOString());
+    if (dataServicios.data) {
+      dataServicios.data.forEach((s: { created_at: string }) => {
+        const dateKey = s.created_at.split('T')[0];
+        if (servMap[dateKey] !== undefined) {
+          servMap[dateKey] += 1;
+        }
+      });
+    }
+
+    setSilenciadoresChart(Object.entries(silMap).map(([fecha, vendidos]) => ({
+      fecha: new Date(fecha).toLocaleDateString('es-VE', { weekday: 'short', day: 'numeric' }),
+      vendidos,
+    })));
+    setServiciosChart(Object.entries(servMap).map(([fecha, trabajos]) => ({
+      fecha: new Date(fecha).toLocaleDateString('es-VE', { weekday: 'short', day: 'numeric' }),
+      trabajos,
+    })));
+
     setLoading(false);
   }, []);
 
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  useEffect(() => {
     loadData();
   }, [loadData]);
 
-  // Real-time subscriptions
   useEffect(() => {
     if (!supabase) return;
-    const tables = ['mensajes_whatsapp', 'conversaciones', 'servicios', 'citas', 'clientes', 'vehiculos'];
+    const tables = ['mensajes_whatsapp', 'conversaciones', 'servicios', 'citas', 'clientes', 'vehiculos', 'ventas_silenciadores'];
     const channels = tables.map(table =>
       supabase!.channel(`dashboard-${table}`)
         .on('postgres_changes', { event: '*', schema: 'public', table }, () => { loadData(); })
@@ -206,40 +265,113 @@ export default function DashboardPage() {
         <StatCard title="Conversations" value={fmt(stats.conversacionesHoy)} icon={MessageSquare} subtitle="activas hoy" color="green" delay={350} />
       </div>
 
-      {/* Chart: mensajes WhatsApp hoy por hora */}
-      <Card>
-        <CardHeader className="pb-0">
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-base">Mensajes WhatsApp — Hoy</CardTitle>
-              <CardDescription className="text-xs">Mensajes entrantes de clientes por hora (Venezuela)</CardDescription>
+      {/* Charts Array */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Chart: mensajes WhatsApp hoy por hora */}
+        <Card>
+          <CardHeader className="pb-0">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-base">Mensajes WhatsApp — Hoy</CardTitle>
+                <CardDescription className="text-xs">Mensajes entrantes de clientes por hora</CardDescription>
+              </div>
             </div>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-4">
-          {waChart.length === 0 ? (
-            <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">
-              Sin mensajes hoy aún
+          </CardHeader>
+          <CardContent className="pt-4">
+            {waChart.length === 0 ? (
+              <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">
+                Sin mensajes hoy aún
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={180}>
+                <AreaChart data={waChart} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorMsgs" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#25d366" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#25d366" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+                  <XAxis dataKey="hora" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} className="text-muted-foreground" />
+                  <YAxis tick={{ fontSize: 10 }} axisLine={false} tickLine={false} className="text-muted-foreground" allowDecimals={false} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area type="monotone" dataKey="mensajes" name="Mensajes" stroke="#25d366" strokeWidth={2} fill="url(#colorMsgs)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Chart: Ventas de Silenciadores */}
+        <Card>
+          <CardHeader className="pb-0">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-base">Silenciadores (7 días)</CardTitle>
+                <CardDescription className="text-xs">Distribución de ventas</CardDescription>
+              </div>
+              <a href="/dashboard/silenciadores" className="text-xs text-primary flex items-center gap-1 hover:underline">
+                Ir <ArrowRight className="w-3 h-3" />
+              </a>
             </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={180}>
-              <AreaChart data={waChart} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="colorMsgs" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#25d366" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#25d366" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-                <XAxis dataKey="hora" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} className="text-muted-foreground" />
-                <YAxis tick={{ fontSize: 10 }} axisLine={false} tickLine={false} className="text-muted-foreground" allowDecimals={false} />
-                <Tooltip content={<CustomTooltip />} />
-                <Area type="monotone" dataKey="mensajes" name="Mensajes" stroke="#25d366" strokeWidth={2} fill="url(#colorMsgs)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          )}
-        </CardContent>
-      </Card>
+          </CardHeader>
+          <CardContent className="pt-4">
+            {silenciadoresChart.every(item => item.vendidos === 0) ? (
+              <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">
+                Sin ventas en los últimos 7 días
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart data={silenciadoresChart} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+                  <XAxis dataKey="fecha" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} className="text-muted-foreground" />
+                  <YAxis tick={{ fontSize: 10 }} axisLine={false} tickLine={false} className="text-muted-foreground" allowDecimals={false} />
+                  <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255, 255, 255, 0.05)' }} />
+                  <Bar dataKey="vendidos" name="Silenciadores" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Chart: Registro de Taller (Servicios) */}
+        <Card>
+          <CardHeader className="pb-0">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-base">Taller (7 días)</CardTitle>
+                <CardDescription className="text-xs">Servicios / Trabajos Registrados</CardDescription>
+              </div>
+              <a href="/dashboard/servicios" className="text-xs text-blue-400 flex items-center gap-1 hover:underline">
+                Ir <ArrowRight className="w-3 h-3" />
+              </a>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-4">
+            {serviciosChart.every(item => item.trabajos === 0) ? (
+              <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">
+                Sin trabajos en los últimos 7 días
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={180}>
+                <AreaChart data={serviciosChart} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorServ" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#60a5fa" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#60a5fa" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+                  <XAxis dataKey="fecha" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} className="text-muted-foreground" />
+                  <YAxis tick={{ fontSize: 10 }} axisLine={false} tickLine={false} className="text-muted-foreground" allowDecimals={false} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area type="monotone" dataKey="trabajos" name="Trabajos" stroke="#60a5fa" strokeWidth={2} fill="url(#colorServ)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Bottom row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

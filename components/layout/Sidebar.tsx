@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Users, Car, Wrench, Calendar, MessageSquare,
   Bot, FileText, Settings, ChevronLeft, ChevronRight,
-  Activity, LogOut, TrendingUp, UserCircle
+  Activity, LogOut, TrendingUp, UserCircle, Package
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -18,9 +18,11 @@ const navItemsConfig = [
   { href: '/dashboard/clientes', icon: Users, label: 'Clientes', badge: null },
   { href: '/dashboard/vehiculos', icon: Car, label: 'Vehículos', badge: null },
   { href: '/dashboard/servicios', icon: Wrench, label: 'Servicios', badge: null },
+  { href: '/dashboard/taller', icon: Wrench, label: 'Taller', badge: null },
   { href: '/dashboard/agenda', icon: Calendar, label: 'Agenda', badge: null },
   { href: '/dashboard/whatsapp', icon: MessageSquare, label: 'WhatsApp', badge: null },
   { href: '/dashboard/leads', icon: TrendingUp, label: 'Leads', badge: null },
+  { href: '/dashboard/silenciadores', icon: Package, label: 'Silenciadores', badge: null },
   { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente', badge: null },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', badge: null },
   { href: '/dashboard/actividad', icon: Activity, label: 'Actividad', badge: null },

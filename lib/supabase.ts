@@ -281,3 +281,19 @@ export async function fetchDashboardStats() {
   ]);
   return { totalClientes, totalVehiculos, serviciosActivos, conversacionesHoy };
 }
+
+// ─── Ventas Silenciadores ───────────────────────────────────────────────────
+export async function fetchVentasSilenciadores() {
+  if (!supabase) return null;
+  const last30Days = new Date();
+  last30Days.setDate(last30Days.getDate() - 30);
+  
+  const { data, error } = await supabase
+    .from('ventas_silenciadores')
+    .select('*')
+    .gte('fecha', last30Days.toISOString())
+    .order('fecha', { ascending: false });
+  
+  if (error) throw error;
+  return data;
+}

@@ -5,6 +5,7 @@ import {
   fetchCitas,
   fetchServicios,
   fetchInventario,
+  fetchVentasSilenciadores
 } from '@/lib/supabase';
 
 const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
@@ -110,6 +111,23 @@ async function loadDbContext(): Promise<string> {
     sections.push(`=== INVENTARIO: Error al cargar (${e}) ===`);
   }
 
+  // Ventas de Silenciadores (Últimos 30 días)
+  try {
+    const ventasSilenciadores = await fetchVentasSilenciadores();
+    if (ventasSilenciadores && ventasSilenciadores.length > 0) {
+      sections.push(
+        `=== VENTAS DE SILENCIADORES (Últimos 30 días) ===\n` +
+        ventasSilenciadores.map((v: any) =>
+          `• Fecha: ${new Date(v.fecha).toLocaleDateString('es-VE')} | Cantidad: ${v.cantidad} | Modelo: ${v.modelo || 'N/A'}`
+        ).join('\n')
+      );
+    } else {
+      sections.push('=== VENTAS DE SILENCIADORES: Sin ventas registradas ===');
+    }
+  } catch (e) {
+    sections.push(`=== VENTAS DE SILENCIADORES: Error al cargar (${e}) ===`);
+  }
+
   return sections.join('\n\n');
 }
 
@@ -176,6 +194,22 @@ async function executeActions(text: string): Promise<{ clean: string; results: s
           .update({ estado: p.estado, updated_at: new Date().toISOString() })
           .eq('id', p.id);
         results.push(`✅ Servicio actualizado → ${p.estado}`);
+      } else if (tipo === 'registrar_venta_silenciador') {
+        await db.from('ventas_silenciadores').insert({
+          cantidad: parseInt(p.cantidad) || 1,
+          modelo: p.modelo || null,
+          notas: p.notas || null,
+        });
+        results.push(`✅ Registrada la venta de ${p.cantidad} silenciador(es)${p.modelo ? ` modelo ${p.modelo}` : ''}.`);
+      } else if (tipo === 'registrar_servicio') {
+        const insertData: any = {
+           descripcion: p.descripcion || 'Servicio registrado por IA',
+           tipo: p.tipo || 'general',
+           estado: p.estado || 'en_proceso',
+        };
+        if (p.costo_estimado) insertData.costo_estimado = parseFloat(p.costo_estimado);
+        await db.from('servicios').insert(insertData);
+        results.push(`✅ Registro de trabajo en taller creado: ${insertData.descripcion} (${insertData.estado})`);
       }
     } catch (e) {
       results.push(`❌ Error en ${tipo}: ${e}`);
@@ -287,7 +321,9 @@ ACCIONES DE ESCRITURA (incluye exactamente al final de tu respuesta, el sistema 
 • Actualizar stock: [ACTION: actualizar_stock | id=ID | stock=NUMERO]
 • Eliminar producto inventario: [ACTION: eliminar_producto | id=ID]
 • Crear cliente: [ACTION: crear_cliente | nombre=N | apellido=A | telefono=T | email=E | cedula=CI]
-• Actualizar servicio: [ACTION: actualizar_servicio | id=ID | estado=finalizado]
+• Actualizar estado servicio: [ACTION: actualizar_servicio | id=ID | estado=finalizado]
+• Registrar Nuevo Trabajo de Taller: [ACTION: registrar_servicio | descripcion=Texto | tipo=mecanica | estado=en_proceso | costo_estimado=Numero]
+• Registrar Venta de Silenciador: [ACTION: registrar_venta_silenciador | cantidad=Numero | modelo=ModeloOpcional | notas=NotasOpcionales]
 
 TONO: Profesional, directo, español venezolano. Emojis mínimos. Proporciona tablas o listas cuando sea útil.
 HORARIO: L–Sáb 8AM–5PM | Dom: Cerrado | +58 412-334-3519 | lycosteam7@gmail.com
