@@ -326,12 +326,17 @@ Si no tienes estos datos, DEBES pedírselos primero sin excepción.
 Si no da la placa, insiste una vez amablemente, si sigue sin darla procede con nombre y modelo.
 Calcula la fecha exacta desde hoy usando FECHA/HORA VENEZUELA. Nunca agendes domingos.
 VERIFICA estrictamente si tiene citas registradas o si el horario está ocupado globalmente.
-ORDEN DEL SISTEMA (CRÍTICO): Cuando tú y el cliente ya acordaron de forma exitosa los datos (Nombre, Vehículo y Día), DEBES obligatoriamente imprimir la siguiente etiqueta oculta de sistema AL FINAL de tu respuesta (solo UNA vez):
+ORDEN DEL SISTEMA #1 (CITAS): Cuando tú y el cliente ya acordaron de forma exitosa los datos (Nombre, Vehículo y Día), DEBES obligatoriamente imprimir la siguiente etiqueta oculta de sistema AL FINAL de tu respuesta (solo UNA vez):
 [CITA: AAAA-MM-DD HH:MM | descripción breve | marca modelo]
 (Si el cliente no dio la hora, usa 08:00 de forma predeterminada en la etiqueta o pones no especificada).
 La descripción debe ser breve. El vehículo toma la forma Marca Modelo.
 Hora en formato 24h (ejemplo: 02:30 PM es 14:30).
 Si el cliente todavía NO ha confirmado el día, NO imprimas la etiqueta.
+
+ORDEN DEL SISTEMA #2 (NOMBRE DEL CLIENTE - CRÍTICO): Si en la conversación el cliente menciona de forma CLARA y DIRECTA su nombre real (ej. "soy Juan", "me llamo María" o responde a tu pregunta "¿con quién tengo el gusto?" con "Arturo"), DEBES obligatoriamente imprimir al final de tu respuesta:
+[NOMBRE: Nombre Del Cliente]
+ESTO ES VITAL. NUNCA lo uses para lugares (ej: "soy de Charallave") ni servicios. Úsalo ÚNICAMENTE cuando detectes certeramente el nombre de la persona. Si ya tienes el nombre en memoria no hace falta que repitas la etiqueta. NO uses el nombre de perfil de WhatsApp si es genérico o un emoji.
+
 ASESOR: Solo mencionarlo si el cliente lo pide explícitamente, para concretar RCV, hay queja compleja, o el bot no puede resolver.
 Cuando corresponda di: "Te envío el contacto de nuestro asesor 👇" (sistema envía la tarjeta).
 
@@ -1045,11 +1050,19 @@ async function processIntents(
     'dias', 'noches', 'tardes', 'gracias', 'okay', 'bueno', 'bien',
     'precio', 'cita', 'servicio', 'taller', 'carro', 'vehiculo', 'favor',
     'presupuesto', 'ubicacion', 'donde', 'dirección', 'direccion', 'llegar',
-    'metro', 'silenciador', 'resonador', 'flexible', 'cola', 'filtro', 'aceite'
+    'metro', 'silenciador', 'resonador', 'flexible', 'cola', 'filtro', 'aceite',
+    'charallave', 'caracas', 'miranda', 'valencia', 'maracay', 'teques', 'antonio',
+    'guarenas', 'guatire', 'cua', 'ocumare', 'maracaibo', 'barquisimeto', 'petare',
+    'chacao', 'sucre', 'baruta', 'hatillo', 'latillo', 'zulia', 'aragua', 'carabobo',
+    'falcon', 'falcón', 'lara', 'merida', 'mérida', 'tachira', 'táchira', 'trujillo',
+    'vargas', 'laguaira', 'guaira', 'apure', 'bolivar', 'bolívar', 'amazonas', 'delta', 
+    'amacuro', 'monagas', 'anzoátegui', 'anzoategui', 'nueva', 'esparta', 'margarita',
+    'yaracuy', 'cojedes', 'portuguesa', 'barinas', 'guarico', 'guárico', 'de', 'del', 
+    'en', 'aqui', 'alla', 'allá', 'soy', 'vengo', 'estoy'
   ];
   
-  // 1. Pattern with prefix (Soy Juan, Me llamo Pedro...)
-  const nameMatch = userMsg.match(/(?:soy|me llamo|mi nombre es|mi nombre|llámame|llamame)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ]{1,}(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñA-ZÁÉÍÓÚÑ]{1,})?)/i);
+  // 1. Pattern with prefix (Soy Juan, Me llamo Pedro...) - Negative lookahead prevents matching locations
+  const nameMatch = userMsg.match(/(?:soy|me llamo|mi nombre es|mi nombre|llámame|llamame)\s+(?!de\b|del\b|en\b|de\s+la\b|el\b|la\b)([A-ZÁÉÍÓÚÑa-záéíóúñ]{2,}(?:\s+[A-ZÁÉÍÓÚÑa-záéíóúñ]{2,})?)/i);
   
   // 2. Fallback: if message is very short (1-3 words) and starts with capitalized words, it might be just a name
   // But ONLY if it's not a common command or service
@@ -1499,6 +1512,25 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
       if (aiResponse) {
         let cleanedAi = cleanForWhatsApp(aiResponse);
+
+        // ── Extract Client Name via AI Tag ────────────────────────────────
+        const nombreMatch = cleanedAi.match(/\[NOMBRE:\s*([^\]]+?)\]/i);
+        if (nombreMatch) {
+            const aiDetectedName = nombreMatch[1].trim();
+            cleanedAi = cleanedAi.replace(/\[NOMBRE:[^\]]+\]/gi, '').trim();
+            
+            const AI_NAME_BLACKLIST = ['cliente','usuario','hola','buenas','buenos','dias','noches','tardes','precio','cita','servicio','taller','vehiculo', 'whatsapp'];
+            if (!AI_NAME_BLACKLIST.some(w => aiDetectedName.toLowerCase().includes(w))) {
+              ctx.memoria.nombre = aiDetectedName;
+              try {
+                if (db) {
+                  await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria }, { onConflict: 'telefono' });
+                  await getOrCreateClientAndVehicle(db, from, aiDetectedName, '', '', undefined, waProfileName);
+                  console.log(`🤖 AI Nombre Extraido y Guardado: ${aiDetectedName}`);
+                }
+              } catch (e) { console.error('Error saving AI detected name:', e); }
+            }
+        }
 
         // Format: [CITA: AAAA-MM-DD HH:MM | descripcion | marca modelo]
         // Now time is optional: [CITA: AAAA-MM-DD | descripcion | marca modelo]
