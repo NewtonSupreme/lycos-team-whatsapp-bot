@@ -925,33 +925,54 @@ REGLAS CRITICAS:
   const contents = [...ctx.historia, { role: 'user', parts: [{ text: userMessage }] }];
 
   console.log(`🧠 Calling Gemini with model: ${GEMINI_MODEL}`);
-  try {
-    const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: systemPrompt }] },
-          contents,
-          generationConfig: { temperature: 0.75, maxOutputTokens: 700, topK: 40, topP: 0.95 },
-          safetySettings: [
-            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-          ],
-        }),
+  const reqBody = JSON.stringify({
+    system_instruction: { parts: [{ text: systemPrompt }] },
+    contents,
+    generationConfig: { temperature: 0.75, maxOutputTokens: 700, topK: 40, topP: 0.95 },
+    safetySettings: [
+      { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+      { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+    ],
+  });
+
+  let attempts = 0;
+  const maxAttempts = 3;
+
+  while (attempts < maxAttempts) {
+    attempts++;
+    try {
+      const resp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: reqBody,
+        }
+      );
+      if (!resp.ok) { 
+        const errText = await resp.text();
+        console.error(`❌ Gemini Error [${resp.status}] (Intento ${attempts}/${maxAttempts}):`, errText.substring(0, 500)); 
+        if ((resp.status === 503 || resp.status === 429) && attempts < maxAttempts) {
+          console.log(`⏳ Retrying Gemini en ${attempts * 2} segundos...`);
+          await delay(attempts * 2000);
+          continue;
+        }
+        return null; 
       }
-    );
-    if (!resp.ok) { 
-      const errText = await resp.text();
-      console.error(`❌ Gemini Error [${resp.status}]:`, errText.substring(0, 500)); 
+      const data = await resp.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+      if (text) console.log(`✅ Gemini: "${text.substring(0, 70)}..."`);
+      return text;
+    } catch (e) { 
+      console.error(`❌ getAIResponse Exception (Intento ${attempts}/${maxAttempts}):`, e); 
+      if (attempts < maxAttempts) {
+        await delay(attempts * 2000);
+        continue;
+      }
       return null; 
     }
-    const data = await resp.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || null;
-    if (text) console.log(`✅ Gemini: "${text.substring(0, 70)}..."`);
-    return text;
-  } catch (e) { console.error('❌ getAIResponse:', e); return null; }
+  }
+  return null;
 }
 
 async function transcribeAudio(base64Data: string, mimeType: string): Promise<string | null> {
@@ -1624,6 +1645,22 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             await sendMsg(from, cleanedAi, hasUrl, wa_message_id);
           }
         }
+      } else {
+        console.warn(`⏳ [${from}] Fallo total de IA (Posible Error 503/429). Programando reintento en 45 segundos...`);
+        const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000';
+        setTimeout(() => {
+          fetch(`${baseUrl}/api/whatsapp/webhook`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              object: 'whatsapp_cron_retry',
+              from: from,
+              messageBody: messageBody,
+              insertedTimestamp: new Date().toISOString(),
+              wa_message_id: wa_message_id
+            })
+          }).catch(e => console.error('❌ Error triggering async background retry:', e));
+        }, 45000);
       }
 
       await updateConversation(db, from, messageBody, ctx.memoria, r?.clientId);
