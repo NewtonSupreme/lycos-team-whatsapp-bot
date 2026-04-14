@@ -212,8 +212,8 @@ export default function WhatsAppPage() {
   const realtimeConnectedRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [file, setFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [files, setFiles] = useState<{file: File, url: string}[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
 
   selectedRef.current = selected;
   msgsRef.current = msgs;
@@ -483,7 +483,7 @@ export default function WhatsAppPage() {
 
   // ── Send message ──────────────────────────────────────────────
   const handleSend = async () => {
-    if ((!message.trim() && !file) || !selected || sending) return;
+    if ((!message.trim() && files.length === 0) || !selected || sending) return;
     const body = message.trim();
     setMessage('');
     setSending(true);
@@ -491,46 +491,66 @@ export default function WhatsAppPage() {
     inputRef.current?.focus();
     scrollToBottom(true);
 
-    const optimisticId = `tmp-${Date.now()}`;
-    const optimistic: RawMsg = {
-      id: optimisticId,
-      from_number: 'system',
-      to_number: selected.telefono,
-      body,
-      tipo: 'saliente',
-      estado: 'enviado',
-      es_ia: false,
-      created_at: new Date().toISOString(),
-    };
-    
-    if (file) {
-      if (file.type.startsWith('image/')) optimistic.media_type = 'image';
-      else if (file.type.startsWith('video/')) optimistic.media_type = 'video';
-      else if (file.type.startsWith('audio/')) optimistic.media_type = 'audio';
-      else optimistic.media_type = 'document';
-      
-      // We will show optimistic preview if it's an image
-      if (previewUrl && optimistic.media_type === 'image') {
-         // Temp hack to display local blob on the media bubble (if supported)
-         optimistic.body = '[imagen] ' + body;
-      }
-    }
-
-    setMsgs(prev => [...prev, optimistic]);
-
     try {
-      const fd = new FormData();
-      fd.append('to', selected.telefono);
-      fd.append('message', body);
-      if (file) fd.append('file', file);
+      if (files.length > 0) {
+        // Send files sequentially
+        for (let i = 0; i < files.length; i++) {
+          const { file, url } = files[i];
+          const optimisticId = `tmp-${Date.now()}-${i}`;
+          
+          const optimistic: RawMsg = {
+            id: optimisticId,
+            from_number: 'system',
+            to_number: selected.telefono,
+            body: i === 0 ? body : '', // Only first file gets the caption
+            tipo: 'saliente',
+            estado: 'enviado',
+            es_ia: false,
+            created_at: new Date().toISOString(),
+          };
 
-      await fetch('/api/whatsapp/send', {
-        method: 'POST',
-        // fetch automatically sets Content-Type to multipart/form-data when using FormData
-        body: fd,
-      });
-      // Clear file after success
-      removeFile();
+          if (file.type.startsWith('image/')) {
+            optimistic.media_type = 'image';
+            if (url) optimistic.body = '[imagen] ' + (optimistic.body || '');
+          }
+          else if (file.type.startsWith('video/')) optimistic.media_type = 'video';
+          else if (file.type.startsWith('audio/')) optimistic.media_type = 'audio';
+          else optimistic.media_type = 'document';
+
+          setMsgs(prev => [...prev, optimistic]);
+
+          const fd = new FormData();
+          fd.append('to', selected.telefono);
+          if (i === 0 && body) fd.append('message', body);
+          fd.append('file', file);
+          await fetch('/api/whatsapp/send', { method: 'POST', body: fd });
+        }
+      } else {
+        // Only text
+        const optimisticId = `tmp-${Date.now()}`;
+        const optimistic: RawMsg = {
+          id: optimisticId,
+          from_number: 'system',
+          to_number: selected.telefono,
+          body,
+          tipo: 'saliente',
+          estado: 'enviado',
+          es_ia: false,
+          created_at: new Date().toISOString(),
+        };
+        setMsgs(prev => [...prev, optimistic]);
+
+        const fd = new FormData();
+        fd.append('to', selected.telefono);
+        fd.append('message', body);
+        await fetch('/api/whatsapp/send', { method: 'POST', body: fd });
+      }
+
+      // Clear files after success
+      files.forEach(f => URL.revokeObjectURL(f.url));
+      setFiles([]);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+
     } catch (e) {
       console.error('Error enviando:', e);
     } finally {
@@ -541,19 +561,21 @@ export default function WhatsAppPage() {
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
-      setFile(selectedFile);
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      setPreviewUrl(URL.createObjectURL(selectedFile));
+    const selectedFiles = Array.from(e.target.files || []);
+    if (selectedFiles.length > 0) {
+      const newFiles = selectedFiles.map(f => ({ file: f, url: URL.createObjectURL(f) }));
+      setFiles(prev => [...prev, ...newFiles]);
       inputRef.current?.focus();
     }
   };
 
-  const removeFile = () => {
-    setFile(null);
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(null);
+  const removeFile = (index: number) => {
+    setFiles(prev => {
+      const newFiles = [...prev];
+      URL.revokeObjectURL(newFiles[index].url);
+      newFiles.splice(index, 1);
+      return newFiles;
+    });
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -778,7 +800,35 @@ export default function WhatsAppPage() {
           {selected ? (
             <div className="flex-1 flex overflow-hidden">
               {/* Chat Main Area */}
-              <div className="flex-1 flex flex-col min-w-0" style={{ background: '#0b141a' }}>
+              <div 
+                className="flex-1 flex flex-col min-w-0 relative" style={{ background: '#0b141a' }}
+                onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDragging(false);
+                  const droppedFiles = Array.from(e.dataTransfer.files);
+                  if (droppedFiles.length > 0) {
+                    const newFiles = droppedFiles.map(f => ({ file: f, url: URL.createObjectURL(f) }));
+                    setFiles(prev => [...prev, ...newFiles]);
+                    inputRef.current?.focus();
+                  }
+                }}
+              >
+                {/* Drag Overlay */}
+                {isDragging && (
+                  <div className="absolute inset-x-0 bottom-0 top-[72px] z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm pointer-events-none">
+                    <div className="bg-[#202c33] p-8 rounded-2xl border-2 border-dashed border-[#00a884] flex flex-col items-center gap-4 text-center animate-in fade-in zoom-in duration-200">
+                      <div className="w-16 h-16 rounded-full bg-[#00a884]/20 flex items-center justify-center">
+                        <Paperclip className="w-8 h-8 text-[#00a884]" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-white">Suelta para adjuntar</h3>
+                        <p className="text-sm text-white/60">Los archivos se agregarán al mensaje</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {/* Chat header */}
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 md:gap-4 px-3 md:px-4 py-3 md:py-2.5 flex-shrink-0" style={{ background: '#202c33', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                   {/* Identity Row */}
@@ -988,21 +1038,23 @@ export default function WhatsAppPage() {
                 <div className="flex flex-col flex-shrink-0" style={{ background: '#202c33', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
                   
                   {/* File Preview */}
-                  {file && previewUrl && (
-                    <div className="p-3 border-b border-white/5 flex relative group">
-                      <div className="relative inline-block border-2 border-[#00a884] rounded-xl overflow-hidden shadow-lg bg-black/20">
-                        {file.type.startsWith('image/') ? (
-                          <img src={previewUrl} alt="Preview" className="h-24 w-auto object-cover max-w-[200px]" />
-                        ) : (
-                          <div className="h-24 w-28 flex flex-col items-center justify-center">
-                            {file.type.startsWith('video/') ? <Video className="w-8 h-8 opacity-70" /> : <FileText className="w-8 h-8 opacity-70" />}
-                            <span className="text-[10px] mt-2 opacity-60 px-2 line-clamp-2 text-center text-ellipsis overflow-hidden">{file.name}</span>
-                          </div>
-                        )}
-                        <button onClick={removeFile} className="absolute top-1 right-1 p-1 rounded-full bg-black/60 hover:bg-red-500/80 text-white shadow-sm transition-colors">
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                  {files.length > 0 && (
+                    <div className="p-3 border-b border-white/5 flex gap-3 overflow-x-auto custom-scrollbar">
+                      {files.map((f, idx) => (
+                        <div key={idx} className="relative inline-block border-2 border-[#00a884] rounded-xl overflow-hidden shadow-lg bg-black/20 flex-shrink-0 group">
+                          {f.file.type.startsWith('image/') ? (
+                            <img src={f.url} alt="Preview" className="h-20 w-auto object-cover min-w-[80px]" />
+                          ) : (
+                            <div className="h-20 w-24 flex flex-col items-center justify-center bg-[#111b21]">
+                              {f.file.type.startsWith('video/') ? <Video className="w-7 h-7 opacity-70 text-white" /> : <FileText className="w-7 h-7 opacity-70 text-white" />}
+                              <span className="text-[9px] mt-1 opacity-60 px-2 line-clamp-2 text-center text-ellipsis overflow-hidden text-white">{f.file.name}</span>
+                            </div>
+                          )}
+                          <button onClick={() => removeFile(idx)} className="absolute top-1 right-1 p-1 rounded-full bg-black/60 hover:bg-red-500/80 text-white md:opacity-0 md:group-hover:opacity-100 shadow-sm transition-all focus:opacity-100">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   )}
 
@@ -1011,19 +1063,24 @@ export default function WhatsAppPage() {
                       <Smile className="w-5 h-5" style={{ color: '#aebac1' }} />
                     </button>
                     
-                    <button onClick={() => fileInputRef.current?.click()} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors flex-shrink-0 mr-1">
+                    <button onClick={() => fileInputRef.current?.click()} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors flex-shrink-0 mr-1 relative">
                       <Paperclip className="w-5 h-5" style={{ color: '#aebac1' }} />
+                      {files.length > 0 && (
+                         <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#00a884] text-black text-[9px] font-bold rounded-full flex items-center justify-center pointer-events-none border border-[#202c33]">
+                           {files.length}
+                         </span>
+                      )}
                     </button>
-                    <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept="image/*,video/*,.pdf,.doc,.docx" />
+                    <input type="file" multiple ref={fileInputRef} onChange={handleFileChange} className="hidden" accept="image/*,video/*,.pdf,.doc,.docx" />
 
                     <input
                       ref={inputRef} value={message} onChange={e => setMessage(e.target.value)}
                       onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-                      placeholder={isWindowOpen ? (file ? 'Añade un comentario...' : 'Escribe un mensaje') : 'Ventana de 24h cerrada'}
+                      placeholder={isWindowOpen ? (files.length > 0 ? (files.length === 1 ? 'Añade un comentario...' : 'El comentario irá con el primer archivo...') : 'Escribe un mensaje') : 'Ventana de 24h cerrada'}
                       className="flex-1 py-2 px-4 rounded-lg text-sm outline-none"
                       style={{ background: '#2a3942', color: '#e9edef', border: 'none' }}
                     />
-                    <button onClick={handleSend} disabled={(!message.trim() && !file) || sending} className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-all" style={{ background: (message.trim() || file) && !sending ? '#00a884' : '#2a3942', opacity: (!message.trim() && !file) || sending ? 0.5 : 1 }}>
+                    <button onClick={handleSend} disabled={(!message.trim() && files.length === 0) || sending} className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-all" style={{ background: (message.trim() || files.length > 0) && !sending ? '#00a884' : '#2a3942', opacity: (!message.trim() && files.length === 0) || sending ? 0.5 : 1 }}>
                       <Send className={cn('w-4 h-4', sending && 'animate-pulse')} style={{ color: '#e9edef' }} />
                     </button>
                   </div>
