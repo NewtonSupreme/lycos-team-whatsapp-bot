@@ -244,7 +244,7 @@ export default function WhatsAppPage() {
       .from('conversaciones')
       .select('*, clientes(id, nombre, apellido, telefono)')
       .order('ultimo_mensaje_at', { ascending: false })
-      .limit(50);
+      .limit(1000);
     if (!data) return;
     setConvs(data as unknown as RawConv[]);
     if (selectedRef.current) {
@@ -411,9 +411,7 @@ export default function WhatsAppPage() {
           const phone = cur.telefono;
           if (newMsg.from_number === phone || newMsg.to_number === phone) {
             setMsgs(prev => {
-              const withoutOptimistic = prev.filter(m =>
-                !(m.id.startsWith('tmp-') && m.body === newMsg.body && m.tipo === newMsg.tipo)
-              );
+              const withoutOptimistic = prev.filter(m => !m.id.startsWith('tmp-'));
               return mergeMessages(withoutOptimistic, [newMsg]);
             });
           }
@@ -555,6 +553,7 @@ export default function WhatsAppPage() {
       console.error('Error enviando:', e);
     } finally {
       setSending(false);
+      setMsgs(prev => prev.filter(m => !m.id.startsWith('tmp-')));
       await fetchNewMsgs(selected.telefono);
       await loadConvs();
     }

@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Wrench, Loader2, RefreshCw, Car } from 'lucide-react';
+import { Wrench, Loader2, RefreshCw, Car, Trash } from 'lucide-react';
 
 interface RowServicio {
   id: string;
@@ -22,6 +22,18 @@ export default function TallerPage() {
   const [descripcion, setDescripcion] = useState('');
   const [tipo, setTipo] = useState('mecanica');
   const [estado, setEstado] = useState('en_proceso');
+
+  const deleteTrabajo = async (id: string) => {
+    if (!confirm('¿Seguro que deseas eliminar este registro?')) return;
+    if (!supabase) return;
+    const { error } = await supabase.from('servicios').delete().eq('id', id);
+    if (!error) {
+      setServicios(prev => prev.filter(s => s.id !== id));
+      fetchTrabajos();
+    } else {
+      alert('Error al eliminar registro');
+    }
+  };
 
   const fetchTrabajos = useCallback(async () => {
     if (!supabase) return;
@@ -182,6 +194,7 @@ export default function TallerPage() {
                       <th className="px-4 py-3 font-medium">Descripción</th>
                       <th className="px-4 py-3 font-medium">Tipo</th>
                       <th className="px-4 py-3 font-medium">Estado</th>
+                      <th className="px-4 py-3 font-medium w-16"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -203,6 +216,11 @@ export default function TallerPage() {
                               'bg-amber-500/20 text-amber-400 border-amber-500/20'}`}>
                             {s.estado.replace('_', ' ').toUpperCase()}
                           </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <button onClick={() => deleteTrabajo(s.id)} className="p-1.5 hover:bg-red-500/20 hover:text-red-500 text-muted-foreground rounded-lg transition-colors" title="Eliminar">
+                            <Trash className="w-4 h-4" />
+                          </button>
                         </td>
                       </tr>
                     ))}

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Package, Plus, TrendingUp, Calendar, AlertCircle } from 'lucide-react';
+import { Package, Plus, TrendingUp, Calendar, AlertCircle, Trash } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -22,6 +22,19 @@ export default function SilenciadoresPage() {
   const [modelo, setModelo] = useState('');
   const [notas, setNotas] = useState('');
   const [loading, setLoading] = useState(true);
+
+  // States for delete
+  const deleteVenta = async (id: string) => {
+    if (!confirm('¿Seguro que deseas eliminar este registro?')) return;
+    if (!supabase) return;
+    const { error } = await supabase.from('ventas_silenciadores').delete().eq('id', id);
+    if (!error) {
+      setVentas(prev => prev.filter(v => v.id !== id));
+      fetchVentas();
+    } else {
+      alert('Error eliminando la venta.');
+    }
+  };
 
   // Stats
   const [hoy, setHoy] = useState(0);
@@ -238,7 +251,8 @@ export default function SilenciadoresPage() {
                         <th className="px-4 py-3 rounded-tl-lg">Fecha</th>
                         <th className="px-4 py-3">Cantidad</th>
                         <th className="px-4 py-3">Modelo</th>
-                        <th className="px-4 py-3 rounded-tr-lg">Notas</th>
+                        <th className="px-4 py-3">Notas</th>
+                        <th className="px-4 py-3 rounded-tr-lg w-16"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -256,6 +270,11 @@ export default function SilenciadoresPage() {
                           </td>
                           <td className="px-4 py-3 font-medium">{v.modelo || '-'}</td>
                           <td className="px-4 py-3 text-xs opacity-70 truncate max-w-[200px]">{v.notas || '-'}</td>
+                          <td className="px-4 py-3 text-right">
+                            <button onClick={() => deleteVenta(v.id)} className="p-1.5 hover:bg-red-500/20 hover:text-red-500 text-muted-foreground rounded-lg transition-colors" title="Eliminar">
+                              <Trash className="w-4 h-4" />
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, BarChart, Bar
+  Tooltip, ResponsiveContainer
 } from 'recharts';
 import StatCard from '@/components/dashboard/StatCard';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -21,6 +21,7 @@ interface DashboardStats {
   serviciosActivos: number | null;
   mensajesHoy: number | null;
   conversacionesHoy: number | null;
+  conversacionesMes: number | null;
   citasHoy: number | null;
   serviciosCompletados: number | null;
   mensajesIA: number | null;
@@ -80,12 +81,19 @@ function getVzlaDateString() {
   return vzla.toISOString().split('T')[0];
 }
 
+function getVzlaFirstDayString() {
+  const now = new Date();
+  const vzla = new Date(now.getTime() + now.getTimezoneOffset() * 60000 + (-4 * 60) * 60000);
+  vzla.setDate(1);
+  return vzla.toISOString().split('T')[0];
+}
+
 export default function DashboardPage() {
   const [mounted, setMounted] = useState(false);
   const [stats, setStats] = useState<DashboardStats>({
     totalClientes: null, totalVehiculos: null, serviciosActivos: null,
-    mensajesHoy: null, conversacionesHoy: null, citasHoy: null,
-    serviciosCompletados: null, mensajesIA: null,
+    mensajesHoy: null, conversacionesHoy: null, conversacionesMes: null, 
+    citasHoy: null, serviciosCompletados: null, mensajesIA: null,
   });
   const [recentServicios, setRecentServicios] = useState<RecentServicio[]>([]);
   const [recentConvs, setRecentConvs] = useState<RecentConv[]>([]);
@@ -97,6 +105,7 @@ export default function DashboardPage() {
   const loadData = useCallback(async () => {
     if (!supabase) return;
     const today = getVzlaDateString();
+    const firstDay = getVzlaFirstDayString();
 
     const [
       { count: clientes },
@@ -104,6 +113,7 @@ export default function DashboardPage() {
       { count: serviciosActivos },
       { count: mensajesHoy },
       { count: conversacionesHoy },
+      { count: conversacionesMes },
       { count: citasHoy },
       { count: completados },
       { count: mensajesIA },
@@ -117,6 +127,8 @@ export default function DashboardPage() {
       supabase.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).gte('created_at', `${today}T00:00:00`).lt('created_at', `${today}T23:59:59`),
       // Conversaciones que tuvieron un mensaje hoy
       supabase.from('conversaciones').select('*', { count: 'exact', head: true }).gte('ultimo_mensaje_at', `${today}T00:00:00`),
+      // Conversaciones que tuvieron un mensaje este mes
+      supabase.from('conversaciones').select('*', { count: 'exact', head: true }).gte('ultimo_mensaje_at', `${firstDay}T00:00:00`),
       supabase.from('citas').select('*', { count: 'exact', head: true }).eq('fecha', today),
       supabase.from('servicios').select('*', { count: 'exact', head: true }).eq('estado', 'completado'),
       supabase.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true),
@@ -138,6 +150,7 @@ export default function DashboardPage() {
       serviciosActivos: serviciosActivos,
       mensajesHoy: mensajesHoy,
       conversacionesHoy: conversacionesHoy,
+      conversacionesMes: conversacionesMes,
       citasHoy: citasHoy,
       serviciosCompletados: completados,
       mensajesIA: mensajesIA,
@@ -258,11 +271,11 @@ export default function DashboardPage() {
         <StatCard title="Clientes" value={fmt(stats.totalClientes)} icon={Users} color="blue" delay={0} />
         <StatCard title="Vehículos" value={fmt(stats.totalVehiculos)} icon={Car} color="cyan" delay={50} />
         <StatCard title="Servicios Activos" value={fmt(stats.serviciosActivos)} icon={Wrench} subtitle="en taller ahora" color="orange" delay={100} />
-        <StatCard title="Mensajes Hoy" value={fmt(stats.mensajesHoy)} icon={MessageSquare} subtitle={`${stats.conversacionesHoy ?? 'null'} conversaciones hoy`} color="purple" delay={150} />
+        <StatCard title="Mensajes Hoy" value={fmt(stats.mensajesHoy)} icon={MessageSquare} subtitle={`${stats.conversacionesHoy ?? 'null'} chats activos hoy`} color="purple" delay={150} />
         <StatCard title="Citas Hoy" value={fmt(stats.citasHoy)} icon={Calendar} subtitle="programadas" color="blue" delay={200} />
         <StatCard title="Completados" value={fmt(stats.serviciosCompletados)} icon={CheckCircle} subtitle="servicios totales" color="green" delay={250} />
         <StatCard title="Respuestas IA" value={fmt(stats.mensajesIA)} icon={Bot} subtitle="mensajes automáticos" color="purple" delay={300} />
-        <StatCard title="Conversations" value={fmt(stats.conversacionesHoy)} icon={MessageSquare} subtitle="activas hoy" color="green" delay={350} />
+        <StatCard title="Cuota WA (Mes)" value={`${stats.conversacionesMes ?? 0}/1000`} icon={MessageSquare} subtitle="conversaciones gratis" color="green" delay={350} />
       </div>
 
       {/* Charts Array */}
@@ -322,13 +335,19 @@ export default function DashboardPage() {
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={180}>
-                <BarChart data={silenciadoresChart} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                <AreaChart data={silenciadoresChart} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorSil" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
                   <XAxis dataKey="fecha" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} className="text-muted-foreground" />
                   <YAxis tick={{ fontSize: 10 }} axisLine={false} tickLine={false} className="text-muted-foreground" allowDecimals={false} />
-                  <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255, 255, 255, 0.05)' }} />
-                  <Bar dataKey="vendidos" name="Silenciadores" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={40} />
-                </BarChart>
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area type="monotone" dataKey="vendidos" name="Silenciadores" stroke="hsl(var(--primary))" strokeWidth={2} fill="url(#colorSil)" />
+                </AreaChart>
               </ResponsiveContainer>
             )}
           </CardContent>
