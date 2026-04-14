@@ -4,7 +4,7 @@ import {
   MessageSquare, Send, Bot, User,
   Smile, CheckCheck, Check, X, RefreshCw, UserCheck, Wifi, WifiOff, Search, Clock,
   Image as ImageIcon, Video, Volume2, FileText, ChevronDown, Car, Calendar, Hash, Info,
-  Copy, Trash, Zap, Paperclip
+  Copy, Trash, Zap, Paperclip, Mic
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { cn, formatRelativeTime } from '@/lib/utils';
@@ -129,9 +129,11 @@ function detectMediaType(body: string): 'image' | 'video' | 'audio' | 'document'
 function MediaBubble({ msg, isOut }: { msg: RawMsg; isOut: boolean }) {
   const { body, media_url, media_type } = msg;
   
-  // Si tenemos media_url (ID de Meta), usamos nuestro Proxy
   const proxyUrl = media_url ? `/api/whatsapp/media/${media_url}` : null;
   const type = media_type || detectMediaType(body);
+  // Detect failed audio transcription using the exact body text saved by the webhook
+  const isFailedAudio = type === 'audio' && body?.includes('no se pudo transcribir');
+  const isTranscribedAudio = type === 'audio' && body?.includes('(Audio transcrito)');
 
   if (!type && !proxyUrl) {
     return <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: '#e9edef', wordBreak: 'break-word' }}>{body}</p>;
@@ -155,7 +157,22 @@ function MediaBubble({ msg, isOut }: { msg: RawMsg; isOut: boolean }) {
       ) : type === 'video' && proxyUrl ? (
         <video src={proxyUrl} controls className="rounded-lg max-w-full max-h-64" style={{ border: `1px solid ${color}` }} />
       ) : type === 'audio' && proxyUrl ? (
-        <audio src={proxyUrl} controls className="w-full max-w-[240px] h-8 mt-1" />
+        <div className="flex flex-col gap-1.5">
+          <audio src={proxyUrl} controls className="w-full max-w-[240px] h-8 mt-1" />
+          {isFailedAudio && (
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md" style={{ background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.25)' }}>
+              <Mic className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#fb923c' }} />
+              <span className="text-[11px] font-medium" style={{ color: '#fb923c' }}>
+                Transcripción fallida — usa &quot;Retranscribir Audio&quot; ↑
+              </span>
+            </div>
+          )}
+          {isTranscribedAudio && body && (
+            <p className="text-[12px] italic px-1" style={{ color: '#8696a0' }}>
+              🎙️ {body.replace(' (Audio transcrito)', '')}
+            </p>
+          )}
+        </div>
       ) : type === 'sticker' && proxyUrl ? (
         <div className="flex justify-center p-1">
           <img src={proxyUrl} alt="Sticker" className="w-32 h-32 object-contain" />
@@ -171,8 +188,7 @@ function MediaBubble({ msg, isOut }: { msg: RawMsg; isOut: boolean }) {
           </div>
         </div>
       )}
-      {/* Texto debajo de media si existe y no es el placeholder */}
-      {media_url && body && !['[image]', '[imagen]', '[audio]', '[video]', '[sticker]'].includes(body.toLowerCase()) && (
+      {media_url && body && type !== 'audio' && !['[image]', '[imagen]', '[audio]', '[video]', '[sticker]'].includes(body.toLowerCase()) && (
          <p className="text-[13px] mt-1" style={{ color: '#e9edef' }}>{body}</p>
       )}
     </div>
@@ -204,6 +220,7 @@ export default function WhatsAppPage() {
   const [savingName, setSavingName] = useState(false);
   const [retryingIA, setRetryingIA] = useState(false);
   const [retryStatus, setRetryStatus] = useState<string | null>(null);
+  const [retranscribing, setRetranscribing] = useState(false);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -632,8 +649,111 @@ export default function WhatsAppPage() {
     }
   };
 
+  // ── Detect failed-transcription audio messages in current conversation ──────
+  const getFailedAudioMsg = (): RawMsg | null => {
+    if (!msgs) return null;
+    // Find the most recent incoming audio message that failed transcription
+    const failed = [...msgs]
+      .reverse()
+      .find(
+        m =>
+          m.tipo === 'entrante' &&
+          m.media_type === 'audio' &&
+          m.body?.includes('no se pudo transcribir')
+      );
+    return failed || null;
+  };
+
+  // ── Detect failed-analysis image messages in current conversation ──────
+  const getFailedImageMsg = (): RawMsg | null => {
+    if (!msgs) return null;
+    const failed = [...msgs]
+      .reverse()
+      .find(
+        m =>
+          m.tipo === 'entrante' &&
+          m.media_type === 'image' &&
+          (m.body === '[Cliente envió imagen]' || m.body?.startsWith('[Cliente envió imagen]'))
+      );
+    return failed || null;
+  };
+
+  // ── Re-describe and re-process a failed image message ────────────────────
+  const handleRedescribeImage = async (msg: RawMsg) => {
+    if (retranscribing) return;
+    setRetranscribing(true);
+    setRetryStatus(null);
+    try {
+      const res = await fetch('/api/whatsapp/redescribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId: msg.id }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setRetryStatus('✅ Imagen analizada y respondida por IA');
+        await fetchNewMsgs(selected!.telefono);
+        await loadConvs();
+      } else if (res.status === 207) {
+        setRetryStatus('⚠️ Imagen descrita pero IA falló al responder');
+        await fetchNewMsgs(selected!.telefono);
+      } else {
+        setRetryStatus(`❌ ${data.error || 'Error al re-analizar imagen'}`);
+      }
+    } catch {
+      setRetryStatus('❌ Error de conexión al re-analizar imagen');
+    } finally {
+      setRetranscribing(false);
+      setTimeout(() => setRetryStatus(null), 6000);
+    }
+  };
+
+  // ── Re-transcribe and re-process a failed audio message ──────────────────
+  const handleRetranscribeAudio = async (msg: RawMsg) => {
+    if (retranscribing) return;
+    setRetranscribing(true);
+    setRetryStatus(null);
+    try {
+      const res = await fetch('/api/whatsapp/retranscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId: msg.id }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setRetryStatus(`✅ Audio transcrito: "${(data.transcript || '').substring(0, 50)}..."`);
+        await fetchNewMsgs(selected!.telefono);
+        await loadConvs();
+      } else if (res.status === 207) {
+        // Partial: transcription OK but AI failed
+        setRetryStatus(`⚠️ Transcrito pero IA falló. Transcripción: "${(data.transcript || '').substring(0, 40)}"`);
+        await fetchNewMsgs(selected!.telefono);
+      } else {
+        setRetryStatus(`❌ ${data.error || 'Error al retranscribir'}`);
+      }
+    } catch {
+      setRetryStatus('❌ Error de conexión al retranscribir');
+    } finally {
+      setRetranscribing(false);
+      setTimeout(() => setRetryStatus(null), 6000);
+    }
+  };
+
   // ── Retry IA for pending messages ──────────────────────────
   const handleRetryIA = async () => {
+    // Priority 1: re-transcribe failed audio
+    const failedAudio = getFailedAudioMsg();
+    if (failedAudio) {
+      await handleRetranscribeAudio(failedAudio);
+      return;
+    }
+    // Priority 2: re-describe failed image
+    const failedImage = getFailedImageMsg();
+    if (failedImage) {
+      await handleRedescribeImage(failedImage);
+      return;
+    }
+
     if (retryingIA) return;
     setRetryingIA(true);
     setRetryStatus(null);
@@ -645,7 +765,7 @@ export default function WhatsAppPage() {
         await fetchNewMsgs(selected!.telefono);
         await loadConvs();
       } else if (data.still_pending > 0) {
-        setRetryStatus('⏳ IA sigue no disponible, se reintentara');
+        setRetryStatus('⏳ IA sigue no disponible, se reintentará');
       } else {
         setRetryStatus('✅ Sin mensajes pendientes');
       }
@@ -859,22 +979,53 @@ export default function WhatsAppPage() {
                       </div>
                     )}
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      {/* Retry IA button */}
+                      {/* Retry IA / Retranscribe Audio button */}
                       <div className="relative">
-                        <button
-                          id="btn-retry-ia"
-                          onClick={handleRetryIA}
-                          disabled={retryingIA}
-                          title="Reintentar respuesta de IA para mensajes pendientes"
-                          className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex-shrink-0 shadow-sm bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 hover:bg-yellow-500/20 disabled:opacity-50"
-                        >
-                          {retryingIA
+                        {(() => {
+                          const failedAudio = getFailedAudioMsg();
+                          const failedImage = getFailedImageMsg();
+                          const isAudioMode = !!failedAudio;
+                          const isImageMode = !isAudioMode && !!failedImage;
+                          const isLoading = retranscribing || retryingIA;
+                          const btnClass = isAudioMode
+                            ? 'bg-blue-500/15 text-blue-400 border border-blue-500/25 hover:bg-blue-500/25'
+                            : isImageMode
+                              ? 'bg-purple-500/15 text-purple-400 border border-purple-500/25 hover:bg-purple-500/25'
+                              : 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 hover:bg-yellow-500/20';
+                          const btnTitle = isAudioMode
+                            ? 'Reintentar transcripción del audio fallido y responder con IA'
+                            : isImageMode
+                              ? 'Re-analizar imagen y responder con IA'
+                              : 'Reintentar respuesta de IA para mensajes pendientes';
+                          const btnIcon = isLoading
                             ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            : <Zap className="w-3.5 h-3.5" />}
-                          <span className="hidden sm:inline">{retryingIA ? 'Reintentando...' : 'Reintentar IA'}</span>
-                        </button>
+                            : isAudioMode
+                              ? <Mic className="w-3.5 h-3.5" />
+                              : isImageMode
+                                ? <ImageIcon className="w-3.5 h-3.5" />
+                                : <Zap className="w-3.5 h-3.5" />;
+                          const btnLabel = isLoading
+                            ? (isAudioMode ? 'Transcribiendo...' : isImageMode ? 'Analizando...' : 'Reintentando...')
+                            : isAudioMode
+                              ? 'Retranscribir Audio'
+                              : isImageMode
+                                ? 'Re-analizar Imagen'
+                                : 'Reintentar IA';
+                          return (
+                            <button
+                              id="btn-retry-ia"
+                              onClick={handleRetryIA}
+                              disabled={isLoading}
+                              title={btnTitle}
+                              className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex-shrink-0 shadow-sm disabled:opacity-50 ${btnClass}`}
+                            >
+                              {btnIcon}
+                              <span className="hidden sm:inline">{btnLabel}</span>
+                            </button>
+                          );
+                        })()}
                         {retryStatus && (
-                          <div className="absolute top-full mt-1 right-0 z-50 px-2.5 py-1.5 rounded-lg text-[11px] font-medium whitespace-nowrap shadow-xl" style={{ background: '#2a3942', color: '#e9edef', border: '1px solid rgba(255,255,255,0.08)' }}>
+                          <div className="absolute top-full mt-1 right-0 z-50 px-2.5 py-1.5 rounded-lg text-[11px] font-medium whitespace-nowrap shadow-xl max-w-[280px] truncate" style={{ background: '#2a3942', color: '#e9edef', border: '1px solid rgba(255,255,255,0.08)' }}>
                             {retryStatus}
                           </div>
                         )}
