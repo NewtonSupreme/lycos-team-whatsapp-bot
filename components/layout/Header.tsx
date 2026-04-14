@@ -83,6 +83,7 @@ export default function Header() {
     if (pushRegistered || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
 
     try {
+      console.log('🔄 Intentando registrar Push Notifications...');
       const reg = await navigator.serviceWorker.register('/sw.js');
       await navigator.serviceWorker.ready;
 
@@ -90,10 +91,16 @@ export default function Header() {
       if (permission === 'default') {
         permission = await Notification.requestPermission();
       }
-      if (permission !== 'granted') return;
+      if (permission !== 'granted') {
+        console.warn('⚠️ Permiso de notificaciones denegado por el usuario.');
+        return;
+      }
 
       const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-      if (!vapidKey) return;
+      if (!vapidKey) {
+        console.error('❌ Error: NEXT_PUBLIC_VAPID_PUBLIC_KEY no configurado en el entorno.');
+        return;
+      }
 
       const existing = await reg.pushManager.getSubscription();
       const sub = existing || await reg.pushManager.subscribe({
@@ -101,15 +108,18 @@ export default function Header() {
         applicationServerKey: urlBase64ToUint8Array(vapidKey),
       });
 
-      await fetch('/api/push/subscribe', {
+      const res = await fetch('/api/push/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(sub.toJSON()),
       });
 
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+
+      console.log('✅ Push Notifications registradas correctamente.');
       setPushRegistered(true);
     } catch (err) {
-      console.warn('Push registration failed:', err);
+      console.error('❌ Falló el registro de Push Notifications:', err);
     }
   }, [pushRegistered, setPushRegistered]);
 

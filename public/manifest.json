@@ -1,0 +1,22 @@
+{
+  "name": "Lycos Team CRM",
+  "short_name": "Lycos CRM",
+  "description": "Sistema de Gestión de Clientes y Chatbot de Lycos Team",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#0b141a",
+  "theme_color": "#00a884",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/logo-icon-white.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/logo-icon-white.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
