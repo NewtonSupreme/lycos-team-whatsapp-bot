@@ -713,6 +713,7 @@ interface ConversationContext {
   isNewSession: boolean;
   agendaOcupada: string;
   historialTecnico: string;
+  estado?: string; // Mode: 'ia' or 'humano'
 }
 
 async function loadConversationContext(
@@ -727,7 +728,8 @@ async function loadConversationContext(
   let historialTecnico = '';
   let agendaOcupada = '';
   let isNewSession = true;
-  if (!db) return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico };
+  let estado = 'ia';
+  if (!db) return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado };
 
   const phone = from.replace(/[^0-9]/g, '');
 
@@ -760,10 +762,11 @@ async function loadConversationContext(
     }
   } catch (e) { console.error('Error loading history:', e); }
 
-  // Memoria
+  // Memoria & Estado
   try {
-    const { data: convRows } = await db.from('conversaciones').select('memoria, cliente_id').eq('telefono', phone).limit(1);
+    const { data: convRows } = await db.from('conversaciones').select('memoria, cliente_id, estado').eq('telefono', phone).limit(1);
     if (convRows?.[0]?.memoria) memoria = convRows[0].memoria as Memoria;
+    if (convRows?.[0]?.estado) estado = convRows[0].estado;
     
     // Technical History (Services & Revisions)
     const clientId = convRows?.[0]?.cliente_id;
@@ -844,7 +847,7 @@ async function loadConversationContext(
     }
   } catch (e) { }
 
-  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico };
+  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado };
 }
 
 // ─── AI Response ───────────────────────────────────────────────────────────────
@@ -1476,6 +1479,16 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       ]);
 
       const lowerBody = messageBody.toLowerCase();
+
+      // 🛑 Silenciar bot si está en modo humano (Intervención manual)
+      if (ctx.estado === 'humano') {
+        console.log(`👤 [${from}] Modo Humano ACTIVO. El bot permanecerá en silencio.`);
+        // Procesamos intenciones para extraer metadatos (nombre, vehículo) para el CRM
+        const r = await processIntents(db, from, messageBody, ctx, waProfileName);
+        // Actualizamos la conversación en la DB para reflejar el último mensaje en el dashboard
+        await updateConversation(db, from, messageBody, ctx.memoria, r?.clientId);
+        return;
+      }
 
       // Location intent (GPS + Video)
       if (isLocationRequest(lowerBody)) {
