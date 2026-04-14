@@ -1667,19 +1667,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         } catch (dbErr) {
           console.error('❌ Error guardando mensaje pendiente en DB:', dbErr);
         }
-        // ── Send an immediate holding message so the client isn't left waiting ──
-        try {
-          const greeting = getVzlaGreeting();
-          await sendMsg(
-            from,
-            `${greeting} 😊 Recibí tu mensaje y lo estoy revisando. En un momento te respondo con toda la información. ¡Gracias por tu paciencia! 🔧`,
-            false,
-            wa_message_id
-          );
-          console.log(`📤 [${from}] Mensaje de espera enviado al cliente.`);
-        } catch (sendErr) {
-          console.error('❌ Error enviando mensaje de espera:', sendErr);
-        }
+        // Holding message removed as requested by user.
       }
 
       await updateConversation(db, from, messageBody, ctx.memoria, r?.clientId);

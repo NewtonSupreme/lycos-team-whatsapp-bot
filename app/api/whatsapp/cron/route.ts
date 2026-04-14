@@ -64,17 +64,7 @@ export async function processPendingMessages(
       ultimo_intento_at: new Date().toISOString(),
     }).eq('id', id);
 
-    // Already replied?
-    const { data: laterReply } = await db
-      .from('mensajes_whatsapp').select('id')
-      .eq('from_number', 'system').eq('to_number', from_number).eq('tipo', 'saliente')
-      .gt('created_at', inserted_timestamp).limit(1);
-
-    if (laterReply && laterReply.length > 0) {
-      await db.from('mensajes_pendientes_ia').update({ status: 'completed' }).eq('id', id);
-      succeeded++;
-      continue;
-    }
+    // (The 'Already replied' check was removed so that old messages blocked by the holding message are successfully retried)
 
     // Human takeover?
     const { data: conv } = await db.from('conversaciones').select('estado').eq('telefono', from_number).maybeSingle();
