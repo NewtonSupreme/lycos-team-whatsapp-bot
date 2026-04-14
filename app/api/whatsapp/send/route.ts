@@ -38,8 +38,7 @@ export async function POST(request: NextRequest) {
       if (file) {
         const fdMeta = new FormData();
         fdMeta.append('messaging_product', 'whatsapp');
-        // Convert File to Blob for FormData
-        fdMeta.append('file', new Blob([await file.arrayBuffer()], { type: file.type }), file.name);
+        fdMeta.append('file', file);
         
         const upRes = await fetch(`https://graph.facebook.com/v18.0/${phoneId}/media`, {
           method: 'POST',
