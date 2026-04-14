@@ -68,6 +68,11 @@ export async function POST(request: NextRequest) {
       if (mediaId && mediaType) {
         payload.type = mediaType;
         payload[mediaType] = { id: mediaId };
+        
+        if (mediaType === 'document' && file?.name) {
+          payload[mediaType].filename = file.name;
+        }
+
         // Meta supports captions for image/video/document
         if (message && mediaType !== 'audio') {
           payload[mediaType].caption = message;
