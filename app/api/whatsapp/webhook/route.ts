@@ -26,7 +26,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 // ─── AI Models — ordered by priority (primary first, then fallbacks) ──────────
 const GEMINI_MODELS = [
   'gemini-3.1-flash-lite-preview', // [PRIMARY]   — fast, preferred
-  'gemini-2.5-flash-preview-04-17',// [FALLBACK 1] — Gemini 2.5 Flash
+  'gemini-2.5-flash',// [FALLBACK 1] — Gemini 2.5 Flash
   'gemma-3-27b-it',                // [FALLBACK 2] — Gemma 3 27B
 ] as const;
 const GEMINI_MODEL = GEMINI_MODELS[0]; // kept for audio/vision helpers
