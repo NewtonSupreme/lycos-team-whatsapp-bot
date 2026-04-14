@@ -394,35 +394,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     console.log('📬 Webhook POST received:', JSON.stringify(body).substring(0, 100));
 
-    if (body.object === 'whatsapp_cron_retry') {
-      const { from, messageBody, insertedTimestamp, wa_message_id } = body;
-      const db = getDb();
-      if (!db || !WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return NextResponse.json({ status: 'ok' });
-
-      try {
-        const { data: newer } = await db.from('mensajes_whatsapp')
-          .select('id')
-          .eq('from_number', 'system')
-          .eq('to_number', from)
-          .eq('tipo', 'saliente')
-          .gt('created_at', insertedTimestamp)
-          .limit(1);
-        if (newer && newer.length > 0) {
-          console.log(`⏩ [CRON] Ignorando retry ${wa_message_id} porque ya se respondio (carrera)`);
-          return NextResponse.json({ status: 'already_replied' });
-        }
-      } catch (e) { }
-
-      try {
-        const { data: convData } = await db.from('conversaciones').select('estado').eq('telefono', from).single();
-        if (convData?.estado === 'humano') {
-          return NextResponse.json({ status: 'ignored_human' });
-        }
-      } catch { }
-
-      await processCoreLogic(db, from, messageBody, wa_message_id);
-      return NextResponse.json({ status: 'ok' });
-    }
+    // Legacy retry handler removed — now uses piggyback strategy
 
     if (body.object !== 'whatsapp_business_account') {
       return NextResponse.json({ status: 'ignored' });
@@ -680,6 +652,29 @@ export async function POST(request: NextRequest) {
         const phone = from.replace(/[^0-9]/g, ''); // Normalize
         // Update is_processing to true
         await db.from('conversaciones').update({ is_processing: true }).eq('telefono', phone);
+
+        // ── Piggyback retry: mark OLD pending messages from THIS user as superseded ──
+        // The incoming message is fresh — AI will answer it now, so old pending entries
+        // from same user are redundant and should not cause duplicate replies.
+        try {
+          await db.from('mensajes_pendientes_ia')
+            .update({ status: 'completed', error_log: 'Supersedido por nuevo mensaje del usuario.' })
+            .eq('from_number', phone)
+            .eq('status', 'pending');
+        } catch { /* non-critical */ }
+
+        // ── Piggyback retry: opportunistically retry OTHER users' pending messages ──
+        // We fire this async (non-blocking) so it never delays the current user's reply.
+        void (async () => {
+          try {
+            // Lazy import avoids circular dependency issues at module load time
+            const { processPendingMessages } = await import('../cron/route');
+            const result = await processPendingMessages(db, 3); // max 3 at a time to stay fast
+            if (result.succeeded > 0 || result.abandoned > 0) {
+              console.log(`♻️ [Piggyback] Retried pendientes — ok:${result.succeeded} abandoned:${result.abandoned}`);
+            }
+          } catch { /* never block main flow */ }
+        })();
 
         try {
           await processCoreLogic(db, phone, messageBody, wa_message_id, waProfileName);

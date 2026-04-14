@@ -4,12 +4,6 @@
   "devCommand": "npm run dev",
   "installCommand": "npm install",
   "regions": ["iad1"],
-  "crons": [
-    {
-      "path": "/api/whatsapp/cron",
-      "schedule": "* * * * *"
-    }
-  ],
   "headers": [
     {
       "source": "/api/(.*)",
