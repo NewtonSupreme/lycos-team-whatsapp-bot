@@ -23,7 +23,14 @@ async function firePushNotification(payload: {
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
+// ─── AI Models — ordered by priority (primary first, then fallbacks) ──────────
+const GEMINI_MODELS = [
+  'gemini-3.1-flash-lite-preview',   // [PRIMARY]  — faster, cheaper, preferred
+  'gemini-2.5-flash-preview-04-17',  // [FALLBACK 1] — Gemini 2.5 Flash
+  'gemini-2.5-pro-preview-03-25',    // [FALLBACK 2] — Gemini 2.5 Pro
+  'gemma-3-27b-it',                  // [FALLBACK 3] — Gemma 3 27B
+] as const;
+const GEMINI_MODEL = GEMINI_MODELS[0]; // kept for audio/vision helpers
 const ASESOR_PHONE = '584123343519';
 const ASESOR_DISPLAY_NAME = 'Asesor Lycos Team';
 const IG_LINK = 'https://www.instagram.com/lycos.team?igsh=MzVwZ3NkbnN2OHk=';
@@ -935,43 +942,50 @@ REGLAS CRITICAS:
     ],
   });
 
-  let attempts = 0;
-  const maxAttempts = 3;
+  // ── Multi-model retry strategy ─────────────────────────────────────────────
+  // Each "attempt" picks a model from the fallback chain and waits progressively.
+  // Schedule: attempt 0→primary, 1→primary(3s), 2→fallback1(6s), 3→fallback2(10s), 4→fallback3(15s)
+  const backoffMs  = [0, 3000, 6000, 10000, 15000];
+  const modelPick  = [0, 0,    1,    2,     3    ]; // index into GEMINI_MODELS
+  const maxAttempts = backoffMs.length;
 
-  while (attempts < maxAttempts) {
-    attempts++;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (backoffMs[attempt] > 0) {
+      console.log(`⏳ Retrying IA en ${backoffMs[attempt] / 1000}s...`);
+      await delay(backoffMs[attempt]);
+    }
+    const model = GEMINI_MODELS[modelPick[attempt]];
+    console.log(`🧠 Calling Gemini model: ${model} (intento ${attempt + 1}/${maxAttempts})`);
     try {
       const resp = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: reqBody,
         }
       );
-      if (!resp.ok) { 
+      if (!resp.ok) {
         const errText = await resp.text();
-        console.error(`❌ Gemini Error [${resp.status}] (Intento ${attempts}/${maxAttempts}):`, errText.substring(0, 500)); 
-        if ((resp.status === 503 || resp.status === 429) && attempts < maxAttempts) {
-          console.log(`⏳ Retrying Gemini en ${attempts * 2} segundos...`);
-          await delay(attempts * 2000);
-          continue;
-        }
-        return null; 
+        console.error(`❌ IA Error [${resp.status}] modelo=${model} (intento ${attempt + 1}/${maxAttempts}):`, errText.substring(0, 400));
+        // Only retry on 503/429 (overload/rate-limit); hard-fail on other errors
+        if (resp.status !== 503 && resp.status !== 429) return null;
+        continue; // try next model/attempt
       }
       const data = await resp.json();
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text || null;
-      if (text) console.log(`✅ Gemini: "${text.substring(0, 70)}..."`);
-      return text;
-    } catch (e) { 
-      console.error(`❌ getAIResponse Exception (Intento ${attempts}/${maxAttempts}):`, e); 
-      if (attempts < maxAttempts) {
-        await delay(attempts * 2000);
-        continue;
+      if (text) {
+        if (model !== GEMINI_MODELS[0]) console.log(`✅ IA respondió con modelo de respaldo: ${model}`);
+        else console.log(`✅ Gemini: "${text.substring(0, 70)}..."`);
+        return text;
       }
-      return null; 
+      // Empty response — try next
+      console.warn(`⚠️ IA respuesta vacía (modelo=${model})`);
+    } catch (e) {
+      console.error(`❌ IA Exception modelo=${model} (intento ${attempt + 1}/${maxAttempts}):`, e);
     }
   }
+  console.error('🚨 Todos los modelos de IA fallaron. Mensaje quedará pendiente para reintento.');
   return null;
 }
 
@@ -1646,21 +1660,37 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           }
         }
       } else {
-        console.warn(`⏳ [${from}] Fallo total de IA (Posible Error 503/429). Programando reintento en 45 segundos...`);
-        const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000';
-        setTimeout(() => {
-          fetch(`${baseUrl}/api/whatsapp/webhook`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              object: 'whatsapp_cron_retry',
-              from: from,
-              messageBody: messageBody,
-              insertedTimestamp: new Date().toISOString(),
-              wa_message_id: wa_message_id
-            })
-          }).catch(e => console.error('❌ Error triggering async background retry:', e));
-        }, 45000);
+        // ── All immediate attempts failed — persist for cron retry ───────────────
+        console.warn(`🚨 [${from}] Fallo total de IA. Guardando en cola de reintento...`);
+        try {
+          if (db) {
+            await db.from('mensajes_pendientes_ia').insert({
+              from_number: from,
+              message_body: messageBody,
+              wa_message_id: wa_message_id,
+              wa_profile_name: waProfileName || null,
+              inserted_timestamp: new Date().toISOString(),
+              intentos: 0,
+              status: 'pending',
+            });
+            console.log(`💾 [${from}] Mensaje guardado en cola pendiente para reintento por cron.`);
+          }
+        } catch (dbErr) {
+          console.error('❌ Error guardando mensaje pendiente en DB:', dbErr);
+        }
+        // ── Send an immediate holding message so the client isn't left waiting ──
+        try {
+          const greeting = getVzlaGreeting();
+          await sendMsg(
+            from,
+            `${greeting} 😊 Recibí tu mensaje y lo estoy revisando. En un momento te respondo con toda la información. ¡Gracias por tu paciencia! 🔧`,
+            false,
+            wa_message_id
+          );
+          console.log(`📤 [${from}] Mensaje de espera enviado al cliente.`);
+        } catch (sendErr) {
+          console.error('❌ Error enviando mensaje de espera:', sendErr);
+        }
       }
 
       await updateConversation(db, from, messageBody, ctx.memoria, r?.clientId);
