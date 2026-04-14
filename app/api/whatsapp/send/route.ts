@@ -3,21 +3,81 @@ import { createClient } from '@supabase/supabase-js';
 
 export async function POST(request: NextRequest) {
   try {
-    const { to, message } = await request.json();
+    let to = '', message = '', file: File | null = null;
+    const contentType = request.headers.get('content-type') || '';
+    
+    if (contentType.includes('multipart/form-data')) {
+      const fd = await request.formData();
+      to = (fd.get('to') as string) || '';
+      message = (fd.get('message') as string) || '';
+      const f = fd.get('file');
+      if (f && typeof f === 'object' && (f as File).name) {
+        file = f as File;
+      }
+    } else {
+      const body = await request.json();
+      to = body.to;
+      message = body.message || '';
+    }
 
-    if (!to || !message) {
-      return NextResponse.json({ error: 'Faltan parámetros: to, message' }, { status: 400 });
+    if (!to && (!message && !file)) {
+      return NextResponse.json({ error: 'Faltan parámetros: to, message o archivo' }, { status: 400 });
     }
 
     const token = process.env.WHATSAPP_TOKEN;
     const phoneId = process.env.WHATSAPP_PHONE_ID;
 
     let waMessageId: string | null = null;
+    let mediaId: string | null = null;
+    let mediaType: string | null = null;
 
     if (!token || !phoneId) {
-      // Demo mode - simulate success
       console.warn('[send] Sin TOKEN de WhatsApp — modo demo.');
     } else {
+      // 1. Upload media to Meta if attached
+      if (file) {
+        const fdMeta = new FormData();
+        fdMeta.append('messaging_product', 'whatsapp');
+        // Convert File to Blob for FormData
+        fdMeta.append('file', new Blob([await file.arrayBuffer()], { type: file.type }), file.name);
+        
+        const upRes = await fetch(`https://graph.facebook.com/v18.0/${phoneId}/media`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+          body: fdMeta
+        });
+        const upData = await upRes.json();
+        if (upData.id) {
+          mediaId = upData.id;
+          if (file.type.startsWith('image/')) mediaType = 'image';
+          else if (file.type.startsWith('video/')) mediaType = 'video';
+          else if (file.type.startsWith('audio/')) mediaType = 'audio';
+          else mediaType = 'document';
+        } else {
+          console.error('❌ Error subiendo media a Meta:', JSON.stringify(upData));
+          return NextResponse.json({ error: 'Fallo al subir archivo a WhatsApp' }, { status: 400 });
+        }
+      }
+
+      // 2. Send Message
+      const payload: any = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: to.replace(/[^0-9]/g, ''),
+      };
+
+      if (mediaId && mediaType) {
+        payload.type = mediaType;
+        payload[mediaType] = { id: mediaId };
+        // Meta supports captions for image/video/document
+        if (message && mediaType !== 'audio') {
+          payload[mediaType].caption = message;
+        }
+      } else {
+        payload.type = 'text';
+        payload.text = { preview_url: false, body: message };
+      }
+
       const response = await fetch(
         `https://graph.facebook.com/v18.0/${phoneId}/messages`,
         {
@@ -26,13 +86,7 @@ export async function POST(request: NextRequest) {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            messaging_product: 'whatsapp',
-            recipient_type: 'individual',
-            to: to.replace(/[^0-9]/g, ''),
-            type: 'text',
-            text: { preview_url: false, body: message },
-          }),
+          body: JSON.stringify(payload),
         }
       );
 
@@ -59,6 +113,7 @@ export async function POST(request: NextRequest) {
         estado: 'enviado',
         es_ia: false,
         ...(waMessageId ? { wa_message_id: waMessageId } : {}),
+        ...(mediaId ? { media_url: mediaId, media_type: mediaType } : {}),
       });
       await db.from('conversaciones').upsert({
         telefono: to.replace(/[^0-9]/g, ''),

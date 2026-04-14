@@ -4,7 +4,7 @@ import {
   MessageSquare, Send, Bot, User,
   Smile, CheckCheck, Check, X, RefreshCw, UserCheck, Wifi, WifiOff, Search, Clock,
   Image as ImageIcon, Video, Volume2, FileText, ChevronDown, Car, Calendar, Hash, Info,
-  Copy, Trash, Zap
+  Copy, Trash, Zap, Paperclip
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { cn, formatRelativeTime } from '@/lib/utils';
@@ -210,6 +210,10 @@ export default function WhatsAppPage() {
   const selectedRef = useRef<RawConv | null>(null);
   const msgsRef = useRef<RawMsg[]>([]);
   const realtimeConnectedRef = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [file, setFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   selectedRef.current = selected;
   msgsRef.current = msgs;
@@ -479,7 +483,7 @@ export default function WhatsAppPage() {
 
   // ── Send message ──────────────────────────────────────────────
   const handleSend = async () => {
-    if (!message.trim() || !selected || sending) return;
+    if ((!message.trim() && !file) || !selected || sending) return;
     const body = message.trim();
     setMessage('');
     setSending(true);
@@ -498,14 +502,35 @@ export default function WhatsAppPage() {
       es_ia: false,
       created_at: new Date().toISOString(),
     };
+    
+    if (file) {
+      if (file.type.startsWith('image/')) optimistic.media_type = 'image';
+      else if (file.type.startsWith('video/')) optimistic.media_type = 'video';
+      else if (file.type.startsWith('audio/')) optimistic.media_type = 'audio';
+      else optimistic.media_type = 'document';
+      
+      // We will show optimistic preview if it's an image
+      if (previewUrl && optimistic.media_type === 'image') {
+         // Temp hack to display local blob on the media bubble (if supported)
+         optimistic.body = '[imagen] ' + body;
+      }
+    }
+
     setMsgs(prev => [...prev, optimistic]);
 
     try {
+      const fd = new FormData();
+      fd.append('to', selected.telefono);
+      fd.append('message', body);
+      if (file) fd.append('file', file);
+
       await fetch('/api/whatsapp/send', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: selected.telefono, message: body }),
+        // fetch automatically sets Content-Type to multipart/form-data when using FormData
+        body: fd,
       });
+      // Clear file after success
+      removeFile();
     } catch (e) {
       console.error('Error enviando:', e);
     } finally {
@@ -513,6 +538,23 @@ export default function WhatsAppPage() {
       await fetchNewMsgs(selected.telefono);
       await loadConvs();
     }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) {
+      setFile(selectedFile);
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(URL.createObjectURL(selectedFile));
+      inputRef.current?.focus();
+    }
+  };
+
+  const removeFile = () => {
+    setFile(null);
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   // ── Mode toggle ───────────────────────────────────────────────
@@ -943,20 +985,48 @@ export default function WhatsAppPage() {
                 )}
 
                 {/* Input area */}
-                <div className="flex items-center gap-2 px-3 py-3 flex-shrink-0" style={{ background: '#202c33', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                  <button onClick={() => setShowQuickReplies(!showQuickReplies)} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors flex-shrink-0">
-                    <Smile className="w-5 h-5" style={{ color: '#aebac1' }} />
-                  </button>
-                  <input
-                    ref={inputRef} value={message} onChange={e => setMessage(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-                    placeholder={isWindowOpen ? 'Escribe un mensaje' : 'Ventana de 24h cerrada'}
-                    className="flex-1 py-2 px-4 rounded-lg text-sm outline-none"
-                    style={{ background: '#2a3942', color: '#e9edef', border: 'none' }}
-                  />
-                  <button onClick={handleSend} disabled={!message.trim() || sending} className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-all" style={{ background: message.trim() && !sending ? '#00a884' : '#2a3942', opacity: !message.trim() || sending ? 0.5 : 1 }}>
-                    <Send className={cn('w-4 h-4', sending && 'animate-pulse')} style={{ color: '#e9edef' }} />
-                  </button>
+                <div className="flex flex-col flex-shrink-0" style={{ background: '#202c33', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                  
+                  {/* File Preview */}
+                  {file && previewUrl && (
+                    <div className="p-3 border-b border-white/5 flex relative group">
+                      <div className="relative inline-block border-2 border-[#00a884] rounded-xl overflow-hidden shadow-lg bg-black/20">
+                        {file.type.startsWith('image/') ? (
+                          <img src={previewUrl} alt="Preview" className="h-24 w-auto object-cover max-w-[200px]" />
+                        ) : (
+                          <div className="h-24 w-28 flex flex-col items-center justify-center">
+                            {file.type.startsWith('video/') ? <Video className="w-8 h-8 opacity-70" /> : <FileText className="w-8 h-8 opacity-70" />}
+                            <span className="text-[10px] mt-2 opacity-60 px-2 line-clamp-2 text-center text-ellipsis overflow-hidden">{file.name}</span>
+                          </div>
+                        )}
+                        <button onClick={removeFile} className="absolute top-1 right-1 p-1 rounded-full bg-black/60 hover:bg-red-500/80 text-white shadow-sm transition-colors">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 px-3 py-3">
+                    <button onClick={() => setShowQuickReplies(!showQuickReplies)} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors flex-shrink-0">
+                      <Smile className="w-5 h-5" style={{ color: '#aebac1' }} />
+                    </button>
+                    
+                    <button onClick={() => fileInputRef.current?.click()} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors flex-shrink-0 mr-1">
+                      <Paperclip className="w-5 h-5" style={{ color: '#aebac1' }} />
+                    </button>
+                    <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept="image/*,video/*,.pdf,.doc,.docx" />
+
+                    <input
+                      ref={inputRef} value={message} onChange={e => setMessage(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                      placeholder={isWindowOpen ? (file ? 'Añade un comentario...' : 'Escribe un mensaje') : 'Ventana de 24h cerrada'}
+                      className="flex-1 py-2 px-4 rounded-lg text-sm outline-none"
+                      style={{ background: '#2a3942', color: '#e9edef', border: 'none' }}
+                    />
+                    <button onClick={handleSend} disabled={(!message.trim() && !file) || sending} className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-all" style={{ background: (message.trim() || file) && !sending ? '#00a884' : '#2a3942', opacity: (!message.trim() && !file) || sending ? 0.5 : 1 }}>
+                      <Send className={cn('w-4 h-4', sending && 'animate-pulse')} style={{ color: '#e9edef' }} />
+                    </button>
+                  </div>
                 </div>
               </div>
 
