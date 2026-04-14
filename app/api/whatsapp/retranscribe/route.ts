@@ -19,7 +19,15 @@ export const maxDuration = 55;
 
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
+
+// STT model chain: primary → fallback
+// Primary: gemini-2.0-flash-exp (transcription)
+// Fallback: gemini-2.5-flash-lite-preview-04-17
+// AI response: handled by processCoreLogic (uses webhook's flash-lite model)
+const STT_MODELS = [
+  'gemini-2.5-flash-preview-native-audio-dialog',                          // primary — transcripción de audio
+  'gemini-2.0-flash-exp',  // fallback — Native Audio Dialog
+];
 
 function getDb() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -32,35 +40,52 @@ async function transcribeAudio(base64Data: string, mimeType: string): Promise<st
   if (!GEMINI_API_KEY) return null;
   const systemPrompt =
     'Eres un sistema de reconocimiento de voz. Tu UNICA tarea es transcribir el audio a texto exacto en español. NO agregues explicaciones, respuestas, introducciones ni comentarios. Solo escribe lo que el usuario dice en español tal cual.';
-  try {
-    const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: systemPrompt }] },
-          contents: [{
-            role: 'user',
-            parts: [
-              { inlineData: { mimeType: mimeType.split(';')[0], data: base64Data } },
-              { text: 'Transcribe el audio siguiente:' },
-            ],
-          }],
-          generationConfig: { temperature: 0.1 },
-        }),
+
+  for (const model of STT_MODELS) {
+    try {
+      console.log(`🎙️ [STT] Intentando transcribir con modelo: ${model}`);
+      const resp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            system_instruction: { parts: [{ text: systemPrompt }] },
+            contents: [{
+              role: 'user',
+              parts: [
+                { inlineData: { mimeType: mimeType.split(';')[0], data: base64Data } },
+                { text: 'Transcribe el audio siguiente:' },
+              ],
+            }],
+            generationConfig: { temperature: 0.1 },
+          }),
+        }
+      );
+
+      if (!resp.ok) {
+        const errText = await resp.text();
+        console.error(`❌ [STT] Error ${resp.status} con ${model}:`, errText.substring(0, 200));
+        // Try next model on 4xx/5xx
+        continue;
       }
-    );
-    if (!resp.ok) {
-      console.error(`❌ Gemini STT error ${resp.status}:`, (await resp.text()).substring(0, 200));
-      return null;
+
+      const data = await resp.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+      if (text) {
+        console.log(`✅ [STT] Transcripción exitosa con modelo: ${model}`);
+        return text;
+      }
+
+      console.warn(`⚠️ [STT] Respuesta vacía con ${model}, intentando siguiente...`);
+    } catch (e) {
+      console.error(`❌ [STT] Excepción con ${model}:`, e);
+      // Continue to next model
     }
-    const data = await resp.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
-  } catch (e) {
-    console.error('❌ transcribeAudio excepcion:', e);
-    return null;
   }
+
+  console.error('🚨 [STT] Todos los modelos de transcripción fallaron.');
+  return null;
 }
 
 export async function POST(request: NextRequest) {
