@@ -4,7 +4,7 @@ import {
   MessageSquare, Send, Bot, User,
   Smile, CheckCheck, Check, X, RefreshCw, UserCheck, Wifi, WifiOff, Search, Clock,
   Image as ImageIcon, Video, Volume2, FileText, ChevronDown, Car, Calendar, Hash, Info,
-  Copy, Trash
+  Copy, Trash, Zap
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { cn, formatRelativeTime } from '@/lib/utils';
@@ -202,6 +202,8 @@ export default function WhatsAppPage() {
   const [isEditingName, setIsEditingName] = useState(false);
   const [editName, setEditName] = useState({ nombre: '', apellido: '' });
   const [savingName, setSavingName] = useState(false);
+  const [retryingIA, setRetryingIA] = useState(false);
+  const [retryStatus, setRetryStatus] = useState<string | null>(null);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -567,6 +569,31 @@ export default function WhatsAppPage() {
     }
   };
 
+  // ── Retry IA for pending messages ──────────────────────────
+  const handleRetryIA = async () => {
+    if (retryingIA) return;
+    setRetryingIA(true);
+    setRetryStatus(null);
+    try {
+      const res = await fetch('/api/whatsapp/cron');
+      const data = await res.json();
+      if (data.succeeded > 0) {
+        setRetryStatus(`✅ ${data.succeeded} mensaje${data.succeeded > 1 ? 's' : ''} respondido${data.succeeded > 1 ? 's' : ''}`);
+        await fetchNewMsgs(selected!.telefono);
+        await loadConvs();
+      } else if (data.still_pending > 0) {
+        setRetryStatus('⏳ IA sigue no disponible, se reintentara');
+      } else {
+        setRetryStatus('✅ Sin mensajes pendientes');
+      }
+    } catch {
+      setRetryStatus('❌ Error al reintentar');
+    } finally {
+      setRetryingIA(false);
+      setTimeout(() => setRetryStatus(null), 4000);
+    }
+  };
+
   // ── Reactions ──────────────────────────────────────────────────
   const handleReact = async (msg: RawMsg, emoji: string) => {
     if (!selected || !msg.wa_message_id || sending) return;
@@ -730,7 +757,7 @@ export default function WhatsAppPage() {
                   </div>
 
                   {/* Actions Row (Mobile: New line with space; Desktop: Inline) */}
-                  <div className="flex items-center justify-between md:justify-end gap-3 w-full md:w-auto md:border-t-0 border-t border-white/5 pt-3 md:pt-0">
+                  <div className="flex items-center justify-between md:justify-end gap-2 w-full md:w-auto md:border-t-0 border-t border-white/5 pt-3 md:pt-0">
                     {timeLeftStr && (
                       <div className={cn(
                         'flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[10px] md:text-xs font-semibold flex-shrink-0 shadow-sm',
@@ -741,6 +768,26 @@ export default function WhatsAppPage() {
                       </div>
                     )}
                     <div className="flex items-center gap-2 flex-shrink-0">
+                      {/* Retry IA button */}
+                      <div className="relative">
+                        <button
+                          id="btn-retry-ia"
+                          onClick={handleRetryIA}
+                          disabled={retryingIA}
+                          title="Reintentar respuesta de IA para mensajes pendientes"
+                          className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex-shrink-0 shadow-sm bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 hover:bg-yellow-500/20 disabled:opacity-50"
+                        >
+                          {retryingIA
+                            ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            : <Zap className="w-3.5 h-3.5" />}
+                          <span className="hidden sm:inline">{retryingIA ? 'Reintentando...' : 'Reintentar IA'}</span>
+                        </button>
+                        {retryStatus && (
+                          <div className="absolute top-full mt-1 right-0 z-50 px-2.5 py-1.5 rounded-lg text-[11px] font-medium whitespace-nowrap shadow-xl" style={{ background: '#2a3942', color: '#e9edef', border: '1px solid rgba(255,255,255,0.08)' }}>
+                            {retryStatus}
+                          </div>
+                        )}
+                      </div>
                       <button
                         onClick={() => setMode('bot')}
                         disabled={togglingMode || selected.estado === 'bot'}

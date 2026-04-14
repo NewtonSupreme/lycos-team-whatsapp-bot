@@ -25,10 +25,9 @@ const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 // ─── AI Models — ordered by priority (primary first, then fallbacks) ──────────
 const GEMINI_MODELS = [
-  'gemini-3.1-flash-lite-preview',   // [PRIMARY]  — faster, cheaper, preferred
-  'gemini-2.5-flash-preview-04-17',  // [FALLBACK 1] — Gemini 2.5 Flash
-  'gemini-2.5-pro-preview-03-25',    // [FALLBACK 2] — Gemini 2.5 Pro
-  'gemma-3-27b-it',                  // [FALLBACK 3] — Gemma 3 27B
+  'gemini-3.1-flash-lite-preview', // [PRIMARY]   — fast, preferred
+  'gemini-2.5-flash-preview-04-17',// [FALLBACK 1] — Gemini 2.5 Flash
+  'gemma-3-27b-it',                // [FALLBACK 2] — Gemma 3 27B
 ] as const;
 const GEMINI_MODEL = GEMINI_MODELS[0]; // kept for audio/vision helpers
 const ASESOR_PHONE = '584123343519';
@@ -653,33 +652,18 @@ export async function POST(request: NextRequest) {
         // Update is_processing to true
         await db.from('conversaciones').update({ is_processing: true }).eq('telefono', phone);
 
-        // ── Piggyback retry: mark OLD pending messages from THIS user as superseded ──
-        // The incoming message is fresh — AI will answer it now, so old pending entries
-        // from same user are redundant and should not cause duplicate replies.
+        // Mark any OLD pending messages from THIS user as superseded
+        // (new message will be processed fresh — avoids duplicate replies)
         try {
           await db.from('mensajes_pendientes_ia')
-            .update({ status: 'completed', error_log: 'Supersedido por nuevo mensaje del usuario.' })
+            .update({ status: 'completed', error_log: 'Supersedido por nuevo mensaje.' })
             .eq('from_number', phone)
             .eq('status', 'pending');
         } catch { /* non-critical */ }
 
-        // ── Piggyback retry: opportunistically retry OTHER users' pending messages ──
-        // We fire this async (non-blocking) so it never delays the current user's reply.
-        void (async () => {
-          try {
-            // Lazy import avoids circular dependency issues at module load time
-            const { processPendingMessages } = await import('../cron/route');
-            const result = await processPendingMessages(db, 3); // max 3 at a time to stay fast
-            if (result.succeeded > 0 || result.abandoned > 0) {
-              console.log(`♻️ [Piggyback] Retried pendientes — ok:${result.succeeded} abandoned:${result.abandoned}`);
-            }
-          } catch { /* never block main flow */ }
-        })();
-
         try {
           await processCoreLogic(db, phone, messageBody, wa_message_id, waProfileName);
         } finally {
-          // Always reset processing flag
           await db.from('conversaciones').update({ is_processing: false }).eq('telefono', phone);
         }
         console.log(`✅ [${phone}] processCoreLogic finished.`);
@@ -938,10 +922,9 @@ REGLAS CRITICAS:
   });
 
   // ── Multi-model retry strategy ─────────────────────────────────────────────
-  // Each "attempt" picks a model from the fallback chain and waits progressively.
-  // Schedule: attempt 0→primary, 1→primary(3s), 2→fallback1(6s), 3→fallback2(10s), 4→fallback3(15s)
-  const backoffMs  = [0, 3000, 6000, 10000, 15000];
-  const modelPick  = [0, 0,    1,    2,     3    ]; // index into GEMINI_MODELS
+  // Attempt 0: primary (no wait), Attempt 1: primary (3s), Attempt 2: gemini-2.5-flash (8s), fallback: gemma-3-27b-it (15s)
+  const backoffMs = [0, 3000, 8000, 15000];
+  const modelPick = [0,    0,    1,      2]; // index into GEMINI_MODELS
   const maxAttempts = backoffMs.length;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
