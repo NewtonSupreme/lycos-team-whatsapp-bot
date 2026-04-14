@@ -43,13 +43,11 @@ export async function processPendingMessages(
   if (!db) return { succeeded: 0, still_pending: 0, abandoned: 0 };
 
   const MAX_INTENTOS = 10;
-  const cutoff = new Date(Date.now() - 60 * 1000).toISOString();
 
   const { data: pendientes } = await db
     .from('mensajes_pendientes_ia')
     .select('*')
     .eq('status', 'pending')
-    .lt('created_at', cutoff)
     .order('created_at', { ascending: true })
     .limit(limitCount);
 

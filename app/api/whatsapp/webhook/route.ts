@@ -910,16 +910,7 @@ REGLAS CRITICAS:
 
   const contents = [...ctx.historia, { role: 'user', parts: [{ text: userMessage }] }];
 
-  console.log(`🧠 Calling Gemini with model: ${GEMINI_MODEL}`);
-  const reqBody = JSON.stringify({
-    system_instruction: { parts: [{ text: systemPrompt }] },
-    contents,
-    generationConfig: { temperature: 0.75, maxOutputTokens: 700, topK: 40, topP: 0.95 },
-    safetySettings: [
-      { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-      { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-    ],
-  });
+  console.log(`🧠 Calling Gemini Models (Fallback Chain)`);
 
   // ── Multi-model retry strategy ─────────────────────────────────────────────
   // Attempt 0: primary (no wait), Attempt 1: primary (3s), Attempt 2: gemini-2.5-flash (8s), fallback: gemma-3-27b-it (15s)
@@ -933,6 +924,26 @@ REGLAS CRITICAS:
       await delay(backoffMs[attempt]);
     }
     const model = GEMINI_MODELS[modelPick[attempt]];
+    const isGemma = model.includes('gemma');
+    
+    // Si es Gemma, API bloquea system_instruction. Anexamos system prompt al texto del usuario.
+    let modelContents = [...contents];
+    if (isGemma) {
+      modelContents = JSON.parse(JSON.stringify(contents)); // Deep copy simple
+      const lastIdx = modelContents.length - 1;
+      modelContents[lastIdx].parts[0].text = `[INSTRUCCIONES DEL SISTEMA A SEGUIR ESTRICTAMENTE]\n${systemPrompt}\n\n[MENSAJE DEL USUARIO]\n${modelContents[lastIdx].parts[0].text}`;
+    }
+
+    const reqBody = JSON.stringify({
+      ...(isGemma ? {} : { system_instruction: { parts: [{ text: systemPrompt }] } }),
+      contents: modelContents,
+      generationConfig: { temperature: 0.75, maxOutputTokens: 700, topK: 40, topP: 0.95 },
+      safetySettings: [
+        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+      ],
+    });
+
     console.log(`🧠 Calling Gemini model: ${model} (intento ${attempt + 1}/${maxAttempts})`);
     try {
       const resp = await fetch(
@@ -946,8 +957,8 @@ REGLAS CRITICAS:
       if (!resp.ok) {
         const errText = await resp.text();
         console.error(`❌ IA Error [${resp.status}] modelo=${model} (intento ${attempt + 1}/${maxAttempts}):`, errText.substring(0, 400));
-        // Only retry on 503/429 (overload/rate-limit); hard-fail on other errors
-        if (resp.status !== 503 && resp.status !== 429) return null;
+        // Retry on 503 (Unavailable), 429 (Rate Limit), or 400 (Bad Request on specific models)
+        if (resp.status !== 503 && resp.status !== 429 && resp.status !== 400) return null;
         continue; // try next model/attempt
       }
       const data = await resp.json();
