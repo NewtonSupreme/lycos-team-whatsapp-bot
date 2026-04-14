@@ -38,7 +38,9 @@ export async function POST(request: NextRequest) {
       if (file) {
         const fdMeta = new FormData();
         fdMeta.append('messaging_product', 'whatsapp');
-        fdMeta.append('file', file);
+        // Asegurar que se pase explicitamente el nombre del archivo en la cabecera multipart
+        fdMeta.append('file', file, file.name || 'documento.pdf');
+        if (file.type) fdMeta.append('type', file.type);
         
         const upRes = await fetch(`https://graph.facebook.com/v18.0/${phoneId}/media`, {
           method: 'POST',
