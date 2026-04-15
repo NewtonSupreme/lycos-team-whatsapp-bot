@@ -1,15 +1,16 @@
 'use client';
 import React, { useEffect } from 'react';
-import { Calendar, Plus, Clock, User, Car, X, ChevronLeft, ChevronRight } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { MessageSquare, Calendar, Clock, User, Car, Filter, ChevronLeft, ChevronRight, Plus, X, Check, Search, UserCheck } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import StatusBadge from '@/components/ui/status-badge';
 import { fetchCitas, createCita, updateCita, deleteCita, fetchClientes, fetchVehiculos } from '@/lib/supabase';
 import { Cita, TipoServicio, Cliente, Vehiculo } from '@/types';
-import { formatDate, cn } from '@/lib/utils';
+import { cn, formatDate } from '@/lib/utils';
+import Link from 'next/link';
 
 const HORAS = ['08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00'];
 const TIPOS: { v: TipoServicio; l: string }[] = [
@@ -296,7 +297,9 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
                       </div>
                       <div className="flex items-center gap-1.5 text-xs mb-1">
                         <User className="w-3 h-3 opacity-60" />
-                        <span className="font-medium">{cliente ? `${cliente.nombre} ${cliente.apellido}` : '—'}</span>
+                        <span className="font-medium truncate">
+                          {cliente ? `${cliente.nombre} ${cliente.apellido}` : (cita.nombre_cliente || cita.telefono || '—')}
+                        </span>
                       </div>
                       <div className="flex items-center gap-1.5 text-xs opacity-80">
                         <Car className="w-3 h-3 opacity-60" />
@@ -340,7 +343,9 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
                         </div>
                       </td>
                       <td className="p-3">
-                        <p className="text-xs font-medium">{cliente ? `${cliente.nombre} ${cliente.apellido}` : '—'}</p>
+                        <p className="text-xs font-medium">
+                          {cliente ? `${cliente.nombre} ${cliente.apellido}` : (cita.nombre_cliente || cita.telefono || '—')}
+                        </p>
                       </td>
                       <td className="p-3">
                         <p className="text-xs">{vehiculo ? `${vehiculo.marca} ${vehiculo.modelo}` : '—'}</p>
@@ -439,11 +444,20 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
               <textarea className="flex w-full rounded-lg border border-border/50 bg-background/50 px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary resize-none min-h-[60px]" value={form.notas} onChange={e => setForm(p => ({ ...p, notas: e.target.value }))} placeholder="Notas adicionales..." />
             </div>
           </div>
-          <DialogFooter className="gap-2 mt-2">
-            <Button variant="outline" onClick={() => setShowModal(false)}>Cancelar</Button>
-            <Button onClick={handleSave} disabled={!form.cliente_id || !form.vehiculo_id || !form.fecha}>
-              {editCita ? 'Guardar Cambios' : 'Agendar Cita'}
-            </Button>
+          <DialogFooter className="flex flex-col sm:flex-row gap-2 mt-2">
+            {editCita && (
+              <Button variant="ghost" className="gap-2 text-xs mr-auto" asChild>
+                <Link href={`/dashboard/whatsapp?chat=${getCliente(editCita.cliente_id)?.telefono || editCita.telefono}`}>
+                  <UserCheck className="w-4 h-4" /> Ver Perfil / Chat
+                </Link>
+              </Button>
+            )}
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setShowModal(false)}>Cancelar</Button>
+              <Button onClick={handleSave} disabled={!form.cliente_id || !form.vehiculo_id || !form.fecha}>
+                {editCita ? 'Guardar Cambios' : 'Agendar Cita'}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

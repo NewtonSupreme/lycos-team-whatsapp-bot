@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_API_KEYS = [
+  process.env.GEMINI_API_KEY || '',
+  process.env.GEMINI_API_KEY_2 || '',
+  process.env.GEMINI_API_KEY_3 || '',
+].filter(Boolean);
 
 export async function POST(req: NextRequest) {
-  if (!GEMINI_API_KEY) {
+  const key = GEMINI_API_KEYS[0];
+  if (!key) {
     return NextResponse.json({ error: 'GEMINI_API_KEY no configurada' }, { status: 500 });
   }
 
@@ -77,7 +82,7 @@ REGLAS IMPORTANTES:
 - NO incluyas texto adicional, solo el JSON puro`;
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=${key}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

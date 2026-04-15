@@ -47,6 +47,23 @@ export async function deleteCliente(id: string) {
   if (error) throw error;
 }
 
+export async function syncClientData(clientId: string, nombre: string, apellido: string, telefono: string) {
+  if (!supabase) return;
+  const fullName = `${nombre} ${apellido}`.trim();
+  try {
+    await supabase.from('citas').update({ nombre_cliente: fullName }).eq('cliente_id', clientId);
+    const { data: conv } = await supabase.from('conversaciones').select('datos_cliente, memoria').eq('telefono', telefono).single();
+    if (conv) {
+      await supabase.from('conversaciones').update({
+        datos_cliente: { ...(conv.datos_cliente || {}), nombre: fullName },
+        memoria: { ...(conv.memoria || {}), nombre: fullName }
+      }).eq('telefono', telefono);
+    }
+  } catch (e) {
+    console.error('Error in syncClientData:', e);
+  }
+}
+
 // ─── Vehículos ─────────────────────────────────────────────────────────────
 export async function fetchVehiculos() {
   if (!supabase) return null;

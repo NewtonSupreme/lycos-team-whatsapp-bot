@@ -6,7 +6,7 @@ import {
   Image as ImageIcon, Video, Volume2, FileText, ChevronDown, Car, Calendar, Hash, Info,
   Copy, Trash, Zap, Paperclip, Mic
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { supabase, syncClientData } from '@/lib/supabase';
 import { cn, formatRelativeTime } from '@/lib/utils';
 
 const QUICK_REPLIES = [
@@ -637,6 +637,9 @@ export default function WhatsAppPage() {
           nombre: fullName
         }
       }).eq('telefono', selected.telefono);
+
+      // 3. Sync redundant data (citas, conversaciones)
+      await syncClientData(selected.cliente_id || '', nombre, apellido, selected.telefono);
 
       // Refresh data
       await loadConvs();

@@ -74,6 +74,8 @@ export interface Cita {
   estado: 'confirmada' | 'pendiente' | 'cancelada' | 'completada';
   notas?: string;
   telefono?: string;
+  nombre_cliente?: string;
+  vehiculo_info?: string;
   duracion_minutos?: number;
   created_at: string;
   cliente?: Cliente;

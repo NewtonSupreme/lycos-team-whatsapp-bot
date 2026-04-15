@@ -22,13 +22,18 @@ async function firePushNotification(payload: {
 }
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const GEMINI_API_KEYS = [
+  process.env.GEMINI_API_KEY || '',
+  process.env.GEMINI_API_KEY_2 || '',
+  process.env.GEMINI_API_KEY_3 || '',
+].filter(Boolean);
+
 // ─── AI Models — ordered by priority (primary first, then fallbacks) ──────────
 const GEMINI_MODELS = [
   'gemini-3.1-flash-lite-preview', // [PRIMARY]   — fast, preferred
-  'gemini-2.5-flash',// [FALLBACK 1] — Gemini 2.5 Flash
-  'gemma-3-27b-it',                // [FALLBACK 2] — Gemma 3 27B
+  'gemini-2.5-flash',              // [FALLBACK 1] — Gemini 2.5 Flash
 ] as const;
+
 const GEMINI_MODEL = GEMINI_MODELS[0]; // kept for audio/vision helpers
 const ASESOR_PHONE = '584123343519';
 const ASESOR_DISPLAY_NAME = 'Asesor Lycos Team';
@@ -865,7 +870,7 @@ async function getAIResponse(
   ctx: ConversationContext,
   rates: ExchangeRates | null
 ): Promise<string | null> {
-  if (!GEMINI_API_KEY) return null;
+  if (GEMINI_API_KEYS.length === 0) return null;
 
   const vzlaDateTime = formatVzlaDateTime();
   const vzlaDateStr = getVzlaDateString();
@@ -899,7 +904,6 @@ La fecha de HOY es ${vzlaDateStr} (${dayName}). Esta es la UNICA referencia vál
 PROHIBIDO: Usar cualquier fecha mencionada en el historial de conversación anterior para calcular "mañana", "pasado mañana", "la próxima semana", etc.
 SIEMPRE: Calcula "mañana" sumando 1 día a ${vzlaDateStr}. "La próxima semana" = los 7 días desde hoy.
 NUNCA registres una cita en una fecha que ya pasó. Si el cálculo da una fecha anterior a ${vzlaDateStr}, es un error, recalcula.
-Ejemplo correcto: Si hoy es ${vzlaDateStr} y el cliente dice "para mañana", la cita es ${new Date(new Date().getTime() + 86400000).toISOString().split('T')[0]}. NUNCA uses la fecha de mensajes viejos del historial.
 
 REGLAS CRITICAS:
 - NUNCA uses asteriscos (*) en tus respuestas. Texto plano siempre. Listas con - o numeradas.
@@ -907,88 +911,79 @@ REGLAS CRITICAS:
 - Usa la fecha (${vzlaDateStr}) para calcular fechas relativas. Nunca agendes domingo.
 - Un cliente puede tener varios vehiculos.
 - REGLA DE ORO (PRECIOS): NUNCA, bajo ningún concepto, des el precio en Bolívares (Bs.). Solo usa dólares ($) y dólares a tasa BCV según las REGLAS DE CONVERSIÓN MONETARIA.
-- Si ves "[Imagen enviada...]", lee su descripción automática para entender qué mandó y responderle. Si manda varias fotos o texto repartido en varios envíos seguidos, asume el contexto completo unificado.
-- PROHIBICION DE ENVIAR IMAGENES: **NUNCA** intentes enviar, simular o ofrecer enviar imágenes o fotos. Jamás uses formatos como "[Imagen adjunta]" ni "[Imagen enviada]" en tus respuestas. Si preguntan por detalles visuales, invítalos siempre a venir al taller presencialmente.
-- No repitas preguntas ya respondidas en el historial.`;
+- Si ves "[Imagen enviada...]", lee su descripción automática para entender qué mandó y responderle.
+- PROHIBICION DE ENVIAR IMAGENES: **NUNCA** intentes enviar, simular o ofrecer enviar imágenes o fotos. 
+
+AGENDAMIENTO DE CITAS (USO DE TAGS):
+- Si el cliente confirma una fecha y hora, genera AL FINAL de tu respuesta el tag: [CITA: AAAA-MM-DD HH:MM | servicio | vehículo]
+- Ejemplo: [CITA: 2026-04-16 08:00 | Silenciador | Mazda Allegro]
+- En 'servicio', resume lo que se hará. En 'vehículo', pon MARCA y MODELO.
+- CRITICO: NUNCA pongas estados como 'pendiente' o 'confirmada' en VEHÍCULO.
+- Si detectas el nombre del cliente por primera vez, usa: [NOMBRE: Juan Pérez]`;
 
   const contents = [...ctx.historia, { role: 'user', parts: [{ text: userMessage }] }];
 
-  console.log(`🧠 Calling Gemini Models (Fallback Chain)`);
-
-  // ── Multi-model retry strategy ─────────────────────────────────────────────
-  // Attempt 0: primary (no wait), Attempt 1: primary (3s), Attempt 2: gemini-2.5-flash (8s), fallback: gemma-3-27b-it (15s)
-  const backoffMs = [0, 3000, 8000, 15000];
-  const modelPick = [0,    0,    1,      2]; // index into GEMINI_MODELS
-  const maxAttempts = backoffMs.length;
-
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    if (backoffMs[attempt] > 0) {
-      console.log(`⏳ Retrying IA en ${backoffMs[attempt] / 1000}s...`);
-      await delay(backoffMs[attempt]);
-    }
-    const model = GEMINI_MODELS[modelPick[attempt]];
-    const isGemma = model.includes('gemma');
+  // ── Multi-KEY & Multi-MODEL strategy ─────────────────────────────────────────────
+  for (let kIdx = 0; kIdx < GEMINI_API_KEYS.length; kIdx++) {
+    const key = GEMINI_API_KEYS[kIdx];
     
-    // Si es Gemma, API bloquea system_instruction. Anexamos system prompt al texto del usuario.
-    let modelContents = [...contents];
-    if (isGemma) {
-      modelContents = JSON.parse(JSON.stringify(contents)); // Deep copy simple
-      const lastIdx = modelContents.length - 1;
-      modelContents[lastIdx].parts[0].text = `[INSTRUCCIONES DEL SISTEMA A SEGUIR ESTRICTAMENTE]\n${systemPrompt}\n\n[MENSAJE DEL USUARIO]\n${modelContents[lastIdx].parts[0].text}`;
-    }
+    for (let mIdx = 0; mIdx < GEMINI_MODELS.length; mIdx++) {
+      const model = GEMINI_MODELS[mIdx];
+      
+      console.log(`🧠 Intentando IA con Key ${kIdx + 1}/${GEMINI_API_KEYS.length} y Modelo ${model}`);
 
-    const reqBody = JSON.stringify({
-      ...(isGemma ? {} : { system_instruction: { parts: [{ text: systemPrompt }] } }),
-      contents: modelContents,
-      generationConfig: { temperature: 0.75, maxOutputTokens: 700, topK: 40, topP: 0.95 },
-      safetySettings: [
-        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-      ],
-    });
+      try {
+        const resp = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              system_instruction: { parts: [{ text: systemPrompt }] },
+              contents,
+              generationConfig: { temperature: 0.75, maxOutputTokens: 700, topK: 40, topP: 0.95 },
+              safetySettings: [
+                { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+                { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+              ],
+            }),
+          }
+        );
 
-    console.log(`🧠 Calling Gemini model: ${model} (intento ${attempt + 1}/${maxAttempts})`);
-    try {
-      const resp = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: reqBody,
+        if (!resp.ok) {
+          const errText = await resp.text();
+          console.error(`❌ IA Error [${resp.status}] Key ${kIdx + 1} Modelo ${model}:`, errText.substring(0, 200));
+          // Retry on Rate limit or overload
+          if (resp.status === 429 || resp.status === 503 || resp.status === 500) continue;
+          // Fatal error for this key? 
+          break; // Try next key
         }
-      );
-      if (!resp.ok) {
-        const errText = await resp.text();
-        console.error(`❌ IA Error [${resp.status}] modelo=${model} (intento ${attempt + 1}/${maxAttempts}):`, errText.substring(0, 400));
-        // Retry on 503 (Unavailable), 429 (Rate Limit), or 400 (Bad Request on specific models)
-        if (resp.status !== 503 && resp.status !== 429 && resp.status !== 400) return null;
-        continue; // try next model/attempt
+
+        const data = await resp.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+        if (text) {
+          console.log(`✅ IA respondió con éxito (Key ${kIdx + 1}, Modelo ${model})`);
+          return text;
+        }
+      } catch (e) {
+        console.error(`❌ IA Exception Key ${kIdx + 1} Modelo ${model}:`, e);
       }
-      const data = await resp.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || null;
-      if (text) {
-        if (model !== GEMINI_MODELS[0]) console.log(`✅ IA respondió con modelo de respaldo: ${model}`);
-        else console.log(`✅ Gemini: "${text.substring(0, 70)}..."`);
-        return text;
-      }
-      // Empty response — try next
-      console.warn(`⚠️ IA respuesta vacía (modelo=${model})`);
-    } catch (e) {
-      console.error(`❌ IA Exception modelo=${model} (intento ${attempt + 1}/${maxAttempts}):`, e);
     }
   }
-  console.error('🚨 Todos los modelos de IA fallaron. Mensaje quedará pendiente para reintento.');
+
+  console.error('🚨 Todos los modelos y todas las API Keys fallaron.');
   return null;
 }
 
 async function transcribeAudio(base64Data: string, mimeType: string): Promise<string | null> {
-  if (!GEMINI_API_KEY) return null;
+  const key = GEMINI_API_KEYS[0];
+  if (!key) return null;
   const sttModel = GEMINI_MODEL;
   const systemPrompt = "Eres un sistema de reconocimiento de voz. Tu UNICA tarea es transcribir el audio a texto exacto en español. NO agregues explicaciones, respuestas, introducciones ni comentarios. Solo escribe lo que el usuario dice en español tal cual.";
 
   try {
     const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${sttModel}:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${sttModel}:generateContent?key=${key}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1018,13 +1013,14 @@ async function transcribeAudio(base64Data: string, mimeType: string): Promise<st
 }
 
 async function describeImage(base64Data: string, mimeType: string): Promise<string | null> {
-  if (!GEMINI_API_KEY) return null;
+  const key = GEMINI_API_KEYS[0];
+  if (!key) return null;
   const sttModel = GEMINI_MODEL;
   const systemPrompt = "Eres un analista de imágenes de un taller automotriz. Detalla brevemente y de forma muy precisa qué se ve en la imagen para que el chatbot lo entienda y pueda ayudar al cliente. Si hay texto relevante en la imagen, menciónalo. Responde siempre en español.";
 
   try {
     const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${sttModel}:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${sttModel}:generateContent?key=${key}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1501,7 +1497,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         // Video Link
         await sendMsg(from, '🎥 *Video de cómo llegar:* https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
         await delay(800);
-        await sendMsg(from, '¿Tienes alguna otra duda o quieres agendar una cita? 😊');
+      await sendMsg(from, '¿Tienes alguna otra duda o quieres agendar una cita? 😊');
         
         await updateConversation(db, from, messageBody, ctx.memoria);
         
@@ -1637,7 +1633,12 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           } catch (e) { console.error('Error insertando cita automatica:', e); }
         }
 
-        // (Logic for images was removed)
+        // ── Clean all AI Tags before sending to WhatsApp ──────────────────
+        cleanedAi = cleanedAi
+          .replace(/\[CITA:[^\]]+\]/gi, '')
+          .replace(/\[NOMBRE:[^\]]+\]/gi, '')
+          .replace(/\s+/g, ' ')
+          .trim();
 
         const needsAsesor = aiNeedsAsesor(cleanedAi);
 

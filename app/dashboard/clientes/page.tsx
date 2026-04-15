@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { fetchClientes, createCliente, updateCliente, deleteCliente } from '@/lib/supabase';
+import { fetchClientes, createCliente, updateCliente, deleteCliente, syncClientData } from '@/lib/supabase';
 import { Cliente, Vehiculo } from '@/types';
 import { formatDate, getInitials } from '@/lib/utils';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -59,6 +59,7 @@ export default function ClientesPage() {
     try {
       if (editCliente) {
         await updateCliente(editCliente.id, form);
+        await syncClientData(editCliente.id, form.nombre, form.apellido, form.telefono);
       } else {
         await createCliente(form);
       }

@@ -14,11 +14,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { processCoreLogic } from '../webhook/route';
 
-export const dynamic = 'force-dynamic';
-export const maxDuration = 55;
-
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const GEMINI_API_KEYS = [
+  process.env.GEMINI_API_KEY || '',
+  process.env.GEMINI_API_KEY_2 || '',
+  process.env.GEMINI_API_KEY_3 || '',
+].filter(Boolean);
 const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
 
 function getDb() {
@@ -29,38 +30,43 @@ function getDb() {
 }
 
 async function describeImage(base64Data: string, mimeType: string): Promise<string | null> {
-  if (!GEMINI_API_KEY) return null;
+  if (GEMINI_API_KEYS.length === 0) return null;
   const systemPrompt =
     'Eres un analista de imágenes de un taller automotriz. Detalla brevemente y de forma muy precisa qué se ve en la imagen para que el chatbot lo entienda y pueda ayudar al cliente. Si hay texto relevante en la imagen, menciónalo. Responde siempre en español.';
-  try {
-    const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: systemPrompt }] },
-          contents: [{
-            role: 'user',
-            parts: [
-              { inlineData: { mimeType: mimeType.split(';')[0], data: base64Data } },
-              { text: 'Describe esta imagen detalladamente pensando como mecánico:' },
-            ],
-          }],
-          generationConfig: { temperature: 0.4 },
-        }),
+  
+  for (const key of GEMINI_API_KEYS) {
+    try {
+      const resp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            system_instruction: { parts: [{ text: systemPrompt }] },
+            contents: [{
+              role: 'user',
+              parts: [
+                { inlineData: { mimeType: mimeType.split(';')[0], data: base64Data } },
+                { text: 'Describe esta imagen detalladamente pensando como mecánico:' },
+              ],
+            }],
+            generationConfig: { temperature: 0.4 },
+          }),
+        }
+      );
+      if (resp.ok) {
+        const data = await resp.json();
+        return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
       }
-    );
-    if (!resp.ok) {
-      console.error(`❌ Gemini Vision error ${resp.status}:`, (await resp.text()).substring(0, 200));
-      return null;
+      const errText = await resp.text();
+      console.error(`❌ Gemini Vision error ${resp.status}:`, errText.substring(0, 200));
+      if (resp.status === 429 || resp.status === 503) continue;
+      break; 
+    } catch (e) {
+      console.error('❌ describeImage excepcion:', e);
     }
-    const data = await resp.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
-  } catch (e) {
-    console.error('❌ describeImage excepcion:', e);
-    return null;
   }
+  return null;
 }
 
 export async function POST(request: NextRequest) {
