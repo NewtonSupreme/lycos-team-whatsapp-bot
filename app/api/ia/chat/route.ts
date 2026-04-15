@@ -8,15 +8,11 @@ import {
   fetchVentasSilenciadores
 } from '@/lib/supabase';
 
-const GEMINI_API_KEYS = [
-  process.env.GEMINI_API_KEY || '',
-  process.env.GEMINI_API_KEY_2 || '',
-  process.env.GEMINI_API_KEY_3 || '',
-].filter(Boolean);
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
 const GEMINI_MODELS = [
-  'gemini-3.1-flash-lite-preview',
-  'gemini-1.5-pro' // Using Pro for internal chat as fallback
+  'gemini-2.5-flash',
+  'gemini-3.1-flash-lite'
 ] as const;
 
 function getVzlaDateTime(): string {
@@ -251,55 +247,49 @@ export async function POST(request: NextRequest) {
 
     let rawText = '';
 
-    // ── Multi-KEY & Multi-MODEL strategy ─────────────────────────────────────────────
-    for (let kIdx = 0; kIdx < GEMINI_API_KEYS.length; kIdx++) {
-      const key = GEMINI_API_KEYS[kIdx];
-      for (let mIdx = 0; mIdx < GEMINI_MODELS.length; mIdx++) {
-        const model = GEMINI_MODELS[mIdx];
-        
-        console.log(`🧠 [IA Chat] Intentando con Key ${kIdx + 1} y Modelo ${model}`);
-        try {
-          const apiResponse = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                system_instruction: { parts: [{ text: finalSystemPrompt }] },
-                contents: geminiMessages,
-                generationConfig: {
-                  temperature: 0.4,
-                  topK: 40,
-                  topP: 0.95,
-                  maxOutputTokens: 2048,
-                },
-                safetySettings: [
-                  { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-                  { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-                  { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-                  { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
-                ],
-              }),
-            }
-          );
-
-          if (apiResponse.ok) {
-            const data = await apiResponse.json();
-            const parts = data.candidates?.[0]?.content?.parts || [];
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            rawText = parts.map((p: any) => p.text).join('') || '';
-            if (rawText) break;
-          } else {
-            const errText = await apiResponse.text();
-            console.error(`[IA Chat] Error ${apiResponse.status}:`, errText.slice(0, 200));
-            if (apiResponse.status === 429 || apiResponse.status === 503) continue;
-            break; // Try next key
+    // ── Multi-MODEL strategy (Single API Key) ──────────────────────────────────────
+    for (const model of GEMINI_MODELS) {
+      console.log(`🧠 [IA Chat] Intentando con Modelo: ${model}`);
+      try {
+        const apiResponse = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              system_instruction: { parts: [{ text: finalSystemPrompt }] },
+              contents: geminiMessages,
+              generationConfig: {
+                temperature: 0.4,
+                topK: 40,
+                topP: 0.95,
+                maxOutputTokens: 2048,
+              },
+              safetySettings: [
+                { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+                { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+                { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+                { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+              ],
+            }),
           }
-        } catch (e) {
-          console.error('[IA Chat] Exception:', e);
+        );
+
+        if (apiResponse.ok) {
+          const data = await apiResponse.json();
+          const parts = data.candidates?.[0]?.content?.parts || [];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          rawText = parts.map((p: any) => p.text).join('') || '';
+          if (rawText) break;
+        } else {
+          const errText = await apiResponse.text();
+          console.error(`[IA Chat] Error ${apiResponse.status} Modelo ${model}:`, errText.slice(0, 200));
+          if (apiResponse.status === 429 || apiResponse.status === 503) continue;
+          break; // Try next loop or stop
         }
+      } catch (e) {
+        console.error('[IA Chat] Exception:', e);
       }
-      if (rawText) break;
     }
 
     if (!rawText) {

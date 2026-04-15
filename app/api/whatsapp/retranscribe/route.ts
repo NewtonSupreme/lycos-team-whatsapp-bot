@@ -18,16 +18,12 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 55;
 
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
-const GEMINI_API_KEYS = [
-  process.env.GEMINI_API_KEY || '',
-  process.env.GEMINI_API_KEY_2 || '',
-  process.env.GEMINI_API_KEY_3 || '',
-].filter(Boolean);
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
 // STT model chain: primary → fallback
 const STT_MODELS = [
-  'gemini-2.5-flash-preview-native-audio-dialog',
-  'gemini-2.0-flash-exp',
+  'gemini-2.5-flash',
+  'gemini-3.1-flash-lite',
 ];
 
 function getDb() {
@@ -38,49 +34,47 @@ function getDb() {
 }
 
 async function transcribeAudio(base64Data: string, mimeType: string): Promise<string | null> {
-  if (GEMINI_API_KEYS.length === 0) return null;
+  if (!GEMINI_API_KEY) return null;
   const systemPrompt =
     'Eres un sistema de reconocimiento de voz. Tu UNICA tarea es transcribir el audio a texto exacto en español. NO agregues explicaciones, respuestas, introducciones ni comentarios. Solo escribe lo que el usuario dice en español tal cual.';
 
-  for (const key of GEMINI_API_KEYS) {
-    for (const model of STT_MODELS) {
-      try {
-        console.log(`🎙️ [STT] Intentando con Key y modelo: ${model}`);
-        const resp = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              system_instruction: { parts: [{ text: systemPrompt }] },
-              contents: [{
-                role: 'user',
-                parts: [
-                  { inlineData: { mimeType: mimeType.split(';')[0], data: base64Data } },
-                  { text: 'Transcribe el audio siguiente:' },
-                ],
-              }],
-              generationConfig: { temperature: 0.1 },
-            }),
-          }
-        );
-
-        if (!resp.ok) {
-          const errText = await resp.text();
-          console.error(`❌ [STT] Error ${resp.status} con ${model}:`, errText.substring(0, 200));
-          if (resp.status === 429 || resp.status === 503) continue;
-          break; // Try next key
+  for (const model of STT_MODELS) {
+    try {
+      console.log(`🎙️ [STT] Intentando con modelo: ${model}`);
+      const resp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            system_instruction: { parts: [{ text: systemPrompt }] },
+            contents: [{
+              role: 'user',
+              parts: [
+                { inlineData: { mimeType: mimeType.split(';')[0], data: base64Data } },
+                { text: 'Transcribe el audio siguiente:' },
+              ],
+            }],
+            generationConfig: { temperature: 0.1 },
+          }),
         }
+      );
 
-        const data = await resp.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
-        if (text) {
-          console.log(`✅ [STT] Transcripción exitosa con modelo: ${model}`);
-          return text;
-        }
-      } catch (e) {
-        console.error(`❌ [STT] Excepción con ${model}:`, e);
+      if (!resp.ok) {
+        const errText = await resp.text();
+        console.error(`❌ [STT] Error ${resp.status} con ${model}:`, errText.substring(0, 200));
+        if (resp.status === 429 || resp.status === 503) continue;
+        break; // Stop on fatal error
       }
+
+      const data = await resp.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+      if (text) {
+        console.log(`✅ [STT] Transcripción exitosa con modelo: ${model}`);
+        return text;
+      }
+    } catch (e) {
+      console.error(`❌ [STT] Excepción con ${model}:`, e);
     }
   }
 

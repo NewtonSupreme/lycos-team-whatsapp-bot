@@ -22,19 +22,14 @@ async function firePushNotification(payload: {
 }
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
-const GEMINI_API_KEYS = [
-  process.env.GEMINI_API_KEY || '',
-  process.env.GEMINI_API_KEY_2 || '',
-  process.env.GEMINI_API_KEY_3 || '',
-].filter(Boolean);
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
-// ─── AI Models — ordered by priority (primary first, then fallbacks) ──────────
+// ─── AI Models — ordered by priority (primary first, then fallback) ──────────
 const GEMINI_MODELS = [
-  'gemini-3.1-flash-lite-preview', // [PRIMARY]   — fast, preferred
-  'gemini-2.5-flash',              // [FALLBACK 1] — Gemini 2.5 Flash
+  'gemini-2.5-flash',              // [PRIMARY]
+  'gemini-3.1-flash-lite',         // [FALLBACK]
 ] as const;
 
-const GEMINI_MODEL = GEMINI_MODELS[0]; // kept for audio/vision helpers
 const ASESOR_PHONE = '584123343519';
 const ASESOR_DISPLAY_NAME = 'Asesor Lycos Team';
 const IG_LINK = 'https://www.instagram.com/lycos.team?igsh=MzVwZ3NkbnN2OHk=';
@@ -870,7 +865,7 @@ async function getAIResponse(
   ctx: ConversationContext,
   rates: ExchangeRates | null
 ): Promise<string | null> {
-  if (GEMINI_API_KEYS.length === 0) return null;
+  if (!GEMINI_API_KEY) return null;
 
   const vzlaDateTime = formatVzlaDateTime();
   const vzlaDateStr = getVzlaDateString();
@@ -923,67 +918,59 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
 
   const contents = [...ctx.historia, { role: 'user', parts: [{ text: userMessage }] }];
 
-  // ── Multi-KEY & Multi-MODEL strategy ─────────────────────────────────────────────
-  for (let kIdx = 0; kIdx < GEMINI_API_KEYS.length; kIdx++) {
-    const key = GEMINI_API_KEYS[kIdx];
-    
-    for (let mIdx = 0; mIdx < GEMINI_MODELS.length; mIdx++) {
-      const model = GEMINI_MODELS[mIdx];
-      
-      console.log(`🧠 Intentando IA con Key ${kIdx + 1}/${GEMINI_API_KEYS.length} y Modelo ${model}`);
+  // ── Multi-MODEL strategy (Single API Key) ──────────────────────────────────────
+  for (const model of GEMINI_MODELS) {
+    console.log(`🧠 Intentando IA con Modelo: ${model}`);
 
-      try {
-        const resp = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              system_instruction: { parts: [{ text: systemPrompt }] },
-              contents,
-              generationConfig: { temperature: 0.75, maxOutputTokens: 700, topK: 40, topP: 0.95 },
-              safetySettings: [
-                { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-                { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-              ],
-            }),
-          }
-        );
-
-        if (!resp.ok) {
-          const errText = await resp.text();
-          console.error(`❌ IA Error [${resp.status}] Key ${kIdx + 1} Modelo ${model}:`, errText.substring(0, 200));
-          // Retry on Rate limit or overload
-          if (resp.status === 429 || resp.status === 503 || resp.status === 500) continue;
-          // Fatal error for this key? 
-          break; // Try next key
+    try {
+      const resp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            system_instruction: { parts: [{ text: systemPrompt }] },
+            contents,
+            generationConfig: { temperature: 0.75, maxOutputTokens: 700, topK: 40, topP: 0.95 },
+            safetySettings: [
+              { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+              { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+            ],
+          }),
         }
+      );
 
-        const data = await resp.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || null;
-        if (text) {
-          console.log(`✅ IA respondió con éxito (Key ${kIdx + 1}, Modelo ${model})`);
-          return text;
-        }
-      } catch (e) {
-        console.error(`❌ IA Exception Key ${kIdx + 1} Modelo ${model}:`, e);
+      if (!resp.ok) {
+        const errText = await resp.text();
+        console.error(`❌ IA Error [${resp.status}] Modelo ${model}:`, errText.substring(0, 200));
+        // Retry on Rate limit or overload if there's another model
+        if (resp.status === 429 || resp.status === 503 || resp.status === 500) continue;
+        break; // Stop if it's a fatal error
       }
+
+      const data = await resp.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+      if (text) {
+        console.log(`✅ IA respondió con éxito (Modelo ${model})`);
+        return text;
+      }
+    } catch (e) {
+      console.error(`❌ IA Exception Modelo ${model}:`, e);
     }
   }
 
-  console.error('🚨 Todos los modelos y todas las API Keys fallaron.');
+  console.error('🚨 Todos los modelos fallaron.');
   return null;
 }
 
 async function transcribeAudio(base64Data: string, mimeType: string): Promise<string | null> {
-  const key = GEMINI_API_KEYS[0];
-  if (!key) return null;
-  const sttModel = GEMINI_MODEL;
+  if (!GEMINI_API_KEY) return null;
+  const sttModel = GEMINI_MODELS[0];
   const systemPrompt = "Eres un sistema de reconocimiento de voz. Tu UNICA tarea es transcribir el audio a texto exacto en español. NO agregues explicaciones, respuestas, introducciones ni comentarios. Solo escribe lo que el usuario dice en español tal cual.";
 
   try {
     const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${sttModel}:generateContent?key=${key}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${sttModel}:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1013,14 +1000,13 @@ async function transcribeAudio(base64Data: string, mimeType: string): Promise<st
 }
 
 async function describeImage(base64Data: string, mimeType: string): Promise<string | null> {
-  const key = GEMINI_API_KEYS[0];
-  if (!key) return null;
-  const sttModel = GEMINI_MODEL;
+  if (!GEMINI_API_KEY) return null;
+  const visionModel = GEMINI_MODELS[0];
   const systemPrompt = "Eres un analista de imágenes de un taller automotriz. Detalla brevemente y de forma muy precisa qué se ve en la imagen para que el chatbot lo entienda y pueda ayudar al cliente. Si hay texto relevante en la imagen, menciónalo. Responde siempre en español.";
 
   try {
     const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${sttModel}:generateContent?key=${key}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${visionModel}:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

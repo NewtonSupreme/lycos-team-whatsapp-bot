@@ -15,12 +15,12 @@ import { createClient } from '@supabase/supabase-js';
 import { processCoreLogic } from '../webhook/route';
 
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
-const GEMINI_API_KEYS = [
-  process.env.GEMINI_API_KEY || '',
-  process.env.GEMINI_API_KEY_2 || '',
-  process.env.GEMINI_API_KEY_3 || '',
-].filter(Boolean);
-const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+
+const GEMINI_MODELS = [
+  'gemini-2.5-flash',
+  'gemini-3.1-flash-lite',
+];
 
 function getDb() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -30,14 +30,15 @@ function getDb() {
 }
 
 async function describeImage(base64Data: string, mimeType: string): Promise<string | null> {
-  if (GEMINI_API_KEYS.length === 0) return null;
+  if (!GEMINI_API_KEY) return null;
   const systemPrompt =
     'Eres un analista de imágenes de un taller automotriz. Detalla brevemente y de forma muy precisa qué se ve en la imagen para que el chatbot lo entienda y pueda ayudar al cliente. Si hay texto relevante en la imagen, menciónalo. Responde siempre en español.';
-  
-  for (const key of GEMINI_API_KEYS) {
+
+  for (const model of GEMINI_MODELS) {
     try {
+      console.log(`🖼️ [redescribe] Intentando con modelo: ${model}`);
       const resp = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -59,7 +60,7 @@ async function describeImage(base64Data: string, mimeType: string): Promise<stri
         return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
       }
       const errText = await resp.text();
-      console.error(`❌ Gemini Vision error ${resp.status}:`, errText.substring(0, 200));
+      console.error(`❌ Gemini Vision error ${resp.status} con ${model}:`, errText.substring(0, 200));
       if (resp.status === 429 || resp.status === 503) continue;
       break; 
     } catch (e) {
