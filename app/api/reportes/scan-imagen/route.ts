@@ -100,7 +100,8 @@ REGLAS IMPORTANTES:
     }
 
     const geminiData = await response.json();
-    const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const parts = geminiData.candidates?.[0]?.content?.parts || [];
+    const rawText = parts.map((p: any) => p.text).join('') || '';
 
     const cleanJson = rawText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
 

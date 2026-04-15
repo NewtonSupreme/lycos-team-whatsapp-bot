@@ -343,8 +343,13 @@ ORDEN DEL SISTEMA #2 (NOMBRE DEL CLIENTE - CRÍTICO): Si en la conversación el 
 [NOMBRE: Nombre Del Cliente]
 ESTO ES VITAL. NUNCA lo uses para lugares (ej: "soy de Charallave") ni servicios. Úsalo ÚNICAMENTE cuando detectes certeramente el nombre de la persona. Si ya tienes el nombre en memoria no hace falta que repitas la etiqueta. NO uses el nombre de perfil de WhatsApp si es genérico o un emoji.
 
-ASESOR: Solo mencionarlo si el cliente lo pide explícitamente, para concretar RCV, hay queja compleja, o el bot no puede resolver.
-Cuando corresponda di: "Te envío el contacto de nuestro asesor 👇" (sistema envía la tarjeta).
+ASESOR Y CONTACTO: 
+- REGLA DE CONTACTO (CRÍTICO): Si el cliente pide un número de teléfono, contacto, o pregunta "dónde llamar", DEBES responder: "Te envío el contacto de nuestro asesor 👇" (OBLIGATORIO usar esta frase exacta).
+- Solo mencionar al asesor si el cliente lo pide explícitamente, para concretar RCV, hay queja compleja, o el bot no puede resolver.
+- Cuando corresponda di: "Te envío el contacto de nuestro asesor 👇" (el sistema enviará automáticamente la tarjeta de contacto).
+
+REGLA DE PRIORIDAD DE RESPUESTA:
+- Si el cliente hace una nueva pregunta mientras estabas terminando una explicación anterior o corrigiendo un error previo, **DEBES PRIORIZAR** responder la nueva pregunta en el mismo mensaje. No la ignores por completar lo anterior.
 
 FILTROS E INVENTARIO: Refrigerantes y líquidos Dr Care | Filtros aceite/gasolina CARDOC para múltiples vehículos. Stock en tiempo real en el sistema.
 `;
@@ -933,8 +938,10 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
             contents,
             generationConfig: { temperature: 0.75, maxOutputTokens: 700, topK: 40, topP: 0.95 },
             safetySettings: [
-              { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-              { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+              { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+              { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+              { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+              { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
             ],
           }),
         }
@@ -949,7 +956,8 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
       }
 
       const data = await resp.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+      const parts = data.candidates?.[0]?.content?.parts || [];
+      const text = parts.map((p: any) => p.text).join('') || null;
       if (text) {
         console.log(`✅ IA respondió con éxito (Modelo ${model})`);
         return text;
@@ -992,7 +1000,8 @@ async function transcribeAudio(base64Data: string, mimeType: string): Promise<st
       return null;
     }
     const data = await resp.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+    const parts = data.candidates?.[0]?.content?.parts || [];
+    return parts.map((p: any) => p.text).join('').trim() || null;
   } catch (e) {
     console.error('❌ transcribeAudio excepcion:', e);
     return null;
@@ -1028,7 +1037,8 @@ async function describeImage(base64Data: string, mimeType: string): Promise<stri
       return null;
     }
     const data = await resp.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+    const parts = data.candidates?.[0]?.content?.parts || [];
+    return parts.map((p: any) => p.text).join('').trim() || null;
   } catch (e) {
     console.error('❌ describeImage excepcion:', e);
     return null;
@@ -1322,7 +1332,7 @@ async function updateConversation(db: ReturnType<typeof getDb>, from: string, la
     try {
       const updateData: any = {
         telefono: from, 
-        ultimo_mensaje: lastMsg.substring(0, 100),
+        ultimo_mensaje: lastMsg.substring(0, 500),
         ultimo_mensaje_at: new Date().toISOString(), 
         memoria,
         updated_at: new Date().toISOString()
@@ -1394,18 +1404,22 @@ async function sendMsg(to: string, body: string, preview: boolean = false, reply
 
 // ─── Send Native Contact Card ──────────────────────────────────────────────────
 async function sendContactCard(to: string, phone: string, displayName: string): Promise<void> {
+  const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
+  const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
   if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
   const cleanPhone = phone.replace(/[^0-9]/g, '');
+  const cleanTo = to.replace(/[^0-9]/g, '');
+  
   try {
     const resp = await fetch(`https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messaging_product: 'whatsapp', recipient_type: 'individual',
-        to: to.replace(/[^0-9]/g, ''), type: 'contacts',
+        to: cleanTo, type: 'contacts',
         contacts: [{
           name: { formatted_name: displayName, first_name: 'Asesor', last_name: 'Lycos Team' },
-          phones: [{ phone: `+${cleanPhone}`, type: 'CELL', wa_id: cleanPhone }],
+          phones: [{ phone: `+${cleanPhone}`, type: 'WORK', wa_id: cleanPhone }],
           org: { company: 'Lycos Team', title: 'Asesor' },
         }],
       }),
@@ -1416,14 +1430,27 @@ async function sendContactCard(to: string, phone: string, displayName: string): 
       return;
     }
     const data = await resp.json();
-    console.log(`📇 Card sent to ${to}. ID: ${data.messages?.[0]?.id}`);
+    const waMessageId = data.messages?.[0]?.id;
+    console.log(`📇 Card sent to ${to}. ID: ${waMessageId}`);
+    
     const db = getDb();
     if (db) {
-      void (async () => {
-        try {
-          await db.from('mensajes_whatsapp').insert({ from_number: 'system', to_number: to, body: `[Tarjeta contacto: ${displayName}]`, tipo: 'saliente', es_ia: true });
-        } catch (e) { console.error('Error saving card:', e); }
-      })();
+      // 1. Guardar mensaje en tabla
+      await db.from('mensajes_whatsapp').insert({
+        from_number: 'system', 
+        to_number: cleanTo, 
+        body: `[Tarjeta de contacto: ${displayName}]`, 
+        tipo: 'saliente', 
+        wa_message_id: waMessageId,
+        es_ia: true 
+      });
+
+      // 2. Marcar como modo humano
+      await db.from('conversaciones').update({
+        estado: 'humano',
+        ultimo_mensaje: `[Tarjeta de contacto: ${displayName}]`,
+        ultimo_mensaje_at: new Date().toISOString()
+      }).eq('telefono', cleanTo);
     }
   } catch (e) {
     console.error('❌ sendContactCard:', e);

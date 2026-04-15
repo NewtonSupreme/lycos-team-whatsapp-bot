@@ -56,6 +56,12 @@ async function transcribeAudio(base64Data: string, mimeType: string): Promise<st
               ],
             }],
             generationConfig: { temperature: 0.1 },
+            safetySettings: [
+              { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+              { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+              { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+              { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+            ],
           }),
         }
       );
@@ -68,7 +74,8 @@ async function transcribeAudio(base64Data: string, mimeType: string): Promise<st
       }
 
       const data = await resp.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+      const parts = data.candidates?.[0]?.content?.parts || [];
+      const text = parts.map((p: any) => p.text).join('').trim() || null;
       if (text) {
         console.log(`✅ [STT] Transcripción exitosa con modelo: ${model}`);
         return text;

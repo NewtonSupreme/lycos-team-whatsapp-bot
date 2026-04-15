@@ -4,7 +4,7 @@ import {
   MessageSquare, Send, Bot, User,
   Smile, CheckCheck, Check, X, RefreshCw, UserCheck, Wifi, WifiOff, Search, Clock,
   Image as ImageIcon, Video, Volume2, FileText, ChevronDown, Car, Calendar, Hash, Info,
-  Copy, Trash, Zap, Paperclip, Mic
+  Copy, Trash, Zap, Paperclip, Mic, UserPlus
 } from 'lucide-react';
 import { supabase, syncClientData } from '@/lib/supabase';
 import { cn, formatRelativeTime } from '@/lib/utils';
@@ -221,6 +221,7 @@ export default function WhatsAppPage() {
   const [retryingIA, setRetryingIA] = useState(false);
   const [retryStatus, setRetryStatus] = useState<string | null>(null);
   const [retranscribing, setRetranscribing] = useState(false);
+  const [sendingContact, setSendingContact] = useState(false);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -810,6 +811,33 @@ export default function WhatsAppPage() {
     }
   };
 
+  // ── Send Advisor Contact ──────────────────────────────────────
+  const handleSendContact = async () => {
+    if (!selected || sendingContact) return;
+    if (!confirm(`¿Enviar tarjeta de contacto del Asesor a ${displayName(selected)}?`)) return;
+    
+    setSendingContact(true);
+    try {
+      const res = await fetch('/api/whatsapp/send-contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: selected.telefono }),
+      });
+      if (res.ok) {
+        await fetchNewMsgs(selected.telefono);
+        await loadConvs();
+        scrollToBottom(true);
+      } else {
+        alert('Error al enviar la tarjeta de contacto');
+      }
+    } catch (e) {
+      console.error('Error sendContact:', e);
+      alert('Error de conexión');
+    } finally {
+      setSendingContact(false);
+    }
+  };
+
   const filtered = convs.filter(c => {
     const q = search.toLowerCase();
     return (displayName(c) + c.telefono + (c.ultimo_mensaje || '')).toLowerCase().includes(q);
@@ -1325,6 +1353,21 @@ export default function WhatsAppPage() {
                     <div className="flex items-center justify-between py-1">
                        <span className="text-[11px]" style={{ color: '#8696a0' }}>Perfil WhatsApp</span>
                        <span className="text-[10px]" style={{ color: '#e9edef' }}>{selected.datos_cliente?.wa_name || 'Desconocido'}</span>
+                    </div>
+
+                    {/* Send Contact Button */}
+                    <div className="mt-4 pt-4 border-t border-white/5">
+                      <button
+                        onClick={handleSendContact}
+                        disabled={sendingContact}
+                        className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-bold transition-all shadow-sm bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 disabled:opacity-50"
+                      >
+                        {sendingContact ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
+                        <span>Enviar Contacto Asesor</span>
+                      </button>
+                      <p className="text-[9px] mt-2 px-1 text-center leading-tight" style={{ color: '#8696a0' }}>
+                        Envía la tarjeta VCard del Asesor Lycos para que el cliente guarde el contacto.
+                      </p>
                     </div>
                   </div>
                 </div>
