@@ -923,9 +923,16 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
 
   const contents = [...ctx.historia, { role: 'user', parts: [{ text: userMessage }] }];
 
-  // ── Multi-MODEL strategy (Single API Key) ──────────────────────────────────────
-  for (const model of GEMINI_MODELS) {
-    console.log(`🧠 Intentando IA con Modelo: ${model}`);
+  // ── ROBUST ALTERNATING RETRY STRATEGY ──────────────────────────────────────────
+  const MAX_TOTAL_ATTEMPTS = 6;
+  const ATTEMPTS_DELAYS = [1500, 2500, 4000, 5000, 6000, 7000]; // Incremental delays
+  
+  for (let attempt = 0; attempt < MAX_TOTAL_ATTEMPTS; attempt++) {
+    // Alternate between models: 0, 1, 0, 1, 0, 1...
+    const modelIndex = attempt % GEMINI_MODELS.length;
+    const model = GEMINI_MODELS[modelIndex];
+    
+    console.log(`🧠 [Intento ${attempt + 1}/${MAX_TOTAL_ATTEMPTS}] Usando Modelo: ${model}`);
 
     try {
       const resp = await fetch(
@@ -936,7 +943,12 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
           body: JSON.stringify({
             system_instruction: { parts: [{ text: systemPrompt }] },
             contents,
-            generationConfig: { temperature: 0.75, maxOutputTokens: 700, topK: 40, topP: 0.95 },
+            generationConfig: { 
+              temperature: 0.75, 
+              maxOutputTokens: 1000, // Increased to avoid cut-offs
+              topK: 40, 
+              topP: 0.95 
+            },
             safetySettings: [
               { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
               { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
@@ -949,25 +961,59 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
 
       if (!resp.ok) {
         const errText = await resp.text();
-        console.error(`❌ IA Error [${resp.status}] Modelo ${model}:`, errText.substring(0, 200));
-        // Retry on Rate limit or overload if there's another model
-        if (resp.status === 429 || resp.status === 503 || resp.status === 500) continue;
-        break; // Stop if it's a fatal error
+        const status = resp.status;
+        console.error(`❌ Error IA [${status}] en Modelo ${model}:`, errText.substring(0, 150));
+        
+        // Retry on saturation or temporary errors
+        if (status === 429 || status === 503 || status === 500) {
+          console.log(`⏳ Saturación detectada. Reintentando después de pausa...`);
+          await delay(ATTEMPTS_DELAYS[attempt] || 2000);
+          continue;
+        }
+        // Fatal error for this specific model, but maybe the other one works
+        continue;
       }
 
       const data = await resp.json();
-      const parts = data.candidates?.[0]?.content?.parts || [];
+      const firstCandidate = data.candidates?.[0];
+      const finishReason = firstCandidate?.finishReason;
+      const parts = firstCandidate?.content?.parts || [];
       const text = parts.map((p: any) => p.text).join('') || null;
-      if (text) {
-        console.log(`✅ IA respondió con éxito (Modelo ${model})`);
+
+      // --- DETECT INCOMPLETE RESPONSE ---
+      if (finishReason === 'MAX_TOKENS') {
+        console.warn(`⚠️ Respuesta CORTADA por límite de tokens en ${model}. Reintentando...`);
+        await delay(1000);
+        continue;
+      }
+
+      // Check if text exists and doesn't end abruptly (very basic heuristic)
+      if (text && text.length > 5) {
+        // If it ended with punctuation or emoji, it's likely complete
+        const lastChar = text.trim().slice(-1);
+        const sentenceEnders = ['.', '!', '?', '»', '"', ')'];
+        const isLikelyComplete = sentenceEnders.includes(lastChar) || /[\u{1F300}-\u{1F9FF}]/u.test(text.slice(-5));
+        
+        // If it looks very short and it's not a common short answer, might be worth a retry if it's the first attempt
+        if (!isLikelyComplete && text.length < 50 && attempt === 0) {
+          console.warn(`⚠️ Respuesta parece incompleta o muy corta. Reintentando una vez más por seguridad.`);
+          await delay(800);
+          continue;
+        }
+
+        console.log(`✅ IA respondió con éxito (Modelo ${model}) en intento ${attempt + 1}`);
         return text;
       }
+      
+      console.warn(`⚠️ Modelo ${model} devolvió respuesta vacía. Reintentando...`);
+      await delay(1000);
     } catch (e) {
-      console.error(`❌ IA Exception Modelo ${model}:`, e);
+      console.error(`❌ Excepción en intento ${attempt + 1} (${model}):`, e);
+      await delay(ATTEMPTS_DELAYS[attempt] || 2000);
     }
   }
 
-  console.error('🚨 Todos los modelos fallaron.');
+  console.error('🚨 Todos los intentos y modelos fallaron después de 6 iteraciones.');
   return null;
 }
 
