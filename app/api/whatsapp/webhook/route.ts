@@ -31,6 +31,9 @@ const GEMINI_MODELS = [
 ] as const;
 
 const ASESOR_PHONE = '584123343519';
+// Permitir múltiples administradores (hardcoded o vía env)
+const ADMIN_PHONES = [ASESOR_PHONE, '584241648710'].filter(Boolean);
+
 const ASESOR_DISPLAY_NAME = 'Asesor Lycos Team';
 const IG_LINK = 'https://www.instagram.com/lycos.team?igsh=MzVwZ3NkbnN2OHk=';
 const TT_LINK = 'https://www.tiktok.com/@lycos.team?_r=1&_t=ZS-94prPaQnR5E';
@@ -921,7 +924,14 @@ async function getAIResponse(
 ): Promise<string | null> {
   if (!GEMINI_API_KEY) return null;
 
-  const isAdmin = from === ASESOR_PHONE;
+  // Un usuario es admin si su teléfono está en la lista O si su nombre en memoria contiene "Leandro"
+  const isAdmin = ADMIN_PHONES.includes(from || '') || 
+                  ctx.memoria?.nombre?.toLowerCase().includes('leandro');
+  
+  if (isAdmin) {
+    console.log(`👤 MODO ADMIN DETECTADO: ${from} (Nombre en memoria: ${ctx.memoria?.nombre || 'Desconocido'})`);
+  }
+  
   const knowledge = isAdmin ? ADMIN_KNOWLEDGE : LYCOS_KNOWLEDGE;
 
   const vzlaDateTime = formatVzlaDateTime();
@@ -1679,34 +1689,61 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         }
 
         // ── ADMIN: Process management tags ────────────────────────────────
-        const isAdmin = from === ASESOR_PHONE;
+        const isAdmin = ADMIN_PHONES.includes(from || '') || ctx.memoria?.nombre?.toLowerCase().includes('leandro');
+        
         if (isAdmin && db) {
           // 1. [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca]
-          const stockUpsertMatches = cleanedAi.matchAll(/\[STOCK_?UPSERT:\s*([^|]*)\|\s*([^|]*)\|\s*([^|]*)\|\s*([^|]*)\|\s*([^|]*)?\|\s*([^\]]*)?\s*\]/gi);
+          // Regex más flexible que captura el interior del tag
+          const stockUpsertMatches = cleanedAi.matchAll(/\[STOCK_?UPSERT:\s*([^\]]+)\]/gi);
+          
           for (const m of stockUpsertMatches) {
             try {
-              const [, nombre, categoria, precio, stock, codigo, marca] = Array.from(m).map(s => s?.trim());
+              const content = m[1].trim();
+              const parts = content.split('|').map(p => p.trim());
+              
+              if (parts.length < 2) continue; // Al menos nombre y stock/categoría
+              
+              const nombre = parts[0];
+              const categoria = (parts[1] || 'general').toLowerCase();
+              const precio = parseFloat(parts[2] || '0');
+              const stock = parseInt(parts[3] || '0');
+              const codigo = parts[4] || null;
+              const marca = parts[5] || null;
+
               const updateObj: any = {
                 nombre, 
-                categoria: (categoria || 'general').toLowerCase(), 
-                precio_usd: parseFloat(precio || '0'), 
-                stock: parseInt(stock || '0'),
-                codigo: codigo || null,
-                marca: marca || null,
+                categoria, 
+                precio_usd: isNaN(precio) ? 0 : precio, 
+                stock: isNaN(stock) ? 0 : stock,
+                codigo,
+                marca,
                 activo: true
               };
-              // Upsert by name OR code if provided
-              const { data: existing } = await db.from('inventario')
-                .select('id').or(`nombre.eq."${nombre}"${codigo ? `,codigo.eq."${codigo}"` : ''}`).limit(1).maybeSingle();
+
+              console.log(`📦 ADMIN (${from}): Intento de UPSERT para ${nombre} (Stock: ${stock})`);
+
+              // Buscar por nombre exacto o código para actualizar
+              let query = db.from('inventario').select('id');
+              if (codigo) {
+                query = query.or(`nombre.eq."${nombre}",codigo.eq."${codigo}"`);
+              } else {
+                query = query.eq('nombre', nombre);
+              }
+
+              const { data: existing } = await query.limit(1).maybeSingle();
               
               if (existing) {
-                await db.from('inventario').update(updateObj).eq('id', existing.id);
-                console.log(`📦 ADMIN: Stock actualizado: ${nombre}`);
+                const { error: updErr } = await db.from('inventario').update(updateObj).eq('id', existing.id);
+                if (updErr) throw updErr;
+                console.log(`✅ ADMIN: Stock actualizado corregido: ${nombre}`);
               } else {
-                await db.from('inventario').insert(updateObj);
-                console.log(`📦 ADMIN: Nuevo producto agregado: ${nombre}`);
+                const { error: insErr } = await db.from('inventario').insert(updateObj);
+                if (insErr) throw insErr;
+                console.log(`✅ ADMIN: Nuevo producto agregado corregido: ${nombre}`);
               }
-            } catch (e) { console.error('Error in STOCK_UPSERT:', e); }
+            } catch (e) { 
+              console.error('❌ Error en STOCK_UPSERT:', e);
+            }
           }
 
           // 2. [STOCK_DELETE: id_o_codigo]
