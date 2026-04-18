@@ -354,6 +354,29 @@ REGLA DE PRIORIDAD DE RESPUESTA:
 FILTROS E INVENTARIO: Refrigerantes y líquidos Dr Care | Filtros aceite/gasolina CARDOC para múltiples vehículos. Stock en tiempo real en el sistema.
 `;
 
+const ADMIN_KNOWLEDGE = `
+ERES EL ADMINISTRADOR DEL SISTEMA (MODO DIOS).
+Tu interlocutor es LYCOS CORPORATIVO (el dueño/administrador del taller).
+Tienes acceso total para gestionar el inventario, citas y clientes mediante comandos ocultos (tags).
+
+REGLAS DE OPERACIÓN ADMINISTRATIVA:
+1. TONO: Profesional, eficiente y servicial. No necesitas ser tan amigable como con los clientes, pero sí educado.
+2. CAPACIDADES: Puedes crear, actualizar y eliminar registros.
+3. ELIMINACIÓN (CRÍTICO): Si se te pide ELIMINAR algo, NUNCA lo hagas de inmediato. Debes preguntar: "¿Está seguro de que desea eliminar [elemento]? Responda SÍ para confirmar."
+   - Solo si el historial muestra que el usuario respondió "SÍ", "CONFIRMADO" o similar a tu pregunta de confirmación, puedes imprimir el tag de DELETE.
+4. ACTUALIZACIÓN DE STOCK: Puedes recibir descripciones de imágenes o audios para actualizar el stock. Analiza la cantidad y el producto.
+5. TAGS DE GESTIÓN (Imprimir SIEMPRE al final de tu respuesta si hay una acción solicitada):
+   - [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca]
+     (Usa esto para agregar o actualizar productos. Si el producto ya existe por nombre o código, se actualizará).
+   - [STOCK_DELETE: id_o_codigo]
+   - [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion]
+   - [CITA_DELETE: id]
+   - [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion]
+
+DATOS DISPONIBLES:
+Se te proporcionará el inventario completo, citas y clientes con sus IDs correspondientes. Utiliza estos IDs para las actualizaciones y eliminaciones.
+`;
+
 export const dynamic = 'force-dynamic';
 
 // ─── GET: Webhook verification ─────────────────────────────────────────────────
@@ -490,7 +513,7 @@ export async function POST(request: NextRequest) {
                   const base64Data = Buffer.from(arrayBuffer).toString('base64');
                   const mimeType = mediaData.mime_type || 'image/jpeg';
 
-                  const description = await describeImage(base64Data, mimeType);
+                  const description = await describeImage(base64Data, mimeType, from === ASESOR_PHONE);
                   if (description) {
                     messageBody = `[Imagen enviada por el cliente. Descripción automática (analízala y respondele en base a esto): ${description}]${captionStr}`;
                     console.log(`🖼️ Imagen descrita de [${from}]: ${description.substring(0, 50)}...`);
@@ -535,7 +558,7 @@ export async function POST(request: NextRequest) {
                   const base64Data = Buffer.from(arrayBuffer).toString('base64');
                   const mimeType = mediaData.mime_type || 'audio/ogg';
 
-                  const transcript = await transcribeAudio(base64Data, mimeType);
+                  const transcript = await transcribeAudio(base64Data, mimeType, from === ASESOR_PHONE);
                   if (transcript) {
                     messageBody = `${transcript} (Audio transcrito)`;
                     console.log(`🎙️ Audio transcrito de [${from}]: ${transcript.substring(0, 50)}...`);
@@ -806,51 +829,76 @@ async function loadConversationContext(
     }
   } catch (e) { console.error('Error loading memoria/historial:', e); }
 
-  // Appointments
-  try {
-    const today = getVzlaDateString();
-    const { data: citas } = await db.from('citas')
-      .select('fecha, hora, tipo_servicio, descripcion, estado')
-      .eq('telefono', from).order('fecha', { ascending: true }).limit(5);
-    if (citas && citas.length > 0) {
-      const list = citas.map(c => `- ${c.fecha} ${c.hora} | ${c.tipo_servicio} | ${c.estado} ${c.fecha < today ? '(PASADA)' : '(PROXIMA)'}`).join('\n');
-      citasInfo = `\nCITAS DEL CLIENTE:\n${list}`;
-    }
-  } catch (e) { console.error('Error loading citas:', e); }
-
-  // Inventory (only when relevant)
-  const lower = currentMessage.toLowerCase();
-  const invKw = ['silenciador', 'resonador', 'flexible', 'cola', 'filtro', 'aceite', 'gasolina', 'refrigerante', 'liquido', 'líquido',
-    'liga', 'dot', 'repuesto', 'stock', 'inventario', 'disponible', 'hay', 'tienes', 'precio', 'cl27', 'cl30', 'cl40', 'clh40',
-    'cl60', 'clk60', 'clc60', 'clp60', 'b55', 'curba', 'flowmaster', 'arauca', 'aveo', 'corolla', 'twingo', 'cavalier',
-    'camry', 'sentra', 'blazer', 'lancer', 'cherokee', 'explorer', 'samuray', 'macho'];
-  if (invKw.some(k => lower.includes(k))) {
-    try {
-      const { data: items } = await db.from('inventario')
-        .select('nombre, codigo, precio_usd, stock, categoria').eq('activo', true)
-        .order('categoria').order('nombre');
-      if (items && items.length > 0) {
-        const list = items.map(i =>
-          `  - ${i.nombre}${i.codigo ? ' [' + i.codigo + ']' : ''}${i.precio_usd ? ': $' + i.precio_usd : ''} — ${i.stock > 0 ? 'Stock: ' + i.stock : 'SIN STOCK'}`
-        ).join('\n');
-        inventarioInfo = `\nINVENTARIO ACTUAL:\n${list}`;
-      }
-    } catch (e) { console.error('Error loading inventory:', e); }
-  }
-
   // Global occupied schedule
   try {
     const today = getVzlaDateString();
-    const endD = new Date(); endD.setDate(endD.getDate() + 3);
+    const endD = new Date(); endD.setDate(endD.getDate() + 7);
     const endStr = endD.toISOString().split('T')[0];
+    
+    // For ADMIN: Load ALL data with IDs
+    const isAdmin = from === ASESOR_PHONE;
+    
+    if (isAdmin) {
+      const [{ data: allCitas }, { data: allInv }, { data: allClients }] = await Promise.all([
+        db.from('citas').select('*').gte('fecha', today).order('fecha').limit(20),
+        db.from('inventario').select('*').order('nombre'),
+        db.from('clientes').select('*').order('created_at', { ascending: false }).limit(20)
+      ]);
+      
+      if (allCitas && allCitas.length > 0) {
+        citasInfo = `\n--- TODAS LAS CITAS (ADMIN) ---\n` + allCitas.map(c => 
+          `ID: ${c.id} | ${c.fecha} ${c.hora} | ${c.nombre_cliente} | ${c.estado} | ${c.descripcion}`
+        ).join('\n');
+      }
+      
+      if (allInv && allInv.length > 0) {
+        inventarioInfo = `\n--- INVENTARIO COMPLETO (ADMIN) ---\n` + allInv.map(i =>
+          `ID: ${i.id} | ${i.nombre} [${i.codigo || 'SIN COD'}] | Stock: ${i.stock} | Precio: $${i.precio_usd} | Cat: ${i.categoria}`
+        ).join('\n');
+      }
+
+      historialTecnico = `\n--- CLIENTES RECIENTES (ADMIN) ---\n` + (allClients?.map(cl => 
+        `ID: ${cl.id} | ${cl.nombre} ${cl.apellido} | Tel: ${cl.telefono}`
+      ).join('\n') || 'No hay clientes recientes');
+
+    } else {
+      // Logic for regular clients (same as before)
+      const { data: citas } = await db.from('citas')
+        .select('fecha, hora, tipo_servicio, descripcion, estado')
+        .eq('telefono', from).order('fecha', { ascending: true }).limit(5);
+      if (citas && citas.length > 0) {
+        const list = citas.map(c => `- ${c.fecha} ${c.hora} | ${c.tipo_servicio} | ${c.estado} ${c.fecha < today ? '(PASADA)' : '(PROXIMA)'}`).join('\n');
+        citasInfo = `\nCITAS DEL CLIENTE:\n${list}`;
+      }
+
+      const lower = currentMessage.toLowerCase();
+      const invKw = ['silenciador', 'resonador', 'flexible', 'cola', 'filtro', 'aceite', 'gasolina', 'refrigerante', 'liquido', 'líquido',
+        'liga', 'dot', 'repuesto', 'stock', 'inventario', 'disponible', 'hay', 'tienes', 'precio', 'cl27', 'cl30', 'cl40', 'clh40',
+        'cl60', 'clk60', 'clc60', 'clp60', 'b55', 'curba', 'flowmaster', 'arauca', 'aveo', 'corolla', 'twingo', 'cavalier',
+        'camry', 'sentra', 'blazer', 'lancer', 'cherokee', 'explorer', 'samuray', 'macho'];
+      if (invKw.some(k => lower.includes(k))) {
+        const { data: items } = await db.from('inventario')
+          .select('nombre, codigo, precio_usd, stock, categoria').eq('activo', true)
+          .order('categoria').order('nombre');
+        if (items && items.length > 0) {
+          const list = items.map(i =>
+            `  - ${i.nombre}${i.codigo ? ' [' + i.codigo + ']' : ''}${i.precio_usd ? ': $' + i.precio_usd : ''} — ${i.stock > 0 ? 'Stock: ' + i.stock : 'SIN STOCK'}`
+          ).join('\n');
+          inventarioInfo = `\nINVENTARIO ACTUAL:\n${list}`;
+        }
+      }
+    }
+
+    const todayStr = getVzlaDateString();
+    const endStrGlobal = new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0];
     const { data: globales } = await db.from('citas')
       .select('fecha, hora')
-      .gte('fecha', today).lte('fecha', endStr)
+      .gte('fecha', todayStr).lte('fecha', endStrGlobal)
       .neq('estado', 'cancelada');
     if (globales && globales.length > 0) {
       agendaOcupada = `\nHORARIOS OCUPADOS GLOBALMENTE (PROHIBIDO AGENDAR EN ESTAS FECHAS Y HORAS EXACTAS):\n` + globales.map(g => `- ${g.fecha} a las ${g.hora}`).join('\n');
     }
-  } catch (e) { }
+  } catch (e) { console.error('Error loading context for admin/client:', e); }
 
   return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado };
 }
@@ -868,9 +916,13 @@ function getVzlaGreeting(): string {
 async function getAIResponse(
   userMessage: string,
   ctx: ConversationContext,
-  rates: ExchangeRates | null
+  rates: ExchangeRates | null,
+  from?: string
 ): Promise<string | null> {
   if (!GEMINI_API_KEY) return null;
+
+  const isAdmin = from === ASESOR_PHONE;
+  const knowledge = isAdmin ? ADMIN_KNOWLEDGE : LYCOS_KNOWLEDGE;
 
   const vzlaDateTime = formatVzlaDateTime();
   const vzlaDateStr = getVzlaDateString();
@@ -885,7 +937,7 @@ async function getAIResponse(
 
   const ratesCtx = buildRatesContext(rates);
 
-  const systemPrompt = `${LYCOS_KNOWLEDGE}
+  const systemPrompt = `${knowledge}
 
 FECHA/HORA VENEZUELA: ${vzlaDateTime}
 HOY ES: ${dayName} ${vzlaDateStr}
@@ -1017,10 +1069,12 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
   return null;
 }
 
-async function transcribeAudio(base64Data: string, mimeType: string): Promise<string | null> {
+async function transcribeAudio(base64Data: string, mimeType: string, isAdmin: boolean = false): Promise<string | null> {
   if (!GEMINI_API_KEY) return null;
   const sttModel = GEMINI_MODELS[0];
-  const systemPrompt = "Eres un sistema de reconocimiento de voz. Tu UNICA tarea es transcribir el audio a texto exacto en español. NO agregues explicaciones, respuestas, introducciones ni comentarios. Solo escribe lo que el usuario dice en español tal cual.";
+  const systemPrompt = isAdmin 
+    ? "Eres un sistema de reconocimiento de voz para el administrador de un taller. Transcribe el audio exactamente. Si el administrador está dictando inventario o stock, asegúrate de ser muy preciso con los nombres y cantidades."
+    : "Eres un sistema de reconocimiento de voz. Tu UNICA tarea es transcribir el audio a texto exacto en español. NO agregues explicaciones, respuestas, introducciones ni comentarios. Solo escribe lo que el usuario dice en español tal cual.";
 
   try {
     const resp = await fetch(
@@ -1054,10 +1108,12 @@ async function transcribeAudio(base64Data: string, mimeType: string): Promise<st
   }
 }
 
-async function describeImage(base64Data: string, mimeType: string): Promise<string | null> {
+async function describeImage(base64Data: string, mimeType: string, isAdmin: boolean = false): Promise<string | null> {
   if (!GEMINI_API_KEY) return null;
   const visionModel = GEMINI_MODELS[0];
-  const systemPrompt = "Eres un analista de imágenes de un taller automotriz. Detalla brevemente y de forma muy precisa qué se ve en la imagen para que el chatbot lo entienda y pueda ayudar al cliente. Si hay texto relevante en la imagen, menciónalo. Responde siempre en español.";
+  const systemPrompt = isAdmin
+    ? "Eres un analista de inventario experto. Describe detalladamente qué productos se ven en la imagen, sus marcas, modelos y CANTIDADES aproximadas. El administrador usará esta información para actualizar el stock."
+    : "Eres un analista de imágenes de un taller automotriz. Detalla brevemente y de forma muy precisa qué se ve en la imagen para que el chatbot lo entienda y pueda ayudar al cliente. Si hay texto relevante en la imagen, menciónalo. Responde siempre en español.";
 
   try {
     const resp = await fetch(
@@ -1600,7 +1656,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       }
 
       // AI response
-      const aiResponse = await getAIResponse(messageBody, ctx, rates);
+      const aiResponse = await getAIResponse(messageBody, ctx, rates, from);
 
       if (aiResponse) {
         let cleanedAi = cleanForWhatsApp(aiResponse);
@@ -1622,6 +1678,101 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 }
               } catch (e) { console.error('Error saving AI detected name:', e); }
             }
+        }
+
+        // ── ADMIN: Process management tags ────────────────────────────────
+        const isAdmin = from === ASESOR_PHONE;
+        if (isAdmin && db) {
+          // 1. [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca]
+          const stockUpsertMatches = cleanedAi.matchAll(/\[STOCK_UPSERT:\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)?\|\s*([^\]]+)?\s*\]/gi);
+          for (const m of stockUpsertMatches) {
+            try {
+              const [, nombre, categoria, precio, stock, codigo, marca] = Array.from(m).map(s => s?.trim());
+              const updateObj: any = {
+                nombre, 
+                categoria: (categoria || 'general').toLowerCase(), 
+                precio_usd: parseFloat(precio || '0'), 
+                stock: parseInt(stock || '0'),
+                codigo: codigo || null,
+                marca: marca || null,
+                activo: true
+              };
+              // Upsert by name OR code if provided
+              const { data: existing } = await db.from('inventario')
+                .select('id').or(`nombre.eq."${nombre}"${codigo ? `,codigo.eq."${codigo}"` : ''}`).limit(1).maybeSingle();
+              
+              if (existing) {
+                await db.from('inventario').update(updateObj).eq('id', existing.id);
+                console.log(`📦 ADMIN: Stock actualizado: ${nombre}`);
+              } else {
+                await db.from('inventario').insert(updateObj);
+                console.log(`📦 ADMIN: Nuevo producto agregado: ${nombre}`);
+              }
+            } catch (e) { console.error('Error in STOCK_UPSERT:', e); }
+          }
+
+          // 2. [STOCK_DELETE: id_o_codigo]
+          const stockDeleteMatch = cleanedAi.match(/\[STOCK_DELETE:\s*([^\]]+?)\s*\]/i);
+          if (stockDeleteMatch) {
+            try {
+              const target = stockDeleteMatch[1].trim();
+              await db.from('inventario').update({ activo: false }).or(`id.eq.${target},codigo.eq.${target}`);
+              console.log(`📦 ADMIN: Item de inventario desactivado: ${target}`);
+            } catch (e) { console.error('Error in STOCK_DELETE:', e); }
+          }
+
+          // 3. [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion]
+          const citaUpsertMatches = cleanedAi.matchAll(/\[CITA_UPSERT:\s*([^|]*)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^\]]+)\s*\]/gi);
+          for (const m of citaUpsertMatches) {
+            try {
+              const [, id, fecha, hora, clientId, vehId, estado, desc] = Array.from(m).map(s => s?.trim());
+              const citaObj = {
+                fecha, hora, cliente_id: clientId, vehiculo_id: vehId, estado, descripcion: desc, telefono: from
+              };
+              if (id && id !== 'id_opcional' && id.length > 5 && db) {
+                await db.from('citas').update(citaObj).eq('id', id);
+                console.log(`📅 ADMIN: Cita actualizada: ${id}`);
+              } else if (db) {
+                await db.from('citas').insert(citaObj);
+                console.log(`📅 ADMIN: Nueva cita creada por administrador`);
+              }
+            } catch (e) { console.error('Error in CITA_UPSERT:', e); }
+          }
+
+          // 4. [CITA_DELETE: id]
+          const citaDeleteMatch = cleanedAi.match(/\[CITA_DELETE:\s*([^\]]+?)\s*\]/i);
+          if (citaDeleteMatch && db) {
+            try {
+              const target = citaDeleteMatch[1].trim();
+              await db.from('citas').delete().eq('id', target);
+              console.log(`📅 ADMIN: Cita eliminada: ${target}`);
+            } catch (e) { console.error('Error in CITA_DELETE:', e); }
+          }
+
+          // 5. [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion]
+          const clientUpsertMatches = cleanedAi.matchAll(/\[CLIENTE_UPSERT:\s*([^|]*)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)?\|\s*([^\]]+)?\s*\]/gi);
+          for (const m of clientUpsertMatches) {
+            try {
+              const [, id, name, last, tel, ced, dir] = Array.from(m).map(s => s?.trim());
+              const clientObj = { nombre: name, apellido: last, telefono: tel, cedula: ced || null, direccion: dir || null };
+              if (id && id !== 'id_opcional' && id.length > 5 && db) {
+                await db.from('clientes').update(clientObj).eq('id', id);
+                console.log(`👤 ADMIN: Cliente actualizado: ${id}`);
+              } else if (db) {
+                await db.from('clientes').insert(clientObj);
+                console.log(`👤 ADMIN: Nuevo cliente agregado por administrador`);
+              }
+            } catch (e) { console.error('Error in CLIENTE_UPSERT:', e); }
+          }
+
+          // Remove management tags from final message
+          cleanedAi = cleanedAi
+            .replace(/\[STOCK_UPSERT:[^\]]+\]/gi, '')
+            .replace(/\[STOCK_DELETE:[^\]]+\]/gi, '')
+            .replace(/\[CITA_UPSERT:[^\]]+\]/gi, '')
+            .replace(/\[CITA_DELETE:[^\]]+\]/gi, '')
+            .replace(/\[CLIENTE_UPSERT:[^\]]+\]/gi, '')
+            .trim();
         }
 
         // Format: [CITA: AAAA-MM-DD HH:MM | descripcion | marca modelo]
