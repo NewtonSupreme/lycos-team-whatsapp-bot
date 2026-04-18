@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { Vehiculo } from '@/types';
+import { Vehiculo, InventarioItem } from '@/types';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -258,19 +258,7 @@ export async function updateInventarioStock(id: string, stock: number) {
   return data;
 }
 
-export async function createInventarioItem(item: {
-  nombre: string;
-  codigo?: string;
-  categoria: string;
-  marca?: string;
-  descripcion?: string;
-  precio_usd?: number;
-  precio_bs?: number;
-  stock: number;
-  stock_minimo?: number;
-  unidad?: string;
-  notas?: string;
-}) {
+export async function createInventarioItem(item: Partial<InventarioItem>) {
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('inventario')
@@ -279,6 +267,28 @@ export async function createInventarioItem(item: {
     .single();
   if (error) throw error;
   return data;
+}
+
+export async function updateInventarioItem(id: string, updates: Partial<InventarioItem>) {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('inventario')
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteInventarioItem(id: string) {
+  if (!supabase) return null;
+  // Soft delete by setting activo to false
+  const { error } = await supabase
+    .from('inventario')
+    .update({ activo: false, updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw error;
 }
 
 // ─── Dashboard Stats ────────────────────────────────────────────────────────

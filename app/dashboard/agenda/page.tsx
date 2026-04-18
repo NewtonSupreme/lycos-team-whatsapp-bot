@@ -1,13 +1,13 @@
 'use client';
 import React, { useEffect } from 'react';
-import { MessageSquare, Calendar, Clock, User, Car, Filter, ChevronLeft, ChevronRight, Plus, X, Check, Search, UserCheck } from 'lucide-react';
+import { MessageSquare, Calendar, Clock, User, Car, Filter, ChevronLeft, ChevronRight, Plus, X, Check, Search, UserCheck, RefreshCw, Lock } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import StatusBadge from '@/components/ui/status-badge';
-import { fetchCitas, createCita, updateCita, deleteCita, fetchClientes, fetchVehiculos } from '@/lib/supabase';
+import { fetchCitas, createCita, updateCita, deleteCita, fetchClientes, fetchVehiculos, createCliente, createVehiculo } from '@/lib/supabase';
 import { Cita, TipoServicio, Cliente, Vehiculo } from '@/types';
 import { cn, formatDate } from '@/lib/utils';
 import Link from 'next/link';
@@ -18,7 +18,7 @@ const TIPOS: { v: TipoServicio; l: string }[] = [
   { v: 'cerrajeria', l: 'Cerrajería' }, { v: 'diagnostico', l: 'Diagnóstico' },
   { v: 'motor', l: 'Motor' }, { v: 'emergencia', l: 'Emergencia' }
 ];
-const ESTADOS_CITA = ['confirmada','pendiente','cancelada','completada'];
+const ESTADOS_CITA = ['confirmada','pendiente','cancelada','completada', 'ocupado'];
 
 const getDaysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
 const getFirstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
@@ -30,6 +30,7 @@ const estadoColorMap: Record<string, string> = {
   pendiente: 'bg-yellow-500/20 border-yellow-500/30 text-yellow-400',
   cancelada: 'bg-red-500/20 border-red-500/30 text-red-400',
   completada: 'bg-blue-500/20 border-blue-500/30 text-blue-400',
+  ocupado: 'bg-rose-600/30 border-rose-500/40 text-rose-200'
 };
 
 export default function AgendaPage() {
@@ -43,7 +44,28 @@ export default function AgendaPage() {
   const [selectedDate, setSelectedDate] = React.useState<string | null>(null);
   const [showModal, setShowModal] = React.useState(false);
   const [editCita, setEditCita] = React.useState<Cita | null>(null);
-  const [form, setForm] = React.useState({ cliente_id: '', vehiculo_id: '', fecha: '', hora: '09:00', tipo_servicio: 'mecanica', descripcion: '', estado: 'pendiente', notas: '' });
+  const [isNewClient, setIsNewClient] = React.useState(false);
+  const [isBlockedMode, setIsBlockedMode] = React.useState(false);
+  const [isTemporalClient, setIsTemporalClient] = React.useState(false);
+  const [form, setForm] = React.useState({ 
+    cliente_id: '', 
+    vehiculo_id: '', 
+    fecha: '', 
+    hora: '09:00', 
+    tipo_servicio: 'mecanica', 
+    descripcion: '', 
+    estado: 'pendiente', 
+    notas: '',
+    // Campos para nuevo cliente
+    nuevo_cliente: {
+      nombre: '',
+      apellido: '',
+      telefono: '',
+      marca: '',
+      modelo: '',
+      placa: ''
+    }
+  });
 
   useEffect(() => {
     const today = new Date();
@@ -89,27 +111,148 @@ export default function AgendaPage() {
 
   const openNew = () => {
     setEditCita(null);
+    setIsNewClient(false);
+    setIsBlockedMode(false);
+    setIsTemporalClient(false);
     const dateStr = selectedDate || new Date().toISOString().split('T')[0];
-    setForm({ cliente_id:'', vehiculo_id:'', fecha: dateStr, hora:'09:00', tipo_servicio:'mecanica', descripcion:'', estado:'pendiente', notas:'' });
+    setForm({ 
+      cliente_id:'', 
+      vehiculo_id:'', 
+      fecha: dateStr, 
+      hora:'09:00', 
+      tipo_servicio:'mecanica', 
+      descripcion:'', 
+      estado:'pendiente', 
+      notas:'',
+      nuevo_cliente: { nombre: '', apellido: '', telefono: '', marca: '', modelo: '', placa: '' }
+    });
     setShowModal(true);
   };
+
+  const handleOpenBlock = () => {
+    setEditCita(null);
+    setIsNewClient(false);
+    setIsBlockedMode(true);
+    setIsTemporalClient(false);
+    const dateStr = selectedDate || new Date().toISOString().split('T')[0];
+    setForm({ 
+      cliente_id:'', 
+      vehiculo_id:'', 
+      fecha: dateStr, 
+      hora:'09:00', 
+      tipo_servicio:'mecanica', 
+      descripcion:'HORARIO OCUPADO', 
+      estado:'ocupado', 
+      notas:'',
+      nuevo_cliente: { nombre: '', apellido: '', telefono: '', marca: '', modelo: '', placa: '' }
+    });
+    setShowModal(true);
+  };
+
   const openEdit = (c: Cita) => {
     setEditCita(c);
-    setForm({ cliente_id:c.cliente_id, vehiculo_id:c.vehiculo_id, fecha:c.fecha, hora:c.hora, tipo_servicio:c.tipo_servicio, descripcion:c.descripcion||'', estado:c.estado, notas:c.notas||'' });
+    setIsNewClient(false);
+    setIsBlockedMode(c.estado === 'ocupado');
+    setIsTemporalClient(false);
+    setForm({ 
+      cliente_id:c.cliente_id || '', 
+      vehiculo_id:c.vehiculo_id || '', 
+      fecha:c.fecha, 
+      hora:c.hora, 
+      tipo_servicio:c.tipo_servicio, 
+      descripcion:c.descripcion||'', 
+      estado:c.estado, 
+      notas:c.notas||'',
+      nuevo_cliente: { nombre: '', apellido: '', telefono: '', marca: '', modelo: '', placa: '' }
+    });
     setShowModal(true);
   };
 
   const handleSave = async () => {
     try {
+      setLoading(true);
       if (editCita) {
-        await updateCita(editCita.id, form);
+        await updateCita(editCita.id, {
+          cliente_id: form.cliente_id,
+          vehiculo_id: form.vehiculo_id,
+          fecha: form.fecha,
+          hora: form.hora,
+          tipo_servicio: form.tipo_servicio,
+          descripcion: form.descripcion,
+          estado: form.estado,
+          notas: form.notas
+        });
+      } else if (isBlockedMode) {
+        await createCita({
+          fecha: form.fecha,
+          hora: form.hora,
+          tipo_servicio: 'otro',
+          descripcion: form.descripcion || 'HORARIO OCUPADO',
+          estado: 'ocupado'
+        });
+      } else if (isTemporalClient) {
+        await createCita({
+          fecha: form.fecha,
+          hora: form.hora,
+          tipo_servicio: form.tipo_servicio,
+          descripcion: form.descripcion,
+          nombre_cliente: form.nuevo_cliente.nombre,
+          telefono: form.nuevo_cliente.telefono,
+          estado: 'pendiente'
+        });
+      } else if (isNewClient) {
+        // 1. Crear cliente
+        const newClient = await createCliente({
+          nombre: form.nuevo_cliente.nombre,
+          apellido: form.nuevo_cliente.apellido,
+          telefono: form.nuevo_cliente.telefono,
+          email: ''
+        });
+        
+        if (!newClient) throw new Error('Error al crear cliente');
+
+        // 2. Crear vehículo
+        const newVehiculo = await createVehiculo({
+          cliente_id: newClient.id,
+          marca: form.nuevo_cliente.marca,
+          modelo: form.nuevo_cliente.modelo,
+          placa: form.nuevo_cliente.placa,
+          anio: 2025, // default
+          estado: 'activo'
+        });
+
+        if (!newVehiculo) throw new Error('Error al crear vehículo');
+
+        // 3. Crear cita
+        await createCita({
+          cliente_id: newClient.id,
+          vehiculo_id: newVehiculo.id,
+          fecha: form.fecha,
+          hora: form.hora,
+          tipo_servicio: form.tipo_servicio,
+          descripcion: form.descripcion,
+          estado: form.estado,
+          notas: form.notas
+        });
       } else {
-        await createCita(form);
+        await createCita({
+          cliente_id: form.cliente_id,
+          vehiculo_id: form.vehiculo_id,
+          fecha: form.fecha,
+          hora: form.hora,
+          tipo_servicio: form.tipo_servicio,
+          descripcion: form.descripcion,
+          estado: form.estado,
+          notas: form.notas
+        });
       }
       setShowModal(false);
-      loadData();
-    } catch {
+      await loadData();
+    } catch (error) {
+      console.error(error);
       alert('Error al guardar la cita');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -176,7 +319,7 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
 
   return (
     <div className="space-y-5">
-      {loading ? (
+      {loading && !showModal ? (
         <div className="flex items-center justify-center py-20">
           <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
         </div>
@@ -187,9 +330,16 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
           <h1 className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Agenda</h1>
           <p className="text-sm text-muted-foreground mt-0.5">{citas.length} citas programadas</p>
         </div>
-        <Button onClick={openNew} className="gap-2 self-start sm:self-auto">
-          <Plus className="w-4 h-4" /> Nueva Cita
-        </Button>
+          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+            <Button onClick={handleOpenBlock} variant="outline" className="glass-card border-rose-500/30 text-rose-400 hover:bg-rose-500/10">
+              <Lock className="w-4 h-4 mr-2" />
+              Bloquear Horario
+            </Button>
+            <Button onClick={openNew} className="bg-primary hover:bg-primary/90">
+              <Plus className="w-4 h-4 mr-2" />
+              Nueva Cita
+            </Button>
+          </div>
       </div>
 
       {/* Stats */}
@@ -385,28 +535,133 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
 
       {/* Modal */}
       <Dialog open={showModal} onOpenChange={setShowModal}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editCita ? 'Editar Cita' : 'Nueva Cita'}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Cliente *</label>
-              <Select value={form.cliente_id} onValueChange={v => { setForm(p => ({ ...p, cliente_id: v, vehiculo_id: '' })); }}>
-                <SelectTrigger><SelectValue placeholder="Seleccionar cliente" /></SelectTrigger>
-                <SelectContent>{(clientes || []).map(c => <SelectItem key={c.id} value={c.id}>{c.nombre} {c.apellido}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Vehículo *</label>
-              <Select value={form.vehiculo_id} onValueChange={v => setForm(p => ({ ...p, vehiculo_id: v }))} disabled={!form.cliente_id}>
-                <SelectTrigger><SelectValue placeholder="Seleccionar vehículo" /></SelectTrigger>
-                <SelectContent>
-                  {getVehiculosByCliente(form.cliente_id).map(v => <SelectItem key={v.id} value={v.id}>{v.marca} {v.modelo} · {v.placa}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-4">
+            {!editCita && !isBlockedMode && (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2 mb-2 p-2 bg-primary/5 rounded-lg border border-primary/20">
+                  <input 
+                    type="checkbox" 
+                    id="isNewClient" 
+                    checked={isNewClient} 
+                    onChange={(e) => {
+                      setIsNewClient(e.target.checked);
+                      if (e.target.checked) setIsTemporalClient(false);
+                    }}
+                    className="w-4 h-4 accent-primary"
+                  />
+                  <label htmlFor="isNewClient" className="text-xs font-bold text-primary cursor-pointer">Registrar como Nuevo Cliente</label>
+                </div>
+
+                <div className="flex items-center gap-2 mb-2 p-2 bg-orange-500/5 rounded-lg border border-orange-500/20">
+                  <input 
+                    type="checkbox" 
+                    id="isTemporalClient" 
+                    checked={isTemporalClient} 
+                    onChange={(e) => {
+                      setIsTemporalClient(e.target.checked);
+                      if (e.target.checked) setIsNewClient(false);
+                    }}
+                    className="w-4 h-4 accent-orange-500"
+                  />
+                  <label htmlFor="isTemporalClient" className="text-xs font-bold text-orange-500 cursor-pointer">Cliente Temporal (Solo Nombre/Telf)</label>
+                </div>
+              </div>
+            )}
+
+            {isBlockedMode ? (
+              <div className="space-y-4 p-4 bg-rose-500/5 rounded-xl border border-rose-500/20 animate-in fade-in zoom-in-95">
+                <div className="flex items-center gap-2 text-rose-400 mb-2">
+                  <Lock className="w-4 h-4" />
+                  <span className="text-xs font-bold uppercase tracking-wider">Bloqueo de Horario</span>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Motivo del Bloqueo *</label>
+                  <Input 
+                    placeholder="Ej: Almuerzo, Mantenimiento, Taller Lleno" 
+                    value={form.descripcion} 
+                    onChange={e => setForm(p => ({ ...p, descripcion: e.target.value }))}
+                  />
+                </div>
+              </div>
+            ) : isTemporalClient ? (
+              <div className="space-y-3 p-3 bg-orange-500/5 rounded-xl border border-orange-500/20 animate-in fade-in slide-in-from-top-2">
+                <p className="text-[10px] font-bold uppercase text-orange-500 tracking-widest">Datos Cliente Temporal</p>
+                <div className="space-y-2">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-medium text-muted-foreground">Nombre / Identificación *</label>
+                    <Input className="h-8 text-xs font-medium" value={form.nuevo_cliente.nombre} onChange={e => setForm(p => ({ ...p, nuevo_cliente: { ...p.nuevo_cliente, nombre: e.target.value } }))} placeholder="Ej: Cliente de paso / Consulta" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-medium text-muted-foreground">Teléfono (WhatsApp)</label>
+                    <Input className="h-8 text-xs" value={form.nuevo_cliente.telefono} onChange={e => setForm(p => ({ ...p, nuevo_cliente: { ...p.nuevo_cliente, telefono: e.target.value } }))} placeholder="Ej: 584120000000" />
+                  </div>
+                </div>
+              </div>
+            ) : isNewClient && !editCita ? (
+              <div className="space-y-3 p-3 bg-primary/5 rounded-xl border border-primary/20 animate-in fade-in slide-in-from-top-2">
+                <p className="text-[10px] font-bold uppercase text-primary tracking-widest">Datos del Nuevo Cliente</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-medium text-muted-foreground">Nombre *</label>
+                    <Input className="h-8 text-xs" value={form.nuevo_cliente.nombre} onChange={e => setForm(p => ({ ...p, nuevo_cliente: { ...p.nuevo_cliente, nombre: e.target.value } }))} placeholder="Ej: Juan" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-medium text-muted-foreground">Apellido *</label>
+                    <Input className="h-8 text-xs" value={form.nuevo_cliente.apellido} onChange={e => setForm(p => ({ ...p, nuevo_cliente: { ...p.nuevo_cliente, apellido: e.target.value } }))} placeholder="Ej: Perez" />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-medium text-muted-foreground">WhatsApp (Sin +) *</label>
+                  <Input className="h-8 text-xs" value={form.nuevo_cliente.telefono} onChange={e => setForm(p => ({ ...p, nuevo_cliente: { ...p.nuevo_cliente, telefono: e.target.value } }))} placeholder="Ej: 584120000000" />
+                </div>
+                <p className="text-[10px] font-bold uppercase text-primary tracking-widest mt-2">Datos del Vehículo</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-medium text-muted-foreground">Marca *</label>
+                    <Input className="h-8 text-xs" value={form.nuevo_cliente.marca} onChange={e => setForm(p => ({ ...p, nuevo_cliente: { ...p.nuevo_cliente, marca: e.target.value } }))} placeholder="Ej: Toyota" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-medium text-muted-foreground">Modelo *</label>
+                    <Input className="h-8 text-xs" value={form.nuevo_cliente.modelo} onChange={e => setForm(p => ({ ...p, nuevo_cliente: { ...p.nuevo_cliente, modelo: e.target.value } }))} placeholder="Ej: Corolla" />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-medium text-muted-foreground">Placa *</label>
+                  <Input className="h-8 text-xs" value={form.nuevo_cliente.placa} onChange={e => setForm(p => ({ ...p, nuevo_cliente: { ...p.nuevo_cliente, placa: e.target.value } }))} placeholder="Ej: ABC-123" />
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Cliente *</label>
+                  <Select value={form.cliente_id} onValueChange={v => { setForm(p => ({ ...p, cliente_id: v, vehiculo_id: '' })); }}>
+                    <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Seleccionar cliente" /></SelectTrigger>
+                    <SelectContent>{(clientes || []).map(c => <SelectItem key={c.id} value={c.id}>{c.nombre} {c.apellido}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Vehículo *</label>
+                  <Select 
+                    value={form.vehiculo_id} 
+                    onValueChange={v => setForm(p => ({ ...p, vehiculo_id: v }))}
+                    disabled={!form.cliente_id}
+                  >
+                    <SelectTrigger className="h-10 text-sm"><SelectValue placeholder={form.cliente_id ? "Seleccionar vehículo" : "Primero selecciona un cliente"} /></SelectTrigger>
+                    <SelectContent>
+                      {(vehiculos || []).filter(v => v.cliente_id === form.cliente_id).map(v => (
+                        <SelectItem key={v.id} value={v.id}>{v.marca} {v.modelo} ({v.placa})</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3 pt-2 border-t border-border/30">
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground">Fecha *</label>
                 <Input type="date" value={form.fecha} onChange={e => setForm(p => ({ ...p, fecha: e.target.value }))} />
@@ -419,6 +674,7 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
                 </Select>
               </div>
             </div>
+            
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground">Tipo Servicio</label>
@@ -436,33 +692,34 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
               </div>
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Descripción</label>
-              <Input value={form.descripcion} onChange={e => setForm(p => ({ ...p, descripcion: e.target.value }))} placeholder="Motivo de la cita..." />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Notas</label>
-              <textarea className="flex w-full rounded-lg border border-border/50 bg-background/50 px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary resize-none min-h-[60px]" value={form.notas} onChange={e => setForm(p => ({ ...p, notas: e.target.value }))} placeholder="Notas adicionales..." />
+              <label className="text-xs font-medium text-muted-foreground">Descripción / Motivo</label>
+              <Input value={form.descripcion} onChange={e => setForm(p => ({ ...p, descripcion: e.target.value }))} placeholder="¿Qué le hace falta al carro?" />
             </div>
           </div>
-          <DialogFooter className="flex flex-col sm:flex-row gap-2 mt-2">
+          <DialogFooter className="flex flex-col sm:flex-row gap-2 mt-4">
             {editCita && (
               <Button variant="ghost" className="gap-2 text-xs mr-auto" asChild>
-                <Link href={`/dashboard/whatsapp?chat=${getCliente(editCita.cliente_id)?.telefono || editCita.telefono}`}>
+                <Link href={`/dashboard/whatsapp?chat=${(editCita.cliente_id ? getCliente(editCita.cliente_id)?.telefono : null) || editCita.telefono || ''}`}>
                   <UserCheck className="w-4 h-4" /> Ver Perfil / Chat
                 </Link>
               </Button>
             )}
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setShowModal(false)}>Cancelar</Button>
-              <Button onClick={handleSave} disabled={!form.cliente_id || !form.vehiculo_id || !form.fecha}>
+            <div className="flex gap-2 w-full sm:w-auto">
+              <Button variant="outline" className="flex-1 sm:flex-none" onClick={() => setShowModal(false)}>Cancelar</Button>
+              <Button 
+                onClick={handleSave}
+                disabled={loading || (!isBlockedMode && !isTemporalClient && !isNewClient && (!form.cliente_id || !form.vehiculo_id)) || (isNewClient && (!form.nuevo_cliente.nombre || !form.nuevo_cliente.telefono || !form.nuevo_cliente.placa)) || (isTemporalClient && !form.nuevo_cliente.nombre) || !form.fecha}
+                className="flex-1 sm:flex-none gap-2"
+              >
+                {loading && <RefreshCw className="w-4 h-4 animate-spin" />}
                 {editCita ? 'Guardar Cambios' : 'Agendar Cita'}
               </Button>
             </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-        </>
-      )}
+    </>
+    )}
     </div>
   );
 }

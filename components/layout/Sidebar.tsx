@@ -22,6 +22,7 @@ const navItemsConfig = [
   { href: '/dashboard/agenda', icon: Calendar, label: 'Agenda', badge: null },
   { href: '/dashboard/whatsapp', icon: MessageSquare, label: 'WhatsApp', badge: null },
   { href: '/dashboard/leads', icon: TrendingUp, label: 'Leads', badge: null },
+  { href: '/dashboard/inventario', icon: Package, label: 'Inventario', badge: null },
   { href: '/dashboard/silenciadores', icon: Package, label: 'Silenciadores', badge: null },
   { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente', badge: null },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', badge: null },

@@ -367,7 +367,7 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
 4. ACTUALIZACIÓN DE STOCK: Puedes recibir descripciones de imágenes o audios para actualizar el stock. Analiza la cantidad y el producto.
 5. TAGS DE GESTIÓN (Imprimir SIEMPRE al final de tu respuesta si hay una acción solicitada):
    - [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca]
-     (Usa esto para agregar o actualizar productos. Si el producto ya existe por nombre o código, se actualizará).
+     (Usa este tag exactamente con el guion bajo. Si el producto ya existe por nombre o código, se actualizará).
    - [STOCK_DELETE: id_o_codigo]
    - [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion]
    - [CITA_DELETE: id]
@@ -1684,7 +1684,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         const isAdmin = from === ASESOR_PHONE;
         if (isAdmin && db) {
           // 1. [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca]
-          const stockUpsertMatches = cleanedAi.matchAll(/\[STOCK_UPSERT:\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)?\|\s*([^\]]+)?\s*\]/gi);
+          const stockUpsertMatches = cleanedAi.matchAll(/\[STOCK_?UPSERT:\s*([^|]*)\|\s*([^|]*)\|\s*([^|]*)\|\s*([^|]*)\|\s*([^|]*)?\|\s*([^\]]*)?\s*\]/gi);
           for (const m of stockUpsertMatches) {
             try {
               const [, nombre, categoria, precio, stock, codigo, marca] = Array.from(m).map(s => s?.trim());

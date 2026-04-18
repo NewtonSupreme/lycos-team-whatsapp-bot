@@ -65,13 +65,13 @@ export interface Servicio {
 
 export interface Cita {
   id: string;
-  cliente_id: string;
-  vehiculo_id: string;
+  cliente_id?: string | null;
+  vehiculo_id?: string | null;
   fecha: string;
   hora: string;
   tipo_servicio: TipoServicio;
   descripcion?: string;
-  estado: 'confirmada' | 'pendiente' | 'cancelada' | 'completada';
+  estado: 'confirmada' | 'pendiente' | 'cancelada' | 'completada' | 'ocupado';
   notas?: string;
   telefono?: string;
   nombre_cliente?: string;
@@ -136,4 +136,27 @@ export interface ActivityLog {
   modulo: string;
   detalles?: string;
   created_at: string;
+}
+
+export type InventarioCategoria = 
+  | 'silenciador' | 'resonador' | 'cola_cromada' | 'flexible' 
+  | 'filtro_aceite' | 'filtro_gasolina' | 'liquido' | 'frenos' 
+  | 'electrico' | 'otro' | 'general';
+
+export interface InventarioItem {
+  id: string;
+  nombre: string;
+  codigo: string | null;
+  categoria: InventarioCategoria;
+  marca: string | null;
+  descripcion: string | null;
+  precio_usd: number | null;
+  precio_bs: number | null;
+  stock: number;
+  stock_minimo: number;
+  unidad: string;
+  notas: string | null;
+  activo: boolean;
+  created_at: string;
+  updated_at: string;
 }

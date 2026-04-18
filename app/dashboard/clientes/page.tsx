@@ -7,9 +7,15 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { fetchClientes, createCliente, updateCliente, deleteCliente, syncClientData } from '@/lib/supabase';
 import { Cliente, Vehiculo } from '@/types';
-import { formatDate, getInitials } from '@/lib/utils';
+import { formatDate, getInitials, cn } from '@/lib/utils';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { createVehiculo, updateVehiculo, deleteVehiculo } from '@/lib/supabase';
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
+import { Calendar } from '@/components/ui/calendar';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Calendar as CalendarIcon, FilterX, Clock, SortAsc, SortDesc } from 'lucide-react';
+import { format } from 'date-fns';
+import { es } from 'date-fns/locale';
 
 const COLORS = ['bg-blue-500/20 text-blue-400','bg-purple-500/20 text-purple-400','bg-green-500/20 text-green-400','bg-orange-500/20 text-orange-400','bg-pink-500/20 text-pink-400','bg-cyan-500/20 text-cyan-400'];
 
@@ -21,6 +27,11 @@ export default function ClientesPage() {
   const [editCliente, setEditCliente] = useState<Cliente | null>(null);
   const [viewCliente, setViewCliente] = useState<Cliente | null>(null);
   const [form, setForm] = useState({ nombre: '', apellido: '', email: '', telefono: '', cedula: '', direccion: '', notas: '' });
+  
+  // Filtering & Sorting
+  const [sortBy, setSortBy] = useState('recent');
+  const [dateFilter, setDateFilter] = useState<Date | undefined>(undefined);
+  const [monthFilter, setMonthFilter] = useState<string>('all');
   
   // Vehiculo management
   const [showVehiculoModal, setShowVehiculoModal] = useState(false);
@@ -48,9 +59,49 @@ export default function ClientesPage() {
     }
   }
 
-  const filtered = (clientes || []).filter(c =>
-    `${c.nombre} ${c.apellido} ${c.email} ${c.telefono} ${c.cedula}`.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = (clientes || [])
+    .filter(c => {
+      // Search text
+      const matchesSearch = `${c.nombre} ${c.apellido} ${c.email} ${c.telefono} ${c.cedula}`.toLowerCase().includes(search.toLowerCase());
+      
+      // Date filter
+      let matchesDate = true;
+      if (dateFilter) {
+        const cDate = new Date(c.created_at);
+        matchesDate = cDate.toDateString() === dateFilter.toDateString();
+      }
+
+      // Month filter
+      let matchesMonth = true;
+      if (monthFilter !== 'all') {
+        const cDate = new Date(c.created_at);
+        const mStr = `${cDate.getFullYear()}-${String(cDate.getMonth() + 1).padStart(2, '0')}`;
+        matchesMonth = mStr === monthFilter;
+      }
+
+      return matchesSearch && matchesDate && matchesMonth;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'recent') {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+      if (sortBy === 'az') {
+        return `${a.nombre} ${a.apellido}`.localeCompare(`${b.nombre} ${b.apellido}`);
+      }
+      if (sortBy === 'za') {
+        return `${b.nombre} ${b.apellido}`.localeCompare(`${a.nombre} ${a.apellido}`);
+      }
+      return 0;
+    });
+
+  const clearFilters = () => {
+    setSearch('');
+    setDateFilter(undefined);
+    setMonthFilter('all');
+    setSortBy('recent');
+  };
+
+  const hasActiveFilters = search || dateFilter || monthFilter !== 'all' || sortBy !== 'recent';
 
   const openNew = () => { setEditCliente(null); setForm({ nombre:'',apellido:'',email:'',telefono:'',cedula:'',direccion:'',notas:'' }); setShowModal(true); };
   const openEdit = (c: Cliente) => { setEditCliente(c); setForm({ nombre:c.nombre,apellido:c.apellido,email:c.email,telefono:c.telefono,cedula:c.cedula||'',direccion:c.direccion||'',notas:c.notas||'' }); setShowModal(true); };
@@ -166,15 +217,99 @@ export default function ClientesPage() {
         ))}
       </div>
 
-      {/* Search */}
-      <div className="flex gap-2">
-        <Input
-          placeholder="Buscar por nombre, cédula, email, teléfono..."
-          icon={<Search />}
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="flex-1"
-        />
+      {/* Search & Filters */}
+      <div className="flex flex-col md:flex-row gap-2">
+        <div className="relative flex-1 group">
+          <Input
+            placeholder="Buscar por nombre, cédula, email, teléfono..."
+            icon={<Search />}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-full pr-10"
+          />
+          {search && (
+            <button 
+              onClick={() => setSearch('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-white/10 text-muted-foreground transition-opacity"
+            >
+              <Plus className="w-3 h-3 rotate-45" />
+            </button>
+          )}
+        </div>
+        
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Sorting */}
+          <Select value={sortBy} onValueChange={setSortBy}>
+            <SelectTrigger className="w-[140px] h-10 border-border/50 bg-background/50">
+              <div className="flex items-center gap-2">
+                {sortBy === 'recent' ? <Clock className="w-3.5 h-3.5" /> : sortBy === 'az' ? <SortAsc className="w-3.5 h-3.5" /> : <SortDesc className="w-3.5 h-3.5" />}
+                <SelectValue placeholder="Ordenar por" />
+              </div>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="recent">Recientes</SelectItem>
+              <SelectItem value="az">A - Z (Nombre)</SelectItem>
+              <SelectItem value="za">Z - A (Nombre)</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {/* Month Filter */}
+          <Select value={monthFilter} onValueChange={(v) => { setMonthFilter(v); setDateFilter(undefined); }}>
+            <SelectTrigger className="w-[150px] h-10 border-border/50 bg-background/50 text-xs">
+              <SelectValue placeholder="Mes" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos los meses</SelectItem>
+              {Array.from({ length: 12 }).map((_, i) => {
+                const d = new Date();
+                d.setMonth(d.getMonth() - i);
+                const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                const label = format(d, 'MMMM yyyy', { locale: es });
+                return <SelectItem key={val} value={val} className="capitalize">{label}</SelectItem>;
+              })}
+            </SelectContent>
+          </Select>
+
+          {/* Date Picker */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button 
+                variant="outline" 
+                className={cn(
+                  "w-[160px] h-10 justify-start text-left font-medium border-border/50 bg-background/30 glass hover:border-primary/30 hover:bg-white/5 text-xs transition-all duration-300",
+                  !dateFilter && "text-muted-foreground"
+                )}
+              >
+                <div className="w-6 h-6 rounded-md bg-primary/10 flex items-center justify-center mr-2 text-primary group-hover:bg-primary group-hover:text-white transition-colors">
+                  <CalendarIcon className="h-3.5 w-3.5" />
+                </div>
+                {dateFilter ? format(dateFilter, "PPP", { locale: es }) : <span>Filtrar por día</span>}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="end">
+              <Calendar
+                mode="single"
+                selected={dateFilter}
+                onSelect={(d) => { setDateFilter(d); setMonthFilter('all'); }}
+                initialFocus
+                locale={es}
+              />
+            </PopoverContent>
+          </Popover>
+
+          {/* Clear Filters */}
+          {hasActiveFilters && (
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              onClick={clearFilters}
+              className="h-10 w-10 text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors"
+              title="Limpiar filtros"
+            >
+              <FilterX className="w-4 h-4" />
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Grid */}

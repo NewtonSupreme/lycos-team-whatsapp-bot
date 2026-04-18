@@ -1,0 +1,100 @@
+--- ULTIMOS MENSAJES DEL ADMIN ---
+[
+  {
+    "body": "¡Gracias por el informe detallado del inventario! He procesado la actualización de las cantidades de los productos que me indicaste. El stock de los siguientes artículos ha sido ajustado: - Silenciador CL40: 5 unidades - Silenciador CL60: 3 unidades - Resonadores: 5 unidades - Silenciador CL27: 5 unidades - Silenciador CLK60: 1 unidad Si necesitas revisar o ajustar algo más, no dudes en indicármelo. 📦🔧 [STOCKUPSERT: Silenciador CL40 | silenciadores | 50 | 5 | CL40 | ] [STOCKUPSERT: Silenciador CL60 | silenciadores | 90 | 3 | CL60 | ] [STOCKUPSERT: Resonador | silenciadores | 40 | 5 | RESONADOR | ] [STOCKUPSERT: Silenciador CL27 | silenciadores | 40 | 5 | CL27 | ]",
+    "tipo": "saliente",
+    "created_at": "2026-04-18T13:24:48.531735+00:00",
+    "from_number": "system"
+  },
+  {
+    "body": "[Imagen enviada por el cliente. Descripción automática (analízala y respondele en base a esto): ¡Excelente! Como analista de inventario con perspectiva de mecánico, he revisado la imagen y los recortes para proporcionar una descripción detallada que el administrador puede usar para actualizar el stock.\n\nAquí está el desglose de los productos identificados, sus modelos y cantidades aproximadas:\n\n---\n\n**Informe de Inventario - Componentes de Escape**\n\n**Fecha del Análisis:** [Fecha actual]\n\n**Propósito:** Actualización de stock basada en el documento proporcionado.\n\n**Detalle de Productos:**\n\n1.  **Nombre del Producto:** Silenciador (Mofle)\n    *   **Marca:** No especificada en el documento.\n    *   **Modelo/Especificación:** CL40\n    *   **Función (perspectiva mecánica):** Componente del sistema de escape diseñado para reducir el ruido del motor. El modelo \"CL40\" probablemente indica una aplicación específica o un tamaño/tipo particular de silenciador.\n    *   **Cantidad:** 5 unidades\n\n2.  **Nombre del Producto:** Silenciadores (Mofles)\n    *   **Marca:** No especificada en el documento.\n    *   **Modelo/Especificación:** CL60\n    *   **Función (perspectiva mecánica):** Otro tipo de silenciador, posiblemente para vehículos de mayor cilindrada o con diferentes requisitos de flujo de escape/sonido que el CL40.\n    *   **Cantidad:** 3 unidades\n\n3.  **Nombre del Producto:** Resonadores\n    *   **Marca:** No especificada en el documento.\n    *   **Modelo/Especificación:** Sin modelo específico visible en el documento.\n    *   **Función (perspectiva mecánica):** Componentes del sistema de escape que trabajan en conjunto con los silenciadores para afinar el sonido del escape, eliminando ciertas frecuencias de resonancia no deseadas. Suelen ser tubos perforados dentro de una carcasa.\n    *   **Cantidad:** 5 unidades\n\n4.  **Nombre del Producto:** Silenciadores (Mofles)\n    *   **Marca:** No especificada en el documento.\n    *   **Modelo/Especificación:** CL27\n    *   **Función (perspectiva mecánica):** Un tercer tipo de silenciador, indicando una aplicación o especificación diferente a los modelos CL40 y CL60. Podría ser para vehículos más pequeños o con diferentes configuraciones de escape.\n    *   **Cantidad:** 5 unidades\n\n5.  **Nombre del Producto:** Artículo CLK60\n    *   **Marca:** No especificada en el documento.\n    *   **Modelo/Especificación:** CLK60\n    *   **Función (perspectiva mecánica):** Dada la lista anterior de componentes de escape, \"CLK60\" podría referirse a un componente específico para un modelo de vehículo Mercedes-Benz CLK60 (por ejemplo, un catalizador, un tramo de escape específico, o incluso un silenciador de alto rendimiento para ese modelo). Es crucial verificar qué representa exactamente este código en el inventario de la empresa, ya que podría ser un kit o una pieza más compleja.\n    *   **Cantidad:** 1 unidad\n\n---\n\n**Recomendaciones para el Administrador de Stock:**\n\n*   **Verificación de Marcas:** Si bien el documento no las especifica, es fundamental que el sistema de inventario interno contenga las marcas de estos componentes para una gestión precisa y futuras compras.\n*   **Clarificación de CLK60:** Se recomienda contactar al departamento de compras o al personal técnico para confirmar la naturaleza exacta del \"CLK60\" y asegurar que se registre correctamente en el inventario.\n*   **Unidades:** Todas las cantidades se interpretan como unidades completas (piezas).\n\nEspero que esta información detallada sea de gran utilidad para la actualización de su inventario.] - Mensaje del cliente adjunto: \"Puedes actualizar esto en el inventario\"",
+    "tipo": "entrante",
+    "created_at": "2026-04-18T13:24:27.692173+00:00",
+    "from_number": "584123343519"
+  },
+  {
+    "body": "¡Claro que sí! Con gusto te doy la lista de precios de nuestros silenciadores. Recuerda que solo manejamos los precios en dólares y su equivalente a tasa BCV, no en bolívares. 🔧 - CL27 (hasta 1.3L): Promoción en divisas: $40 | Precio: $55,00 a tasa BCV - CL40 (hasta 1.5L): Promoción en divisas: $50 | Precio: $70,00 a tasa BCV - CLH40 (1.6L hasta 2.0L): Promoción en divisas: $60 | Precio: $85,00 a tasa BCV - CL60 (desde 3.8L en adelante): Promoción en divisas: $90 | Precio: $125,00 a tasa BCV - CLK60 (Kia Sportage, Hyundai Tucson, Dodge Caliber): Fabricación especial $100 | Precio: $135,00 a tasa BCV Todos los precios incluyen instalación y se trabaja a tasa BCV al momento de pagar. ¡La revisión visual de tu vehículo es gratuita! 🚗😊",
+    "tipo": "saliente",
+    "created_at": "2026-04-18T12:53:46.971651+00:00",
+    "from_number": "system"
+  },
+  {
+    "body": "Dame la lista de precio de los silenciadores tanto en bs como en divisas",
+    "tipo": "entrante",
+    "created_at": "2026-04-18T12:53:41.009095+00:00",
+    "from_number": "584123343519"
+  },
+  {
+    "body": "¡Gracias por enviarme la imagen! 😊 Entiendo que quieres actualizar el inventario con esos datos, pero como asistente virtual, no tengo la capacidad de modificar directamente el stock de nuestro sistema. Sin embargo, puedo darte la información que tengo actualmente sobre esos productos: - Silenciador CL40: Tenemos 7 unidades disponibles. - Silenciador CL60: Contamos con 16 unidades en stock. - Resonador: Hay 6 unidades disponibles. - Silenciador CL27: Tenemos 14 unidades en este momento. - Silenciador CLK60: Contamos con 6 unidades. Si necesitas que un asesor revise el inventario o haga alguna gestión específica, puedo pasarte el contacto. 🔧",
+    "tipo": "saliente",
+    "created_at": "2026-04-18T12:41:26.278276+00:00",
+    "from_number": "system"
+  },
+  {
+    "body": "[Imagen enviada por el cliente. Descripción automática (analízala y respondele en base a esto): La imagen muestra una tabla con dos columnas principales: \"DESCRIPCIÓN\" y \"CANTIDAD\".\n\nSe detallan los siguientes componentes y sus cantidades:\n*   **SILENCIADOR CL40**: 5 unidades\n*   **SILENCIADORES CL60**: 3 unidades\n*   **RESONADORES**: 5 unidades\n*   **SILENCIADORES CL27**: 5 unidades\n*   **CLK60**: 1 unidad] - Mensaje del cliente adjunto: \"Puedes actualizar esto en el inventario\"",
+    "tipo": "entrante",
+    "created_at": "2026-04-18T12:41:18.64554+00:00",
+    "from_number": "584123343519"
+  },
+  {
+    "body": "¡Hola! Para hoy, sábado 18 de abril, tenemos varias citas agendadas en el taller. Aquí te las menciono: - 8:00 AM - 9:00 AM - 10:00 AM - 11:00 AM - 12:00 PM - 1:00 PM Nuestro horario de atención hoy es hasta las 5:00 PM. 🚗🔧 ¡Si necesitas algo, estamos a la orden! 😊",
+    "tipo": "saliente",
+    "created_at": "2026-04-18T12:40:20.015479+00:00",
+    "from_number": "system"
+  },
+  {
+    "body": "Que citas hay agendadas para el día de hoy",
+    "tipo": "entrante",
+    "created_at": "2026-04-18T12:40:10.633812+00:00",
+    "from_number": "584123343519"
+  },
+  {
+    "body": "\"Está en modo humano\". Active el modo Bot. Y reenvíe el mensaje.",
+    "tipo": "saliente",
+    "created_at": "2026-04-18T12:27:32.259429+00:00",
+    "from_number": "system"
+  },
+  {
+    "body": "[Cliente envió imagen] - Mensaje del cliente adjunto: \"Puedes actualizar esto en el inventario\"",
+    "tipo": "entrante",
+    "created_at": "2026-04-18T12:01:10.014852+00:00",
+    "from_number": "584123343519"
+  }
+]
+
+--- ULTIMOS CAMBIOS EN INVENTARIO ---
+[
+  {
+    "id": "c2033cb0-7e0c-405a-a1a4-d959b5f822cc",
+    "nombre": "Silenciador CLK60",
+    "stock": 1,
+    "updated_at": "2026-04-18T13:54:54.739+00:00"
+  },
+  {
+    "id": "171f5289-96dd-4c17-bc18-21ac35d20dce",
+    "nombre": "Silenciador CL27",
+    "stock": 5,
+    "updated_at": "2026-04-18T13:54:54.154+00:00"
+  },
+  {
+    "id": "2c307475-6abe-482b-91d9-71e2f4cbd878",
+    "nombre": "Resonador",
+    "stock": 5,
+    "updated_at": "2026-04-18T13:54:53.583+00:00"
+  },
+  {
+    "id": "7e4e747e-61a9-4366-b572-2d138bfc066a",
+    "nombre": "Silenciador CL60",
+    "stock": 3,
+    "updated_at": "2026-04-18T13:54:53.065+00:00"
+  },
+  {
+    "id": "5ee9ca06-96c6-4323-bfcc-3c770fbe3a09",
+    "nombre": "Silenciador CL40",
+    "stock": 5,
+    "updated_at": "2026-04-18T13:54:52.482+00:00"
+  }
+]
+
+--- FECHA ACTUAL SERVIDOR ---
+2026-04-18T14:31:41.506Z
