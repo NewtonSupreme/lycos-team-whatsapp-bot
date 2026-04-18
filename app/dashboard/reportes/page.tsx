@@ -38,16 +38,27 @@ interface DesglosItem {
 }
 
 interface ScannedData {
+  tipo_escaneo?: 'cierre' | 'ticket';
   fecha: string;
-  items: DesglosItem[];
-  subtotal: number;
-  descuentos: number;
+  items?: DesglosItem[]; // for cierre
+  subtotal?: number;
+  descuentos?: number;
   total_ingresos: number;
-  moneda: string;
-  notas: string;
-  total_clientes: number;
-  total_servicios: number;
+  moneda?: string;
+  notas?: string;
+  total_clientes?: number;
+  total_servicios?: number;
   rawText?: string;
+  
+  // Ticket fields
+  empresa_nombre?: string;
+  empresa_rif?: string;
+  hora?: string;
+  nro_factura?: string;
+  cliente_nombre?: string;
+  cliente_vehiculo?: string;
+  impuestos?: number;
+  metodo_pago?: string;
 }
 
 // ── Tooltip ────────────────────────────────────────────────────
@@ -259,9 +270,10 @@ function ManualModal({ onClose, onSave, initial }: {
 }
 
 // ── Modal: Scan IA + Confirmación ──────────────────────────────
-function ScanModal({ onClose, onConfirm }: {
+function ScanModal({ onClose, onConfirm, modo }: {
   onClose: () => void;
   onConfirm: (data: ScannedData) => void;
+  modo: 'cierre' | 'ticket';
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -311,7 +323,7 @@ function ScanModal({ onClose, onConfirm }: {
       const res = await fetch('/api/reportes/scan-imagen', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64, mimeType })
+        body: JSON.stringify({ imageBase64, mimeType, modo })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error al escanear');
@@ -331,7 +343,7 @@ function ScanModal({ onClose, onConfirm }: {
         <div className="flex items-center justify-between p-5 border-b border-border/30">
           <div>
             <h2 className="text-base font-bold flex items-center gap-2">
-              <Camera className="w-4 h-4 text-violet-400" /> Escanear con IA
+              <Camera className="w-4 h-4 text-violet-400" /> {modo === 'ticket' ? 'Escanear Factura/Ticket' : 'Escanear Cierre con IA'}
             </h2>
             <div className="flex items-center gap-2 mt-2">
               {['Subir imagen', 'Vista previa', 'Confirmar datos'].map((s, i) => (
@@ -426,70 +438,84 @@ function ScanModal({ onClose, onConfirm }: {
                 <p className="text-xs text-green-400">Datos extraídos correctamente. Revisa antes de confirmar.</p>
               </div>
 
-              {/* Datos extraídos editables */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">Fecha</label>
-                  <input
-                    type="date" value={scanned.fecha}
-                    onChange={e => setScanned(s => s ? ({ ...s, fecha: e.target.value }) : s)}
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-border/50 bg-background/50 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">Total ingresos ($)</label>
-                  <input
-                    type="number" step="0.01" value={scanned.total_ingresos}
-                    onChange={e => setScanned(s => s ? ({ ...s, total_ingresos: Number(e.target.value) }) : s)}
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-border/50 bg-background/50 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">Clientes</label>
-                  <input
-                    type="number" value={scanned.total_clientes}
-                    onChange={e => setScanned(s => s ? ({ ...s, total_clientes: Number(e.target.value) }) : s)}
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-border/50 bg-background/50 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">Servicios</label>
-                  <input
-                    type="number" value={scanned.total_servicios}
-                    onChange={e => setScanned(s => s ? ({ ...s, total_servicios: Number(e.target.value) }) : s)}
-                    className="w-full px-2.5 py-1.5 rounded-lg border border-border/50 bg-background/50 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                </div>
-              </div>
-
-              {/* Items detectados */}
-              {scanned.items?.length > 0 && (
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-2">Servicios detectados ({scanned.items.length})</p>
-                  <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                    {scanned.items.map((item, i) => (
-                      <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-muted/20 text-xs">
-                        <span className="flex-1 truncate">{item.descripcion}</span>
-                        <span className="text-muted-foreground mx-2">×{item.cantidad}</span>
-                        <span className="font-semibold text-primary">${Number(item.total).toFixed(2)}</span>
+              {/* Datos extraídos editables - Dinámico según modo */}
+              {modo === 'cierre' ? (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5"><label className="text-xs text-muted-foreground">Fecha</label><input type="date" value={scanned.fecha} onChange={e => setScanned({...scanned, fecha: e.target.value})} className="w-full px-3 py-2 rounded border border-border/50 bg-background text-sm font-semibold" /></div>
+                    <div className="space-y-1.5"><label className="text-xs text-muted-foreground">Total Ingresos ($)</label><input type="number" step="0.01" value={scanned.total_ingresos} onChange={e => setScanned({...scanned, total_ingresos: Number(e.target.value)})} className="w-full px-3 py-2 rounded border border-border/50 bg-background text-sm font-bold text-green-400" /></div>
+                    <div className="space-y-1.5"><label className="text-xs text-muted-foreground">Servicios</label><input type="number" value={scanned.total_servicios} onChange={e => setScanned({...scanned, total_servicios: Number(e.target.value)})} className="w-full px-3 py-2 rounded border border-border/50 bg-background text-sm" /></div>
+                    <div className="space-y-1.5"><label className="text-xs text-muted-foreground">Clientes</label><input type="number" value={scanned.total_clientes} onChange={e => setScanned({...scanned, total_clientes: Number(e.target.value)})} className="w-full px-3 py-2 rounded border border-border/50 bg-background text-sm" /></div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-muted-foreground flex justify-between">
+                      <span>Desglose Resumido ({scanned.items?.length || 0})</span>
+                    </label>
+                    <div className="p-3 bg-background border border-border/50 rounded-lg text-xs space-y-1 max-h-[150px] overflow-y-auto">
+                      {scanned.items?.map((it, i) => (
+                        <div key={i} className="flex justify-between border-b border-border/30 pb-1 last:border-0 last:pb-0">
+                          <span className="text-muted-foreground">{it.cantidad}x {it.descripcion}</span>
+                          <span className="font-semibold">${it.total}</span>
+                        </div>
+                      ))}
+                      {!scanned.items?.length && <span className="text-muted-foreground italic">No se detectaron items individuales</span>}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="bg-white text-black p-4 rounded shadow font-mono text-xs border border-gray-200">
+                  <div className="text-center border-b border-dashed border-gray-400 pb-2 mb-2">
+                    <h3 className="font-bold text-sm">{scanned.empresa_nombre || 'LYCOS TEAM CA'}</h3>
+                    <p>RIF: {scanned.empresa_rif}</p>
+                    <p>Factura N° {scanned.nro_factura}</p>
+                    <p>{scanned.fecha} {scanned.hora}</p>
+                  </div>
+                  <div className="mb-2">
+                    <p>Cliente: {scanned.cliente_nombre}</p>
+                    <p>Vehículo: {scanned.cliente_vehiculo}</p>
+                  </div>
+                  <div className="border-b border-dashed border-gray-400 pb-2 mb-2">
+                    <div className="grid grid-cols-12 font-bold mb-1">
+                      <span className="col-span-2">CANT</span>
+                      <span className="col-span-6">DESCRIPCIÓN</span>
+                      <span className="col-span-2 text-right">P.U</span>
+                      <span className="col-span-2 text-right">TOT</span>
+                    </div>
+                    {scanned.items?.map((it, i) => (
+                      <div key={i} className="grid grid-cols-12 mb-1">
+                        <span className="col-span-2">{it.cantidad}</span>
+                        <span className="col-span-6 line-clamp-1">{it.descripcion}</span>
+                        <span className="col-span-2 text-right">{it.precio_unitario}</span>
+                        <span className="col-span-2 text-right">{it.total}</span>
                       </div>
                     ))}
                   </div>
+                  <div className="text-right font-bold space-y-1">
+                    <p>SUBTOTAL: ${scanned.subtotal}</p>
+                    <p>IMPUESTOS: ${scanned.impuestos}</p>
+                    <p className="text-sm">TOTAL: ${scanned.total_ingresos}</p>
+                  </div>
+                  <div className="mt-2 text-center border-t border-dashed border-gray-400 pt-2">
+                    <p>MÉTODO DE PAGO: {scanned.metodo_pago}</p>
+                  </div>
                 </div>
               )}
-
-              {scanned.notas && (
-                <div className="p-2.5 rounded-lg bg-muted/20 border border-border/20 text-xs text-muted-foreground">
-                  <span className="font-medium text-foreground">Notas: </span>{scanned.notas}
-                </div>
-              )}
-
-              <div className="p-3 rounded-xl bg-primary/5 border border-primary/20 flex items-center justify-between">
-                <span className="text-sm font-medium">Total a registrar</span>
-                <span className="text-xl font-bold text-primary" style={{ fontFamily: 'Syne, sans-serif' }}>
-                  ${Number(scanned.total_ingresos).toFixed(2)}
-                </span>
+              
+              <div className="space-y-1.5">
+                <label className="text-xs text-muted-foreground">Notas Adicionales (Opcional)</label>
+                <textarea 
+                  value={scanned.notas || ''} 
+                  onChange={e => setScanned({...scanned, notas: e.target.value})} 
+                  rows={2} 
+                  className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-xs placeholder:text-muted-foreground" 
+                />
               </div>
+            </div>
+          )}
+
+          {scanError && (
+            <div className="flex items-center gap-2 text-xs text-destructive mt-4 bg-destructive/10 p-2.5 rounded-lg border border-destructive/20">
+              <AlertCircle className="w-3.5 h-3.5" /> {scanError}
             </div>
           )}
         </div>
@@ -529,7 +555,7 @@ export default function ReportesPage() {
   const [tab, setTab] = useState<'graficos' | 'cierres' | 'historial'>('graficos');
   const [period, setPeriod] = useState('30d');
   const [showManual, setShowManual] = useState(false);
-  const [showScan, setShowScan] = useState(false);
+  const [scanMode, setScanMode] = useState<'cierre' | 'ticket' | null>(null);
   const [editando, setEditando] = useState<VentaDia | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [previewInvoice, setPreviewInvoice] = useState<string | null>(null);
@@ -623,9 +649,9 @@ export default function ReportesPage() {
     await handleSaveVenta({
       fecha: scanned.fecha,
       total_ingresos: scanned.total_ingresos,
-      total_servicios: scanned.total_servicios,
-      total_clientes: scanned.total_clientes,
-      desglose: scanned.items,
+      total_servicios: scanned.total_servicios || scanned.items?.length || 1,
+      total_clientes: scanned.total_clientes || 1,
+      desglose: scanned.items || [],
       notas: finalNotas || null,
     });
   };
@@ -678,33 +704,41 @@ export default function ReportesPage() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Reportes</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {loading ? 'Cargando...' : `${ventas.length} registros · datos reales`}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex rounded-lg border border-border/50 overflow-hidden">
-            {(['7d', '30d', '3m', '1a'] as const).map(p => (
-              <button key={p} onClick={() => setPeriod(p)}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${period === p ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-white/5'}`}
-              >
-                {p}
-              </button>
-            ))}
+      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between w-full">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Reportes</h1>
+            <p className="text-muted-foreground mt-1">Control definitivo de ingresos, métricas y facturación con IA</p>
           </div>
-          <button onClick={loadVentas} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg border border-border/30 hover:bg-white/5 transition-colors">
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-          
-          <div className="flex items-center gap-2">
+          <div className="flex gap-2 w-full sm:w-auto">
+            <Button onClick={() => setShowManual(true)} variant="outline" className="gap-2 flex-1 sm:flex-none border-border">
+              <Plus className="w-4 h-4" /> Manual
+            </Button>
+            <div className="relative group">
+              <Button className="gap-2 bg-violet-600 hover:bg-violet-700 text-white flex-1 sm:flex-none">
+                <Camera className="w-4 h-4" /> Escanear... <ChevronDown className="w-3 h-3 ml-1" />
+              </Button>
+              <div className="absolute right-0 top-full mt-1 w-48 bg-card border border-border/50 rounded-xl shadow-xl flex-col p-1 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all z-50">
+                <div className="absolute -top-3 left-0 right-0 h-4 bg-transparent" />
+                <button
+                  onClick={() => setScanMode('cierre')}
+                  className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-white/5 rounded-lg text-left"
+                >
+                  <Package className="w-4 h-4 text-violet-400" /> Cierre de Caja
+                </button>
+                <button
+                  onClick={() => setScanMode('ticket')}
+                  className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-white/5 rounded-lg text-left"
+                >
+                  <FileText className="w-4 h-4 text-green-400" /> Factura / Ticket
+                </button>
+              </div>
+            </div>
+            
+            {/* Export Dropdown */}
             <div className="relative group">
               <Button variant="outline" size="sm" className="gap-1.5">
                 <Download className="w-3.5 h-3.5" /> Exportar <ChevronDown className="w-3 h-3" />
               </Button>
-              {/* Dropdown Menu - Bridge added via pt-1 and transparent bg container */}
               <div className="absolute right-0 top-full pt-1 w-48 bg-transparent opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all z-20">
                 <div className="bg-card border border-border rounded-xl shadow-xl py-1 overflow-hidden">
                   <button onClick={exportCSV} className="w-full px-3 py-2 text-xs text-left hover:bg-white/5 flex items-center gap-2 transition-colors">
@@ -718,7 +752,6 @@ export default function ReportesPage() {
             </div>
           </div>
         </div>
-      </div>
 
       {/* Tabs */}
       <div className="flex items-center gap-1 bg-muted/30 p-1 rounded-xl w-fit">
@@ -846,20 +879,6 @@ export default function ReportesPage() {
       {/* ── Tab: Cierres de Caja ──────────────────────────────── */}
       {tab === 'cierres' && (
         <div className="space-y-3">
-          {/* Action buttons */}
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={() => { setEditando(null); setShowManual(true); }} className="gap-2">
-              <Plus className="w-4 h-4" /> Ingreso manual
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => setShowScan(true)}
-              className="gap-2 border-violet-500/30 text-violet-400 hover:bg-violet-500/10"
-            >
-              <Camera className="w-4 h-4" /> Escanear con IA
-            </Button>
-          </div>
-
           {/* List */}
           {loading ? (
             <div className="flex items-center justify-center py-12">
@@ -878,7 +897,7 @@ export default function ReportesPage() {
                   <Button size="sm" onClick={() => setShowManual(true)} className="gap-2">
                     <Plus className="w-4 h-4" /> Manual
                   </Button>
-                  <Button size="sm" variant="outline" onClick={() => setShowScan(true)} className="gap-2 border-violet-500/30 text-violet-400">
+                  <Button size="sm" variant="outline" onClick={() => setScanMode('cierre')} className="gap-2 border-violet-500/30 text-violet-400">
                     <Camera className="w-4 h-4" /> Escanear IA
                   </Button>
                 </div>
@@ -1138,7 +1157,7 @@ export default function ReportesPage() {
           initial={editando}
         />
       )}
-      {showScan && <ScanModal onClose={() => setShowScan(false)} onConfirm={handleScanConfirm} />}
+      {scanMode && <ScanModal modo={scanMode} onClose={() => setScanMode(null)} onConfirm={handleScanConfirm} />}
       
       {/* ── Modal: Ver Factura IA ───────────────────────────── */}
       {previewInvoice && (

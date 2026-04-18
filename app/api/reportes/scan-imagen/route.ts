@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { imageBase64, mimeType = 'image/jpeg' } = body;
+    const { imageBase64, mimeType = 'image/jpeg', modo = 'cierre' } = body;
 
     if (!imageBase64) {
       return NextResponse.json({ error: 'Se requiere la imagen en base64' }, { status: 400 });
@@ -17,12 +17,51 @@ export async function POST(req: NextRequest) {
 
     const today = new Date().toISOString().split('T')[0];
 
-    const prompt = `Eres un asistente contable experto para Lycos Team, un taller automotriz en Venezuela.
+    let prompt = '';
+    
+    if (modo === 'ticket') {
+      prompt = `Eres un asistente automatizado de facturación para Lycos Team.
+Analiza este documento que es un Ticket o Factura individual.
+Extrae ABSOLUTAMENTE TODO el detalle del ticket de forma estructurada.
+
+Responde ÚNICAMENTE con un JSON válido con esta estructura exacta:
+{
+  "tipo_escaneo": "ticket",
+  "empresa_nombre": "",
+  "empresa_rif": "",
+  "fecha": "${today}",
+  "hora": "",
+  "nro_factura": "",
+  "cliente_nombre": "",
+  "cliente_vehiculo": "",
+  "items": [
+    {
+      "cantidad": 1,
+      "descripcion": "",
+      "precio_unitario": 0.00,
+      "total": 0.00
+    }
+  ],
+  "subtotal": 0.00,
+  "impuestos": 0.00,
+  "total_ingresos": 0.00,
+  "total_servicios": 0,
+  "total_clientes": 1,
+  "metodo_pago": ""
+}
+
+REGLAS IMPORTANTES PARA TICKET:
+- Extrae todas las líneas (items) compradas, con detalle exacto.
+- Las cantidades son numéricas, igual que los totales.
+- NO incluyas Markdown (\`\`\`json) rodeando la respuesta, solo retorna el objeto JSON crudo en texto.`;
+    } else {
+      prompt = `Eres un asistente contable experto para Lycos Team, un taller automotriz en Venezuela.
 Analiza esta imagen que puede ser: un cierre de caja, recibo, resumen diario, lista de servicios, o el formato de reporte del taller.
 
 Extrae TODOS los datos visibles y responde ÚNICAMENTE con un JSON válido con esta estructura exacta (todos los campos son requeridos, usa 0 si no aparece):
 
 {
+  "tipo_escaneo": "cierre",
   "fecha": "${today}",
   "clientes_atendidos": 0,
   "servicios": {
@@ -74,7 +113,8 @@ REGLAS IMPORTANTES:
 - total_ingresos es la suma total de TODOS los ingresos en dólares
 - tasa es la tasa BCV del día si aparece
 - Extrae los clientes individuales si aparecen listados con nombre y vehículo
-- NO incluyas texto adicional, solo el JSON puro`;
+- NO incluyas Markdown (\`\`\`json) rodeando la respuesta, solo retorna el objeto JSON crudo en texto.`;
+    }
 
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
