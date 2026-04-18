@@ -983,19 +983,19 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
 - En 'servicio', resume lo que se hará. En 'vehículo', pon MARCA y MODELO.
 - CRITICO: NUNCA pongas estados como 'pendiente' o 'confirmada' en VEHÍCULO.
 - Si detectas el nombre del cliente por primera vez, usa: [NOMBRE: Juan Pérez]`;
-
   const contents = [...ctx.historia, { role: 'user', parts: [{ text: userMessage }] }];
 
   // ── ROBUST SEQUENTIAL RETRY STRATEGY ─────────────────────────────────────────
-  const MAX_TOTAL_ATTEMPTS = 6;
-  const ATTEMPTS_DELAYS = [2000, 4000, 6000, 8000, 10000, 12000]; // Incremental delays
+  // Configuración de reintentos más agresiva para Vercel Hobby (10s total)
+  const ATTEMPTS_DELAYS = [500, 1500, 3000];
+  const MAX_ATTEMPTS = ATTEMPTS_DELAYS.length;
   
-  for (let attempt = 0; attempt < MAX_TOTAL_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     // Strategy: First 3 attempts with PRIMARY model, then 3 with FALLBACK
     const modelIndex = attempt < 3 ? 0 : 1;
     const model = GEMINI_MODELS[modelIndex];
     
-    console.log(`🧠 [Intento ${attempt + 1}/${MAX_TOTAL_ATTEMPTS}] Usando Modelo: ${model}`);
+    console.log(`🧠 [Intento ${attempt + 1}/${MAX_ATTEMPTS}] Usando Modelo: ${model}`);
 
     try {
       const resp = await fetch(
@@ -1366,7 +1366,7 @@ async function getOrCreateClientAndVehicle(
             placa: placa.toUpperCase(),
             marca: marca || 'Desconocida',
             modelo: modelo || 'Modelo',
-            ...(anio ? { anio: parseInt(anio) } : {}),
+            anio: parseInt(anio || '2024'), // NOT NULL constraint fix
             estado: 'activo'
           }).select('id').single();
           if (vehErr) { console.error('Error creando vehiculo con placa:', vehErr.message); }
@@ -1600,6 +1600,28 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
       const lowerBody = messageBody.toLowerCase();
 
+      // ─── EARLY PERSISTENCE (Vercel Timeout Safe) ─────────────────────
+      // Guardar el mensaje de inmediato para que si Vercel corta por tiempo (10s), 
+      // el usuario vea el mensaje en el CRM para reintentar.
+      let pendingId: string | null = null;
+      try {
+        if (db) {
+          const { data: pData } = await db.from('mensajes_pendientes_ia').insert({
+            from_number: from,
+            message_body: messageBody,
+            wa_message_id: wa_message_id,
+            wa_profile_name: waProfileName || null,
+            inserted_timestamp: new Date().toISOString(),
+            intentos: 0,
+            status: 'pending'
+          }).select('id').single();
+          pendingId = pData?.id || null;
+          console.log(`💾 [${from}] Persistencia temprana activada (ID: ${pendingId})`);
+        }
+      } catch (e) {
+        console.error('❌ Error en persistencia temprana:', e);
+      }
+
       // 🛑 Silenciar bot si está en modo humano (Intervención manual)
       if (ctx.estado === 'humano') {
         console.log(`👤 [${from}] Modo Humano ACTIVO. El bot permanecerá en silencio.`);
@@ -1739,15 +1761,29 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               if (existingId) {
                 const { error: updErr } = await db.from('inventario').update(updateObj).eq('id', existingId);
                 if (updErr) {
-                  console.error(`❌ Error actualizando stock de ${nombre}:`, updErr);
-                  throw updErr;
+                  // Fallback si la columna 'marca' no existe en la DB real
+                  if (updErr.message.includes('marca') || updErr.code === 'PGRST204') {
+                    console.warn(`⚠️ Omitiendo columna 'marca' inexistente para ${nombre}`);
+                    delete updateObj.marca;
+                    await db.from('inventario').update(updateObj).eq('id', existingId);
+                  } else {
+                    console.error(`❌ Error actualizando stock de ${nombre}:`, updErr);
+                    throw updErr;
+                  }
                 }
                 console.log(`✅ ADMIN: Stock ACTUALIZADO en DB: ${nombre}`);
               } else {
                 const { error: insErr } = await db.from('inventario').insert(updateObj);
                 if (insErr) {
-                  console.error(`❌ Error insertando nuevo producto ${nombre}:`, insErr);
-                  throw insErr;
+                  // Fallback si la columna 'marca' no existe en la DB real
+                  if (insErr.message.includes('marca') || insErr.code === 'PGRST204') {
+                    console.warn(`⚠️ Omitiendo columna 'marca' inexistente para ${nombre}`);
+                    delete updateObj.marca;
+                    await db.from('inventario').insert(updateObj);
+                  } else {
+                    console.error(`❌ Error insertando nuevo producto ${nombre}:`, insErr);
+                    throw insErr;
+                  }
                 }
                 console.log(`✅ ADMIN: Nuevo producto INSERTADO en DB: ${nombre}`);
               }
@@ -1936,8 +1972,12 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         } catch (dbErr) {
           console.error('❌ Error guardando mensaje pendiente en DB:', dbErr);
         }
-        // Holding message removed as requested by user.
       }
 
-      await updateConversation(db, from, messageBody, ctx.memoria, r?.clientId);
+        // Marcar como completado si llegamos hasta aquí con éxito
+        if (db && pendingId) {
+          await db.from('mensajes_pendientes_ia').update({ status: 'completed' }).eq('id', pendingId);
+        }
+
+        await updateConversation(db, from, messageBody, ctx.memoria, r?.clientId);
 }
