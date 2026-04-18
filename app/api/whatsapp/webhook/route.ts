@@ -40,7 +40,8 @@ const TT_LINK = 'https://www.tiktok.com/@lycos.team?_r=1&_t=ZS-94prPaQnR5E';
 
 function getDb() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+  // Usar SERVICE_ROLE_KEY si está disponible para saltar RLS en acciones de admin
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
   if (!url || !key) return null;
   return createClient(url, key);
 }
@@ -1720,26 +1721,35 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 activo: true
               };
 
-              console.log(`📦 ADMIN (${from}): Intento de UPSERT para ${nombre} (Stock: ${stock})`);
+              console.log(`📦 ADMIN (${from}): Intento de UPSERT para "${nombre}" (Stock: ${stock}, Cod: ${codigo})`);
 
-              // Buscar por nombre exacto o código para actualizar
-              let query = db.from('inventario').select('id');
+              // Intentar encontrar por CÓDIGO primero (es más preciso)
+              let existingId = null;
               if (codigo) {
-                query = query.or(`nombre.eq."${nombre}",codigo.eq."${codigo}"`);
-              } else {
-                query = query.eq('nombre', nombre);
+                const { data: byCod } = await db.from('inventario').select('id').eq('codigo', codigo).limit(1).maybeSingle();
+                if (byCod) existingId = byCod.id;
               }
-
-              const { data: existing } = await query.limit(1).maybeSingle();
               
-              if (existing) {
-                const { error: updErr } = await db.from('inventario').update(updateObj).eq('id', existing.id);
-                if (updErr) throw updErr;
-                console.log(`✅ ADMIN: Stock actualizado corregido: ${nombre}`);
+              // Si no hay por código, buscar por NOMBRE exacto
+              if (!existingId) {
+                const { data: byNom } = await db.from('inventario').select('id').eq('nombre', nombre).limit(1).maybeSingle();
+                if (byNom) existingId = byNom.id;
+              }
+              
+              if (existingId) {
+                const { error: updErr } = await db.from('inventario').update(updateObj).eq('id', existingId);
+                if (updErr) {
+                  console.error(`❌ Error actualizando stock de ${nombre}:`, updErr);
+                  throw updErr;
+                }
+                console.log(`✅ ADMIN: Stock ACTUALIZADO en DB: ${nombre}`);
               } else {
                 const { error: insErr } = await db.from('inventario').insert(updateObj);
-                if (insErr) throw insErr;
-                console.log(`✅ ADMIN: Nuevo producto agregado corregido: ${nombre}`);
+                if (insErr) {
+                  console.error(`❌ Error insertando nuevo producto ${nombre}:`, insErr);
+                  throw insErr;
+                }
+                console.log(`✅ ADMIN: Nuevo producto INSERTADO en DB: ${nombre}`);
               }
             } catch (e) { 
               console.error('❌ Error en STOCK_UPSERT:', e);
