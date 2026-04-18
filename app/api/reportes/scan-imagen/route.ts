@@ -117,7 +117,7 @@ REGLAS IMPORTANTES:
       }
     }
 
-    return NextResponse.json({ success: true, data: extracted });
+    return NextResponse.json({ success: true, data: extracted, rawText });
 
   } catch (error) {
     console.error('Error en scan-imagen:', error);

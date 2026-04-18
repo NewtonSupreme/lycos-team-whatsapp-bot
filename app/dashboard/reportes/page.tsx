@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Download, TrendingUp, DollarSign, Wrench, Users, Plus, Pencil,
   Trash2, CheckCircle, AlertCircle, Loader2, X, Camera, Eye,
-  Calendar, FileText, BarChart2, RefreshCw, Package, ChevronDown
+  Calendar, FileText, BarChart2, RefreshCw, Package, ChevronDown, Clock
 } from 'lucide-react';
 import {
   Card, CardContent, CardHeader, CardTitle, CardDescription
@@ -47,6 +47,7 @@ interface ScannedData {
   notas: string;
   total_clientes: number;
   total_servicios: number;
+  rawText?: string;
 }
 
 // ── Tooltip ────────────────────────────────────────────────────
@@ -273,18 +274,33 @@ function ScanModal({ onClose, onConfirm }: {
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    processFile(file);
+  };
+
+  const processFile = (file: File | undefined | null) => {
     if (!file) return;
     setMimeType(file.type || 'image/jpeg');
     const reader = new FileReader();
     reader.onload = ev => {
       const result = ev.target?.result as string;
       setImagePreview(result);
-      // Extract base64 (remove data:image/...;base64, prefix)
       const base64 = result.split(',')[1];
       setImageBase64(base64);
       setStep('preview');
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const file = e.dataTransfer.files?.[0];
+    processFile(file);
   };
 
   const handleScan = async () => {
@@ -347,6 +363,8 @@ function ScanModal({ onClose, onConfirm }: {
             <div className="space-y-4">
               <div
                 onClick={() => fileRef.current?.click()}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
                 className="border-2 border-dashed border-border/40 hover:border-violet-500/50 rounded-2xl p-10 text-center cursor-pointer transition-colors group"
               >
                 <Camera className="w-12 h-12 text-muted-foreground/30 group-hover:text-violet-400 mx-auto mb-3 transition-colors" />
@@ -356,7 +374,7 @@ function ScanModal({ onClose, onConfirm }: {
                 </p>
                 <p className="text-xs text-muted-foreground mt-0.5">PNG, JPG, WEBP · Máx. 10MB</p>
               </div>
-              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
+              <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFile} />
               <div className="p-3 rounded-xl bg-violet-500/5 border border-violet-500/20">
                 <p className="text-xs text-violet-400 font-medium mb-1">¿Cómo funciona?</p>
                 <ul className="text-xs text-muted-foreground space-y-0.5">
@@ -508,12 +526,18 @@ function ScanModal({ onClose, onConfirm }: {
 export default function ReportesPage() {
   const [ventas, setVentas] = useState<VentaDia[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'graficos' | 'cierres'>('graficos');
+  const [tab, setTab] = useState<'graficos' | 'cierres' | 'historial'>('graficos');
   const [period, setPeriod] = useState('30d');
   const [showManual, setShowManual] = useState(false);
   const [showScan, setShowScan] = useState(false);
   const [editando, setEditando] = useState<VentaDia | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [previewInvoice, setPreviewInvoice] = useState<string | null>(null);
+
+  // Calendar State
+  const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
+  const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
+  const [selectedDate, setSelectedDate] = useState<string | null>(new Date().toISOString().split('T')[0]);
 
   // Stats from ventas
   const totalIngresos = ventas.reduce((s, v) => s + Number(v.total_ingresos), 0);
@@ -592,25 +616,27 @@ export default function ReportesPage() {
   };
 
   const handleScanConfirm = async (scanned: ScannedData) => {
+    let finalNotas = scanned.notas || '';
+    if (scanned.rawText) {
+      finalNotas = finalNotas ? `${finalNotas}\n\n[FACTURA_IA_START]\n${scanned.rawText}\n[FACTURA_IA_END]` : `[FACTURA_IA_START]\n${scanned.rawText}\n[FACTURA_IA_END]`;
+    }
     await handleSaveVenta({
       fecha: scanned.fecha,
       total_ingresos: scanned.total_ingresos,
       total_servicios: scanned.total_servicios,
       total_clientes: scanned.total_clientes,
       desglose: scanned.items,
-      notas: scanned.notas || null,
+      notas: finalNotas || null,
     });
   };
 
   const handleDelete = async (id: string) => {
-    if (!supabase) return;
-    setDeleting(id);
-    await supabase.from('ventas_dia').delete().eq('id', id);
-    await supabase.from('logs_actividad').insert({
-      usuario: 'Admin', accion: 'Cierre de caja eliminado', modulo: 'Reportes', detalles: `ID: ${id}`
-    });
-    setDeleting(null);
-    loadVentas();
+    if (confirm('¿Eliminar cierre?')) {
+      setDeleting(id);
+      await supabase?.from('ventas_dia').delete().eq('id', id);
+      setDeleting(null);
+      loadVentas();
+    }
   };
 
   const exportCSV = () => {
@@ -625,6 +651,28 @@ export default function ReportesPage() {
     const from = new Date(Date.now() - days * 86400000).toISOString().split('T')[0];
     const to = new Date().toISOString().split('T')[0];
     window.location.href = `/api/reportes/export?tipo=citas&from=${from}&to=${to}`;
+  };
+
+  // Calendar utils
+  const getDaysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
+  const getFirstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
+  const MONTHS = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const DAYS = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+
+  const prevMonth = () => { if (currentMonth === 0) { setCurrentMonth(11); setCurrentYear(y => y - 1); } else setCurrentMonth(m => m - 1); };
+  const nextMonth = () => { if (currentMonth === 11) { setCurrentMonth(0); setCurrentYear(y => y + 1); } else setCurrentMonth(m => m + 1); };
+  
+  const getVentasForDate = (dateStr: string) => ventas.filter(v => v.fecha === dateStr);
+  
+  const exportDay = (type: 'ventas'|'citas') => {
+    if (!selectedDate) return;
+    window.location.href = `/api/reportes/export?tipo=${type}&from=${selectedDate}&to=${selectedDate}`;
+  };
+
+  const exportMonth = (type: 'ventas'|'citas') => {
+    const from = `${currentYear}-${String(currentMonth + 1).padStart(2,'0')}-01`;
+    const to = `${currentYear}-${String(currentMonth + 1).padStart(2,'0')}-${String(getDaysInMonth(currentYear, currentMonth)).padStart(2,'0')}`;
+    window.location.href = `/api/reportes/export?tipo=${type}&from=${from}&to=${to}`;
   };
 
   return (
@@ -650,18 +698,22 @@ export default function ReportesPage() {
           <button onClick={loadVentas} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg border border-border/30 hover:bg-white/5 transition-colors">
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
+          
           <div className="flex items-center gap-2">
             <div className="relative group">
               <Button variant="outline" size="sm" className="gap-1.5">
                 <Download className="w-3.5 h-3.5" /> Exportar <ChevronDown className="w-3 h-3" />
               </Button>
-              <div className="absolute right-0 top-full mt-1 w-48 bg-card border border-border rounded-xl shadow-xl py-1 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity z-10">
-                <button onClick={exportCSV} className="w-full px-3 py-2 text-xs text-left hover:bg-white/5 flex items-center gap-2">
-                  <FileText className="w-3.5 h-3.5 text-primary" /> Ventas (CSV Excel)
-                </button>
-                <button onClick={exportCitas} className="w-full px-3 py-2 text-xs text-left hover:bg-white/5 flex items-center gap-2">
-                  <Calendar className="w-3.5 h-3.5 text-blue-400" /> Citas (CSV Excel)
-                </button>
+              {/* Dropdown Menu - Bridge added via pt-1 and transparent bg container */}
+              <div className="absolute right-0 top-full pt-1 w-48 bg-transparent opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all z-20">
+                <div className="bg-card border border-border rounded-xl shadow-xl py-1 overflow-hidden">
+                  <button onClick={exportCSV} className="w-full px-3 py-2 text-xs text-left hover:bg-white/5 flex items-center gap-2 transition-colors">
+                    <FileText className="w-3.5 h-3.5 text-primary" /> Ventas (Excel/CSV)
+                  </button>
+                  <button onClick={exportCitas} className="w-full px-3 py-2 text-xs text-left hover:bg-white/5 flex items-center gap-2 transition-colors">
+                    <Calendar className="w-3.5 h-3.5 text-blue-400" /> Citas (Excel/CSV)
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -690,6 +742,14 @@ export default function ReportesPage() {
               {ventas.length}
             </span>
           )}
+        </button>
+        <button
+          onClick={() => setTab('historial')}
+          className={cn('flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all',
+            tab === 'historial' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'
+          )}
+        >
+          <Calendar className="w-4 h-4" /> Historial y Calendario
         </button>
       </div>
 
@@ -870,21 +930,40 @@ export default function ReportesPage() {
                             <span className="text-sm">{v.total_clientes}</span>
                           </td>
                           <td className="px-4 py-3 text-xs text-muted-foreground hidden md:table-cell max-w-[160px] truncate">
-                            {v.notas || '—'}
+                            {v.notas ? v.notas.replace(/\[FACTURA_IA_START\][\s\S]*?\[FACTURA_IA_END\]/g, '').trim() || '—' : '—'}
                           </td>
                           <td className="px-4 py-3 hidden md:table-cell">
                             {v.imagen_url ? (
-                              <span className="flex items-center gap-1 text-[10px] text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded-full">
+                              <span className="flex items-center gap-1 text-[10px] text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded-full inline-flex w-fit">
                                 <Camera className="w-3 h-3" /> IA
                               </span>
+                            ) : v.notas && v.notas.includes('[FACTURA_IA_START]') ? (
+                               <button 
+                                onClick={() => {
+                                  const text = v.notas?.match(/\[FACTURA_IA_START\]\n([\s\S]*?)\n\[FACTURA_IA_END\]/)?.[1];
+                                  if (text) setPreviewInvoice(text);
+                                }}
+                                className="flex items-center gap-1 text-[10px] text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded-full hover:bg-violet-500/20 transition-colors w-fit"
+                               >
+                                 <FileText className="w-3 h-3" /> Ver Factura
+                               </button>
                             ) : (
-                              <span className="flex items-center gap-1 text-[10px] text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-full">
-                                <Eye className="w-3 h-3" /> Manual
-                              </span>
+                               <span className="flex items-center gap-1 text-[10px] text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-full inline-flex w-fit">
+                                 <Eye className="w-3 h-3" /> Manual
+                               </span>
                             )}
                           </td>
                           <td className="px-4 py-3">
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-1 justify-end">
+                              <button
+                                onClick={() => {
+                                  window.location.href = `/api/reportes/diario?fecha=${v.fecha}`;
+                                }}
+                                className="w-7 h-7 rounded-lg hover:bg-green-500/10 text-muted-foreground hover:text-green-500 flex items-center justify-center transition-colors"
+                                title="Descargar Reporte Diario"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </button>
                               <button
                                 onClick={() => { setEditando(v); setShowManual(true); }}
                                 className="w-7 h-7 rounded-lg hover:bg-white/5 text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors"
@@ -929,6 +1008,128 @@ export default function ReportesPage() {
         </div>
       )}
 
+      {/* ── Tab: Historial y Calendario ──────────────────────── */}
+      {tab === 'historial' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <Card className="lg:col-span-2">
+            <CardHeader className="pb-3 flex flex-row items-center justify-between border-b border-border/30">
+              <CardTitle className="text-base flex items-center justify-between w-full">
+                <span>{MONTHS[currentMonth]} {currentYear}</span>
+              </CardTitle>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => exportMonth('ventas')} className="gap-2 text-xs border-primary/20">
+                  <Download className="w-3.5 h-3.5" /> Mes (Ventas)
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => exportMonth('citas')} className="gap-2 text-xs border-blue-500/30 text-blue-400">
+                  <Download className="w-3.5 h-3.5" /> Mes (Citas)
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-4">
+              <div className="flex items-center justify-between mb-4">
+                <Button variant="ghost" size="sm" onClick={prevMonth} className="px-2">← Anterior</Button>
+                <Button variant="ghost" size="sm" onClick={() => { const now = new Date(); setCurrentMonth(now.getMonth()); setCurrentYear(now.getFullYear()); setSelectedDate(now.toISOString().split('T')[0]); }} className="font-bold">Hoy</Button>
+                <Button variant="ghost" size="sm" onClick={nextMonth} className="px-2">Siguiente →</Button>
+              </div>
+              
+              {/* Day headers */}
+              <div className="grid grid-cols-7 mb-2">
+                {DAYS.map(d => (
+                  <div key={d} className="text-center text-xs font-semibold text-muted-foreground py-1">{d}</div>
+                ))}
+              </div>
+              
+              {/* Days Grid */}
+              <div className="grid grid-cols-7 gap-1">
+                {Array.from({ length: getFirstDayOfMonth(currentYear, currentMonth) }).map((_, i) => <div key={`empty-${i}`} />)}
+                {Array.from({ length: getDaysInMonth(currentYear, currentMonth) }).map((_, i) => {
+                  const day = i + 1;
+                  const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                  const vCount = getVentasForDate(dateStr).length;
+                  const isToday = dateStr === new Date().toISOString().split('T')[0];
+                  const isSelected = dateStr === selectedDate;
+                  
+                  return (
+                    <button
+                      key={day}
+                      onClick={() => setSelectedDate(dateStr)}
+                      className={cn(
+                        'min-h-[60px] flex flex-col items-center justify-start p-1.5 rounded-xl border transition-all text-sm group hover:border-primary/50',
+                        isSelected ? 'bg-primary/20 border-primary text-foreground' :
+                        isToday ? 'bg-muted/50 border-border font-bold' :
+                        'bg-card/50 border-border/20 text-muted-foreground hover:bg-white/5 hover:text-foreground'
+                      )}
+                    >
+                      <span className={cn("text-xs mb-1", isSelected && "text-primary font-bold")}>{day}</span>
+                      {vCount > 0 && (
+                        <div className="flex gap-0.5 mt-auto bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded text-[9px] font-bold">
+                          {vCount} cierre{vCount > 1 ? 's' : ''}
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3 border-b border-border/30">
+              <CardTitle className="text-sm font-bold flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-primary" />
+                Resumen del Día
+              </CardTitle>
+              <CardDescription className="text-xs">
+                {selectedDate ? new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-VE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : 'Selecciona un día'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-4 flex flex-col gap-3">
+              {!selectedDate ? (
+                <div className="text-center py-10 text-muted-foreground text-xs">Ningún día seleccionado</div>
+              ) : (
+                <>
+                  <div className="rounded-xl border border-border/50 bg-muted/20 p-3 space-y-2">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Acciones Rápidas</p>
+                    <Button onClick={() => exportDay('ventas')} className="w-full justify-start gap-2 text-xs" variant="secondary">
+                      <Download className="w-3.5 h-3.5" /> Descargar Día (Ventas)
+                    </Button>
+                    <Button onClick={() => exportDay('citas')} className="w-full justify-start gap-2 text-xs text-blue-400" variant="outline">
+                      <Download className="w-3.5 h-3.5" /> Descargar Día (Citas)
+                    </Button>
+                  </div>
+
+                  {getVentasForDate(selectedDate).length === 0 ? (
+                     <div className="text-center py-6 text-muted-foreground text-xs bg-card border border-border/30 rounded-xl">Sin reportes registrados ese día.</div>
+                  ) : (
+                    <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                      {getVentasForDate(selectedDate).map(v => (
+                         <div key={v.id} className="p-3 bg-card border border-border/50 rounded-xl space-y-1.5">
+                           <div className="flex justify-between items-center">
+                             <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                               <Clock className="w-3 h-3" /> {new Date(v.created_at).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' })}
+                             </p>
+                             <span className="text-xs font-bold text-green-400">${Number(v.total_ingresos).toFixed(2)}</span>
+                           </div>
+                           <div className="flex gap-2">
+                              <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium">{v.total_servicios} serv.</span>
+                              <span className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-[10px] font-medium">{v.total_clientes} clientes</span>
+                           </div>
+                           {v.notas && (
+                             <p className="text-[10px] text-muted-foreground line-clamp-2 italic pt-1 border-t border-border/30">
+                               &quot;{v.notas.replace(/\[FACTURA_IA_START\][\s\S]*?\[FACTURA_IA_END\]/g, '').trim()}&quot;
+                             </p>
+                           )}
+                         </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {/* Modals */}
       {showManual && (
         <ManualModal
@@ -937,11 +1138,25 @@ export default function ReportesPage() {
           initial={editando}
         />
       )}
-      {showScan && (
-        <ScanModal
-          onClose={() => setShowScan(false)}
-          onConfirm={handleScanConfirm}
-        />
+      {showScan && <ScanModal onClose={() => setShowScan(false)} onConfirm={handleScanConfirm} />}
+      
+      {/* ── Modal: Ver Factura IA ───────────────────────────── */}
+      {previewInvoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="flex items-center justify-between p-4 border-b border-border/30 bg-muted/20">
+              <h2 className="text-sm font-bold flex items-center gap-2 text-violet-400">
+                <FileText className="w-4 h-4" /> Factura Extraída (IA)
+              </h2>
+              <button onClick={() => setPreviewInvoice(null)} className="w-8 h-8 rounded-lg hover:bg-white/5 flex items-center justify-center text-muted-foreground hover:text-foreground">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto bg-black/40 text-xs font-mono text-green-400/90 whitespace-pre-wrap select-text">
+              {previewInvoice}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
