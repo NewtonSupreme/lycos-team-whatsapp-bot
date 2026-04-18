@@ -1718,7 +1718,13 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           // 1. [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca]
           // Regex más flexible que captura el interior del tag
           const stockUpsertMatchesArray = Array.from(cleanedAi.matchAll(/\[STOCK_?UPSERT:\s*([^\]]+)\]/gi));
-          
+          for (const match of stockUpsertMatchesArray) {
+            try {
+              const parts = match[1].split('|').map(s => s.trim());
+              const nombre = parts[0];
+              const categoria = parts[1];
+              const precio = parseFloat(parts[2]);
+              const stock = parseInt(parts[3]);
               const codigo = parts[4] || null;
               const marca = parts[5] || null;
 
