@@ -1717,19 +1717,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         if (isAdmin && db) {
           // 1. [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca]
           // Regex más flexible que captura el interior del tag
-          const stockUpsertMatches = cleanedAi.matchAll(/\[STOCK_?UPSERT:\s*([^\]]+)\]/gi);
+          const stockUpsertMatchesArray = Array.from(cleanedAi.matchAll(/\[STOCK_?UPSERT:\s*([^\]]+)\]/gi));
           
-          for (const m of stockUpsertMatches) {
-            try {
-              const content = m[1].trim();
-              const parts = content.split('|').map(p => p.trim());
-              
-              if (parts.length < 2) continue; // Al menos nombre y stock/categoría
-              
-              const nombre = parts[0];
-              const categoria = (parts[1] || 'general').toLowerCase();
-              const precio = parseFloat(parts[2] || '0');
-              const stock = parseInt(parts[3] || '0');
               const codigo = parts[4] || null;
               const marca = parts[5] || null;
 
