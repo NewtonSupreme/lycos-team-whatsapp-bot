@@ -7,6 +7,7 @@ import {
   Copy, Trash, Zap, Paperclip, Mic, UserPlus
 } from 'lucide-react';
 import { supabase, syncClientData } from '@/lib/supabase';
+import { Vehiculo } from '@/types';
 import { cn, formatRelativeTime } from '@/lib/utils';
 
 const QUICK_REPLIES = [
@@ -208,7 +209,7 @@ export default function WhatsAppPage() {
   const [showQuickReplies, setShowQuickReplies] = useState(false);
   const [showMobileChat, setShowMobileChat] = useState(false);
   const [togglingMode, setTogglingMode] = useState(false);
-  const [selectedVehicles, setSelectedVehicles] = useState<any[]>([]);
+  const [selectedVehicles, setSelectedVehicles] = useState<Vehiculo[]>([]);
   const [loadingVehicles, setLoadingVehicles] = useState(false);
   const [isScrolledUp, setIsScrolledUp] = useState(false);
   const [timeLeftStr, setTimeLeftStr] = useState<string | null>(null);
@@ -444,7 +445,7 @@ export default function WhatsAppPage() {
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'vehiculos' }, (payload) => {
         const cur = selectedRef.current;
-        const affected: any = payload.new || payload.old;
+        const affected = (payload.new || payload.old) as Vehiculo;
         if (cur?.cliente_id && affected?.cliente_id === cur.cliente_id) {
           loadVehicles(cur.cliente_id);
         }
@@ -469,7 +470,7 @@ export default function WhatsAppPage() {
     }, 10000);
 
     return () => {
-      sb.removeChannel(channel);
+      sb?.removeChannel(channel);
       clearInterval(poll);
     };
   }, [loadConvs, fetchNewMsgs, loadVehicles]);
@@ -1315,7 +1316,7 @@ export default function WhatsAppPage() {
                           </div>
                         ))
                       ) : (selected.memoria?.vehiculos && selected.memoria.vehiculos.length > 0) ? (
-                        selected.memoria.vehiculos.map((v: any, idx: number) => (
+                        selected.memoria.vehiculos.map((v, idx: number) => (
                           <div key={idx} className="p-3 rounded-xl border border-dashed border-white/10 transition-all hover:bg-white/5" style={{ background: 'rgba(255,255,255,0.02)' }}>
                             <div className="flex items-start justify-between mb-1">
                               <span className="text-sm font-medium truncate pr-2" style={{ color: '#e9edef' }}>
