@@ -306,8 +306,9 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
     }
   };
 
-  const getCliente = (id: string) => clientes.find(c => c.id === id);
-  const getVehiculo = (id: string) => vehiculos.find(v => v.id === id);
+  const getCliente = (id?: string | null) => id ? clientes.find(c => c.id === id) : null;
+  const getVehiculo = (id?: string | null) => id ? vehiculos.find(v => v.id === id) : null;
+
   const getVehiculosByCliente = (clienteId: string) => vehiculos.filter(v => v.cliente_id === clienteId);
 
   const getTodayStr = () => new Date().toISOString().split('T')[0];
