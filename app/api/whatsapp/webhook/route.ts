@@ -114,7 +114,11 @@ async function fetchExchangeRates(): Promise<ExchangeRates | null> {
       });
       if (respBin.ok) {
         const binData = await respBin.json();
-        if (binData.data && binData.data.length > 0) {
+        if (binData.data && binData.data.length > 3) {
+          // Skip first 2 ads (often low-limit outliers) and average next 5
+          const marketAds = binData.data.slice(2, 7);
+          binanceRate = marketAds.reduce((acc: number, ad: any) => acc + parseFloat(ad.adv.price), 0) / marketAds.length;
+        } else if (binData.data && binData.data.length > 0) {
           binanceRate = parseFloat(binData.data[0].adv.price);
         }
       }
@@ -124,28 +128,23 @@ async function fetchExchangeRates(): Promise<ExchangeRates | null> {
     if (!binanceRate && ratesCache) binanceRate = ratesCache.paralelo;
 
     if (!binanceRate) {
-      // Fallback
       try {
         const tempResp = await fetch('https://ve.dolarapi.com/v1/dolares/paralelo');
         if (tempResp.ok) {
-          const parEntry: { promedio?: number; precio?: number } = await tempResp.json();
-          if (parEntry) binanceRate = parEntry.promedio || parEntry.precio || 0;
+          const parEntry: any = await tempResp.json();
+          binanceRate = parseFloat(parEntry?.promedio || parEntry?.precio || 0);
         }
-      } catch (e) { }
+      } catch (e) { console.error('Error in parallel fallback:', e); }
     }
 
     if (!bcvRate || !binanceRate) {
-      console.warn('⚠️ Could not fetch some rates, using cache if available');
-      return ratesCache;
+      console.warn('⚠️ Could not fetch real-time rates, using previous cache');
+      return ratesCache || { bcv: 36.5, paralelo: 54.0, fetchedAt: 'HARD_FALLBACK' };
     }
 
-    ratesCache = {
-      bcv: bcvRate,
-      paralelo: binanceRate,
-      fetchedAt: new Date().toISOString(),
-    };
+    ratesCache = { bcv: bcvRate, paralelo: binanceRate, fetchedAt: new Date().toISOString() };
     ratesCacheTime = Date.now();
-    console.log(`💱 Tasas actualizadas: BCV ${ratesCache.bcv} | Binance P2P Nativo ${ratesCache.paralelo}`);
+    console.log(`💱 TASAS: BCV ${bcvRate} | PARALELO ${binanceRate.toFixed(2)} | RATIO: ${(binanceRate/bcvRate).toFixed(4)}`);
     return ratesCache;
   } catch (e) {
     console.error('Error general fetchExchangeRates:', e);
@@ -179,7 +178,12 @@ Sigue ESTRICTAMENTE estas reglas para dar precios al cliente:
    - PRECIO: Debes mostrar DOS montos en dólares:
      a) "Promocion en divisas: $[MontoOriginal]"
      b) "Precio: $[MontoConvertido] a tasa BCV"
-   - CONVERSIÓN: El MontoConvertido se calcula como: MontoOriginal * ${multiplier.toFixed(4)}. IMPORTANTE: Redondea siempre el resultado final HACIA ARRIBA al múltiplo de 5 más cercano para que los precios terminen estrictamente en 0 o en 5, a favor del taller. Siempre que de por ejemplo 47,22 debe de dar 50, o 57,03 debe de dar 60 para redondearlo completamente hacia arriba obligatoriamente en todos los casos de promo divisa a dólares BCV. REGLA ESTRICTA: NUNCA le digas al cliente que redondeaste el precio ni le des explicaciones matemáticas. Simplemente asume ese número final como el precio oficial y dáselo con total naturalidad.
+   - CONVERSIÓN: El MontoConvertido se calcula como: MontoOriginal * ${multiplier.toFixed(4)}.
+    - **TABLA DE PRECIOS BCV FIJOS (OBLIGATORIO)**: Para los siguientes casos populares, **NO uses el cálculo matemático**, usa estos montos fijos:
+        * Si el precio Promo es **$60**, el precio BCV siempre es **$90**.
+        * Si el precio Promo es **$90**, el precio BCV siempre es **$120**.
+    - REDONDEO (Para otros montos): Redondea siempre el resultado final HACIA ARRIBA al múltiplo de 5 más cercano ($42 -> $45, $46 -> $50, etc.). NUNCA redondees hacia abajo.
+    - REGLA ESTRICTA: NUNCA le digas al cliente que redondeaste el precio ni le des explicaciones matemáticas o sobre la tabla. Simplemente asume ese número final como el precio oficial y dáselo con total naturalidad.
    - REGLA DE ORO: ¡PROHIBIDO! NUNCA menciones "Binance", "P2P", "paralela", "externa", ni des el precio en bolívares (Bs.) bajo ninguna circunstancia.
    - AVISO DE PAGO: Al igual que en la regla anterior, solo aclara que el pago es a tasa BCV cuando vayas a arrojar el precio. Está terminantemente prohibido estar repitiendo frases largas de "a tasa del BCV en la caja..." en más de un mensaje; hazlo natural y casual.
 
@@ -239,13 +243,24 @@ Eres el asistente virtual de Lycos Team, taller automotriz profesional en San An
 NUNCA digas que eres IA, bot, ChatGPT o robot. Si preguntan, di que eres el asistente del taller.
 
 COMPORTAMIENTO Y TONO:
-ES MUY IMPORTANTE QUE VARÍES TUS RESPUESTAS PARA SONAR MÁS HUMANO. NO SEAS REPETITIVO.
+ES MUY IMPORTANTE QUE SEAS EXTREMADAMENTE BREVE Y DIRECTO (MAX 3 LÍNEAS).
+
 - Español venezolano, amigable, máximo 4-5 líneas, no improvises precios, texto plano sin asteriscos.
 - Usa al menos 1 emoji por respuesta, pero sin saturar. Ejemplos: 🔧 🚗 💰 📅 😊.
 - SALUDO INICIAL (solo sesión NUEVA): Usa SIEMPRE el saludo apropiado según la hora del día indicada en SALUDO_APROPIADO más abajo, seguido de "Bienvenido a Lycos Team 🔧 Soy tu asistente virtual, estoy capacitado para responder cualquier tipo de pregunta y ayudarte con servicios, precios, citas, inventario y lo que necesites. ¿En qué te puedo ayudar? 😊"
 - SALUDO_APROPIADO: ${getSaludoApropiado()}
 - REVISIÓN GRATIS: La revisión visual del vehículo al traerlo al taller es totalmente gratuita. Menciónalo SOLO UNA VEZ cuando trates de convencer al cliente de ir al taller para revisar un presupuesto que no puedes darle por chat. ESTÁ ESTRICTAMENTE PROHIBIDO repetir que la revisión es gratis en varios de tus mensajes (suena aburrido y repetitivo). Dilo en el momento exacto y una sola vez.
 - REDES SOCIALES: Instagram y TikTok @lycos.team (el sistema envía la tarjeta/enlace nativo automáticamente si el cliente pide seguir en redes). Enlace perfil general: https://www.lycosteam.com
+- REGLA DE ENVÍO DE IMÁGENES (OBLIGATORIO): **SIEMPRE** que menciones un modelo de silenciador específico (CL30, CL40, CLH40, CL60, etc.) como recomendación para el vehículo del cliente, **DEBES** incluir el tag correspondiente [IMAGE: slug] al final de tu mensaje. No esperes a que el cliente te pida la foto; si le estás recomendando un modelo basándote en su motor, envíale la imagen automáticamente para que la vea.
+- CATALOGO DE IMÁGENES DISPONIBLES (USA ESTOS SLUGS EXACTOS):
+    - cl30 (Modelo CL30/CL27 para motores hasta 1.3L)
+    - cl40 (Modelo CL40 para motores hasta 1.5L)
+    - clh40 (Modelo CLH40 para motores 1.6L a 2.0L - Aveo, Corolla 1.6, Terios, etc.)
+    - cl60 (Modelo CL60 para motores desde 3.8L en adelante - Camionetas, Jeep, etc.)
+    - clk60 (Fabricación Especial: Ford EcoSport, Kia Sportage, Hyundai Tucson, Dodge Caliber)
+    - clc60 (Modelo CLC60)
+    - clcp60 (Modelo CLCP60)
+    - rc30 (Modelo RC30 - Resonador)
 - CLIENTES SEGUIDORES: Si el cliente menciona que ya nos sigue en Instagram o TikTok, agradécele con mucho entusiasmo, dile que nos motiva mucho su apoyo y anímalo a visitarnos o consultar cualquier duda sobre su vehículo.
 - RECORDATORIOS DE CITA: Menciónalos SOLO si el cliente pregunta por su cita o están tratando de agendar, pero no en cada mensaje.
 
@@ -264,11 +279,12 @@ SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gr
 - **LISTA DE PRECIOS POR MOTOR** (instalación incluida):
   - CL27 / CL30: Motores hasta 1.3L → $40
   - CL40: Motores hasta 1.5L → $50
-  - CLH40: Motores 1.6L hasta 2.0L (Casos típicos: Aveo 1.6, Volkswagen Gol, Toyota Corolla, Neon, etc.) → $60
+  - CLH40: Motores 1.6L hasta 2.0L (Casos típicos: Aveo 1.6, Volkswagen Gol, Toyota Corolla 1.6, Neon, etc.) → $60. **NOTA**: La camioneta EcoSport NO entra en este rango, es de fabricación especial.
   - CL60: Motores desde 3.8L en adelante (Camionetas grandes, etc.) → $90
-  - CLK60: Fabricación especial $100 — SOLO para Kia Sportage, Hyundai Tucson y Dodge Caliber
+  - CLK60 (Fabricación Especial): $100 — Aplicable a Ford EcoSport, Kia Sportage, Hyundai Tucson y Dodge Caliber.
+
 - Resonador: $40
-- Flowmaster Serie 40: $140 (instalación incluida, flexibles doble malla)
+- Flowmaster Serie 40: $140 (instalación incluida). **NOTA**: El flexible NO está incluido, se vende por separado si el vehículo lo requiere.
 - Flexibles doble malla: $40
 - Tubo silenciador/cola: Primer metro $35, metros adicionales $20/metro, soldadura $15, gomas $7
 - Colas cromadas: B55 $25, Camioneta $35, Curba $30
@@ -952,7 +968,18 @@ async function getAIResponse(
 
 FECHA/HORA VENEZUELA: ${vzlaDateTime}
 HOY ES: ${dayName} ${vzlaDateStr}
-${dayNum === 0 ? 'HOY ES DOMINGO — Taller CERRADO. Informa y sugiere mañana (lunes).' : ''}
+
+⚠️ REGLA CRITICA (FECHAS Y BREVEDAD) — LEE CON ATENCION:
+- BREVEDAD ABSOLUTA: Prohibido exceder las 3-4 LÍNEAS. Sé directo.
+- FECHA ACTUAL: HOY es ${vzlaDateStr} (${dayName}). Usa ESTA fecha para todo. Ignora fechas del historial.
+- NUNCA uses asteriscos (*) en tus respuestas. Texto plano siempre.
+- REGLA DE ORO (PRECIOS): Solo dólares ($) y tasa BCV. Prohibido mencionar Bolívares (Bs.).
+- IMÁGENES: Usa el tag [IMAGE: modelo] para enviar fotos de silenciadores (ej: [IMAGE: cl60]).
+- AGENDAMIENTO: Usa [CITA: AAAA-MM-DD HH:MM | servicio | vehículo] solo si confirma.
+- IDENTIDAD: Si sabes su nombre, usa [NOMBRE: Juan Pérez] al final.
+
+${ratesCtx}
+
 SALUDO_APROPIADO: ${greeting} — USA ESTE SALUDO EXACTO al inicio cuando sea sesión nueva. NO uses otro.
 SESION: ${ctx.isNewSession ? `NUEVA — saluda con "${greeting}" + mensaje de bienvenida` : 'CONTINUA — ve al tema, sin repetir saludo ni bienvenida'}
 ${memoriaStr}
@@ -960,7 +987,6 @@ ${ctx.citasInfo}
 ${(ctx as any).historialTecnico || ''}
 ${ctx.inventarioInfo}
 ${ctx.agendaOcupada}
-${ratesCtx}
 
 ⚠️ REGLA CRITICA DE FECHAS — LEE CON ATENCION:
 La fecha de HOY es ${vzlaDateStr} (${dayName}). Esta es la UNICA referencia válida para calcular fechas.
@@ -969,12 +995,15 @@ SIEMPRE: Calcula "mañana" sumando 1 día a ${vzlaDateStr}. "La próxima semana"
 NUNCA registres una cita en una fecha que ya pasó. Si el cálculo da una fecha anterior a ${vzlaDateStr}, es un error, recalcula.
 
 REGLAS CRITICAS:
+- BREVEDAD: Tus respuestas NO DEBEN EXCEDER las 3 líneas. Sé extremadamente directo.
+
 - NUNCA uses asteriscos (*) en tus respuestas. Texto plano siempre. Listas con - o numeradas.
 - Pon al menos 1 emoji relevante en la respuesta.
 - Usa la fecha (${vzlaDateStr}) para calcular fechas relativas. Nunca agendes domingo.
 - Un cliente puede tener varios vehiculos.
 - REGLA DE ORO (PRECIOS): NUNCA, bajo ningún concepto, des el precio en Bolívares (Bs.). Solo usa dólares ($) y dólares a tasa BCV según las REGLAS DE CONVERSIÓN MONETARIA.
 - Si ves "[Imagen enviada...]", lee su descripción automática para entender qué mandó y responderle.
+- ENVÍO DE IMÁGENES: Puedes enviar imágenes de silenciadores usando el tag [IMAGE: modelo]. Por ejemplo: [IMAGE: cl60] o [IMAGE: clh40].
 - PROHIBICION DE ENVIAR IMAGENES: **NUNCA** intentes enviar, simular o ofrecer enviar imágenes o fotos. 
 
 AGENDAMIENTO DE CITAS (USO DE TAGS):
@@ -1511,6 +1540,85 @@ async function sendMsg(to: string, body: string, preview: boolean = false, reply
 }
 
 // ─── Send WhatsApp Image ───────────────────────────────────────────────────────
+async function sendImageMsg(to: string, imageSlug: string, caption?: string, replyToId?: string | null) {
+  if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
+
+  const imageMap: Record<string, string> = {
+    'cl30': 'CL 30.jpg',
+    'cl40': 'CL 40.jpg',
+    'cl60': 'CL 60.jpg',
+    'clc60': 'CLC 60.jpg',
+    'clcp60': 'CLCP 60.jpg',
+    'clh40': 'CLH 40.jpg',
+    'rc30': 'RC 30.jpg'
+  };
+
+  const fileName = imageMap[imageSlug.toLowerCase()];
+  if (!fileName) {
+    console.error(`❌ No se encontró imagen para el slug: ${imageSlug}`);
+    return;
+  }
+
+  // URL base proporcionada por el usuario (Vercel)
+  const baseUrl = 'https://lycos-team-whatsapp-bot.vercel.app';
+  const imageUrl = `${baseUrl}/Silenciadores/${encodeURIComponent(fileName)}`;
+
+  console.log(`🖼️ Intentando enviar imagen: ${imageUrl} a ${to}`);
+
+  try {
+    const payload: any = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: to.replace(/[^0-9]/g, ''),
+      type: 'image',
+      image: {
+        link: imageUrl,
+        ...(caption ? { caption } : {})
+      },
+    };
+
+    if (replyToId) {
+      payload.context = { message_id: replyToId };
+    }
+
+    const resp = await fetch(`https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!resp.ok) {
+      console.error('❌ Error enviando imagen WhatsApp:', await resp.text());
+      return;
+    }
+
+    const data = await resp.json();
+    const wa_id = data.messages?.[0]?.id;
+    console.log(`📤 Imagen enviada a ${to}. ID: ${wa_id}`);
+
+    const db = getDb();
+    if (db) {
+      try {
+        await db.from('mensajes_whatsapp').insert({
+          from_number: 'system',
+          to_number: to.replace(/[^0-9]/g, ''),
+          body: `[Imagen: ${imageSlug}] ${caption || ''}`,
+          tipo: 'saliente',
+          wa_message_id: wa_id,
+          es_ia: true
+        });
+      } catch (e) {
+        console.error('Error guardando imagen saliente en DB:', e);
+      }
+    }
+  } catch (e) {
+    console.error('❌ Error en sendImageMsg:', e);
+  }
+}
+
 
 
 // ─── Send Native Contact Card ──────────────────────────────────────────────────
@@ -1685,12 +1793,22 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       if (ctx.memoria.nombre) {
         // Already updated inside processIntents, but ensuring context for AI is fresh
       }
-
       // AI response
       const aiResponse = await getAIResponse(messageBody, ctx, rates, from);
 
       if (aiResponse) {
-        let cleanedAi = cleanForWhatsApp(aiResponse);
+        const cleanedAiBody = cleanForWhatsApp(aiResponse);
+        let cleanedAi = cleanedAiBody.replace(/\[IMAGE:[^\]]+\]/gi, '').trim();
+
+        // ── Process Image Tags [IMAGE: slug] ───────────────────────────
+        const imageMatches = Array.from(cleanedAiBody.matchAll(/\[IMAGE:\s*([^\]]+)\]/gi));
+        for (const match of imageMatches) {
+            const slug = match[1].trim().toLowerCase();
+            console.log(`🤖 AI solicitó enviar imagen: ${slug}`);
+            await sendImageMsg(from, slug, undefined, wa_message_id);
+            await delay(500);
+        }
+
 
         // ── Extract Client Name via AI Tag ────────────────────────────────
         const nombreMatch = cleanedAi.match(/\[NOMBRE:\s*([^\]]+?)\]/i);
