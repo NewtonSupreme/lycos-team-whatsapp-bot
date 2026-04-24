@@ -15,7 +15,11 @@ export function middleware(request: NextRequest) {
     pathname.includes("/favicon") ||
     pathname.endsWith(".png") ||
     pathname.endsWith(".svg") ||
-    pathname.endsWith(".ico")
+    pathname.endsWith(".webp") ||
+    pathname.endsWith(".jpg") ||
+    pathname.endsWith(".jpeg") ||
+    pathname.endsWith(".ico") ||
+    pathname.startsWith("/Silenciadores")
   ) {
     return NextResponse.next();
   }
@@ -45,6 +49,6 @@ export const config = {
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
      */
-    "/((?!api|_next/static|_next/image|favicon.ico).*)",
+    "/((?!api|_next/static|_next/image|Silenciadores|favicon.ico).*)",
   ],
 };
