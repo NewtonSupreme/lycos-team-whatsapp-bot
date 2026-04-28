@@ -25,7 +25,7 @@ const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
 // ─── AI Models — ordered by priority (primary first, then fallback) ──────────
-const GEMINI_MODELS = [
+const GEMINI_MODELSS = [
   'gemini-2.5-flash',              // [PRIMARY]
   'gemini-3.1-flash-lite',         // [FALLBACK]
 ] as const;

@@ -10,7 +10,7 @@ import {
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
-const GEMINI_MODELS = [
+const GEMINI_MODELsS = [
   'gemini-2.5-flash',
   'gemini-3.1-flash-lite'
 ] as const;
