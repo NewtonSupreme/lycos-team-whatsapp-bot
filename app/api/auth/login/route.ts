@@ -46,9 +46,10 @@ export async function POST(request: NextRequest) {
 
     // Fallback without DB credentials check
     const ACCOUNTS: Record<string, string> = {
-      administrador: 'administrador'
+      administrador: 'administrador', daniela: 'daniela',
+      alejandra: 'alejandra', andrea: 'andrea',
     };
-    if (username === 'administrador' && password === 'Leandro100*') {
+    if (ACCOUNTS[username] && password === 'lycos2026') {
       const cookieStore = await cookies();
       cookieStore.set('lycos_session', username, {
         httpOnly: true, secure: process.env.NODE_ENV === 'production',
@@ -59,20 +60,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, id: dbUser?.id, nombre: username, username, rol: username === 'administrador' ? 'admin' : 'usuario' });
     }
 
-    // Look up user in DB (only allow administrator)
+    // Look up user in DB
     const { data: user, error } = await db
       .from('usuarios')
       .select('id, username, nombre, email, password_hash, rol, activo')
-      .eq('username', 'administrador')
+      .eq('username', username)
       .eq('activo', true)
       .single();
 
-    if (error || !user || username !== 'administrador') {
-      return NextResponse.json({ error: 'Credenciales inválidas o acceso restringido por el administrador' }, { status: 401 });
+    if (error || !user) {
+      return NextResponse.json({ error: 'Credenciales inválidas o cuenta no autorizada' }, { status: 401 });
     }
 
-    // Direct password check for admin lockdown
-    if (password !== 'Leandro100*') {
+    if (user.password_hash !== password) {
       return NextResponse.json({ error: 'Contraseña incorrecta' }, { status: 401 });
     }
 
