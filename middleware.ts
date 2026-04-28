@@ -10,6 +10,7 @@ export function middleware(request: NextRequest) {
     pathname.startsWith("/_next") ||
     pathname.includes("/api/auth") ||
     pathname === "/login" ||
+    pathname === "/mantenimiento" ||
     pathname.includes("/Icono") ||
     pathname.includes("/Logo") ||
     pathname.includes("/favicon") ||
@@ -30,6 +31,11 @@ export function middleware(request: NextRequest) {
     // Store the intended destination
     loginUrl.searchParams.set("from", pathname);
     return NextResponse.redirect(loginUrl);
+  }
+
+  // LOCKDOWN CHECK: Only 'administrador' can access protected routes
+  if (session.value !== "administrador") {
+    return NextResponse.redirect(new URL("/mantenimiento", request.url));
   }
 
   // Root redirect handled by middleware if session exists
