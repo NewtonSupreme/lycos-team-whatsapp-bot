@@ -17,9 +17,9 @@ import { processCoreLogic } from '../webhook/route';
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
-const GEMINI_MODELSs = [
-  'gemini-2.5-flash',
-  'gemini-3.1-flash-lite',
+const GEMINI_MODELS = [
+  'gemini-2.5-flash---',
+  'gemini-3.1-flash-lite---',
 ];
 
 function getDb() {
