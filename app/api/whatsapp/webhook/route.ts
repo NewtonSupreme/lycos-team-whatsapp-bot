@@ -787,6 +787,7 @@ async function loadConversationContext(
       .from('mensajes_whatsapp')
       .select('body, tipo, created_at')
       .or(`from_number.eq.${from},to_number.eq.${from}`)
+      .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .limit(50); // Increased memory
     if (msgs && msgs.length > 0) {

@@ -4,7 +4,7 @@ import {
   MessageSquare, Send, Bot, User,
   Smile, CheckCheck, Check, X, RefreshCw, UserCheck, Wifi, WifiOff, Search, Clock,
   Image as ImageIcon, Video, Volume2, FileText, ChevronDown, Car, Calendar, Hash, Info,
-  Copy, Trash, Zap, Paperclip, Mic, UserPlus
+  Copy, Trash, Zap, Paperclip, Mic, UserPlus, Trash2, RotateCcw
 } from 'lucide-react';
 import { supabase, syncClientData } from '@/lib/supabase';
 import { Vehiculo } from '@/types';
@@ -223,6 +223,9 @@ export default function WhatsAppPage() {
   const [retryStatus, setRetryStatus] = useState<string | null>(null);
   const [retranscribing, setRetranscribing] = useState(false);
   const [sendingContact, setSendingContact] = useState(false);
+  const [viewMode, setViewMode] = useState<'chat' | 'audit'>('chat');
+  const [auditMsgs, setAuditMsgs] = useState<any[]>([]);
+  const [loadingAudit, setLoadingAudit] = useState(false);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -279,11 +282,10 @@ export default function WhatsAppPage() {
     setLoadingMsgs(true);
     setHasMoreAbove(false);
 
-
-    const { data } = await supabase
-      .from('mensajes_whatsapp')
+    const { data } = await supabase.from('mensajes_whatsapp')
       .select('*')
       .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
+      .is('deleted_at', null)
       .order('created_at', { ascending: false }) // newest first
       .limit(60);
 
@@ -302,11 +304,56 @@ export default function WhatsAppPage() {
     });
   }, []);
 
-  const deleteMsg = async (id: string) => {
-    if (!confirm('¿Seguro que deseas eliminar este mensaje?')) return;
-    const { error } = await supabase!.from('mensajes_whatsapp').delete().eq('id', id);
-    if (!error) setMsgs(prev => prev.filter(m => m.id !== id));
-    else alert('Error al eliminar mensaje');
+  const deleteMsg = async (msg: RawMsg) => {
+    if (!confirm('¿Seguro que deseas eliminar este mensaje? Pasará a la papelera de auditoría.')) return;
+    
+    // 1. Log to activity_log for traceability
+    try {
+      await supabase!.from('activity_log').insert({
+        usuario: 'Administrador',
+        accion: 'delete_message',
+        modulo: 'whatsapp',
+        detalles: `Eliminado mensaje de ${msg.from_number}: "${msg.body.substring(0, 80)}..."`,
+        ip_address: 'CRM_UI'
+      });
+    } catch {}
+
+    // 2. Soft delete
+    const { error } = await supabase!
+      .from('mensajes_whatsapp')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', msg.id);
+
+    if (!error) {
+      setMsgs(prev => prev.filter(m => m.id !== msg.id));
+    } else {
+      alert('Error al eliminar mensaje (Verifica si ejecutaste el SQL de Soft-Delete)');
+    }
+  };
+
+  const loadAuditMsgs = async () => {
+    if (!supabase) return;
+    setLoadingAudit(true);
+    const { data, error } = await supabase
+      .from('mensajes_whatsapp')
+      .select('*')
+      .not('deleted_at', 'is', null)
+      .order('deleted_at', { ascending: false })
+      .limit(100);
+    
+    if (!error) setAuditMsgs(data || []);
+    setLoadingAudit(false);
+  };
+
+  const restoreMsg = async (id: string) => {
+    if (!confirm('¿Deseas restaurar este mensaje al chat original?')) return;
+    const { error } = await supabase!.from('mensajes_whatsapp').update({ deleted_at: null }).eq('id', id);
+    if (!error) {
+      setAuditMsgs(prev => prev.filter(m => m.id !== id));
+      if (selected && msgs.some(m => m.id === id)) {
+         loadInitialMsgs(selected.telefono);
+      }
+    }
   };
 
   const copyToClipboard = (text: string) => {
@@ -319,10 +366,10 @@ export default function WhatsAppPage() {
     setLoadingMore(true);
 
     const oldest = msgs[0].created_at;
-    const { data } = await supabase
-      .from('mensajes_whatsapp')
+    const { data } = await supabase.from('mensajes_whatsapp')
       .select('*')
       .or(`from_number.eq.${selected.telefono},to_number.eq.${selected.telefono}`)
+      .is('deleted_at', null)
       .lt('created_at', oldest)
       .order('created_at', { ascending: false })
       .limit(40);
@@ -366,10 +413,10 @@ export default function WhatsAppPage() {
     const realMsgs = latest.filter(m => !m.id.startsWith('tmp-'));
     const lastTs = realMsgs.length ? realMsgs[realMsgs.length - 1].created_at : new Date(0).toISOString();
 
-    const { data } = await supabase
-      .from('mensajes_whatsapp')
+    const { data } = await supabase.from('mensajes_whatsapp')
       .select('*')
       .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
+      .is('deleted_at', null)
       .gt('created_at', lastTs)
       .order('created_at', { ascending: true })
       .limit(20);
@@ -865,9 +912,27 @@ export default function WhatsAppPage() {
               : <><WifiOff className="w-3 h-3 text-yellow-400 animate-pulse" />Conectando...</>}
           </p>
         </div>
-        <button onClick={loadConvs} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg hover:bg-white/5">
-          <RefreshCw className="w-3.5 h-3.5" /> Actualizar
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => {
+              const newMode = viewMode === 'chat' ? 'audit' : 'chat';
+              setViewMode(newMode);
+              if (newMode === 'audit') loadAuditMsgs();
+            }} 
+            className={cn(
+              "flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg transition-all font-bold",
+              viewMode === 'audit' 
+                ? "bg-red-500/20 text-red-400 border border-red-500/30" 
+                : "bg-white/5 text-muted-foreground hover:text-foreground border border-transparent hover:border-white/10"
+            )}
+          >
+            {viewMode === 'audit' ? <MessageSquare className="w-3.5 h-3.5" /> : <Trash2 className="w-3.5 h-3.5" />}
+            {viewMode === 'audit' ? 'Volver al Chat' : 'Papelera'}
+          </button>
+          <button onClick={loadConvs} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg hover:bg-white/5">
+            <RefreshCw className="w-3.5 h-3.5" /> Actualizar
+          </button>
+        </div>
       </div>
 
       {/* Chat layout */}
@@ -1168,9 +1233,9 @@ export default function WhatsAppPage() {
                                 <button onClick={() => copyToClipboard(msg.body)} className="p-1.5 hover:bg-white/10 rounded-full text-white/60 hover:text-white" title="Copiar">
                                   <Copy className="w-3.5 h-3.5" />
                                 </button>
-                                <button onClick={() => deleteMsg(msg.id)} className="p-1.5 hover:bg-red-500/20 rounded-full text-red-500/60 hover:text-red-500" title="Eliminar">
-                                  <Trash className="w-3.5 h-3.5" />
-                                </button>
+                                  <button onClick={() => deleteMsg(msg)} className="p-1.5 hover:bg-red-500/20 rounded-full text-red-500/60 hover:text-red-500" title="Eliminar">
+                                    <Trash className="w-3.5 h-3.5" />
+                                  </button>
                               </div>
                             )}
                             {msg.es_ia && (
@@ -1384,6 +1449,67 @@ export default function WhatsAppPage() {
             </div>
           )}
         </div>
+
+        {/* ── Audit View Overlay ── */}
+        {viewMode === 'audit' && (
+          <div className="absolute inset-x-0 bottom-0 top-[110px] z-[60] flex flex-col" style={{ background: '#111b21' }}>
+            <div className="p-4 flex items-center justify-between border-b border-white/5 bg-[#202c33]">
+              <div>
+                <h2 className="text-lg font-bold flex items-center gap-2 text-red-400">
+                  <Trash2 className="w-5 h-5" /> Papelera de Auditoría
+                </h2>
+                <p className="text-xs text-muted-foreground">Mensajes eliminados recientemente (Últimos 100)</p>
+              </div>
+              <button 
+                onClick={() => setViewMode('chat')}
+                className="px-4 py-2 text-xs font-bold rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+              >
+                Cerrar Papelera
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
+              {loadingAudit ? (
+                <div className="flex flex-col items-center justify-center py-20 gap-3">
+                  <RefreshCw className="w-10 h-10 animate-spin text-white/10" />
+                  <p className="text-sm text-white/40">Cargando auditoría...</p>
+                </div>
+              ) : auditMsgs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-20 opacity-20">
+                  <Trash2 className="w-16 h-16 mb-4" />
+                  <p>La papelera está vacía</p>
+                </div>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {auditMsgs.map(msg => (
+                    <div key={msg.id} className="p-4 rounded-xl border border-white/5 bg-[#202c33] flex flex-col gap-3 relative group">
+                       <div className="flex items-center justify-between gap-2">
+                         <div className="flex items-center gap-2">
+                           <div className="w-2 h-2 rounded-full bg-red-400" />
+                           <span className="text-[10px] font-bold text-white/40 uppercase">Eliminado en {new Date(msg.deleted_at).toLocaleDateString()}</span>
+                         </div>
+                         <button 
+                           onClick={() => restoreMsg(msg.id)}
+                           className="p-2 rounded-lg bg-green-500/10 text-green-400 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-green-500/20"
+                           title="Restaurar mensaje"
+                         >
+                           <RotateCcw className="w-4 h-4" />
+                         </button>
+                       </div>
+                       <div className="bg-black/20 p-3 rounded-lg border border-white/5 italic text-sm text-[#e9edef] whitespace-pre-wrap line-clamp-4">
+                         {msg.body}
+                       </div>
+                       <div className="flex items-center justify-between mt-1">
+                         <span className="text-[11px] text-white/30 truncate max-w-[150px]">De: {msg.from_number}</span>
+                         <span className="text-[10px] text-white/20">{new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                       </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
       {/* Edit Name Modal */}
       {isEditingName && (
