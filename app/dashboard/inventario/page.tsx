@@ -116,10 +116,11 @@ export default function InventarioPage() {
     }));
     
     try {
-      await updateInventarioOrder(updates);
-    } catch (error) {
+      const result = await updateInventarioOrder(updates);
+      console.log('✅ Orden guardado:', result);
+    } catch (error: any) {
       console.error('Error saving new order:', error);
-      // Optional: reload data to revert on error
+      alert(`Error al guardar el orden: ${error.message || 'Error desconocido'}`);
     }
   };
 
@@ -380,6 +381,14 @@ export default function InventarioPage() {
                 onReorder={handleReorder}
                 className="divide-y divide-border/50"
               >
+                {/* Disable reordering when filtering to avoid data corruption */}
+                {(search || categoryFilter !== 'all') && (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-2 bg-yellow-500/5 text-[10px] text-yellow-500 font-bold text-center border-y border-yellow-500/20 uppercase tracking-widest">
+                      Reordenado desactivado mientras haya filtros activos
+                    </td>
+                  </tr>
+                )}
                 {loading ? (
                   <tr>
                     <td colSpan={6} className="px-6 py-20 text-center">
@@ -404,10 +413,18 @@ export default function InventarioPage() {
                       key={item.id} 
                       value={item} 
                       as="tr"
-                      className="group border-b border-border/30 hover:bg-white/5 transition-colors cursor-default"
+                      drag={!(search || categoryFilter !== 'all')}
+                      className={cn(
+                        "group border-b border-border/30 hover:bg-white/5 transition-colors cursor-default",
+                        (search || categoryFilter !== 'all') && "opacity-80"
+                      )}
                     >
                       <td className="px-3 py-4 w-10">
-                        <GripVertical className="w-4 h-4 text-muted-foreground/30 group-hover:text-primary/50 cursor-grab active:cursor-grabbing" />
+                        {!(search || categoryFilter !== 'all') ? (
+                          <GripVertical className="w-4 h-4 text-muted-foreground/30 group-hover:text-primary/50 cursor-grab active:cursor-grabbing" />
+                        ) : (
+                          <div className="w-4 h-4" />
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex flex-col">
