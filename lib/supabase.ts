@@ -238,8 +238,8 @@ export async function fetchInventario(categoria?: string) {
     .from('inventario')
     .select('*')
     .eq('activo', true)
-    .order('categoria')
-    .order('nombre');
+    .order('orden', { ascending: true })
+    .order('created_at', { ascending: true });
   if (categoria) query = query.eq('categoria', categoria);
   const { data, error } = await query;
   if (error) throw error;
@@ -254,6 +254,18 @@ export async function updateInventarioStock(id: string, stock: number) {
     .eq('id', id)
     .select()
     .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateInventarioOrder(items: { id: string, orden: number }[]) {
+  if (!supabase) return null;
+  
+  // Upsert can be used for batch updates if the table has a unique identifier
+  const { data, error } = await supabase
+    .from('inventario')
+    .upsert(items, { onConflict: 'id' });
+    
   if (error) throw error;
   return data;
 }

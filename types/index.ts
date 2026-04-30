@@ -157,6 +157,7 @@ export interface InventarioItem {
   unidad: string;
   notas: string | null;
   activo: boolean;
+  orden?: number;
   created_at: string;
   updated_at: string;
 }

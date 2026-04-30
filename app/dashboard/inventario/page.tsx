@@ -1,13 +1,15 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { Reorder } from 'framer-motion';
 import { 
   Package, Plus, Search, Filter, Edit, Trash2, 
   AlertTriangle, CheckCircle2, 
   FilterX, RefreshCw, TrendingUp,
-  DollarSign, ArrowUpRight, ArrowDownRight
+  DollarSign, ArrowUpRight, ArrowDownRight,
+  GripVertical
 } from 'lucide-react';
-import { supabase, fetchInventario, createInventarioItem, updateInventarioItem, deleteInventarioItem, updateInventarioStock } from '@/lib/supabase';
+import { supabase, fetchInventario, createInventarioItem, updateInventarioItem, deleteInventarioItem, updateInventarioStock, updateInventarioOrder } from '@/lib/supabase';
 import { InventarioItem, InventarioCategoria } from '@/types';
 import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
@@ -102,6 +104,24 @@ export default function InventarioPage() {
       setLoading(false);
     }
   }
+
+  const handleReorder = async (newOrder: InventarioItem[]) => {
+    // Update local state immediately for smooth UI
+    setItems(newOrder);
+    
+    // Prepare batch update for database
+    const updates = newOrder.map((item, index) => ({
+      id: item.id,
+      orden: index
+    }));
+    
+    try {
+      await updateInventarioOrder(updates);
+    } catch (error) {
+      console.error('Error saving new order:', error);
+      // Optional: reload data to revert on error
+    }
+  };
 
   const filteredItems = useMemo(() => {
     return items.filter(item => {
@@ -343,140 +363,152 @@ export default function InventarioPage() {
       <Card className="glass-panel border-border/50 bg-card/40 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left border-collapse">
-            <thead>
-              <tr className="border-b border-border/50 bg-secondary/20">
-                <th className="px-6 py-4 font-semibold text-xs uppercase tracking-widest text-muted-foreground">Producto / Código</th>
-                <th className="px-6 py-4 font-semibold text-xs uppercase tracking-widest text-muted-foreground text-center">Categoría</th>
-                <th className="px-6 py-4 font-semibold text-xs uppercase tracking-widest text-muted-foreground text-center">Stock</th>
-                <th className="px-6 py-4 font-semibold text-xs uppercase tracking-widest text-muted-foreground text-center">Precio (USD)</th>
-                <th className="px-6 py-4 font-semibold text-xs uppercase tracking-widest text-muted-foreground text-center">Estado</th>
-                <th className="px-6 py-4 font-semibold text-xs uppercase tracking-widest text-muted-foreground text-right w-20">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
+            <thead className="bg-muted/50 text-[10px] uppercase tracking-widest text-muted-foreground font-bold">
                 <tr>
-                  <td colSpan={6} className="px-6 py-20 text-center">
-                    <div className="flex flex-col items-center gap-2">
-                      <RefreshCw className="w-10 h-10 text-primary animate-spin opacity-20" />
-                      <span className="text-muted-foreground animate-pulse">Cargando inventario...</span>
-                    </div>
-                  </td>
+                  <th className="px-6 py-3 text-left w-10"></th>
+                  <th className="px-6 py-3 text-left">Producto</th>
+                  <th className="px-6 py-3 text-center">Stock</th>
+                  <th className="px-6 py-3 text-center">Precio (USD)</th>
+                  <th className="px-6 py-3 text-center">Estado</th>
+                  <th className="px-6 py-3 text-right">Acciones</th>
                 </tr>
-              ) : filteredItems.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-6 py-20 text-center">
-                    <div className="flex flex-col items-center gap-2 opacity-30">
-                      <Package className="w-12 h-12" />
-                      <span>No se encontraron productos.</span>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                filteredItems.map((item) => (
-                  <tr key={item.id} className="border-b border-border/30 hover:bg-white/5 transition-colors group">
-                    <td className="px-6 py-4">
-                      <div className="flex flex-col">
-                        <span className="font-bold text-foreground text-base">{item.nombre}</span>
-                        <span className="text-xs text-muted-foreground font-mono bg-secondary/50 px-1.5 py-0.5 rounded w-fit mt-0.5">
-                          {item.codigo || 'SIN-CÓDIGO'}
-                        </span>
-                        {item.marca && <span className="text-[10px] text-primary uppercase font-bold mt-1 tracking-tighter">Marca: {item.marca}</span>}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <Badge variant="outline" className="text-[10px] uppercase tracking-tighter font-bold border-muted-foreground/30">
-                        {CATEGORIES.find(c => c.value === item.categoria)?.label || item.categoria}
-                      </Badge>
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <div className="flex flex-col items-center gap-1">
-                        <div className="flex items-center gap-2">
-                          <button 
-                            onClick={() => handleQuickStockUpdate(item.id, item.stock, -1)}
-                            className="w-6 h-6 rounded-full flex items-center justify-center bg-secondary hover:bg-secondary/80 border border-border/50 text-muted-foreground transition-colors"
-                          >
-                            -
-                          </button>
-                          <span className={cn(
-                            "text-xl font-bold px-3 py-1 rounded-xl shadow-sm min-w-[50px]",
-                            item.stock <= 0 ? "bg-red-500/10 text-red-500" : 
-                            item.stock <= item.stock_minimo ? "bg-orange-500/10 text-orange-500" :
-                            "bg-green-500/10 text-green-500"
-                          )}>
-                            {item.stock}
-                          </span>
-                          <button 
-                            onClick={() => handleQuickStockUpdate(item.id, item.stock, 1)}
-                            className="w-6 h-6 rounded-full flex items-center justify-center bg-primary/10 hover:bg-primary/20 border border-primary/20 text-primary transition-colors"
-                          >
-                            +
-                          </button>
-                        </div>
-                        <span className="text-[9px] text-muted-foreground uppercase font-bold">Min: {item.stock_minimo} · {item.unidad || 'unidad'}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <div className="flex flex-col items-center">
-                        <span className="text-base font-bold text-primary">
-                          ${item.precio_usd?.toFixed(2) || '0.00'}
-                        </span>
-                        
-                        {rates && item.precio_usd && (
-                          <div className="flex flex-col items-center gap-0.5 mt-1">
-                            <div className="flex items-center gap-1 text-[10px] text-blue-400 font-bold bg-blue-500/5 px-1.5 rounded border border-blue-500/10" title="Precio a tasa BCV">
-                              <span>BCV: Bs. {(item.precio_usd * rates.bcv).toFixed(2)}</span>
-                            </div>
-                            <div className="flex items-center gap-1 text-[10px] text-orange-400 font-bold bg-orange-500/5 px-1.5 rounded border border-orange-500/10" title="Precio a tasa Binance">
-                              <span>P2P: Bs. {(item.precio_usd * rates.paralelo).toFixed(2)}</span>
-                            </div>
-                          </div>
-                        )}
-                        
-                        {!rates && item.precio_bs && (
-                          <span className="text-[10px] text-muted-foreground font-medium">
-                            Bs. {item.precio_bs.toLocaleString()}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      {item.stock <= item.stock_minimo ? (
-                        <div className="flex items-center justify-center gap-1.5 text-orange-500">
-                          <AlertTriangle className="w-4 h-4" />
-                          <span className="text-[10px] font-bold uppercase tracking-tighter">Stock Crítico</span>
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-center gap-1.5 text-green-500">
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span className="text-[10px] font-bold uppercase tracking-tighter">Disponible</span>
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-1 transition-opacity">
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10 border border-transparent hover:border-primary/20" 
-                          onClick={() => handleOpenEdit(item)}
-                        >
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          className="h-8 w-8 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 border border-transparent hover:border-red-500/20" 
-                          onClick={() => handleDelete(item.id, item.nombre)}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+              </thead>
+              <Reorder.Group 
+                as="tbody" 
+                axis="y" 
+                values={items} 
+                onReorder={handleReorder}
+                className="divide-y divide-border/50"
+              >
+                {loading ? (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-20 text-center">
+                      <div className="flex flex-col items-center gap-2">
+                        <RefreshCw className="w-10 h-10 text-primary animate-spin opacity-20" />
+                        <span className="text-muted-foreground animate-pulse">Cargando inventario...</span>
                       </div>
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
+                ) : filteredItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-20 text-center">
+                      <div className="flex flex-col items-center gap-2 opacity-30">
+                        <Package className="w-12 h-12" />
+                        <span>No se encontraron productos.</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredItems.map((item) => (
+                    <Reorder.Item 
+                      key={item.id} 
+                      value={item} 
+                      as="tr"
+                      className="group border-b border-border/30 hover:bg-white/5 transition-colors cursor-default"
+                    >
+                      <td className="px-3 py-4 w-10">
+                        <GripVertical className="w-4 h-4 text-muted-foreground/30 group-hover:text-primary/50 cursor-grab active:cursor-grabbing" />
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-foreground text-base">{item.nombre}</span>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-[10px] text-muted-foreground font-mono bg-secondary/50 px-1.5 py-0.5 rounded uppercase font-bold">
+                              {item.categoria}
+                            </span>
+                            {item.codigo && (
+                              <span className="text-xs text-muted-foreground font-mono opacity-60">
+                                {item.codigo}
+                              </span>
+                            )}
+                          </div>
+                          {item.marca && <span className="text-[10px] text-primary uppercase font-bold mt-1 tracking-tighter">Marca: {item.marca}</span>}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <div className="flex flex-col items-center gap-1">
+                          <div className="flex items-center gap-2">
+                            <button 
+                              type="button"
+                              onClick={() => handleQuickStockUpdate(item.id, item.stock, -1)}
+                              className="w-6 h-6 rounded-full flex items-center justify-center bg-secondary hover:bg-secondary/80 border border-border/50 text-muted-foreground transition-colors"
+                            >
+                              -
+                            </button>
+                            <span className={cn(
+                              "text-xl font-bold px-3 py-1 rounded-xl shadow-sm min-w-[50px]",
+                              item.stock <= 0 ? "bg-red-500/10 text-red-500" : 
+                              item.stock <= item.stock_minimo ? "bg-orange-500/10 text-orange-500" :
+                              "bg-green-500/10 text-green-500"
+                            )}>
+                              {item.stock}
+                            </span>
+                            <button 
+                              type="button"
+                              onClick={() => handleQuickStockUpdate(item.id, item.stock, 1)}
+                              className="w-6 h-6 rounded-full flex items-center justify-center bg-primary/10 hover:bg-primary/20 border border-primary/20 text-primary transition-colors"
+                            >
+                              +
+                            </button>
+                          </div>
+                          <span className="text-[9px] text-muted-foreground uppercase font-bold">Min: {item.stock_minimo} · {item.unidad || 'unidad'}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <div className="flex flex-col items-center">
+                          <span className="text-base font-bold text-primary">
+                            ${item.precio_usd?.toFixed(2) || '0.00'}
+                          </span>
+                          
+                          {rates && item.precio_usd && (
+                            <div className="flex flex-col items-center gap-0.5 mt-1">
+                              <div className="flex items-center gap-1 text-[10px] text-blue-400 font-bold bg-blue-500/5 px-1.5 rounded border border-blue-500/10" title="Precio a tasa BCV">
+                                <span>BCV: Bs. {(item.precio_usd * rates.bcv).toFixed(2)}</span>
+                              </div>
+                              <div className="flex items-center gap-1 text-[10px] text-orange-400 font-bold bg-orange-500/5 px-1.5 rounded border border-orange-500/10" title="Precio a tasa Binance">
+                                <span>P2P: Bs. {(item.precio_usd * rates.paralelo).toFixed(2)}</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        {item.stock <= item.stock_minimo ? (
+                          <div className="flex items-center justify-center gap-1.5 text-orange-500">
+                            <AlertTriangle className="w-4 h-4" />
+                            <span className="text-[10px] font-bold uppercase tracking-tighter">Stock Crítico</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center gap-1.5 text-green-500">
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span className="text-[10px] font-bold uppercase tracking-tighter">Disponible</span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10 border border-transparent hover:border-primary/20" 
+                            onClick={() => handleOpenEdit(item)}
+                          >
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 border border-transparent hover:border-red-500/20" 
+                            onClick={() => handleDelete(item.id, item.nombre)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </td>
+                    </Reorder.Item>
+                  ))
+                )}
+              </Reorder.Group>
           </table>
         </div>
       </Card>
