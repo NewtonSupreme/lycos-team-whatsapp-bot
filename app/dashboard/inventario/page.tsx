@@ -40,6 +40,8 @@ export default function InventarioPage() {
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState<InventarioItem | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [rates, setRates] = useState<{ bcv: number; paralelo: number } | null>(null);
+  const [lastRateUpdate, setLastRateUpdate] = useState<string>('');
 
   // Form state
   const [form, setForm] = useState({
