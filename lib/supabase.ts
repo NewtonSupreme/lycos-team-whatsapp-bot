@@ -261,10 +261,9 @@ export async function updateInventarioStock(id: string, stock: number) {
 export async function updateInventarioOrder(items: { id: string, orden: number }[]) {
   if (!supabase) return null;
   
-  // Upsert can be used for batch updates if the table has a unique identifier
+  // Use RPC to avoid NOT NULL constraint issues with upsert
   const { data, error } = await supabase
-    .from('inventario')
-    .upsert(items, { onConflict: 'id' });
+    .rpc('reorder_inventario', { updates: items });
     
   if (error) throw error;
   return data;
