@@ -16,10 +16,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Calendar as CalendarIcon, FilterX, Clock, SortAsc, SortDesc } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { logActivity } from '@/lib/activity';
+import { useAppStore } from '@/lib/store';
 
 const COLORS = ['bg-blue-500/20 text-blue-400','bg-purple-500/20 text-purple-400','bg-green-500/20 text-green-400','bg-orange-500/20 text-orange-400','bg-pink-500/20 text-pink-400','bg-cyan-500/20 text-cyan-400'];
 
 export default function ClientesPage() {
+  const { user } = useAppStore();
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -111,8 +114,27 @@ export default function ClientesPage() {
       if (editCliente) {
         await updateCliente(editCliente.id, form);
         await syncClientData(editCliente.id, form.nombre, form.apellido, form.telefono);
+        
+        logActivity({
+          usuario: user?.nombre || 'Sistema',
+          modulo: 'Clientes',
+          accion: 'Actualizó cliente',
+          detalles: `${form.nombre} ${form.apellido}`,
+          referencia_id: editCliente.id,
+          referencia_tabla: 'clientes'
+        });
       } else {
-        await createCliente(form);
+        const result = await createCliente(form);
+        if (result) {
+          logActivity({
+            usuario: user?.nombre || 'Sistema',
+            modulo: 'Clientes',
+            accion: 'Creó cliente',
+            detalles: `${form.nombre} ${form.apellido}`,
+            referencia_id: (result as any).id,
+            referencia_tabla: 'clientes'
+          });
+        }
       }
       setShowModal(false);
       loadData();
@@ -124,7 +146,18 @@ export default function ClientesPage() {
   const handleDelete = async (id: string) => {
     if (confirm('¿Estás seguro de eliminar este cliente? Se eliminarán también sus vehículos.')) {
       try {
+        const cliente = clientes.find(c => c.id === id);
         await deleteCliente(id);
+        
+        logActivity({
+          usuario: user?.nombre || 'Sistema',
+          modulo: 'Clientes',
+          accion: 'Eliminó cliente',
+          detalles: cliente ? `${cliente.nombre} ${cliente.apellido}` : id,
+          referencia_id: id,
+          referencia_tabla: 'clientes'
+        });
+        
         loadData();
       } catch {
         alert('Error al eliminar el cliente');

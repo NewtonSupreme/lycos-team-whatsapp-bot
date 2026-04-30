@@ -11,6 +11,8 @@ import { fetchCitas, createCita, updateCita, deleteCita, fetchClientes, fetchVeh
 import { Cita, TipoServicio, Cliente, Vehiculo } from '@/types';
 import { cn, formatDate } from '@/lib/utils';
 import Link from 'next/link';
+import { logActivity } from '@/lib/activity';
+import { useAppStore } from '@/lib/store';
 
 const HORAS = ['08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00'];
 const TIPOS: { v: TipoServicio; l: string }[] = [
@@ -34,6 +36,7 @@ const estadoColorMap: Record<string, string> = {
 };
 
 export default function AgendaPage() {
+  const { user } = useAppStore();
   const [mounted, setMounted] = React.useState(false);
   const [citas, setCitas] = React.useState<Cita[]>([]);
   const [clientes, setClientes] = React.useState<Cliente[]>([]);
@@ -182,16 +185,30 @@ export default function AgendaPage() {
           estado: form.estado,
           notas: form.notas
         });
+        logActivity({
+          usuario: user?.nombre || 'Sistema',
+          modulo: 'Agenda',
+          accion: 'Actualizó cita',
+          detalles: `${form.fecha} ${form.hora}`,
+          referencia_id: editCita.id,
+          referencia_tabla: 'citas'
+        });
       } else if (isBlockedMode) {
-        await createCita({
+        const result = await createCita({
           fecha: form.fecha,
           hora: form.hora,
           tipo_servicio: 'otro',
           descripcion: form.descripcion || 'HORARIO OCUPADO',
           estado: 'ocupado'
         });
+        logActivity({
+          usuario: user?.nombre || 'Sistema',
+          modulo: 'Agenda',
+          accion: 'Bloqueó horario',
+          detalles: `${form.fecha} ${form.hora}: ${form.descripcion || 'OCUPADO'}`
+        });
       } else if (isTemporalClient) {
-        await createCita({
+        const result = await createCita({
           fecha: form.fecha,
           hora: form.hora,
           tipo_servicio: form.tipo_servicio,
@@ -200,31 +217,32 @@ export default function AgendaPage() {
           telefono: form.nuevo_cliente.telefono,
           estado: 'pendiente'
         });
+        logActivity({
+          usuario: user?.nombre || 'Sistema',
+          modulo: 'Agenda',
+          accion: 'Agendó cita (Temporal)',
+          detalles: `${form.nuevo_cliente.nombre} - ${form.fecha} ${form.hora}`,
+          referencia_id: (result as any)?.id,
+          referencia_tabla: 'citas'
+        });
       } else if (isNewClient) {
-        // 1. Crear cliente
         const newClient = await createCliente({
           nombre: form.nuevo_cliente.nombre,
           apellido: form.nuevo_cliente.apellido,
           telefono: form.nuevo_cliente.telefono,
           email: ''
         });
-        
         if (!newClient) throw new Error('Error al crear cliente');
-
-        // 2. Crear vehículo
         const newVehiculo = await createVehiculo({
           cliente_id: newClient.id,
           marca: form.nuevo_cliente.marca,
           modelo: form.nuevo_cliente.modelo,
           placa: form.nuevo_cliente.placa,
-          anio: 2025, // default
+          anio: 2025,
           estado: 'activo'
         });
-
         if (!newVehiculo) throw new Error('Error al crear vehículo');
-
-        // 3. Crear cita
-        await createCita({
+        const result = await createCita({
           cliente_id: newClient.id,
           vehiculo_id: newVehiculo.id,
           fecha: form.fecha,
@@ -234,8 +252,16 @@ export default function AgendaPage() {
           estado: form.estado,
           notas: form.notas
         });
+        logActivity({
+          usuario: user?.nombre || 'Sistema',
+          modulo: 'Agenda',
+          accion: 'Agendó cita (Nuevo Cliente)',
+          detalles: `${form.nuevo_cliente.nombre} ${form.nuevo_cliente.apellido} - ${form.fecha} ${form.hora}`,
+          referencia_id: (result as any)?.id,
+          referencia_tabla: 'citas'
+        });
       } else {
-        await createCita({
+        const result = await createCita({
           cliente_id: form.cliente_id,
           vehiculo_id: form.vehiculo_id,
           fecha: form.fecha,
@@ -244,6 +270,14 @@ export default function AgendaPage() {
           descripcion: form.descripcion,
           estado: form.estado,
           notas: form.notas
+        });
+        logActivity({
+          usuario: user?.nombre || 'Sistema',
+          modulo: 'Agenda',
+          accion: 'Agendó cita',
+          detalles: `${form.fecha} ${form.hora}`,
+          referencia_id: (result as any)?.id,
+          referencia_tabla: 'citas'
         });
       }
       setShowModal(false);
@@ -259,7 +293,16 @@ export default function AgendaPage() {
   const handleDelete = async (id: string) => {
     if (confirm('¿Estás seguro de eliminar esta cita?')) {
       try {
+        const cita = citas.find(c => c.id === id);
         await deleteCita(id);
+        logActivity({
+          usuario: user?.nombre || 'Sistema',
+          modulo: 'Agenda',
+          accion: 'Eliminó cita',
+          detalles: cita ? `${cita.fecha} ${cita.hora}` : id,
+          referencia_id: id,
+          referencia_tabla: 'citas'
+        });
         loadData();
       } catch (_err) {
         console.error('Error deleting appointment');

@@ -134,7 +134,9 @@ export interface ActivityLog {
   usuario: string;
   accion: string;
   modulo: string;
-  detalles?: string;
+  detalles?: string | null;
+  referencia_id?: string | null;
+  referencia_tabla?: string | null;
   created_at: string;
 }
 

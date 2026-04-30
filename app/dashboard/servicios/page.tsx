@@ -6,6 +6,8 @@ import {
   Phone, ChevronDown, X
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { logActivity } from '@/lib/activity';
+import { useAppStore } from '@/lib/store';
 
 // ── Types ─────────────────────────────────────────────────────
 interface CitaServicio {
@@ -63,6 +65,7 @@ function timeAgo(ts: string) {
 }
 
 export default function ServiciosPage() {
+  const { user } = useAppStore();
   const [citas, setCitas] = useState<CitaServicio[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -107,6 +110,18 @@ export default function ServiciosPage() {
     if (!supabase) return;
     setUpdatingId(id);
     await supabase.from('citas').update({ estado, updated_at: new Date().toISOString() }).eq('id', id);
+    
+    // Log activity
+    const cita = citas.find(c => c.id === id);
+    logActivity({
+      usuario: user?.nombre || 'Sistema',
+      modulo: 'Servicios',
+      accion: 'Cambió estado',
+      detalles: `Ticket #${id.slice(0,5)}: ${cita?.estado || '?'} -> ${estado}`,
+      referencia_id: id,
+      referencia_tabla: 'citas'
+    });
+    
     setCitas(prev => prev.map(c => c.id === id ? { ...c, estado } : c));
     setUpdatingId(null);
   };

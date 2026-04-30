@@ -19,6 +19,8 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
+import { logActivity } from '@/lib/activity';
+import { useAppStore } from '@/lib/store';
 
 const CATEGORIES: { value: InventarioCategoria; label: string }[] = [
   { value: 'silenciador', label: 'Silenciadores' },
@@ -35,6 +37,7 @@ const CATEGORIES: { value: InventarioCategoria; label: string }[] = [
 ];
 
 export default function InventarioPage() {
+  const { user } = useAppStore();
   const [items, setItems] = useState<InventarioItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -116,8 +119,16 @@ export default function InventarioPage() {
     }));
     
     try {
-      const result = await updateInventarioOrder(updates);
-      console.log('✅ Orden guardado:', result);
+      await updateInventarioOrder(updates);
+      console.log('✅ Orden guardado');
+      
+      // Log activity once for the whole reorder
+      logActivity({
+        usuario: user?.nombre || 'Sistema',
+        modulo: 'Inventario',
+        accion: 'Reordenó inventario',
+        detalles: `Se cambió el orden manual de ${newOrder.length} productos.`
+      });
     } catch (error: any) {
       console.error('Error saving new order:', error);
       alert(`Error al guardar el orden: ${error.message || 'Error desconocido'}`);
@@ -177,8 +188,31 @@ export default function InventarioPage() {
     try {
       if (editingItem) {
         await updateInventarioItem(editingItem.id, form);
+        
+        logActivity({
+          usuario: user?.nombre || 'Sistema',
+          modulo: 'Inventario',
+          accion: 'Actualizó producto',
+          detalles: `${form.nombre} (${form.codigo || 'S/N'})`,
+          referencia_id: editingItem.id,
+          referencia_tabla: 'inventario'
+        });
       } else {
-        await createInventarioItem(form);
+        const newItem = await createInventarioItem({
+          ...form,
+          orden: items.length
+        });
+        
+        if (newItem) {
+          logActivity({
+            usuario: user?.nombre || 'Sistema',
+            modulo: 'Inventario',
+            accion: 'Creó producto',
+            detalles: `${form.nombre} (${form.codigo || 'S/N'})`,
+            referencia_id: newItem[0]?.id,
+            referencia_tabla: 'inventario'
+          });
+        }
       }
       setShowModal(false);
       loadData();
@@ -194,8 +228,20 @@ export default function InventarioPage() {
   const handleQuickStockUpdate = async (id: string, currentStock: number, delta: number) => {
     const newStock = Math.max(0, currentStock + delta);
     try {
-      setItems(prev => prev.map(item => item.id === id ? { ...item, stock: newStock } : item));
       await updateInventarioStock(id, newStock);
+      
+      // Log activity
+      const item = items.find(i => i.id === id);
+      logActivity({
+        usuario: user?.nombre || 'Sistema',
+        modulo: 'Inventario',
+        accion: 'Actualizó stock',
+        detalles: `${item?.nombre || 'Producto'}: ${currentStock} -> ${newStock}`,
+        referencia_id: id,
+        referencia_tabla: 'inventario'
+      });
+      
+      loadData();
     } catch (error) {
       console.error('Error updating stock:', error);
       loadData(); // Revert on error
@@ -203,9 +249,19 @@ export default function InventarioPage() {
   };
 
   const handleDelete = async (id: string, nombre: string) => {
-    if (confirm(`¿Estás seguro de desactivar "${nombre}"? El producto ya no aparecerá en las búsquedas activas.`)) {
+    if (confirm(`¿Estás seguro de eliminar "${nombre}"?`)) {
       try {
         await deleteInventarioItem(id);
+        
+        logActivity({
+          usuario: user?.nombre || 'Sistema',
+          modulo: 'Inventario',
+          accion: 'Eliminó producto',
+          detalles: nombre,
+          referencia_id: id,
+          referencia_tabla: 'inventario'
+        });
+        
         loadData();
       } catch (error) {
         console.error('Error deleting item:', error);
