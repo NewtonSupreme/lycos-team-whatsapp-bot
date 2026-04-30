@@ -4,7 +4,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Package, Plus, Search, Filter, Edit, Trash2, 
   AlertTriangle, CheckCircle2, 
-  FilterX, RefreshCw, TrendingUp
+  FilterX, RefreshCw, TrendingUp,
+  DollarSign, ArrowUpRight, ArrowDownRight
 } from 'lucide-react';
 import { supabase, fetchInventario, createInventarioItem, updateInventarioItem, deleteInventarioItem, updateInventarioStock } from '@/lib/supabase';
 import { InventarioItem, InventarioCategoria } from '@/types';
@@ -54,9 +55,24 @@ export default function InventarioPage() {
     notas: ''
   });
 
+  const fetchRates = async () => {
+    try {
+      const res = await fetch('/api/rates');
+      const data = await res.json();
+      setRates({ bcv: data.bcv, paralelo: data.paralelo });
+      setLastRateUpdate(new Date(data.fetchedAt).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' }));
+    } catch (error) {
+      console.error('Error fetching rates:', error);
+    }
+  };
+
   useEffect(() => {
     loadData();
+    fetchRates();
     
+    // Refresh rates every 15 minutes
+    const interval = setInterval(fetchRates, 15 * 60 * 1000);
+
     // Realtime subscription
     if (!supabase) return;
     const channel = supabase!.channel('inventario-changes')
@@ -66,6 +82,7 @@ export default function InventarioPage() {
       .subscribe();
 
     return () => {
+      clearInterval(interval);
       supabase?.removeChannel(channel);
     };
   }, []);
@@ -193,6 +210,33 @@ export default function InventarioPage() {
           </Button>
         </div>
       </div>
+
+      {/* Exchange Rates Display */}
+      {rates && (
+        <div className="flex flex-wrap items-center gap-3 mb-2">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-500/10 border border-blue-500/20 shadow-sm animate-in fade-in slide-in-from-top-1">
+            <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-blue-500/20">
+              <span className="text-[10px] font-bold text-blue-400">BCV</span>
+            </div>
+            <span className="text-sm font-bold text-blue-400">Bs. {rates.bcv.toFixed(2)}</span>
+          </div>
+
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-orange-500/10 border border-orange-500/20 shadow-sm animate-in fade-in slide-in-from-top-2">
+            <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-orange-500/20">
+              <span className="text-[10px] font-bold text-orange-400">P2P</span>
+            </div>
+            <span className="text-sm font-bold text-orange-400">Bs. {rates.paralelo.toFixed(2)}</span>
+            <div className="flex items-center gap-0.5 ml-1 px-1.5 py-0.5 rounded-md bg-orange-500/10 text-[9px] font-bold text-orange-400 uppercase">
+              Binance
+            </div>
+          </div>
+
+          <div className="text-[10px] text-muted-foreground ml-auto flex items-center gap-1">
+            <RefreshCw className="w-3 h-3 animate-spin-slow" />
+            Actualizado: {lastRateUpdate}
+          </div>
+        </div>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -375,7 +419,19 @@ export default function InventarioPage() {
                         <span className="text-base font-bold text-primary">
                           ${item.precio_usd?.toFixed(2) || '0.00'}
                         </span>
-                        {item.precio_bs && (
+                        
+                        {rates && item.precio_usd && (
+                          <div className="flex flex-col items-center gap-0.5 mt-1">
+                            <div className="flex items-center gap-1 text-[10px] text-blue-400 font-bold bg-blue-500/5 px-1.5 rounded border border-blue-500/10" title="Precio a tasa BCV">
+                              <span>BCV: Bs. {(item.precio_usd * rates.bcv).toFixed(2)}</span>
+                            </div>
+                            <div className="flex items-center gap-1 text-[10px] text-orange-400 font-bold bg-orange-500/5 px-1.5 rounded border border-orange-500/10" title="Precio a tasa Binance">
+                              <span>P2P: Bs. {(item.precio_usd * rates.paralelo).toFixed(2)}</span>
+                            </div>
+                          </div>
+                        )}
+                        
+                        {!rates && item.precio_bs && (
                           <span className="text-[10px] text-muted-foreground font-medium">
                             Bs. {item.precio_bs.toLocaleString()}
                           </span>
