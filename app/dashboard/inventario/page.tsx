@@ -142,9 +142,10 @@ export default function InventarioPage() {
       }
       setShowModal(false);
       loadData();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving item:', error);
-      alert('Error al guardar el producto');
+      const msg = error.message || 'Error desconocido';
+      alert(`Error al guardar el producto: ${msg}\n\nVerifica que la base de datos tenga todas las columnas necesarias.`);
     } finally {
       setIsSubmitting(false);
     }
