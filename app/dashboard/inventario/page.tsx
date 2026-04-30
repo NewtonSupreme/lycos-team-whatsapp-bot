@@ -6,7 +6,7 @@ import {
   AlertTriangle, CheckCircle2, 
   FilterX, RefreshCw, TrendingUp
 } from 'lucide-react';
-import { supabase, fetchInventario, createInventarioItem, updateInventarioItem, deleteInventarioItem } from '@/lib/supabase';
+import { supabase, fetchInventario, createInventarioItem, updateInventarioItem, deleteInventarioItem, updateInventarioStock } from '@/lib/supabase';
 import { InventarioItem, InventarioCategoria } from '@/types';
 import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
@@ -47,8 +47,10 @@ export default function InventarioPage() {
     categoria: 'general' as InventarioCategoria,
     marca: '',
     precio_usd: 0,
+    precio_bs: 0,
     stock: 0,
     stock_minimo: 1,
+    unidad: 'unidad',
     notas: ''
   });
 
@@ -103,8 +105,10 @@ export default function InventarioPage() {
       categoria: 'general',
       marca: '',
       precio_usd: 0,
+      precio_bs: 0,
       stock: 0,
       stock_minimo: 1,
+      unidad: 'unidad',
       notas: ''
     });
     setShowModal(true);
@@ -118,8 +122,10 @@ export default function InventarioPage() {
       categoria: item.categoria,
       marca: item.marca || '',
       precio_usd: item.precio_usd || 0,
+      precio_bs: item.precio_bs || 0,
       stock: item.stock,
       stock_minimo: item.stock_minimo,
+      unidad: item.unidad || 'unidad',
       notas: item.notas || ''
     });
     setShowModal(true);
@@ -141,6 +147,17 @@ export default function InventarioPage() {
       alert('Error al guardar el producto');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleQuickStockUpdate = async (id: string, currentStock: number, delta: number) => {
+    const newStock = Math.max(0, currentStock + delta);
+    try {
+      setItems(prev => prev.map(item => item.id === id ? { ...item, stock: newStock } : item));
+      await updateInventarioStock(id, newStock);
+    } catch (error) {
+      console.error('Error updating stock:', error);
+      loadData(); // Revert on error
     }
   };
 
@@ -177,8 +194,8 @@ export default function InventarioPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="glass-card bg-primary/5 border-primary/20 transition-all hover:scale-[1.02]">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Card className="glass-card bg-primary/5 border-primary/20 transition-all hover:shadow-md">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
@@ -192,7 +209,7 @@ export default function InventarioPage() {
           </CardContent>
         </Card>
 
-        <Card className="glass-card bg-orange-500/5 border-orange-500/20 transition-all hover:scale-[1.02]">
+        <Card className="glass-card bg-orange-500/5 border-orange-500/20 transition-all hover:shadow-md">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
@@ -208,7 +225,7 @@ export default function InventarioPage() {
           </CardContent>
         </Card>
 
-        <Card className="glass-card bg-green-500/5 border-green-500/20 transition-all hover:scale-[1.02]">
+        <Card className="glass-card bg-green-500/5 border-green-500/20 transition-all hover:shadow-md">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
@@ -224,7 +241,7 @@ export default function InventarioPage() {
           </CardContent>
         </Card>
 
-        <Card className="glass-card bg-cyan-500/5 border-cyan-500/20 transition-all hover:scale-[1.02]">
+        <Card className="glass-card bg-cyan-500/5 border-cyan-500/20 transition-all hover:shadow-md">
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
@@ -326,22 +343,43 @@ export default function InventarioPage() {
                       </Badge>
                     </td>
                     <td className="px-6 py-4 text-center">
-                      <div className="flex flex-col items-center">
-                        <span className={cn(
-                          "text-xl font-bold px-3 py-1 rounded-xl shadow-sm",
-                          item.stock <= 0 ? "bg-red-500/10 text-red-500" : 
-                          item.stock <= item.stock_minimo ? "bg-orange-500/10 text-orange-500" :
-                          "bg-green-500/10 text-green-500"
-                        )}>
-                          {item.stock}
-                        </span>
-                        <span className="text-[9px] text-muted-foreground uppercase font-bold mt-1">Min: {item.stock_minimo}</span>
+                      <div className="flex flex-col items-center gap-1">
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => handleQuickStockUpdate(item.id, item.stock, -1)}
+                            className="w-6 h-6 rounded-full flex items-center justify-center bg-secondary hover:bg-secondary/80 border border-border/50 text-muted-foreground transition-colors"
+                          >
+                            -
+                          </button>
+                          <span className={cn(
+                            "text-xl font-bold px-3 py-1 rounded-xl shadow-sm min-w-[50px]",
+                            item.stock <= 0 ? "bg-red-500/10 text-red-500" : 
+                            item.stock <= item.stock_minimo ? "bg-orange-500/10 text-orange-500" :
+                            "bg-green-500/10 text-green-500"
+                          )}>
+                            {item.stock}
+                          </span>
+                          <button 
+                            onClick={() => handleQuickStockUpdate(item.id, item.stock, 1)}
+                            className="w-6 h-6 rounded-full flex items-center justify-center bg-primary/10 hover:bg-primary/20 border border-primary/20 text-primary transition-colors"
+                          >
+                            +
+                          </button>
+                        </div>
+                        <span className="text-[9px] text-muted-foreground uppercase font-bold">Min: {item.stock_minimo} · {item.unidad || 'unidad'}</span>
                       </div>
                     </td>
                     <td className="px-6 py-4 text-center">
-                      <span className="text-base font-bold text-primary">
-                        ${item.precio_usd?.toFixed(2) || '0.00'}
-                      </span>
+                      <div className="flex flex-col items-center">
+                        <span className="text-base font-bold text-primary">
+                          ${item.precio_usd?.toFixed(2) || '0.00'}
+                        </span>
+                        {item.precio_bs && (
+                          <span className="text-[10px] text-muted-foreground font-medium">
+                            Bs. {item.precio_bs.toLocaleString()}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-center">
                       {item.stock <= item.stock_minimo ? (
@@ -357,11 +395,11 @@ export default function InventarioPage() {
                       )}
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex items-center justify-end gap-1 transition-opacity">
                         <Button 
                           variant="ghost" 
                           size="icon" 
-                          className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10" 
+                          className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10 border border-transparent hover:border-primary/20" 
                           onClick={() => handleOpenEdit(item)}
                         >
                           <Edit className="w-4 h-4" />
@@ -369,7 +407,7 @@ export default function InventarioPage() {
                         <Button 
                           variant="ghost" 
                           size="icon" 
-                          className="h-8 w-8 text-muted-foreground hover:text-red-500 hover:bg-red-500/10" 
+                          className="h-8 w-8 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 border border-transparent hover:border-red-500/20" 
                           onClick={() => handleDelete(item.id, item.nombre)}
                         >
                           <Trash2 className="w-4 h-4" />
@@ -407,17 +445,17 @@ export default function InventarioPage() {
                   value={form.nombre}
                   onChange={e => setForm({...form, nombre: e.target.value})}
                   placeholder="Ej. Silenciador CL40"
-                  className="bg-background/50"
+                  className="bg-background/50 border-primary/20"
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="codigo" className="text-xs font-bold uppercase text-muted-foreground">Código</Label>
+                <Label htmlFor="codigo" className="text-xs font-bold uppercase text-muted-foreground">Código / SKU</Label>
                 <Input 
                   id="codigo"
                   value={form.codigo}
                   onChange={e => setForm({...form, codigo: e.target.value})}
                   placeholder="SKU-001"
-                  className="bg-background/50 font-mono text-sm"
+                  className="bg-background/50 font-mono text-sm border-primary/20"
                 />
               </div>
               <div className="space-y-1.5">
@@ -426,7 +464,7 @@ export default function InventarioPage() {
                   value={form.categoria} 
                   onValueChange={val => setForm({...form, categoria: val as InventarioCategoria})}
                 >
-                  <SelectTrigger id="categoria" className="bg-background/50">
+                  <SelectTrigger id="categoria" className="bg-background/50 border-primary/20">
                     <SelectValue placeholder="Seleccionar" />
                   </SelectTrigger>
                   <SelectContent>
@@ -443,8 +481,26 @@ export default function InventarioPage() {
                   value={form.marca}
                   onChange={e => setForm({...form, marca: e.target.value})}
                   placeholder="Ej. Kardoc"
-                  className="bg-background/50"
+                  className="bg-background/50 border-primary/20"
                 />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="unidad" className="text-xs font-bold uppercase text-muted-foreground">Unidad de Medida</Label>
+                <Select 
+                  value={form.unidad} 
+                  onValueChange={val => setForm({...form, unidad: val})}
+                >
+                  <SelectTrigger id="unidad" className="bg-background/50 border-primary/20">
+                    <SelectValue placeholder="Seleccionar" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="unidad">Unidad (pza)</SelectItem>
+                    <SelectItem value="galon">Galón</SelectItem>
+                    <SelectItem value="litro">Litro</SelectItem>
+                    <SelectItem value="par">Par</SelectItem>
+                    <SelectItem value="set">Set / Juego</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="precio" className="text-xs font-bold uppercase text-muted-foreground">Precio (USD)</Label>
@@ -457,7 +513,22 @@ export default function InventarioPage() {
                     required 
                     value={form.precio_usd}
                     onChange={e => setForm({...form, precio_usd: parseFloat(e.target.value) || 0})}
-                    className="pl-7 bg-background/50 font-bold text-primary"
+                    className="pl-7 bg-background/50 font-bold text-primary border-primary/20"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="precio_bs" className="text-xs font-bold uppercase text-muted-foreground">Precio (Bs.D)</Label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-xs font-bold">Bs</span>
+                  <Input 
+                    id="precio_bs"
+                    type="number"
+                    step="0.01"
+                    value={form.precio_bs}
+                    onChange={e => setForm({...form, precio_bs: parseFloat(e.target.value) || 0})}
+                    className="pl-8 bg-background/50 font-bold text-muted-foreground border-primary/20"
+                    placeholder="0.00"
                   />
                 </div>
               </div>
@@ -469,7 +540,7 @@ export default function InventarioPage() {
                   required 
                   value={form.stock}
                   onChange={e => setForm({...form, stock: parseInt(e.target.value) || 0})}
-                  className="bg-background/50 font-bold"
+                  className="bg-background/50 font-bold border-primary/20"
                 />
               </div>
               <div className="space-y-1.5">
@@ -480,7 +551,17 @@ export default function InventarioPage() {
                   required 
                   value={form.stock_minimo}
                   onChange={e => setForm({...form, stock_minimo: parseInt(e.target.value) || 0})}
-                  className="bg-background/50"
+                  className="bg-background/50 border-primary/20"
+                />
+              </div>
+              <div className="col-span-2 space-y-1.5">
+                <Label htmlFor="notas" className="text-xs font-bold uppercase text-muted-foreground">Notas Internas</Label>
+                <Input 
+                  id="notas"
+                  value={form.notas}
+                  onChange={e => setForm({...form, notas: e.target.value})}
+                  placeholder="Ej. Ubicación en estante A-1..."
+                  className="bg-background/50 border-primary/20"
                 />
               </div>
             </div>
