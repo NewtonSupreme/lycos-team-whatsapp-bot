@@ -6,13 +6,33 @@ export async function GET() {
   try {
     let bcvRate = 0;
     try {
-      const respBcv = await fetch('https://ve.dolarapi.com/v1/dolares', {
+      const respBcv = await fetch('https://ve.dolarapi.com/v1/dolares/oficial', {
         next: { revalidate: 600 } // Cache for 10 minutes
       });
       if (respBcv.ok) {
         const data = await respBcv.json();
-        const bcvEntry = data.find((d: any) => d.nombre?.toLowerCase().includes('oficial') || d.nombre?.toLowerCase().includes('bcv'));
-        if (bcvEntry) bcvRate = bcvEntry.promedio;
+        bcvRate = data.promedio || data.precio || 0;
+      } else {
+        // Fallback to general list if /oficial fails
+        const respAll = await fetch('https://ve.dolarapi.com/v1/dolares');
+        if (respAll.ok) {
+          const dataAll = await respAll.json();
+          const bcvEntry = dataAll.find((d: any) => 
+            d.fuente === 'oficial' || 
+            d.nombre?.toLowerCase().includes('bcv') || 
+            d.nombre?.toLowerCase().includes('oficial')
+          );
+          if (bcvEntry) bcvRate = bcvEntry.promedio || bcvEntry.precio || 0;
+        }
+      }
+
+      // Final fallback if still 0
+      if (!bcvRate) {
+        const respPy = await fetch('https://pydolarvenezuela-api.vercel.app/api/v1/dollar?page=bcv');
+        if (respPy.ok) {
+          const dataPy = await respPy.json();
+          bcvRate = dataPy.monitors?.bcv?.price || 0;
+        }
       }
     } catch (e) {
       console.error('Error fetching BCV:', e);
