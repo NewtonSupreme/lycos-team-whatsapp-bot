@@ -14,6 +14,9 @@ interface InvoiceData {
   }>;
   total: number;
   notas?: string;
+  pago_usd?: number;
+  pago_ves?: number;
+  tasa_cambio?: number;
 }
 
 export const generateInvoicePDF = (data: InvoiceData) => {
@@ -93,7 +96,8 @@ export const generateInvoicePDF = (data: InvoiceData) => {
   doc.text(`${itemsCount} Servicios realizados`, 190, 66, { align: 'right' });
 
   // Table
-  const tableRows = data.items.map(item => [
+  const tableRows = data.items.map((item, i) => [
+    i + 1,
     item.descripcion,
     item.cantidad,
     `$${item.precio_unitario.toFixed(2)}`,
@@ -102,27 +106,28 @@ export const generateInvoicePDF = (data: InvoiceData) => {
 
   autoTable(doc, {
     startY: 85,
-    head: [['Descripción', 'Cant.', 'Precio Unit.', 'Total']],
+    head: [['#', 'Descripción', 'Cant.', 'Precio Unit.', 'Total']],
     body: tableRows,
     theme: 'plain',
     headStyles: { 
       fillColor: [255, 255, 255], 
       textColor: slate900, 
-      fontSize: 10, 
+      fontSize: 9, 
       fontStyle: 'bold',
       lineColor: slate900,
       lineWidth: { bottom: 1 }
     },
     styles: { 
-      fontSize: 9, 
+      fontSize: 8, 
       textColor: slate600,
-      cellPadding: 4
+      cellPadding: 3
     },
     columnStyles: {
-      0: { cellWidth: 100 },
-      1: { halign: 'center' },
-      2: { halign: 'right' },
-      3: { halign: 'right', fontStyle: 'bold', textColor: slate900 }
+      0: { cellWidth: 10, halign: 'center' },
+      1: { cellWidth: 90 },
+      2: { halign: 'center' },
+      3: { halign: 'right' },
+      4: { halign: 'right', fontStyle: 'bold', textColor: slate900 }
     },
     margin: { left: 20, right: 20 }
   });
@@ -140,13 +145,36 @@ export const generateInvoicePDF = (data: InvoiceData) => {
   doc.text('SUBTOTAL', 140, finalY + 12);
   doc.text(`$${data.total.toFixed(2)}`, 190, finalY + 12, { align: 'right' });
 
+  let currentY = finalY + 20;
+
+  if ((data.pago_usd || 0) > 0) {
+    doc.setFontSize(7);
+    doc.setTextColor(...slate400);
+    doc.text('PAGO USD ($)', 140, currentY);
+    doc.text(`$${Number(data.pago_usd).toFixed(2)}`, 190, currentY, { align: 'right' });
+    currentY += 5;
+  }
+
+  if ((data.pago_ves || 0) > 0) {
+    doc.setFontSize(7);
+    doc.setTextColor(...slate400);
+    doc.text('PAGO VES (Bs.)', 140, currentY);
+    doc.text(`Bs. ${Number(data.pago_ves).toLocaleString('es-VE', { minimumFractionDigits: 2 })}`, 190, currentY, { align: 'right' });
+    currentY += 5;
+    if (data.tasa_cambio) {
+        doc.setFontSize(6);
+        doc.text(`Tasa: ${data.tasa_cambio} Bs/$`, 190, currentY, { align: 'right' });
+        currentY += 4;
+    }
+  }
+
   doc.setTextColor(...slate900);
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
-  doc.text('TOTAL', 140, finalY + 20);
+  doc.text('TOTAL', 140, currentY + 4);
   
   doc.setTextColor(...primaryOrange);
-  doc.text(`$${data.total.toFixed(2)}`, 190, finalY + 20, { align: 'right' });
+  doc.text(`$${data.total.toFixed(2)}`, 190, currentY + 4, { align: 'right' });
 
   // Notes
   if (data.notas) {
@@ -237,7 +265,8 @@ export const generateEgresoPDF = (data: InvoiceData & { categoria?: string }) =>
   doc.text(`Categoría: ${data.categoria || 'General'}`, 20, 71);
 
   // Table
-  const tableRows = data.items.map(item => [
+  const tableRows = data.items.map((item, i) => [
+    i + 1,
     item.descripcion,
     item.cantidad,
     `$${item.precio_unitario.toFixed(2)}`,
@@ -246,27 +275,28 @@ export const generateEgresoPDF = (data: InvoiceData & { categoria?: string }) =>
 
   autoTable(doc, {
     startY: 85,
-    head: [['Concepto / Descripción', 'Cant.', 'Precio Unit.', 'Total']],
+    head: [['#', 'Concepto / Descripción', 'Cant.', 'Precio Unit.', 'Total']],
     body: tableRows,
     theme: 'plain',
     headStyles: { 
       fillColor: [255, 255, 255], 
       textColor: slate900, 
-      fontSize: 10, 
+      fontSize: 9, 
       fontStyle: 'bold',
       lineColor: slate900,
       lineWidth: { bottom: 1 }
     },
     styles: { 
-      fontSize: 9, 
+      fontSize: 8, 
       textColor: slate600,
-      cellPadding: 4
+      cellPadding: 3
     },
     columnStyles: {
-      0: { cellWidth: 100 },
-      1: { halign: 'center' },
-      2: { halign: 'right' },
-      3: { halign: 'right', fontStyle: 'bold', textColor: slate900 }
+      0: { cellWidth: 10, halign: 'center' },
+      1: { cellWidth: 90 },
+      2: { halign: 'center' },
+      3: { halign: 'right' },
+      4: { halign: 'right', fontStyle: 'bold', textColor: slate900 }
     },
     margin: { left: 20, right: 20 }
   });

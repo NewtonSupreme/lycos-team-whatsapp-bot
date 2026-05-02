@@ -32,6 +32,9 @@ interface VentaDia {
   imagen_url: string | null;
   creado_por: string;
   created_at: string;
+  pago_usd?: number;
+  pago_ves?: number;
+  tasa_cambio?: number;
 }
 
 interface DesglosItem {
@@ -57,24 +60,30 @@ interface Egreso {
 interface ScannedData {
   tipo_escaneo?: 'cierre' | 'ticket';
   fecha: string;
-  items?: DesglosItem[]; // for cierre
-  subtotal?: number;
-  descuentos?: number;
   total_ingresos: number;
-  moneda?: string;
   notas?: string;
   total_clientes?: number;
   total_servicios?: number;
   rawText?: string;
   
-  // Ticket fields
-  empresa_nombre?: string;
-  empresa_rif?: string;
-  hora?: string;
-  nro_factura?: string;
+  // From Gemini Cierre Mode
+  clientes_atendidos?: number;
+  formas_de_pago?: {
+    dolares?: number;
+    efectivo_bs?: number;
+    tasa?: number;
+    [key: string]: any;
+  };
+  clientes?: Array<{
+    nombre: string;
+    carro?: string;
+    servicio?: string;
+    total: number;
+  }>;
+
+  // From Gemini Ticket Mode
   cliente_nombre?: string;
-  cliente_vehiculo?: string;
-  impuestos?: number;
+  items?: DesglosItem[];
   metodo_pago?: string;
 }
 
@@ -106,6 +115,9 @@ function ManualModal({ onClose, onSave, initial }: {
     total_servicios: initial?.total_servicios || 0,
     total_clientes: initial?.total_clientes || 0,
     notas: initial?.notas || '',
+    pago_usd: initial?.pago_usd || 0,
+    pago_ves: initial?.pago_ves || 0,
+    tasa_cambio: initial?.tasa_cambio || 0,
   });
   const [items, setItems] = useState<DesglosItem[]>(
     initial?.desglose?.length ? initial.desglose : [{ descripcion: '', cantidad: 1, precio_unitario: 0, total: 0 }]
@@ -127,8 +139,19 @@ function ManualModal({ onClose, onSave, initial }: {
   const totalFromItems = items.reduce((s, it) => s + Number(it.total), 0);
 
   useEffect(() => {
+    // If we have payment values but total_ingresos is 0 (new entry), we might want to sync
+    // But usually total_ingresos is the source of truth from items
     setForm(f => ({ ...f, total_ingresos: totalFromItems }));
   }, [totalFromItems]);
+
+  const handlePaymentCalc = (field: 'pago_usd' | 'pago_ves' | 'tasa_cambio', val: number) => {
+    setForm(f => {
+      const next = { ...f, [field]: val };
+      // Optional: Auto-sync total_ingresos if only one payment method is used
+      // For now, we just keep them as extra info
+      return next;
+    });
+  };
 
   const handleSave = async () => {
     if (!form.fecha) { setError('La fecha es requerida'); return; }
@@ -142,6 +165,9 @@ function ManualModal({ onClose, onSave, initial }: {
         total_clientes: Number(form.total_clientes),
         notas: form.notas || null,
         desglose: items.filter(i => i.descripcion.trim()),
+        pago_usd: Number(form.pago_usd),
+        pago_ves: Number(form.pago_ves),
+        tasa_cambio: Number(form.tasa_cambio),
       });
       onClose();
     } catch (e) {
@@ -191,7 +217,7 @@ function ManualModal({ onClose, onSave, initial }: {
                 step="0.01"
                 value={form.total_ingresos}
                 onChange={e => setForm(f => ({ ...f, total_ingresos: Number(e.target.value) }))}
-                className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm focus:outline-none focus:ring-1 focus:ring-primary font-bold text-primary"
               />
             </div>
             <div className="space-y-1.5">
@@ -214,6 +240,53 @@ function ManualModal({ onClose, onSave, initial }: {
             </div>
           </div>
 
+          <div className="p-3 rounded-xl bg-primary/5 border border-primary/20 space-y-3">
+            <p className="text-[10px] font-bold text-primary uppercase tracking-wider">Desglose de Pago (Metodos)</p>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase">Monto en USD ($)</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1.5 text-xs text-muted-foreground">$</span>
+                  <input
+                    type="number" step="0.01"
+                    value={form.pago_usd}
+                    onChange={e => handlePaymentCalc('pago_usd', Number(e.target.value))}
+                    className="w-full pl-6 pr-3 py-1.5 rounded-lg border border-border/50 bg-background text-sm focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase">Monto en VES (Bs.)</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1.5 text-[10px] text-muted-foreground">Bs</span>
+                  <input
+                    type="number" step="0.01"
+                    value={form.pago_ves}
+                    onChange={e => handlePaymentCalc('pago_ves', Number(e.target.value))}
+                    className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-border/50 bg-background text-sm focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase">Tasa de Cambio (Bs/$)</label>
+                <div className="relative">
+                  <input
+                    type="number" step="0.01"
+                    placeholder="Ej: 36.5"
+                    value={form.tasa_cambio}
+                    onChange={e => handlePaymentCalc('tasa_cambio', Number(e.target.value))}
+                    className="w-full px-3 py-1.5 rounded-lg border border-border/50 bg-background text-sm focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+              </div>
+            </div>
+            {form.tasa_cambio > 0 && form.pago_ves > 0 && (
+              <p className="text-[10px] text-muted-foreground italic">
+                Equivalente Bs. a USD: ${(form.pago_ves / form.tasa_cambio).toFixed(2)} (Total proyectado: ${(Number(form.pago_usd) + (form.pago_ves / form.tasa_cambio)).toFixed(2)})
+              </p>
+            )}
+          </div>
+
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-medium text-muted-foreground">Desglose de servicios</label>
@@ -226,9 +299,12 @@ function ManualModal({ onClose, onSave, initial }: {
             </div>
             <div className="space-y-2">
               {items.map((item, i) => (
-                <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                <div key={i} className="grid grid-cols-12 gap-2 items-center group">
+                  <div className="col-span-1 text-[10px] font-bold text-muted-foreground text-center bg-muted/30 h-7 flex items-center justify-center rounded">
+                    {i + 1}
+                  </div>
                   <input
-                    className="col-span-5 px-2 py-1.5 rounded-lg border border-border/40 bg-background/50 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                    className="col-span-4 px-2 py-1.5 rounded-lg border border-border/40 bg-background/50 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
                     placeholder="Descripción del servicio"
                     value={item.descripcion}
                     onChange={e => updateItem(i, 'descripcion', e.target.value)}
@@ -250,7 +326,7 @@ function ManualModal({ onClose, onSave, initial }: {
                   </div>
                   <button
                     onClick={() => setItems(p => p.filter((_, j) => j !== i))}
-                    className="col-span-1 w-6 h-6 rounded hover:bg-destructive/20 text-destructive flex items-center justify-center"
+                    className="col-span-1 w-6 h-6 rounded hover:bg-destructive/20 text-destructive flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -419,9 +495,12 @@ function EgresoModal({ onClose, onSave, initial }: {
             </div>
             <div className="space-y-2">
               {items.map((item, i) => (
-                <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                <div key={i} className="grid grid-cols-12 gap-2 items-center group">
+                  <div className="col-span-1 text-[10px] font-bold text-muted-foreground text-center bg-muted/30 h-7 flex items-center justify-center rounded">
+                    {i + 1}
+                  </div>
                   <input
-                    className="col-span-5 px-2 py-1.5 rounded-lg border border-border/40 bg-background/50 text-xs"
+                    className="col-span-4 px-2 py-1.5 rounded-lg border border-border/40 bg-background/50 text-xs"
                     placeholder="¿En qué se gastó?"
                     value={item.descripcion}
                     onChange={e => updateItem(i, 'descripcion', e.target.value)}
@@ -439,7 +518,10 @@ function EgresoModal({ onClose, onSave, initial }: {
                   <div className="col-span-2 text-xs font-medium text-rose-400 text-right">
                     ${Number(item.total).toFixed(2)}
                   </div>
-                  <button onClick={() => setItems(p => p.filter((_, j) => j !== i))} className="col-span-1 text-destructive">
+                  <button
+                    onClick={() => setItems(p => p.filter((_, j) => j !== i))}
+                    className="col-span-1 text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
                     <X className="w-3 h-3" />
                   </button>
                 </div>
@@ -760,7 +842,10 @@ function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void
         cliente: venta.cliente || undefined,
         items: venta.desglose || [],
         total: venta.total_ingresos,
-        notas: venta.notas || undefined
+        notas: venta.notas || undefined,
+        pago_usd: venta.pago_usd,
+        pago_ves: venta.pago_ves,
+        tasa_cambio: venta.tasa_cambio
       });
     } catch (err) {
       alert('Error al generar PDF');
@@ -834,6 +919,26 @@ function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void
                   <span>SUBTOTAL</span>
                   <span>${venta.total_ingresos.toFixed(2)}</span>
                 </div>
+                
+                {(venta.pago_usd || 0) > 0 && (
+                  <div className="flex justify-between text-[10px] text-slate-400 italic">
+                    <span>PAGO USD ($)</span>
+                    <span>${Number(venta.pago_usd).toFixed(2)}</span>
+                  </div>
+                )}
+                {(venta.pago_ves || 0) > 0 && (
+                  <div className="flex justify-between text-[10px] text-slate-400 italic">
+                    <span>PAGO VES (Bs.)</span>
+                    <span>Bs. {Number(venta.pago_ves).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                )}
+                {venta.tasa_cambio && (venta.pago_ves || 0) > 0 && (
+                  <div className="flex justify-between text-[9px] text-slate-300">
+                    <span>TASA (Bs/$)</span>
+                    <span>{venta.tasa_cambio}</span>
+                  </div>
+                )}
+
                 <div className="flex justify-between text-xs font-black text-slate-900 pt-2 border-t border-slate-200">
                   <span>TOTAL</span>
                   <span className="text-primary">${venta.total_ingresos.toFixed(2)}</span>
@@ -1051,6 +1156,18 @@ export default function ReportesPage() {
     return Object.values(byWeek).slice(-12);
   }, [ventas, egresos]);
 
+  const handleSaveVenta = async (data: Partial<VentaDia>) => {
+    if (!supabase) return;
+    const payload = { ...data, updated_at: new Date().toISOString() };
+    if (editando) {
+      await supabase.from('ventas_dia').update(payload).eq('id', editando.id);
+    } else {
+      await supabase.from('ventas_dia').insert({ ...payload, creado_por: 'Admin' });
+    }
+    setEditando(null);
+    loadData();
+  };
+
   const handleSaveEgreso = async (data: Partial<Egreso>) => {
     if (!supabase) return;
     const payload = { ...data, updated_at: new Date().toISOString() };
@@ -1075,18 +1192,36 @@ export default function ReportesPage() {
       });
       return;
     }
+
     let finalNotas = scanned.notas || '';
     if (scanned.rawText) {
       finalNotas = finalNotas ? `${finalNotas}\n\n[FACTURA_IA_START]\n${scanned.rawText}\n[FACTURA_IA_END]` : `[FACTURA_IA_START]\n${scanned.rawText}\n[FACTURA_IA_END]`;
     }
+
+    // Map items from either 'items' (ticket) or 'clientes' (cierre)
+    let finalItems: DesglosItem[] = [];
+    if (scanned.items && scanned.items.length > 0) {
+      finalItems = scanned.items;
+    } else if (scanned.clientes && scanned.clientes.length > 0) {
+      finalItems = scanned.clientes.map(c => ({
+        descripcion: `${c.nombre}${c.carro ? ' - ' + c.carro : ''}${c.servicio ? ' (' + c.servicio + ')' : ''}`,
+        cantidad: 1,
+        precio_unitario: c.total,
+        total: c.total
+      }));
+    }
+
     await handleSaveVenta({
       fecha: scanned.fecha,
-      cliente: scanned.cliente_nombre || null,
+      cliente: scanned.cliente_nombre || (scanned.clientes?.[0]?.nombre) || null,
       total_ingresos: scanned.total_ingresos,
-      total_servicios: scanned.total_servicios || scanned.items?.length || 1,
-      total_clientes: scanned.total_clientes || 1,
-      desglose: scanned.items || [],
+      total_servicios: scanned.total_servicios || finalItems.length || 1,
+      total_clientes: scanned.total_clientes || scanned.clientes_atendidos || 1,
+      desglose: finalItems,
       notas: finalNotas || null,
+      pago_usd: scanned.formas_de_pago?.dolares || 0,
+      pago_ves: scanned.formas_de_pago?.efectivo_bs || 0,
+      tasa_cambio: scanned.formas_de_pago?.tasa || 0
     });
   };
 
@@ -1095,7 +1230,7 @@ export default function ReportesPage() {
       setDeleting(id);
       await supabase?.from('ventas_dia').delete().eq('id', id);
       setDeleting(null);
-      loadVentas();
+      loadData();
     }
   };
 
