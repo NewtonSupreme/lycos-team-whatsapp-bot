@@ -4,7 +4,8 @@ import { createPortal } from 'react-dom';
 import {
   Download, TrendingUp, DollarSign, Wrench, Users, Plus, Pencil,
   Trash2, CheckCircle, AlertCircle, Loader2, X, Camera, Eye,
-  Calendar, FileText, BarChart2, RefreshCw, Package, ChevronDown, Clock
+  Calendar, FileText, BarChart2, RefreshCw, Package, ChevronDown, Clock,
+  ArrowDownCircle, TrendingDown, Receipt
 } from 'lucide-react';
 import {
   Card, CardContent, CardHeader, CardTitle, CardDescription
@@ -16,7 +17,7 @@ import {
 } from 'recharts';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
-import { generateInvoicePDF } from '@/lib/invoice-pdf';
+import { generateInvoicePDF, generateEgresoPDF } from '@/lib/invoice-pdf';
 
 // ── Types ──────────────────────────────────────────────────────
 interface VentaDia {
@@ -38,6 +39,19 @@ interface DesglosItem {
   cantidad: number;
   precio_unitario: number;
   total: number;
+}
+
+interface Egreso {
+  id: string;
+  fecha: string;
+  cliente: string | null;
+  total_egresos: number;
+  categoria: string;
+  desglose: DesglosItem[];
+  notas: string | null;
+  imagen_url: string | null;
+  creado_por: string;
+  created_at: string;
 }
 
 interface ScannedData {
@@ -150,7 +164,6 @@ function ManualModal({ onClose, onSave, initial }: {
         </div>
 
         <div className="p-5 space-y-4">
-          {/* Fecha + Totales */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">Fecha del cierre</label>
@@ -201,7 +214,6 @@ function ManualModal({ onClose, onSave, initial }: {
             </div>
           </div>
 
-          {/* Desglose de items */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-medium text-muted-foreground">Desglose de servicios</label>
@@ -284,11 +296,187 @@ function ManualModal({ onClose, onSave, initial }: {
   );
 }
 
+function EgresoModal({ onClose, onSave, initial }: {
+  onClose: () => void;
+  onSave: (data: Partial<Egreso>) => Promise<void>;
+  initial?: Egreso | null;
+}) {
+  const [form, setForm] = useState({
+    fecha: initial?.fecha || new Date().toISOString().split('T')[0],
+    cliente: initial?.cliente || '',
+    categoria: initial?.categoria || 'otro',
+    total_egresos: initial?.total_egresos || 0,
+    notas: initial?.notas || '',
+  });
+  const [items, setItems] = useState<DesglosItem[]>(
+    initial?.desglose?.length ? initial.desglose : [{ descripcion: '', cantidad: 1, precio_unitario: 0, total: 0 }]
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const updateItem = (i: number, key: keyof DesglosItem, val: string | number) => {
+    setItems(prev => {
+      const next = [...prev];
+      next[i] = { ...next[i], [key]: val };
+      if (key === 'cantidad' || key === 'precio_unitario') {
+        next[i].total = Number(next[i].cantidad) * Number(next[i].precio_unitario);
+      }
+      return next;
+    });
+  };
+
+  const totalFromItems = items.reduce((s, it) => s + Number(it.total), 0);
+  useEffect(() => { setForm(f => ({ ...f, total_egresos: totalFromItems })); }, [totalFromItems]);
+
+  const handleSave = async () => {
+    if (!form.fecha) { setError('La fecha es requerida'); return; }
+    setSaving(true);
+    try {
+      await onSave({
+        fecha: form.fecha,
+        cliente: form.cliente || null,
+        categoria: form.categoria,
+        total_egresos: Number(form.total_egresos),
+        notas: form.notas || null,
+        desglose: items.filter(i => i.descripcion.trim()),
+      });
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al guardar');
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-card border border-border rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl">
+        <div className="flex items-center justify-between p-5 border-b border-border/30">
+          <div>
+            <h2 className="text-base font-bold text-rose-400">{initial ? 'Editar egreso' : 'Nuevo registro de egreso'}</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Registra pagos, compras o gastos del taller</p>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-white/5 flex items-center justify-center">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Fecha del egreso</label>
+              <input
+                type="date"
+                value={form.fecha}
+                onChange={e => setForm(f => ({ ...f, fecha: e.target.value }))}
+                className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Categoría</label>
+              <select
+                value={form.categoria}
+                onChange={e => setForm(f => ({ ...f, categoria: e.target.value }))}
+                className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm"
+              >
+                <option value="repuestos">Compra de Repuestos</option>
+                <option value="servicios">Pago de Servicios (Luz, Agua, etc)</option>
+                <option value="nomina">Nómina / Personal</option>
+                <option value="herramientas">Herramientas</option>
+                <option value="local">Alquiler / Local</option>
+                <option value="otro">Otro gasto</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Pagado a (Proveedor / Nombre)</label>
+              <input
+                type="text"
+                placeholder="Ej: Repuestos El Chamo"
+                value={form.cliente}
+                onChange={e => setForm(f => ({ ...f, cliente: e.target.value }))}
+                className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Total egreso ($)</label>
+              <input
+                type="number" step="0.01"
+                value={form.total_egresos}
+                onChange={e => setForm(f => ({ ...f, total_egresos: Number(e.target.value) }))}
+                className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm font-bold text-rose-400"
+              />
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-medium text-muted-foreground">Desglose de egreso</label>
+              <button
+                onClick={() => setItems(p => [...p, { descripcion: '', cantidad: 1, precio_unitario: 0, total: 0 }])}
+                className="text-xs text-rose-400 hover:underline flex items-center gap-1"
+              >
+                <Plus className="w-3 h-3" /> Agregar ítem
+              </button>
+            </div>
+            <div className="space-y-2">
+              {items.map((item, i) => (
+                <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                  <input
+                    className="col-span-5 px-2 py-1.5 rounded-lg border border-border/40 bg-background/50 text-xs"
+                    placeholder="¿En qué se gastó?"
+                    value={item.descripcion}
+                    onChange={e => updateItem(i, 'descripcion', e.target.value)}
+                  />
+                  <input
+                    className="col-span-2 px-2 py-1.5 rounded-lg border border-border/40 bg-background/50 text-xs"
+                    type="number" placeholder="Cant." value={item.cantidad}
+                    onChange={e => updateItem(i, 'cantidad', Number(e.target.value))}
+                  />
+                  <input
+                    className="col-span-2 px-2 py-1.5 rounded-lg border border-border/40 bg-background/50 text-xs"
+                    type="number" placeholder="$" value={item.precio_unitario}
+                    onChange={e => updateItem(i, 'precio_unitario', Number(e.target.value))}
+                  />
+                  <div className="col-span-2 text-xs font-medium text-rose-400 text-right">
+                    ${Number(item.total).toFixed(2)}
+                  </div>
+                  <button onClick={() => setItems(p => p.filter((_, j) => j !== i))} className="col-span-1 text-destructive">
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Notas</label>
+            <textarea
+              value={form.notas}
+              onChange={e => setForm(f => ({ ...f, notas: e.target.value }))}
+              placeholder="Detalles adicionales..."
+              rows={2}
+              className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-xs resize-none"
+            />
+          </div>
+
+          {error && <div className="text-xs text-destructive p-2.5 rounded-lg bg-destructive/10">{error}</div>}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 p-5 border-t border-border/30">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm">Cancelar</button>
+          <Button onClick={handleSave} disabled={saving} className="bg-rose-600 hover:bg-rose-700">
+            {saving ? 'Guardando...' : 'Guardar Egreso'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Modal: Scan IA + Confirmación ──────────────────────────────
 function ScanModal({ onClose, onConfirm, modo }: {
   onClose: () => void;
   onConfirm: (data: ScannedData) => void;
-  modo: 'cierre' | 'ticket';
+  modo: 'cierre' | 'ticket' | 'egreso';
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -566,7 +754,6 @@ function ScanModal({ onClose, onConfirm, modo }: {
 function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void }) {
   const handleDownload = () => {
     try {
-      console.log('📄 Generando PDF para venta:', venta.id);
       generateInvoicePDF({
         id: venta.id,
         fecha: venta.fecha,
@@ -575,10 +762,8 @@ function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void
         total: venta.total_ingresos,
         notas: venta.notas || undefined
       });
-      console.log('✅ PDF generado con éxito');
     } catch (err) {
-      console.error('❌ Error al generar PDF:', err);
-      alert('Hubo un error al generar el PDF. Por favor, revisa la consola.');
+      alert('Error al generar PDF');
     }
   };
 
@@ -595,7 +780,6 @@ function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void
         </div>
         
         <div className="p-6 overflow-y-auto bg-white text-slate-900 font-sans">
-          {/* Professional Invoice Preview Design */}
           <div className="border border-slate-200 p-8 rounded-lg shadow-sm">
             <div className="flex justify-between items-start mb-8">
               <div>
@@ -669,11 +853,110 @@ function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void
         </div>
 
         <div className="p-4 border-t border-border/30 bg-muted/20 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm hover:bg-white/5 transition-colors">
-            Cerrar
-          </button>
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm hover:bg-white/5 transition-colors">Cerrar</button>
           <Button onClick={handleDownload} className="gap-2">
             <Download className="w-4 h-4" /> Descargar PDF Profesional
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EgresoPreviewModal({ egreso, onClose }: { egreso: Egreso; onClose: () => void }) {
+  const handleDownload = () => {
+    try {
+      generateEgresoPDF({
+        id: egreso.id,
+        fecha: egreso.fecha,
+        cliente: egreso.cliente || undefined,
+        categoria: egreso.categoria,
+        items: egreso.desglose || [],
+        total: egreso.total_egresos,
+        notas: egreso.notas || undefined
+      });
+    } catch (err) {
+      alert('Error al generar PDF');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-card border border-border rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between p-4 border-b border-border/30 bg-muted/20">
+          <h2 className="text-sm font-bold flex items-center gap-2 text-rose-400">
+            <Receipt className="w-4 h-4" /> Vista Previa de Egreso
+          </h2>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-white/5 flex items-center justify-center">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        
+        <div className="p-6 overflow-y-auto bg-white text-slate-900 font-sans">
+          <div className="border border-slate-200 p-8 rounded-lg shadow-sm">
+            <div className="flex justify-between items-start mb-8">
+              <div>
+                <h1 className="text-2xl font-black text-slate-900 tracking-tight">LYCOS TEAM</h1>
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">Comprobante de Egreso / Pago</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-bold text-slate-400 uppercase">Egreso</p>
+                <p className="text-sm font-bold text-slate-900">#{egreso.id.slice(0, 8).toUpperCase()}</p>
+                <p className="text-[10px] text-slate-500 mt-1">{egreso.fecha}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-8 mb-8 pb-8 border-b border-slate-100">
+              <div>
+                <p className="text-[9px] font-bold text-slate-400 uppercase mb-2">Pagado a:</p>
+                <p className="text-xs font-bold text-slate-900">{egreso.cliente || 'Proveedor / Otros'}</p>
+                <p className="text-[10px] text-slate-500 mt-1 uppercase">Categoría: {egreso.categoria}</p>
+              </div>
+            </div>
+
+            <table className="w-full text-xs mb-8">
+              <thead>
+                <tr className="border-b-2 border-slate-900">
+                  <th className="text-left py-2 font-bold text-slate-900">Concepto</th>
+                  <th className="text-center py-2 font-bold text-slate-900 w-16">Cant.</th>
+                  <th className="text-right py-2 font-bold text-slate-900 w-24">Precio</th>
+                  <th className="text-right py-2 font-bold text-slate-900 w-24">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {egreso.desglose.map((item, i) => (
+                  <tr key={i}>
+                    <td className="py-3 text-slate-700">{item.descripcion}</td>
+                    <td className="py-3 text-center text-slate-600">{item.cantidad}</td>
+                    <td className="py-3 text-right text-slate-600">${item.precio_unitario.toFixed(2)}</td>
+                    <td className="py-3 text-right font-medium text-slate-900">${item.total.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="flex justify-end pt-4">
+              <div className="w-48 space-y-2">
+                <div className="flex justify-between text-xs font-black text-slate-900 pt-2 border-t border-slate-200">
+                  <span>TOTAL PAGADO</span>
+                  <span className="text-rose-600">${egreso.total_egresos.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+
+            {egreso.notas && (
+              <div className="mt-12 pt-4 border-t border-slate-100">
+                <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Notas:</p>
+                <p className="text-[10px] text-slate-500 leading-relaxed italic">{egreso.notas}</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="p-4 border-t border-border/30 bg-muted/20 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm">Cerrar</button>
+          <Button onClick={handleDownload} className="gap-2 bg-rose-600 hover:bg-rose-700">
+            <Download className="w-4 h-4" /> Descargar PDF Egreso
           </Button>
         </div>
       </div>
@@ -684,15 +967,19 @@ function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void
 // ── Main Page ──────────────────────────────────────────────────
 export default function ReportesPage() {
   const [ventas, setVentas] = useState<VentaDia[]>([]);
+  const [egresos, setEgresos] = useState<Egreso[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'graficos' | 'cierres' | 'historial'>('graficos');
+  const [tab, setTab] = useState<'graficos' | 'cierres' | 'egresos' | 'historial'>('graficos');
   const [period, setPeriod] = useState('30d');
   const [showManual, setShowManual] = useState(false);
-  const [scanMode, setScanMode] = useState<'cierre' | 'ticket' | null>(null);
+  const [showManualEgreso, setShowManualEgreso] = useState(false);
+  const [scanMode, setScanMode] = useState<'cierre' | 'ticket' | 'egreso' | null>(null);
   const [editando, setEditando] = useState<VentaDia | null>(null);
+  const [editandoEgreso, setEditandoEgreso] = useState<Egreso | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [previewInvoice, setPreviewInvoice] = useState<string | null>(null);
   const [selectedVenta, setSelectedVenta] = useState<VentaDia | null>(null);
+  const [selectedEgreso, setSelectedEgreso] = useState<Egreso | null>(null);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -706,88 +993,95 @@ export default function ReportesPage() {
 
   // Stats from ventas
   const totalIngresos = ventas.reduce((s, v) => s + Number(v.total_ingresos), 0);
+  const totalEgresos = egresos.reduce((s, e) => s + Number(e.total_egresos), 0);
+  const balanceNeto = totalIngresos - totalEgresos;
   const totalServicios = ventas.reduce((s, v) => s + Number(v.total_servicios), 0);
   const totalClientes = ventas.reduce((s, v) => s + Number(v.total_clientes), 0);
   const ticketPromedio = totalServicios > 0 ? totalIngresos / totalServicios : 0;
 
-  const loadVentas = useCallback(async () => {
+  const loadData = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
     const days = period === '7d' ? 7 : period === '30d' ? 30 : period === '3m' ? 90 : 365;
     const from = new Date(Date.now() - days * 86400000).toISOString().split('T')[0];
-    const { data } = await supabase
-      .from('ventas_dia')
-      .select('*')
-      .gte('fecha', from)
-      .order('fecha', { ascending: false });
-    setVentas((data as VentaDia[]) || []);
+    
+    const [vRes, eRes] = await Promise.all([
+      supabase.from('ventas_dia').select('*').gte('fecha', from).order('fecha', { ascending: false }),
+      supabase.from('egresos').select('*').gte('fecha', from).order('fecha', { ascending: false })
+    ]);
+    
+    setVentas((vRes.data as VentaDia[]) || []);
+    setEgresos((eRes.data as Egreso[]) || []);
     setLoading(false);
   }, [period]);
 
-  useEffect(() => { loadVentas(); }, [loadVentas]);
+  useEffect(() => { loadData(); }, [loadData]);
 
   // Realtime
   useEffect(() => {
     if (!supabase) return;
-    const ch = supabase.channel('ventas-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ventas_dia' }, () => {
-        loadVentas();
-      })
+    const ch = supabase.channel('financial-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ventas_dia' }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'egresos' }, () => loadData())
       .subscribe();
     return () => { supabase?.removeChannel(ch); };
-  }, [loadVentas]);
+  }, [loadData]);
 
   // Chart data grouping by week
   const chartData = React.useMemo(() => {
-    const byWeek: Record<string, { semana: string; ingresos: number; servicios: number }> = {};
+    const byWeek: Record<string, { semana: string; ingresos: number; egresos: number; servicios: number }> = {};
+    
     [...ventas].reverse().forEach(v => {
       const d = new Date(v.fecha + 'T12:00:00');
       const weekNum = Math.floor(d.getDate() / 7) + 1;
       const key = `${d.toLocaleString('es', { month: 'short' })} S${weekNum}`;
-      if (!byWeek[key]) byWeek[key] = { semana: key, ingresos: 0, servicios: 0 };
+      if (!byWeek[key]) byWeek[key] = { semana: key, ingresos: 0, egresos: 0, servicios: 0 };
       byWeek[key].ingresos += Number(v.total_ingresos);
       byWeek[key].servicios += Number(v.total_servicios);
     });
-    return Object.values(byWeek).slice(-12);
-  }, [ventas]);
 
-  // Save venta (create or update)
-  const handleSaveVenta = async (data: Partial<VentaDia>, imagenUrl?: string) => {
+    [...egresos].reverse().forEach(e => {
+      const d = new Date(e.fecha + 'T12:00:00');
+      const weekNum = Math.floor(d.getDate() / 7) + 1;
+      const key = `${d.toLocaleString('es', { month: 'short' })} S${weekNum}`;
+      if (!byWeek[key]) byWeek[key] = { semana: key, ingresos: 0, egresos: 0, servicios: 0 };
+      byWeek[key].egresos += Number(e.total_egresos);
+    });
+
+    return Object.values(byWeek).slice(-12);
+  }, [ventas, egresos]);
+
+  const handleSaveEgreso = async (data: Partial<Egreso>) => {
     if (!supabase) return;
-    const payload = {
-      ...data,
-      imagen_url: imagenUrl || editando?.imagen_url || null,
-      updated_at: new Date().toISOString(),
-    };
-    if (editando) {
-      await supabase.from('ventas_dia').update(payload).eq('id', editando.id);
-      await supabase.from('logs_actividad').insert({
-        usuario: 'Admin',
-        accion: 'Cierre de caja actualizado',
-        modulo: 'Reportes',
-        detalles: `Fecha: ${data.fecha} · $${data.total_ingresos}`
-      });
+    const payload = { ...data, updated_at: new Date().toISOString() };
+    if (editandoEgreso) {
+      await supabase.from('egresos').update(payload).eq('id', editandoEgreso.id);
     } else {
-      await supabase.from('ventas_dia').insert({ ...payload, creado_por: 'Admin' });
-      await supabase.from('logs_actividad').insert({
-        usuario: 'Admin',
-        accion: 'Cierre de caja registrado',
-        modulo: 'Reportes',
-        detalles: `Fecha: ${data.fecha} · $${data.total_ingresos}`
-      });
+      await supabase.from('egresos').insert({ ...payload, creado_por: 'Admin' });
     }
-    setEditando(null);
-    loadVentas();
+    setEditandoEgreso(null);
+    loadData();
   };
 
   const handleScanConfirm = async (scanned: ScannedData) => {
+    if (scanMode === 'egreso') {
+      await handleSaveEgreso({
+        fecha: scanned.fecha,
+        cliente: scanned.cliente_nombre || null,
+        total_egresos: scanned.total_ingresos,
+        desglose: scanned.items || [],
+        categoria: 'otro',
+        notas: scanned.notas || null
+      });
+      return;
+    }
     let finalNotas = scanned.notas || '';
     if (scanned.rawText) {
       finalNotas = finalNotas ? `${finalNotas}\n\n[FACTURA_IA_START]\n${scanned.rawText}\n[FACTURA_IA_END]` : `[FACTURA_IA_START]\n${scanned.rawText}\n[FACTURA_IA_END]`;
     }
     await handleSaveVenta({
       fecha: scanned.fecha,
-      cliente: scanned.cliente_nombre || scanned.cliente_nombre || null,
+      cliente: scanned.cliente_nombre || null,
       total_ingresos: scanned.total_ingresos,
       total_servicios: scanned.total_servicios || scanned.items?.length || 1,
       total_clientes: scanned.total_clientes || 1,
@@ -866,6 +1160,12 @@ export default function ReportesPage() {
                   <Package className="w-4 h-4 text-violet-400" /> Cierre de Caja
                 </button>
                 <button
+                  onClick={() => setScanMode('egreso')}
+                  className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-white/5 rounded-lg text-left"
+                >
+                  <ArrowDownCircle className="w-4 h-4 text-rose-400" /> Egreso / Gasto
+                </button>
+                <button
                   onClick={() => setScanMode('ticket')}
                   className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-white/5 rounded-lg text-left"
                 >
@@ -910,9 +1210,17 @@ export default function ReportesPage() {
           )}
         >
           <Package className="w-4 h-4" /> Cierres de Caja
-          {ventas.length > 0 && (
-            <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded-full font-semibold">
-              {ventas.length}
+        </button>
+        <button
+          onClick={() => setTab('egresos')}
+          className={cn('flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all',
+            tab === 'egresos' ? 'bg-card shadow-sm text-rose-400 font-bold' : 'text-muted-foreground hover:text-foreground'
+          )}
+        >
+          <ArrowDownCircle className="w-4 h-4 text-rose-400" /> Egresos
+          {egresos.length > 0 && (
+            <span className="text-[10px] bg-rose-500/20 text-rose-400 px-1.5 py-0.5 rounded-full font-semibold">
+              {egresos.length}
             </span>
           )}
         </button>
@@ -922,17 +1230,17 @@ export default function ReportesPage() {
             tab === 'historial' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'
           )}
         >
-          <Calendar className="w-4 h-4" /> Historial y Calendario
+          <Calendar className="w-4 h-4" /> Historial
         </button>
       </div>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { label: 'Ingresos del Período', value: `$${totalIngresos.toFixed(2)}`, sub: `${ventas.length} cierres registrados`, icon: DollarSign, color: 'text-green-400 bg-green-500/10' },
-          { label: 'Servicios Realizados', value: totalServicios, sub: 'Total del período', icon: Wrench, color: 'text-primary bg-primary/10' },
-          { label: 'Clientes Atendidos', value: totalClientes, sub: 'Total registro', icon: Users, color: 'text-blue-400 bg-blue-500/10' },
-          { label: 'Ticket Promedio', value: `$${ticketPromedio.toFixed(2)}`, sub: 'Por servicio', icon: TrendingUp, color: 'text-purple-400 bg-purple-500/10' },
+          { label: 'Ingresos Totales', value: `$${totalIngresos.toFixed(2)}`, sub: 'Dinero recibido', icon: DollarSign, color: 'text-green-400 bg-green-500/10' },
+          { label: 'Egresos Totales', value: `$${totalEgresos.toFixed(2)}`, sub: 'Gastos y pagos', icon: ArrowDownCircle, color: 'text-rose-400 bg-rose-500/10' },
+          { label: 'Balance Neto', value: `$${balanceNeto.toFixed(2)}`, sub: 'Utilidad bruta', icon: TrendingUp, color: balanceNeto >= 0 ? 'text-blue-400 bg-blue-500/10' : 'text-rose-400 bg-rose-500/10' },
+          { label: 'Ticket Promedio', value: `$${ticketPromedio.toFixed(2)}`, sub: 'Venta por servicio', icon: Receipt, color: 'text-purple-400 bg-purple-500/10' },
         ].map(({ label, value, sub, icon: Icon, color }) => (
           <div key={label} className="rounded-xl border border-border/50 bg-card/50 p-4">
             <div className="flex items-start justify-between">
@@ -970,24 +1278,29 @@ export default function ReportesPage() {
           ) : (
             <>
               <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Ingresos por Semana</CardTitle>
-                  <CardDescription className="text-xs">Evolución de ventas reales del período</CardDescription>
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <div>
+                    <CardTitle className="text-base">Evolución Financiera</CardTitle>
+                    <CardDescription className="text-xs">Comparativa semanal de ingresos vs egresos</CardDescription>
+                  </div>
+                  <div className="flex gap-4 text-[10px] font-bold">
+                    <span className="flex items-center gap-1 text-orange-400"><span className="w-2 h-2 rounded-full bg-orange-400" /> INGRESOS</span>
+                    <span className="flex items-center gap-1 text-rose-400"><span className="w-2 h-2 rounded-full bg-rose-400" /> EGRESOS</span>
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={220}>
                     <AreaChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
                       <defs>
-                        <linearGradient id="gIngresos" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#f97316" stopOpacity={0.3} />
-                          <stop offset="95%" stopColor="#f97316" stopOpacity={0} />
-                        </linearGradient>
+                        <linearGradient id="gIngresos" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f97316" stopOpacity={0.3} /><stop offset="95%" stopColor="#f97316" stopOpacity={0} /></linearGradient>
+                        <linearGradient id="gEgresos" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#e11d48" stopOpacity={0.3} /><stop offset="95%" stopColor="#e11d48" stopOpacity={0} /></linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
                       <XAxis dataKey="semana" tick={{ fontSize: 10, fill: '#6b7280' }} axisLine={false} tickLine={false} />
                       <YAxis tick={{ fontSize: 10, fill: '#6b7280' }} axisLine={false} tickLine={false} />
                       <Tooltip content={<CustomTooltip />} />
-                      <Area type="monotone" dataKey="ingresos" name="Ingresos ($)" stroke="#f97316" strokeWidth={2} fill="url(#gIngresos)" />
+                      <Area type="monotone" dataKey="ingresos" name="Ingresos" stroke="#f97316" strokeWidth={2} fill="url(#gIngresos)" />
+                      <Area type="monotone" dataKey="egresos" name="Egresos" stroke="#e11d48" strokeWidth={2} fill="url(#gEgresos)" />
                     </AreaChart>
                   </ResponsiveContainer>
                 </CardContent>
@@ -995,8 +1308,8 @@ export default function ReportesPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Servicios por Semana</CardTitle>
-                  <CardDescription className="text-xs">Volumen de trabajo semanal</CardDescription>
+                  <CardTitle className="text-base">Actividad Semanal</CardTitle>
+                  <CardDescription className="text-xs">Servicios y volumen de trabajo</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={180}>
@@ -1006,7 +1319,7 @@ export default function ReportesPage() {
                       <YAxis tick={{ fontSize: 10, fill: '#6b7280' }} axisLine={false} tickLine={false} />
                       <Tooltip />
                       <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Bar dataKey="servicios" name="Servicios" fill="#3b82f6" radius={[3, 3, 0, 0]} opacity={0.85} />
+                      <Bar dataKey="servicios" name="Servicios realizados" fill="#3b82f6" radius={[3, 3, 0, 0]} opacity={0.85} />
                     </BarChart>
                   </ResponsiveContainer>
                 </CardContent>
@@ -1174,6 +1487,117 @@ export default function ReportesPage() {
         </div>
       )}
 
+      {/* ── Tab: Egresos ────────────────────────────────────── */}
+      {tab === 'egresos' && (
+        <div className="space-y-3">
+          {loading ? (
+             <div className="flex items-center justify-center py-12">
+               <Loader2 className="w-5 h-5 animate-spin text-muted-foreground mr-2" />
+               <span className="text-sm text-muted-foreground">Cargando egresos...</span>
+             </div>
+          ) : egresos.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-16">
+                <ArrowDownCircle className="w-10 h-10 text-muted-foreground/20 mb-3" />
+                <p className="text-sm font-medium">Sin egresos registrados</p>
+                <p className="text-xs text-muted-foreground mt-1 mb-4">
+                  Registra un gasto o pago manualmente
+                </p>
+                <Button size="sm" onClick={() => setShowManualEgreso(true)} className="gap-2 bg-rose-600">
+                  <Plus className="w-4 h-4" /> Nuevo Egreso
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border/20">
+                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3">Fecha</th>
+                        <th className="text-right text-xs text-muted-foreground font-medium px-4 py-3">Monto</th>
+                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3">Categoría</th>
+                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3">Pagado a</th>
+                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3 hidden md:table-cell">Notas</th>
+                        <th className="px-4 py-3"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {egresos.map(e => (
+                        <tr key={e.id} className="border-b border-border/10 hover:bg-rose-500/5 transition-colors group">
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <div className="w-7 h-7 rounded-lg bg-rose-500/10 flex items-center justify-center">
+                                <ArrowDownCircle className="w-3.5 h-3.5 text-rose-400" />
+                              </div>
+                              <p className="text-sm font-medium">
+                                {new Date(e.fecha + 'T12:00:00').toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })}
+                              </p>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <span className="font-bold text-rose-400">-${Number(e.total_egresos).toFixed(2)}</span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 text-[10px] font-bold uppercase tracking-wider">
+                              {e.categoria}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 font-medium text-slate-200">{e.cliente || 'Otros'}</td>
+                          <td className="px-4 py-3 text-xs text-muted-foreground hidden md:table-cell max-w-[200px] truncate">
+                            {e.notas || '—'}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => setSelectedEgreso(e)}
+                                className="w-7 h-7 rounded-lg hover:bg-rose-500/10 text-rose-400 flex items-center justify-center"
+                                title="Ver Comprobante"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => { setEditandoEgreso(e); setShowManualEgreso(true); }}
+                                className="w-7 h-7 rounded-lg hover:bg-white/5 text-muted-foreground flex items-center justify-center"
+                                title="Editar"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={async () => { if(confirm('¿Eliminar egreso?')) { await supabase?.from('egresos').delete().eq('id', e.id); loadData(); } }}
+                                className="w-7 h-7 rounded-lg hover:bg-destructive/10 text-destructive flex items-center justify-center"
+                                title="Eliminar"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-border/30 bg-muted/10">
+                        <td className="px-4 py-3 text-xs font-medium text-muted-foreground">Total período</td>
+                        <td className="px-4 py-3 text-right text-sm font-bold text-rose-400">
+                          -${totalEgresos.toFixed(2)}
+                        </td>
+                        <td colSpan={4} />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          <div className="flex justify-end">
+            <Button onClick={() => setShowManualEgreso(true)} className="gap-2 bg-rose-600 hover:bg-rose-700">
+              <Plus className="w-4 h-4" /> Registrar Egreso
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* ── Tab: Historial y Calendario ──────────────────────── */}
       {tab === 'historial' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -1296,7 +1720,7 @@ export default function ReportesPage() {
         </div>
       )}
 
-      {/* Modals con Portals para evitar conflictos de posicionamiento fixed con transform/page-enter */}
+      {/* Modals con Portals */}
       {mounted && showManual && createPortal(
         <ManualModal
           onClose={() => { setShowManual(false); setEditando(null); }}
@@ -1305,15 +1729,57 @@ export default function ReportesPage() {
         />,
         document.body
       )}
-      {mounted && scanMode && createPortal(
-        <ScanModal modo={scanMode} onClose={() => setScanMode(null)} onConfirm={handleScanConfirm} />,
+
+      {mounted && showManualEgreso && createPortal(
+        <EgresoModal
+          onClose={() => { setShowManualEgreso(false); setEditandoEgreso(null); }}
+          onSave={handleSaveEgreso}
+          initial={editandoEgreso}
+        />,
         document.body
       )}
+
+      {mounted && scanMode && createPortal(
+        <ScanModal
+          modo={scanMode}
+          onClose={() => setScanMode(null)}
+          onConfirm={handleScanConfirm}
+        />,
+        document.body
+      )}
+
       {mounted && selectedVenta && createPortal(
         <InvoiceModal
           venta={selectedVenta}
           onClose={() => setSelectedVenta(null)}
         />,
+        document.body
+      )}
+
+      {mounted && selectedEgreso && createPortal(
+        <EgresoPreviewModal
+          egreso={selectedEgreso}
+          onClose={() => setSelectedEgreso(null)}
+        />,
+        document.body
+      )}
+
+      {mounted && previewInvoice && createPortal(
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-2xl w-full max-w-xl max-h-[80vh] flex flex-col shadow-2xl">
+            <div className="flex items-center justify-between p-4 border-b border-border/30">
+              <h3 className="text-sm font-bold flex items-center gap-2">
+                <FileText className="w-4 h-4 text-violet-400" /> Texto Extraído por IA
+              </h3>
+              <button onClick={() => setPreviewInvoice(null)} className="p-2 hover:bg-white/5 rounded-lg">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto font-mono text-[10px] leading-relaxed text-muted-foreground whitespace-pre-wrap bg-black/20 m-4 rounded-xl border border-border/20">
+              {previewInvoice}
+            </div>
+          </div>
+        </div>,
         document.body
       )}
     </div>
