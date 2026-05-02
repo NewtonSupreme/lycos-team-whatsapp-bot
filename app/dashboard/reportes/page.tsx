@@ -22,6 +22,7 @@ import { generateInvoicePDF } from '@/lib/invoice-pdf';
 interface VentaDia {
   id: string;
   fecha: string;
+  cliente: string | null;
   total_ingresos: number;
   total_servicios: number;
   total_clientes: number;
@@ -86,6 +87,7 @@ function ManualModal({ onClose, onSave, initial }: {
 }) {
   const [form, setForm] = useState({
     fecha: initial?.fecha || new Date().toISOString().split('T')[0],
+    cliente: initial?.cliente || '',
     total_ingresos: initial?.total_ingresos || 0,
     total_servicios: initial?.total_servicios || 0,
     total_clientes: initial?.total_clientes || 0,
@@ -120,6 +122,7 @@ function ManualModal({ onClose, onSave, initial }: {
     try {
       await onSave({
         fecha: form.fecha,
+        cliente: form.cliente || null,
         total_ingresos: Number(form.total_ingresos),
         total_servicios: Number(form.total_servicios) || items.filter(i => i.descripcion).length,
         total_clientes: Number(form.total_clientes),
@@ -155,6 +158,16 @@ function ManualModal({ onClose, onSave, initial }: {
                 type="date"
                 value={form.fecha}
                 onChange={e => setForm(f => ({ ...f, fecha: e.target.value }))}
+                className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Nombre del Cliente (Opcional)</label>
+              <input
+                type="text"
+                placeholder="Ej: Juan Pérez o Empresa X"
+                value={form.cliente}
+                onChange={e => setForm(f => ({ ...f, cliente: e.target.value }))}
                 className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
               />
             </div>
@@ -445,9 +458,9 @@ function ScanModal({ onClose, onConfirm, modo }: {
                 <>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5"><label className="text-xs text-muted-foreground">Fecha</label><input type="date" value={scanned.fecha} onChange={e => setScanned({...scanned, fecha: e.target.value})} className="w-full px-3 py-2 rounded border border-border/50 bg-background text-sm font-semibold" /></div>
+                    <div className="space-y-1.5"><label className="text-xs text-muted-foreground">Cliente</label><input type="text" placeholder="Nombre del cliente" value={scanned.cliente_nombre || ''} onChange={e => setScanned({...scanned, cliente_nombre: e.target.value})} className="w-full px-3 py-2 rounded border border-border/50 bg-background text-sm" /></div>
                     <div className="space-y-1.5"><label className="text-xs text-muted-foreground">Total Ingresos ($)</label><input type="number" step="0.01" value={scanned.total_ingresos} onChange={e => setScanned({...scanned, total_ingresos: Number(e.target.value)})} className="w-full px-3 py-2 rounded border border-border/50 bg-background text-sm font-bold text-green-400" /></div>
                     <div className="space-y-1.5"><label className="text-xs text-muted-foreground">Servicios</label><input type="number" value={scanned.total_servicios} onChange={e => setScanned({...scanned, total_servicios: Number(e.target.value)})} className="w-full px-3 py-2 rounded border border-border/50 bg-background text-sm" /></div>
-                    <div className="space-y-1.5"><label className="text-xs text-muted-foreground">Clientes</label><input type="number" value={scanned.total_clientes} onChange={e => setScanned({...scanned, total_clientes: Number(e.target.value)})} className="w-full px-3 py-2 rounded border border-border/50 bg-background text-sm" /></div>
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs text-muted-foreground flex justify-between">
@@ -557,6 +570,7 @@ function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void
       generateInvoicePDF({
         id: venta.id,
         fecha: venta.fecha,
+        cliente: venta.cliente || undefined,
         items: venta.desglose || [],
         total: venta.total_ingresos,
         notas: venta.notas || undefined
@@ -599,7 +613,7 @@ function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void
             <div className="grid grid-cols-2 gap-8 mb-8 pb-8 border-b border-slate-100">
               <div>
                 <p className="text-[9px] font-bold text-slate-400 uppercase mb-2">Facturado a:</p>
-                <p className="text-xs font-bold text-slate-900">Consumidor Final</p>
+                <p className="text-xs font-bold text-slate-900">{venta.cliente || 'Consumidor Final'}</p>
                 <p className="text-[10px] text-slate-500 mt-1">Control de Cierre de Caja</p>
               </div>
               <div className="text-right">
@@ -773,6 +787,7 @@ export default function ReportesPage() {
     }
     await handleSaveVenta({
       fecha: scanned.fecha,
+      cliente: scanned.cliente_nombre || scanned.cliente_nombre || null,
       total_ingresos: scanned.total_ingresos,
       total_servicios: scanned.total_servicios || scanned.items?.length || 1,
       total_clientes: scanned.total_clientes || 1,
