@@ -78,6 +78,7 @@ export async function GET() {
     return NextResponse.json({
       bcv: bcvRate,
       binance: binanceRate,
+      paralelo: binanceRate,
       fetchedAt: new Date().toISOString()
     });
   } catch (error) {

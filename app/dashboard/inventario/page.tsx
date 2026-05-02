@@ -66,8 +66,11 @@ export default function InventarioPage() {
     try {
       const res = await fetch('/api/rates');
       const data = await res.json();
-      setRates({ bcv: data.bcv, paralelo: data.paralelo });
-      setLastRateUpdate(new Date(data.fetchedAt).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' }));
+      setRates({ 
+        bcv: data.bcv || 0, 
+        paralelo: data.paralelo || data.binance || 0 
+      });
+      setLastRateUpdate(new Date(data.fetchedAt || Date.now()).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' }));
     } catch (error) {
       console.error('Error fetching rates:', error);
     }
@@ -297,14 +300,14 @@ export default function InventarioPage() {
             <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-blue-500/20">
               <span className="text-[10px] font-bold text-blue-400">BCV</span>
             </div>
-            <span className="text-sm font-bold text-blue-400">Bs. {rates.bcv.toFixed(2)}</span>
+            <span className="text-sm font-bold text-blue-400">Bs. {(rates.bcv || 0).toFixed(2)}</span>
           </div>
 
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-orange-500/10 border border-orange-500/20 shadow-sm animate-in fade-in slide-in-from-top-2">
             <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-orange-500/20">
               <span className="text-[10px] font-bold text-orange-400">P2P</span>
             </div>
-            <span className="text-sm font-bold text-orange-400">Bs. {rates.paralelo.toFixed(2)}</span>
+            <span className="text-sm font-bold text-orange-400">Bs. {(rates.paralelo || 0).toFixed(2)}</span>
             <div className="flex items-center gap-0.5 ml-1 px-1.5 py-0.5 rounded-md bg-orange-500/10 text-[9px] font-bold text-orange-400 uppercase">
               Binance
             </div>

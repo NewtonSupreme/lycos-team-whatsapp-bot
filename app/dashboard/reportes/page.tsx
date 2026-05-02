@@ -1,5 +1,6 @@
 'use client';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Download, TrendingUp, DollarSign, Wrench, Users, Plus, Pencil,
   Trash2, CheckCircle, AlertCircle, Loader2, X, Camera, Eye,
@@ -671,6 +672,11 @@ export default function ReportesPage() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [previewInvoice, setPreviewInvoice] = useState<string | null>(null);
   const [selectedVenta, setSelectedVenta] = useState<VentaDia | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Calendar State
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
@@ -1268,22 +1274,25 @@ export default function ReportesPage() {
         </div>
       )}
 
-      {/* Modals */}
-      {showManual && (
+      {/* Modals con Portals para evitar conflictos de posicionamiento fixed con transform/page-enter */}
+      {mounted && showManual && createPortal(
         <ManualModal
           onClose={() => { setShowManual(false); setEditando(null); }}
           onSave={handleSaveVenta}
           initial={editando}
-        />
+        />,
+        document.body
       )}
-      {scanMode && <ScanModal modo={scanMode} onClose={() => setScanMode(null)} onConfirm={handleScanConfirm} />}
-      
-      {/* ── Modal: Factura Profesional ───────────────────────── */}
-      {selectedVenta && (
+      {mounted && scanMode && createPortal(
+        <ScanModal modo={scanMode} onClose={() => setScanMode(null)} onConfirm={handleScanConfirm} />,
+        document.body
+      )}
+      {mounted && selectedVenta && createPortal(
         <InvoiceModal
           venta={selectedVenta}
           onClose={() => setSelectedVenta(null)}
-        />
+        />,
+        document.body
       )}
     </div>
   );
