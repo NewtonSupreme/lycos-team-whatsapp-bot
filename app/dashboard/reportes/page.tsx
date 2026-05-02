@@ -94,8 +94,15 @@ interface ScannedData {
 
   // From Gemini Ticket Mode
   cliente_nombre?: string;
+  cliente_vehiculo?: string;
   items?: DesglosItem[];
   metodo_pago?: string;
+  empresa_nombre?: string;
+  empresa_rif?: string;
+  nro_factura?: string;
+  hora?: string;
+  subtotal?: number;
+  impuestos?: number;
 }
 
 // ── Tooltip ────────────────────────────────────────────────────
