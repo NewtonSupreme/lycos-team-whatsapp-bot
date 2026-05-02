@@ -2,7 +2,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Users, Car, Wrench, MessageSquare, Bot,
-  Calendar, CheckCircle, ArrowRight, Zap, RefreshCw
+  Calendar, CheckCircle, ArrowRight, Zap, RefreshCw,
+  Coins, TrendingUp, DollarSign
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
@@ -100,10 +101,22 @@ export default function DashboardPage() {
   const [waChart, setWaChart] = useState<WaChartPoint[]>([]);
   const [silenciadoresChart, setSilenciadoresChart] = useState<SilenciadoresChartPoint[]>([]);
   const [serviciosChart, setServiciosChart] = useState<ServiciosChartPoint[]>([]);
+  const [rates, setRates] = useState<{ bcv: number; binance: number; fetchedAt: string } | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const loadRates = useCallback(async () => {
+    try {
+      const resp = await fetch('/api/rates');
+      const data = await resp.json();
+      if (!data.error) setRates(data);
+    } catch (e) {
+      console.error('Error loading rates:', e);
+    }
+  }, []);
 
   const loadData = useCallback(async () => {
     if (!supabase) return;
+    loadRates();
     const today = getVzlaDateString();
     const firstDay = getVzlaFirstDayString();
 
@@ -265,6 +278,49 @@ export default function DashboardPage() {
           </button>
         </div>
       </div>
+
+      {/* Exchange Rates Bar */}
+      {rates && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card className="bg-gradient-to-br from-blue-500/5 to-transparent border-blue-500/10 shadow-sm overflow-hidden relative group">
+            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
+              <DollarSign className="w-12 h-12 text-blue-500" />
+            </div>
+            <CardContent className="p-4 flex items-center gap-4">
+              <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+                <TrendingUp className="w-6 h-6 text-blue-500" />
+              </div>
+              <div>
+                <p className="text-[10px] text-blue-500 font-bold uppercase tracking-widest mb-0.5">Tasa Oficial BCV</p>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
+                    Bs. {rates.bcv.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-gradient-to-br from-orange-500/5 to-transparent border-orange-500/10 shadow-sm overflow-hidden relative group">
+            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
+              <Coins className="w-12 h-12 text-orange-500" />
+            </div>
+            <CardContent className="p-4 flex items-center gap-4">
+              <div className="w-12 h-12 rounded-xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center">
+                <RefreshCw className="w-6 h-6 text-orange-500" />
+              </div>
+              <div>
+                <p className="text-[10px] text-orange-500 font-bold uppercase tracking-widest mb-0.5">Binance P2P (USDT)</p>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
+                    Bs. {rates.binance.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

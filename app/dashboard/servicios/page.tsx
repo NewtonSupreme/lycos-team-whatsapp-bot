@@ -8,6 +8,9 @@ import {
 import { supabase } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
+import { Button } from '@/components/ui/button';
+import { Eye, Download, FileText } from 'lucide-react';
+import { generateInvoicePDF } from '@/lib/invoice-pdf';
 
 // ── Types ─────────────────────────────────────────────────────
 interface CitaServicio {
@@ -64,6 +67,129 @@ function timeAgo(ts: string) {
   return `hace ${Math.floor(h / 24)}d`;
 }
 
+function InvoiceModal({ cita, onClose }: { cita: CitaServicio; onClose: () => void }) {
+  const clienteName = cita.clientes
+    ? `${cita.clientes.nombre} ${cita.clientes.apellido}`
+    : cita.nombre_cliente || 'Consumidor Final';
+  
+  const vehicleStr = cita.vehiculos
+    ? `${cita.vehiculos.marca} ${cita.vehiculos.modelo}${cita.vehiculos.anio ? ' ' + cita.vehiculos.anio : ''} (${cita.vehiculos.placa})`
+    : cita.vehiculo_info || '—';
+
+  const total = cita.costo_estimado || 0;
+  const items = [{
+    descripcion: cita.descripcion || SERVICIO_LABELS[cita.tipo_servicio] || 'Servicio General',
+    cantidad: 1,
+    precio_unitario: total,
+    total: total
+  }];
+
+  const handleDownload = () => {
+    generateInvoicePDF({
+      id: cita.id,
+      fecha: cita.fecha,
+      cliente: clienteName,
+      vehiculo: vehicleStr,
+      items: items,
+      total: total,
+      notas: cita.descripcion || undefined
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-card border border-border rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between p-4 border-b border-border/30 bg-muted/20">
+          <h2 className="text-sm font-bold flex items-center gap-2">
+            <FileText className="w-4 h-4 text-primary" /> Vista Previa de Factura
+          </h2>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-white/5 flex items-center justify-center">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        
+        <div className="p-6 overflow-y-auto bg-white text-slate-900 font-sans">
+          <div className="border border-slate-200 p-8 rounded-lg shadow-sm">
+            <div className="flex justify-between items-start mb-8">
+              <div>
+                <h1 className="text-2xl font-black text-slate-900 tracking-tight">LYCOS TEAM</h1>
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">Taller Automotriz Profesional</p>
+                <p className="text-[9px] text-slate-400 mt-2">San Antonio de los Altos, Miranda</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-bold text-slate-400 uppercase">Factura de Servicio</p>
+                <p className="text-sm font-bold text-slate-900">#{cita.id.slice(0, 8).toUpperCase()}</p>
+                <p className="text-[10px] text-slate-500 mt-1">{cita.fecha}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-8 mb-8 pb-8 border-b border-slate-100">
+              <div>
+                <p className="text-[9px] font-bold text-slate-400 uppercase mb-2">Cliente:</p>
+                <p className="text-xs font-bold text-slate-900">{clienteName}</p>
+                <p className="text-[10px] text-slate-500 mt-1">{cita.telefono || '—'}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[9px] font-bold text-slate-400 uppercase mb-2">Vehículo:</p>
+                <p className="text-xs text-slate-600 font-bold">{vehicleStr}</p>
+                <p className="text-[10px] text-slate-500 mt-1">Estado: {cita.estado.toUpperCase()}</p>
+              </div>
+            </div>
+
+            <table className="w-full text-xs mb-8">
+              <thead>
+                <tr className="border-b-2 border-slate-900">
+                  <th className="text-left py-2 font-bold text-slate-900">Descripción del Trabajo</th>
+                  <th className="text-center py-2 font-bold text-slate-900 w-16">Cant.</th>
+                  <th className="text-right py-2 font-bold text-slate-900 w-24">Precio</th>
+                  <th className="text-right py-2 font-bold text-slate-900 w-24">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {items.map((item, i) => (
+                  <tr key={i}>
+                    <td className="py-3 text-slate-700">{item.descripcion}</td>
+                    <td className="py-3 text-center text-slate-600">{item.cantidad}</td>
+                    <td className="py-3 text-right text-slate-600">${item.precio_unitario.toFixed(2)}</td>
+                    <td className="py-3 text-right font-medium text-slate-900">${item.total.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="flex justify-end pt-4">
+              <div className="w-48 space-y-2">
+                <div className="flex justify-between text-xs font-black text-slate-900 pt-2 border-t border-slate-200">
+                  <span>TOTAL</span>
+                  <span className="text-primary">${total.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+
+            {cita.descripcion && (
+              <div className="mt-12 pt-4 border-t border-slate-100">
+                <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Observaciones Técnicas:</p>
+                <p className="text-[10px] text-slate-500 leading-relaxed italic">
+                  {cita.descripcion}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="p-4 border-t border-border/30 bg-muted/20 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm hover:bg-white/5 transition-colors">
+            Cerrar
+          </button>
+          <Button onClick={handleDownload} className="gap-2">
+            <Download className="w-4 h-4" /> Descargar PDF Profesional
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ServiciosPage() {
   const { user } = useAppStore();
   const [citas, setCitas] = useState<CitaServicio[]>([]);
@@ -71,6 +197,7 @@ export default function ServiciosPage() {
   const [search, setSearch] = useState('');
   const [filterEstado, setFilterEstado] = useState('todos');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [selectedCita, setSelectedCita] = useState<CitaServicio | null>(null);
 
   const loadCitas = useCallback(async () => {
     if (!supabase) return;
@@ -251,7 +378,7 @@ export default function ServiciosPage() {
               )}
               {!loading && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="text-center py-16">
+                  <td colSpan={7} className="text-center py-16">
                     <Wrench className="w-10 h-10 text-muted-foreground/20 mx-auto mb-3" />
                     <p className="text-sm text-muted-foreground">No se encontraron servicios</p>
                     {search && (
@@ -367,6 +494,16 @@ export default function ServiciosPage() {
                     <td className="px-4 py-3 hidden xl:table-cell">
                       <span className="text-xs text-muted-foreground">{timeAgo(cita.created_at)}</span>
                     </td>
+                    
+                    {/* Acciones */}
+                    <td className="px-4 py-3">
+                      <button 
+                        onClick={() => setSelectedCita(cita)}
+                        className="text-xs text-primary hover:underline font-medium"
+                      >
+                        Ver Factura
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -388,6 +525,13 @@ export default function ServiciosPage() {
           </div>
         )}
       </div>
+
+      {selectedCita && (
+        <InvoiceModal
+          cita={selectedCita}
+          onClose={() => setSelectedCita(null)}
+        />
+      )}
     </div>
   );
 }

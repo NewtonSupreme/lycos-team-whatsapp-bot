@@ -2,33 +2,21 @@ import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-interface ExchangeRates {
-  bcv: number;
-  paralelo: number;
-  fetchedAt: string;
-}
-
-let ratesCache: ExchangeRates | null = null;
-let ratesCacheTime = 0;
-const RATES_TTL = 30 * 60 * 1000; // 30 minutes
-
 export async function GET() {
-  if (ratesCache && Date.now() - ratesCacheTime < RATES_TTL) {
-    return NextResponse.json(ratesCache);
-  }
-
   try {
     let bcvRate = 0;
     try {
-      const respBcv = await fetch('https://ve.dolarapi.com/v1/dolares/oficial', {
-        headers: { 'Accept': 'application/json' },
-        next: { revalidate: 1800 }
+      const respBcv = await fetch('https://ve.dolarapi.com/v1/dolares', {
+        next: { revalidate: 600 } // Cache for 10 minutes
       });
       if (respBcv.ok) {
-        const bcvEntry = await respBcv.json();
-        if (bcvEntry) bcvRate = bcvEntry.promedio || bcvEntry.precio || 0;
+        const data = await respBcv.json();
+        const bcvEntry = data.find((d: any) => d.nombre?.toLowerCase().includes('oficial') || d.nombre?.toLowerCase().includes('bcv'));
+        if (bcvEntry) bcvRate = bcvEntry.promedio;
       }
-    } catch (e) { console.error('Error fetching BCV:', e); }
+    } catch (e) {
+      console.error('Error fetching BCV:', e);
+    }
 
     let binanceRate = 0;
     try {
@@ -42,39 +30,37 @@ export async function GET() {
           fiat: "VES", page: 1, rows: 10, tradeType: "BUY", asset: "USDT",
           countries: [], proMerchantAds: false, shieldMerchantAds: false,
           publisherType: null, payTypes: ["PagoMovil"], classifies: ["mass", "profession", "user"]
-        })
+        }),
+        next: { revalidate: 600 }
       });
       if (respBin.ok) {
         const binData = await respBin.json();
-        if (binData.data && binData.data.length > 3) {
-          const marketAds = binData.data.slice(2, 7);
-          binanceRate = marketAds.reduce((acc: number, ad: any) => acc + parseFloat(ad.adv.price), 0) / marketAds.length;
-        } else if (binData.data && binData.data.length > 0) {
+        if (binData.data && binData.data.length > 0) {
           binanceRate = parseFloat(binData.data[0].adv.price);
         }
       }
-    } catch (e) { console.error('Error fetching Binance P2P:', e); }
+    } catch (e) {
+      console.error('Error fetching Binance P2P:', e);
+    }
 
-    // Fallback if Binance P2P fails
+    // Fallback for Binance if native fetch fails
     if (!binanceRate) {
       try {
-        const tempResp = await fetch('https://ve.dolarapi.com/v1/dolares/paralelo');
+        const tempResp = await fetch('https://ve.dolarapi.com/v1/dolares');
         if (tempResp.ok) {
-          const parEntry = await tempResp.json();
-          binanceRate = parseFloat(parEntry?.promedio || parEntry?.precio || 0);
+          const tempData = await tempResp.json();
+          const parEntry = tempData.find((d: any) => d.nombre?.toLowerCase().includes('paralelo') || d.nombre?.toLowerCase().includes('binance'));
+          if (parEntry) binanceRate = parEntry.promedio;
         }
-      } catch (e) { console.error('Error in parallel fallback:', e); }
+      } catch (e) {}
     }
 
-    if (!bcvRate || !binanceRate) {
-      return NextResponse.json(ratesCache || { bcv: 36.5, paralelo: 54.0, fetchedAt: 'FALLBACK' });
-    }
-
-    ratesCache = { bcv: bcvRate, paralelo: binanceRate, fetchedAt: new Date().toISOString() };
-    ratesCacheTime = Date.now();
-    return NextResponse.json(ratesCache);
+    return NextResponse.json({
+      bcv: bcvRate,
+      binance: binanceRate,
+      fetchedAt: new Date().toISOString()
+    });
   } catch (error) {
-    console.error('Error in rates API:', error);
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to fetch rates' }, { status: 500 });
   }
 }

@@ -15,6 +15,7 @@ import {
 } from 'recharts';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
+import { generateInvoicePDF } from '@/lib/invoice-pdf';
 
 // ── Types ──────────────────────────────────────────────────────
 interface VentaDia {
@@ -548,6 +549,116 @@ function ScanModal({ onClose, onConfirm, modo }: {
   );
 }
 
+function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void }) {
+  const handleDownload = () => {
+    generateInvoicePDF({
+      id: venta.id,
+      fecha: venta.fecha,
+      items: venta.desglose || [],
+      total: venta.total_ingresos,
+      notas: venta.notas || undefined
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-card border border-border rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between p-4 border-b border-border/30 bg-muted/20">
+          <h2 className="text-sm font-bold flex items-center gap-2">
+            <FileText className="w-4 h-4 text-primary" /> Vista Previa de Factura
+          </h2>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-white/5 flex items-center justify-center">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        
+        <div className="p-6 overflow-y-auto bg-white text-slate-900 font-sans">
+          {/* Professional Invoice Preview Design */}
+          <div className="border border-slate-200 p-8 rounded-lg shadow-sm">
+            <div className="flex justify-between items-start mb-8">
+              <div>
+                <h1 className="text-2xl font-black text-slate-900 tracking-tight">LYCOS TEAM</h1>
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">Taller Automotriz Profesional</p>
+                <p className="text-[9px] text-slate-400 mt-2">San Antonio de los Altos, Miranda</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-bold text-slate-400 uppercase">Factura</p>
+                <p className="text-sm font-bold text-slate-900">#{venta.id.slice(0, 8).toUpperCase()}</p>
+                <p className="text-[10px] text-slate-500 mt-1">{venta.fecha}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-8 mb-8 pb-8 border-b border-slate-100">
+              <div>
+                <p className="text-[9px] font-bold text-slate-400 uppercase mb-2">Facturado a:</p>
+                <p className="text-xs font-bold text-slate-900">Consumidor Final</p>
+                <p className="text-[10px] text-slate-500 mt-1">Control de Cierre de Caja</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[9px] font-bold text-slate-400 uppercase mb-2">Resumen:</p>
+                <p className="text-xs text-slate-600">{venta.total_servicios} Servicios realizados</p>
+                <p className="text-xs text-slate-600">{venta.total_clientes} Clientes atendidos</p>
+              </div>
+            </div>
+
+            <table className="w-full text-xs mb-8">
+              <thead>
+                <tr className="border-b-2 border-slate-900">
+                  <th className="text-left py-2 font-bold text-slate-900">Descripción</th>
+                  <th className="text-center py-2 font-bold text-slate-900 w-16">Cant.</th>
+                  <th className="text-right py-2 font-bold text-slate-900 w-24">Precio</th>
+                  <th className="text-right py-2 font-bold text-slate-900 w-24">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {(venta.desglose || []).map((item, i) => (
+                  <tr key={i}>
+                    <td className="py-3 text-slate-700">{item.descripcion}</td>
+                    <td className="py-3 text-center text-slate-600">{item.cantidad}</td>
+                    <td className="py-3 text-right text-slate-600">${item.precio_unitario.toFixed(2)}</td>
+                    <td className="py-3 text-right font-medium text-slate-900">${item.total.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="flex justify-end pt-4">
+              <div className="w-48 space-y-2">
+                <div className="flex justify-between text-[10px] text-slate-500">
+                  <span>SUBTOTAL</span>
+                  <span>${venta.total_ingresos.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-xs font-black text-slate-900 pt-2 border-t border-slate-200">
+                  <span>TOTAL</span>
+                  <span className="text-primary">${venta.total_ingresos.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+
+            {venta.notas && (
+              <div className="mt-12 pt-4 border-t border-slate-100">
+                <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Notas:</p>
+                <p className="text-[10px] text-slate-500 leading-relaxed italic">
+                  {venta.notas.replace(/\[FACTURA_IA_START\][\s\S]*?\[FACTURA_IA_END\]/g, '').trim()}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="p-4 border-t border-border/30 bg-muted/20 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm hover:bg-white/5 transition-colors">
+            Cerrar
+          </button>
+          <Button onClick={handleDownload} className="gap-2">
+            <Download className="w-4 h-4" /> Descargar PDF Profesional
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ──────────────────────────────────────────────────
 export default function ReportesPage() {
   const [ventas, setVentas] = useState<VentaDia[]>([]);
@@ -559,6 +670,7 @@ export default function ReportesPage() {
   const [editando, setEditando] = useState<VentaDia | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [previewInvoice, setPreviewInvoice] = useState<string | null>(null);
+  const [selectedVenta, setSelectedVenta] = useState<VentaDia | null>(null);
 
   // Calendar State
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
@@ -984,6 +1096,13 @@ export default function ReportesPage() {
                                 <Download className="w-3.5 h-3.5" />
                               </button>
                               <button
+                                onClick={() => setSelectedVenta(v)}
+                                className="w-7 h-7 rounded-lg hover:bg-primary/10 text-muted-foreground hover:text-primary flex items-center justify-center transition-colors"
+                                title="Ver Factura Profesional"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+                              <button
                                 onClick={() => { setEditando(v); setShowManual(true); }}
                                 className="w-7 h-7 rounded-lg hover:bg-white/5 text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors"
                                 title="Editar"
@@ -1159,23 +1278,12 @@ export default function ReportesPage() {
       )}
       {scanMode && <ScanModal modo={scanMode} onClose={() => setScanMode(null)} onConfirm={handleScanConfirm} />}
       
-      {/* ── Modal: Ver Factura IA ───────────────────────────── */}
-      {previewInvoice && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-card border border-border rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
-            <div className="flex items-center justify-between p-4 border-b border-border/30 bg-muted/20">
-              <h2 className="text-sm font-bold flex items-center gap-2 text-violet-400">
-                <FileText className="w-4 h-4" /> Factura Extraída (IA)
-              </h2>
-              <button onClick={() => setPreviewInvoice(null)} className="w-8 h-8 rounded-lg hover:bg-white/5 flex items-center justify-center text-muted-foreground hover:text-foreground">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="p-4 overflow-y-auto bg-black/40 text-xs font-mono text-green-400/90 whitespace-pre-wrap select-text">
-              {previewInvoice}
-            </div>
-          </div>
-        </div>
+      {/* ── Modal: Factura Profesional ───────────────────────── */}
+      {selectedVenta && (
+        <InvoiceModal
+          venta={selectedVenta}
+          onClose={() => setSelectedVenta(null)}
+        />
       )}
     </div>
   );
