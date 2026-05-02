@@ -552,13 +552,20 @@ function ScanModal({ onClose, onConfirm, modo }: {
 
 function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void }) {
   const handleDownload = () => {
-    generateInvoicePDF({
-      id: venta.id,
-      fecha: venta.fecha,
-      items: venta.desglose || [],
-      total: venta.total_ingresos,
-      notas: venta.notas || undefined
-    });
+    try {
+      console.log('📄 Generando PDF para venta:', venta.id);
+      generateInvoicePDF({
+        id: venta.id,
+        fecha: venta.fecha,
+        items: venta.desglose || [],
+        total: venta.total_ingresos,
+        notas: venta.notas || undefined
+      });
+      console.log('✅ PDF generado con éxito');
+    } catch (err) {
+      console.error('❌ Error al generar PDF:', err);
+      alert('Hubo un error al generar el PDF. Por favor, revisa la consola.');
+    }
   };
 
   return (
