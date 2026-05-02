@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Users, Car, Wrench, Calendar, MessageSquare,
   Bot, FileText, Settings, ChevronLeft, ChevronRight,
-  Activity, LogOut, TrendingUp, UserCircle, Package
+  Activity, LogOut, TrendingUp, UserCircle, Package, Calculator
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -27,6 +27,7 @@ const navItemsConfig = [
   { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente', badge: null },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', badge: null },
   { href: '/dashboard/actividad', icon: Activity, label: 'Actividad', badge: null },
+  { href: '/dashboard/calculadora', icon: Calculator, label: 'Calculadora', badge: null },
 ];
 
 const bottomItems = [

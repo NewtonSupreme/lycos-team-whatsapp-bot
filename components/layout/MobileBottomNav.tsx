@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, MessageSquare, Calendar, Wrench,
-  MoreHorizontal, Users, Car, Bot, FileText, Activity, Settings, X, TrendingUp, LogOut, Package
+  MoreHorizontal, Users, Car, Bot, FileText, Activity, Settings, X, TrendingUp, LogOut, Package, Calculator
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -27,6 +27,7 @@ const MORE_NAV = [
   { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente' },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes' },
   { href: '/dashboard/actividad', icon: Activity, label: 'Actividad' },
+  { href: '/dashboard/calculadora', icon: Calculator, label: 'Calculadora' },
   { href: '/dashboard/configuracion', icon: Settings, label: 'Configuración' },
 ];
 

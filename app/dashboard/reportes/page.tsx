@@ -35,6 +35,17 @@ interface VentaDia {
   pago_usd?: number;
   pago_ves?: number;
   tasa_cambio?: number;
+  con_iva?: boolean;
+  metodos_pago?: {
+    pago_movil?: number;
+    zelle?: number;
+    efectivo_usd?: number;
+    efectivo_ves?: number;
+    cashea?: number;
+    transferencia?: number;
+    punto_de_venta?: number;
+    otro?: number;
+  };
 }
 
 interface DesglosItem {
@@ -118,6 +129,17 @@ function ManualModal({ onClose, onSave, initial }: {
     pago_usd: initial?.pago_usd || 0,
     pago_ves: initial?.pago_ves || 0,
     tasa_cambio: initial?.tasa_cambio || 0,
+    con_iva: initial?.con_iva || false,
+    metodos_pago: initial?.metodos_pago || {
+      pago_movil: 0,
+      zelle: 0,
+      efectivo_usd: 0,
+      efectivo_ves: 0,
+      cashea: 0,
+      transferencia: 0,
+      punto_de_venta: 0,
+      otro: 0,
+    },
   });
   const [items, setItems] = useState<DesglosItem[]>(
     initial?.desglose?.length ? initial.desglose : [{ descripcion: '', cantidad: 1, precio_unitario: 0, total: 0 }]
@@ -144,12 +166,18 @@ function ManualModal({ onClose, onSave, initial }: {
     setForm(f => ({ ...f, total_ingresos: totalFromItems }));
   }, [totalFromItems]);
 
-  const handlePaymentCalc = (field: 'pago_usd' | 'pago_ves' | 'tasa_cambio', val: number) => {
+  const handlePaymentCalc = (field: string, val: number, isMetodo = false) => {
     setForm(f => {
-      const next = { ...f, [field]: val };
-      // Optional: Auto-sync total_ingresos if only one payment method is used
-      // For now, we just keep them as extra info
-      return next;
+      if (isMetodo) {
+        return {
+          ...f,
+          metodos_pago: {
+            ...f.metodos_pago,
+            [field]: val
+          }
+        };
+      }
+      return { ...f, [field]: val };
     });
   };
 
@@ -168,6 +196,8 @@ function ManualModal({ onClose, onSave, initial }: {
         pago_usd: Number(form.pago_usd),
         pago_ves: Number(form.pago_ves),
         tasa_cambio: Number(form.tasa_cambio),
+        con_iva: form.con_iva,
+        metodos_pago: form.metodos_pago,
       });
       onClose();
     } catch (e) {
@@ -240,51 +270,111 @@ function ManualModal({ onClose, onSave, initial }: {
             </div>
           </div>
 
-          <div className="p-3 rounded-xl bg-primary/5 border border-primary/20 space-y-3">
-            <p className="text-[10px] font-bold text-primary uppercase tracking-wider">Desglose de Pago (Metodos)</p>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-medium text-muted-foreground uppercase">Monto en USD ($)</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1.5 text-xs text-muted-foreground">$</span>
-                  <input
-                    type="number" step="0.01"
-                    value={form.pago_usd}
-                    onChange={e => handlePaymentCalc('pago_usd', Number(e.target.value))}
-                    className="w-full pl-6 pr-3 py-1.5 rounded-lg border border-border/50 bg-background text-sm focus:ring-1 focus:ring-primary"
-                  />
-                </div>
+          <div className="p-4 rounded-xl bg-primary/5 border border-primary/20 space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-bold text-primary uppercase tracking-wider">Desglose de Pago (Detallado)</p>
+              <label className="flex items-center gap-2 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={form.con_iva}
+                  onChange={e => setForm(f => ({ ...f, con_iva: e.target.checked }))}
+                  className="w-3.5 h-3.5 rounded border-border text-primary focus:ring-primary/20"
+                />
+                <span className="text-[10px] font-bold text-muted-foreground group-hover:text-primary transition-colors">INCLUIR IVA (+16%)</span>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="space-y-1">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase">Pago Móvil</label>
+                <input
+                  type="number" step="0.01"
+                  value={form.metodos_pago?.pago_movil}
+                  onChange={e => handlePaymentCalc('pago_movil', Number(e.target.value), true)}
+                  className="w-full px-2 py-1.5 rounded-lg border border-border/50 bg-background text-xs focus:ring-1 focus:ring-primary"
+                />
               </div>
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-medium text-muted-foreground uppercase">Monto en VES (Bs.)</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1.5 text-[10px] text-muted-foreground">Bs</span>
-                  <input
-                    type="number" step="0.01"
-                    value={form.pago_ves}
-                    onChange={e => handlePaymentCalc('pago_ves', Number(e.target.value))}
-                    className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-border/50 bg-background text-sm focus:ring-1 focus:ring-primary"
-                  />
-                </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase">Zelle</label>
+                <input
+                  type="number" step="0.01"
+                  value={form.metodos_pago?.zelle}
+                  onChange={e => handlePaymentCalc('zelle', Number(e.target.value), true)}
+                  className="w-full px-2 py-1.5 rounded-lg border border-border/50 bg-background text-xs focus:ring-1 focus:ring-primary"
+                />
               </div>
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-medium text-muted-foreground uppercase">Tasa de Cambio (Bs/$)</label>
-                <div className="relative">
-                  <input
-                    type="number" step="0.01"
-                    placeholder="Ej: 36.5"
-                    value={form.tasa_cambio}
-                    onChange={e => handlePaymentCalc('tasa_cambio', Number(e.target.value))}
-                    className="w-full px-3 py-1.5 rounded-lg border border-border/50 bg-background text-sm focus:ring-1 focus:ring-primary"
-                  />
-                </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase">Divisas (Efectivo)</label>
+                <input
+                  type="number" step="0.01"
+                  value={form.metodos_pago?.efectivo_usd}
+                  onChange={e => handlePaymentCalc('efectivo_usd', Number(e.target.value), true)}
+                  className="w-full px-2 py-1.5 rounded-lg border border-border/50 bg-background text-xs focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase">Efectivo Bs.</label>
+                <input
+                  type="number" step="0.01"
+                  value={form.metodos_pago?.efectivo_ves}
+                  onChange={e => handlePaymentCalc('efectivo_ves', Number(e.target.value), true)}
+                  className="w-full px-2 py-1.5 rounded-lg border border-border/50 bg-background text-xs focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase text-violet-400">Cashea</label>
+                <input
+                  type="number" step="0.01"
+                  value={form.metodos_pago?.cashea}
+                  onChange={e => handlePaymentCalc('cashea', Number(e.target.value), true)}
+                  className="w-full px-2 py-1.5 rounded-lg border border-violet-500/30 bg-violet-500/5 text-xs focus:ring-1 focus:ring-violet-400"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase">Transferencia</label>
+                <input
+                  type="number" step="0.01"
+                  value={form.metodos_pago?.transferencia}
+                  onChange={e => handlePaymentCalc('transferencia', Number(e.target.value), true)}
+                  className="w-full px-2 py-1.5 rounded-lg border border-border/50 bg-background text-xs focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase">Punto</label>
+                <input
+                  type="number" step="0.01"
+                  value={form.metodos_pago?.punto_de_venta}
+                  onChange={e => handlePaymentCalc('punto_de_venta', Number(e.target.value), true)}
+                  className="w-full px-2 py-1.5 rounded-lg border border-border/50 bg-background text-xs focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-medium text-muted-foreground uppercase">Tasa Cambio</label>
+                <input
+                  type="number" step="0.01"
+                  value={form.tasa_cambio}
+                  onChange={e => handlePaymentCalc('tasa_cambio', Number(e.target.value))}
+                  className="w-full px-2 py-1.5 rounded-lg border border-border/50 bg-background text-xs focus:ring-1 focus:ring-primary"
+                />
               </div>
             </div>
-            {form.tasa_cambio > 0 && form.pago_ves > 0 && (
-              <p className="text-[10px] text-muted-foreground italic">
-                Equivalente Bs. a USD: ${(form.pago_ves / form.tasa_cambio).toFixed(2)} (Total proyectado: ${(Number(form.pago_usd) + (form.pago_ves / form.tasa_cambio)).toFixed(2)})
-              </p>
-            )}
+
+            <div className="flex flex-wrap gap-4 pt-2 border-t border-primary/10">
+              <div className="flex flex-col">
+                <span className="text-[10px] text-muted-foreground uppercase">Monto Bruto</span>
+                <span className="text-sm font-bold">${form.total_ingresos.toFixed(2)}</span>
+              </div>
+              {form.con_iva && (
+                <div className="flex flex-col">
+                  <span className="text-[10px] text-muted-foreground uppercase">IVA (16%)</span>
+                  <span className="text-sm font-bold text-orange-400">+${(form.total_ingresos * 0.16).toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex flex-col ml-auto">
+                <span className="text-[10px] text-muted-foreground uppercase">Total Final</span>
+                <span className="text-lg font-black text-primary">${(form.total_ingresos * (form.con_iva ? 1.16 : 1)).toFixed(2)}</span>
+              </div>
+            </div>
           </div>
 
           <div>
@@ -920,28 +1010,51 @@ function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void
                   <span>${venta.total_ingresos.toFixed(2)}</span>
                 </div>
                 
-                {(venta.pago_usd || 0) > 0 && (
-                  <div className="flex justify-between text-[10px] text-slate-400 italic">
-                    <span>PAGO USD ($)</span>
-                    <span>${Number(venta.pago_usd).toFixed(2)}</span>
-                  </div>
-                )}
-                {(venta.pago_ves || 0) > 0 && (
-                  <div className="flex justify-between text-[10px] text-slate-400 italic">
-                    <span>PAGO VES (Bs.)</span>
-                    <span>Bs. {Number(venta.pago_ves).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span>
-                  </div>
-                )}
-                {venta.tasa_cambio && (venta.pago_ves || 0) > 0 && (
-                  <div className="flex justify-between text-[9px] text-slate-300">
-                    <span>TASA (Bs/$)</span>
-                    <span>{venta.tasa_cambio}</span>
+                {(venta.con_iva || (venta.metodos_pago && Object.values(venta.metodos_pago).some(v => v > 0))) && (
+                  <div className="pt-2 mt-2 border-t border-slate-100 space-y-1">
+                    <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Métodos de Pago:</p>
+                    {venta.metodos_pago?.pago_movil ? (
+                      <div className="flex justify-between text-[9px] text-slate-500">
+                        <span>PAGO MÓVIL</span>
+                        <span>Bs. {venta.metodos_pago.pago_movil.toLocaleString('es-VE')}</span>
+                      </div>
+                    ) : null}
+                    {venta.metodos_pago?.zelle ? (
+                      <div className="flex justify-between text-[9px] text-slate-500">
+                        <span>ZELLE</span>
+                        <span>${venta.metodos_pago.zelle.toFixed(2)}</span>
+                      </div>
+                    ) : null}
+                    {venta.metodos_pago?.efectivo_usd ? (
+                      <div className="flex justify-between text-[9px] text-slate-500">
+                        <span>EFECTIVO USD</span>
+                        <span>${venta.metodos_pago.efectivo_usd.toFixed(2)}</span>
+                      </div>
+                    ) : null}
+                    {venta.metodos_pago?.efectivo_ves ? (
+                      <div className="flex justify-between text-[9px] text-slate-500">
+                        <span>EFECTIVO VES</span>
+                        <span>Bs. {venta.metodos_pago.efectivo_ves.toLocaleString('es-VE')}</span>
+                      </div>
+                    ) : null}
+                    {venta.metodos_pago?.cashea ? (
+                      <div className="flex justify-between text-[9px] text-violet-500 font-bold">
+                        <span>CASHEA</span>
+                        <span>${venta.metodos_pago.cashea.toFixed(2)}</span>
+                      </div>
+                    ) : null}
+                    {venta.metodos_pago?.punto_de_venta ? (
+                      <div className="flex justify-between text-[9px] text-slate-500">
+                        <span>PUNTO DE VENTA</span>
+                        <span>Bs. {venta.metodos_pago.punto_de_venta.toLocaleString('es-VE')}</span>
+                      </div>
+                    ) : null}
                   </div>
                 )}
 
                 <div className="flex justify-between text-xs font-black text-slate-900 pt-2 border-t border-slate-200">
-                  <span>TOTAL</span>
-                  <span className="text-primary">${venta.total_ingresos.toFixed(2)}</span>
+                  <span>TOTAL {venta.con_iva ? '(CON IVA)' : ''}</span>
+                  <span className="text-primary">${(venta.total_ingresos * (venta.con_iva ? 1.16 : 1)).toFixed(2)}</span>
                 </div>
               </div>
             </div>
