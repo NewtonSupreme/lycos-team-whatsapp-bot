@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
+import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 
 // ── Toggle Component ──────────────────────────────────────────
 function Toggle({ checked, onChange, label, description, disabled }: {
@@ -147,12 +148,12 @@ export default function ConfiguracionPage() {
       }
 
       // Log the action
-      await supabase.from('logs_actividad').insert({
+      await withSedeFilter(supabase.from('logs_actividad')).insert(withSedeInsert({
         usuario: user?.nombre || 'Admin',
         accion: 'Configuración actualizada',
         modulo: 'Configuración',
         detalles: `Pestaña: ${activeTab}`
-      });
+      }));
 
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 3000);

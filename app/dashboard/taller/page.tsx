@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Wrench, Loader2, RefreshCw, Car, Trash } from 'lucide-react';
+import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 
 interface RowServicio {
   id: string;
@@ -26,7 +27,7 @@ export default function TallerPage() {
   const deleteTrabajo = async (id: string) => {
     if (!confirm('¿Seguro que deseas eliminar este registro?')) return;
     if (!supabase) return;
-    const { error } = await supabase.from('servicios').delete().eq('id', id);
+    const { error } = await withSedeFilter(supabase.from('servicios')).delete().eq('id', id);
     if (!error) {
       setServicios(prev => prev.filter(s => s.id !== id));
       fetchTrabajos();
@@ -71,11 +72,11 @@ export default function TallerPage() {
     if (!descripcion.trim()) return;
 
     setRegistering(true);
-    const { error } = await supabase.from('servicios').insert({
+    const { error } = await withSedeFilter(supabase.from('servicios')).insert(withSedeInsert({
       descripcion,
       tipo,
       estado,
-    });
+    }));
 
     setRegistering(false);
     if (!error) {

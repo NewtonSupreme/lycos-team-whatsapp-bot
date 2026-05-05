@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { supabase } from '@/lib/supabase';
 import { getInitials } from '@/lib/utils';
 import { startRegistration } from '@simplewebauthn/browser';
+import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 
 type Status = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -215,12 +216,12 @@ export default function PerfilPage() {
 
       setUser({ ...user, nombre: profile.nombre });
 
-      await supabase.from('logs_actividad').insert({
+      await withSedeFilter(supabase.from('logs_actividad')).insert(withSedeInsert({
         usuario: profile.nombre || user.nombre,
         accion: 'Perfil actualizado',
         modulo: 'Configuración',
         detalles: 'Información de perfil modificada'
-      });
+      }));
 
       setProfileStatus('saved');
       setTimeout(() => setProfileStatus('idle'), 3000);

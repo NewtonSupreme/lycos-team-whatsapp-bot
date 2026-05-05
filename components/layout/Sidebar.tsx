@@ -32,6 +32,7 @@ const navItemsConfig = [
 
 const bottomItems = [
   { href: '/dashboard/configuracion', icon: Settings, label: 'Configuración' },
+  { href: '/dashboard/ajustes/empleados', icon: Users, label: 'Gestión Empleados' },
   { href: '/dashboard/perfil', icon: UserCircle, label: 'Mi Perfil' },
 ];
 

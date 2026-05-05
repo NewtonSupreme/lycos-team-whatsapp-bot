@@ -1,5 +1,6 @@
 'use client';
 import React, { useState, useRef, useEffect } from 'react';
+import { useSedeStore } from '@/lib/store/useSedeStore';
 import { Bot, Send, RefreshCw, Settings, Zap, MessageSquare, Car, Wrench, Clock, Phone, MapPin, Sparkles, Copy, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -101,8 +102,25 @@ export default function IAPage() {
     timestamp: new Date()
   }]);
 
+  const { currentSede } = useSedeStore();
+  const isSanAntonio = currentSede?.nombre === 'San Antonio de los Altos';
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 relative">
+      {!isSanAntonio && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-md bg-background/50 rounded-2xl">
+          <div className="bg-card border border-border shadow-2xl rounded-2xl p-8 max-w-md text-center flex flex-col items-center gap-4">
+            <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+              <Bot className="w-8 h-8 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold mb-2">Módulo No Disponible</h2>
+              <p className="text-muted-foreground text-sm">El asistente de Inteligencia Artificial (Chatbot) está configurado exclusivamente para la sede de <strong>San Antonio de los Altos</strong> en este momento.</p>
+            </div>
+          </div>
+        </div>
+      )}
+      <div className={cn("space-y-5 transition-opacity duration-300", !isSanAntonio && "opacity-30 pointer-events-none")}>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2" style={{ fontFamily: 'Syne, sans-serif' }}>
@@ -272,6 +290,7 @@ export default function IAPage() {
             </CardContent>
           </Card>
         </div>
+      </div>
       </div>
     </div>
   );

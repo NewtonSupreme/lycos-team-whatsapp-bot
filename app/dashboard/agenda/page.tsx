@@ -13,6 +13,7 @@ import { cn, formatDate } from '@/lib/utils';
 import Link from 'next/link';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
+import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 
 const HORAS = ['08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00'];
 const TIPOS: { v: TipoServicio; l: string }[] = [

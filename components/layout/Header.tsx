@@ -8,6 +8,9 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { cn, getInitials } from '@/lib/utils';
 import { ThemeToggle } from './ThemeToggle';
 import { supabase } from '@/lib/supabase';
+import { useSedeStore } from '@/lib/store/useSedeStore';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Building2 } from 'lucide-react';
 
 // ── Helpers ──────────────────────────────────────────────────
 function urlBase64ToUint8Array(base64String: string) {
@@ -75,6 +78,7 @@ async function sendPushNotification(payload: {
 
 export default function Header() {
   const { user, sidebarOpen, toggleSidebar, notifications, unreadCount, markAllRead, addNotification, pushRegistered, setPushRegistered } = useAppStore();
+  const { currentSede, availableSedes, canViewAll, setCurrentSede, userRole } = useSedeStore();
   const [showNotifs, setShowNotifs] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
 
@@ -268,6 +272,29 @@ export default function Header() {
         <span className="text-[10px] text-green-400 font-medium">Bot activo</span>
       </div>
 
+      {/* Sede Selector */}
+      {canViewAll() && availableSedes.length > 0 && (
+        <div className="hidden md:flex items-center gap-2 mr-2">
+          <Building2 className="w-4 h-4 text-muted-foreground" />
+          <Select
+            value={currentSede?.id}
+            onValueChange={(id) => {
+              const s = availableSedes.find(s => s.id === id);
+              if (s) setCurrentSede(s);
+            }}
+          >
+            <SelectTrigger className="h-8 w-[200px] text-xs">
+              <SelectValue placeholder="Seleccionar Sede" />
+            </SelectTrigger>
+            <SelectContent>
+              {availableSedes.map(sede => (
+                <SelectItem key={sede.id} value={sede.id}>{sede.nombre}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
       {/* Theme Toggle & Notifications */}
       <div className="flex items-center gap-1">
         <ThemeToggle />
@@ -368,7 +395,15 @@ export default function Header() {
         </Avatar>
         <div className="hidden sm:flex flex-col">
           <span className="text-xs font-medium leading-none">{user?.nombre || 'Admin'}</span>
-          <span className="text-[10px] text-muted-foreground mt-0.5 capitalize">{user?.rol === 'admin' ? 'Administrador' : (user?.rol || 'Administrador')}</span>
+          <div className="flex items-center gap-1 mt-1">
+            <div className={cn(
+              "w-1.5 h-1.5 rounded-full",
+              userRole === 'admin' ? "bg-red-500" : userRole === 'gerente' ? "bg-blue-500" : "bg-slate-400"
+            )} />
+            <span className="text-[9px] text-muted-foreground uppercase tracking-wider font-bold">
+              {userRole || 'Admin'}
+            </span>
+          </div>
         </div>
       </div>
     </header>

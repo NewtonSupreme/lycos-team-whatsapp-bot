@@ -18,6 +18,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { generateInvoicePDF, generateEgresoPDF } from '@/lib/invoice-pdf';
+import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 
 // ── Types ──────────────────────────────────────────────────────
 interface VentaDia {
@@ -1231,8 +1232,8 @@ export default function ReportesPage() {
     const from = new Date(Date.now() - days * 86400000).toISOString().split('T')[0];
     
     const [vRes, eRes] = await Promise.all([
-      supabase.from('ventas_dia').select('*').gte('fecha', from).order('fecha', { ascending: false }),
-      supabase.from('egresos').select('*').gte('fecha', from).order('fecha', { ascending: false })
+      withSedeFilter(supabase.from('ventas_dia')).select('*').gte('fecha', from).order('fecha', { ascending: false }),
+      withSedeFilter(supabase.from('egresos')).select('*').gte('fecha', from).order('fecha', { ascending: false })
     ]);
     
     setVentas((vRes.data as VentaDia[]) || []);
@@ -1280,9 +1281,9 @@ export default function ReportesPage() {
     if (!supabase) return;
     const payload = { ...data, updated_at: new Date().toISOString() };
     if (editando) {
-      await supabase.from('ventas_dia').update(payload).eq('id', editando.id);
+      await withSedeFilter(supabase.from('ventas_dia')).update(payload).eq('id', editando.id);
     } else {
-      await supabase.from('ventas_dia').insert({ ...payload, creado_por: 'Admin' });
+      await withSedeFilter(supabase.from('ventas_dia')).insert(withSedeInsert({ ...payload, creado_por: 'Admin' }));
     }
     setEditando(null);
     loadData();
@@ -1292,9 +1293,9 @@ export default function ReportesPage() {
     if (!supabase) return;
     const payload = { ...data, updated_at: new Date().toISOString() };
     if (editandoEgreso) {
-      await supabase.from('egresos').update(payload).eq('id', editandoEgreso.id);
+      await withSedeFilter(supabase.from('egresos')).update(payload).eq('id', editandoEgreso.id);
     } else {
-      await supabase.from('egresos').insert({ ...payload, creado_por: 'Admin' });
+      await withSedeFilter(supabase.from('egresos')).insert(withSedeInsert({ ...payload, creado_por: 'Admin' }));
     }
     setEditandoEgreso(null);
     loadData();
@@ -1348,7 +1349,7 @@ export default function ReportesPage() {
   const handleDelete = async (id: string) => {
     if (confirm('¿Eliminar cierre?')) {
       setDeleting(id);
-      await supabase?.from('ventas_dia').delete().eq('id', id);
+      await withSedeFilter(supabase?.from('ventas_dia')).delete().eq('id', id);
       setDeleting(null);
       loadData();
     }
@@ -1820,7 +1821,7 @@ export default function ReportesPage() {
                                 <Pencil className="w-3.5 h-3.5" />
                               </button>
                               <button
-                                onClick={async () => { if(confirm('¿Eliminar egreso?')) { await supabase?.from('egresos').delete().eq('id', e.id); loadData(); } }}
+                                onClick={async () => { if(confirm('¿Eliminar egreso?')) { await withSedeFilter(supabase?.from('egresos')).delete().eq('id', e.id); loadData(); } }}
                                 className="w-7 h-7 rounded-lg hover:bg-destructive/10 text-destructive flex items-center justify-center"
                                 title="Eliminar"
                               >

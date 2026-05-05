@@ -11,6 +11,7 @@ import { useAppStore } from '@/lib/store';
 import { Button } from '@/components/ui/button';
 import { Eye, Download, FileText } from 'lucide-react';
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
+import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 
 // ── Types ─────────────────────────────────────────────────────
 interface CitaServicio {
@@ -236,7 +237,7 @@ export default function ServiciosPage() {
   const updateEstado = async (id: string, estado: string) => {
     if (!supabase) return;
     setUpdatingId(id);
-    await supabase.from('citas').update({ estado, updated_at: new Date().toISOString() }).eq('id', id);
+    await withSedeFilter(supabase.from('citas')).update({ estado, updated_at: new Date().toISOString() }).eq('id', id);
     
     // Log activity
     const cita = citas.find(c => c.id === id);

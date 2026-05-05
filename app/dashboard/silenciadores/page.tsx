@@ -5,6 +5,7 @@ import { Package, Plus, TrendingUp, Calendar, AlertCircle, Trash } from 'lucide-
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 
 interface VentaSilenciador {
   id: string;
@@ -27,7 +28,7 @@ export default function SilenciadoresPage() {
   const deleteVenta = async (id: string) => {
     if (!confirm('¿Seguro que deseas eliminar este registro?')) return;
     if (!supabase) return;
-    const { error } = await supabase.from('ventas_silenciadores').delete().eq('id', id);
+    const { error } = await withSedeFilter(supabase.from('ventas_silenciadores')).delete().eq('id', id);
     if (!error) {
       setVentas(prev => prev.filter(v => v.id !== id));
       fetchVentas();
@@ -102,12 +103,12 @@ export default function SilenciadoresPage() {
     if (cantidad <= 0) return alert("La cantidad debe ser mayor a 0");
 
     setIsAdding(true);
-    const { error } = await supabase.from('ventas_silenciadores').insert({
+    const { error } = await withSedeFilter(supabase.from('ventas_silenciadores')).insert(withSedeInsert({
       cantidad,
       modelo: modelo.trim() || null,
       notas: notas.trim() || null,
       fecha: new Date().toISOString()
-    });
+    }));
 
     if (error) {
       console.error('Error adding:', error);

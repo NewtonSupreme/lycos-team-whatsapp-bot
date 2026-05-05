@@ -6,6 +6,7 @@ import {
   X, Zap, TrendingUp, ChevronRight
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 
 // ── Types ─────────────────────────────────────────────────────
 interface Lead {

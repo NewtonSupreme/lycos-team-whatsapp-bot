@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { Vehiculo, InventarioItem } from '@/types';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -14,8 +15,7 @@ export const isSupabaseConfigured = () => !!supabaseUrl && !!supabaseAnonKey;
 // ─── Clientes ──────────────────────────────────────────────────────────────
 export async function fetchClientes() {
   if (!supabase) return null;
-  const { data, error } = await supabase
-    .from('clientes')
+  const { data, error } = await withSedeFilter(supabase.from('clientes'))
     .select('*, vehiculos(*)')
     .order('created_at', { ascending: false });
   if (error) throw error;
@@ -27,15 +27,14 @@ export async function createCliente(cliente: {
   telefono: string; cedula?: string; direccion?: string; notas?: string;
 }) {
   if (!supabase) return null;
-  const { data, error } = await supabase.from('clientes').insert(cliente).select().single();
+  const { data, error } = await withSedeFilter(supabase.from('clientes')).insert(withSedeInsert(cliente)).select().single();
   if (error) throw error;
   return data;
 }
 
 export async function updateCliente(id: string, updates: Record<string, unknown>) {
   if (!supabase) return null;
-  const { data, error } = await supabase
-    .from('clientes').update({ ...updates, updated_at: new Date().toISOString() })
+  const { data, error } = await withSedeFilter(supabase.from('clientes')).update({ ...updates, updated_at: new Date().toISOString() })
     .eq('id', id).select().single();
   if (error) throw error;
   return data;
@@ -43,7 +42,7 @@ export async function updateCliente(id: string, updates: Record<string, unknown>
 
 export async function deleteCliente(id: string) {
   if (!supabase) return null;
-  const { error } = await supabase.from('clientes').delete().eq('id', id);
+  const { error } = await withSedeFilter(supabase.from('clientes')).delete().eq('id', id);
   if (error) throw error;
 }
 
@@ -51,10 +50,10 @@ export async function syncClientData(clientId: string, nombre: string, apellido:
   if (!supabase) return;
   const fullName = `${nombre} ${apellido}`.trim();
   try {
-    await supabase.from('citas').update({ nombre_cliente: fullName }).eq('cliente_id', clientId);
-    const { data: conv } = await supabase.from('conversaciones').select('datos_cliente, memoria').eq('telefono', telefono).single();
+    await withSedeFilter(supabase.from('citas')).update({ nombre_cliente: fullName }).eq('cliente_id', clientId);
+    const { data: conv } = await withSedeFilter(supabase.from('conversaciones')).select('datos_cliente, memoria').eq('telefono', telefono).single();
     if (conv) {
-      await supabase.from('conversaciones').update({
+      await withSedeFilter(supabase.from('conversaciones')).update({
         datos_cliente: { ...(conv.datos_cliente || {}), nombre: fullName },
         memoria: { ...(conv.memoria || {}), nombre: fullName }
       }).eq('telefono', telefono);
@@ -67,8 +66,7 @@ export async function syncClientData(clientId: string, nombre: string, apellido:
 // ─── Vehículos ─────────────────────────────────────────────────────────────
 export async function fetchVehiculos() {
   if (!supabase) return null;
-  const { data, error } = await supabase
-    .from('vehiculos')
+  const { data, error } = await withSedeFilter(supabase.from('vehiculos'))
     .select('*, clientes(nombre, apellido, telefono)')
     .order('created_at', { ascending: false });
   if (error) throw error;
@@ -77,15 +75,14 @@ export async function fetchVehiculos() {
 
 export async function createVehiculo(vehiculo: Partial<Vehiculo>) {
   if (!supabase) return null;
-  const { data, error } = await supabase.from('vehiculos').insert(vehiculo).select().single();
+  const { data, error } = await withSedeFilter(supabase.from('vehiculos')).insert(withSedeInsert(vehiculo)).select().single();
   if (error) throw error;
   return data;
 }
 
 export async function updateVehiculo(id: string, updates: Partial<Vehiculo>) {
   if (!supabase) return null;
-  const { data, error } = await supabase
-    .from('vehiculos')
+  const { data, error } = await withSedeFilter(supabase.from('vehiculos'))
     .update({ ...updates, updated_at: new Date().toISOString() })
     .eq('id', id)
     .select()
@@ -96,15 +93,14 @@ export async function updateVehiculo(id: string, updates: Partial<Vehiculo>) {
 
 export async function deleteVehiculo(id: string) {
   if (!supabase) return null;
-  const { error } = await supabase.from('vehiculos').delete().eq('id', id);
+  const { error } = await withSedeFilter(supabase.from('vehiculos')).delete().eq('id', id);
   if (error) throw error;
 }
 
 // ─── Servicios ─────────────────────────────────────────────────────────────
 export async function fetchServicios() {
   if (!supabase) return null;
-  const { data, error } = await supabase
-    .from('servicios')
+  const { data, error } = await withSedeFilter(supabase.from('servicios'))
     .select('*, vehiculos(marca, modelo, placa, clientes(nombre, apellido))')
     .order('created_at', { ascending: false });
   if (error) throw error;
@@ -113,8 +109,7 @@ export async function fetchServicios() {
 
 export async function updateServicioEstado(id: string, estado: string) {
   if (!supabase) return null;
-  const { data, error } = await supabase
-    .from('servicios')
+  const { data, error } = await withSedeFilter(supabase.from('servicios'))
     .update({ estado, updated_at: new Date().toISOString() })
     .eq('id', id).select().single();
   if (error) throw error;
@@ -124,8 +119,7 @@ export async function updateServicioEstado(id: string, estado: string) {
 // ─── Citas ─────────────────────────────────────────────────────────────────
 export async function fetchCitas() {
   if (!supabase) return null;
-  const { data, error } = await supabase
-    .from('citas')
+  const { data, error } = await withSedeFilter(supabase.from('citas'))
     .select('*, cliente:clientes(nombre, apellido), vehiculo:vehiculos(marca, modelo, placa)')
     .order('fecha', { ascending: true });
   if (error) throw error;
@@ -134,29 +128,28 @@ export async function fetchCitas() {
 
 export async function createCita(cita: Record<string, any>) {
   if (!supabase) return null;
-  const { data, error } = await supabase.from('citas').insert(cita).select().single();
+  const { data, error } = await withSedeFilter(supabase.from('citas')).insert(withSedeInsert(cita)).select().single();
   if (error) throw error;
   return data;
 }
 
 export async function updateCita(id: string, updates: Record<string, any>) {
   if (!supabase) return null;
-  const { data, error } = await supabase.from('citas').update(updates).eq('id', id).select().single();
+  const { data, error } = await withSedeFilter(supabase.from('citas')).update(updates).eq('id', id).select().single();
   if (error) throw error;
   return data;
 }
 
 export async function deleteCita(id: string) {
   if (!supabase) return null;
-  const { error } = await supabase.from('citas').delete().eq('id', id);
+  const { error } = await withSedeFilter(supabase.from('citas')).delete().eq('id', id);
   if (error) throw error;
 }
 
 // ─── Mensajes WhatsApp ──────────────────────────────────────────────────────
 export async function fetchMensajes(telefono: string) {
   if (!supabase) return null;
-  const { data, error } = await supabase
-    .from('mensajes_whatsapp')
+  const { data, error } = await withSedeFilter(supabase.from('mensajes_whatsapp'))
     .select('*')
     .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
     .order('created_at', { ascending: true });
@@ -166,8 +159,7 @@ export async function fetchMensajes(telefono: string) {
 
 export async function checkMensajeDuplicado(wa_message_id: string) {
   if (!supabase) return false;
-  const { data, error } = await supabase
-    .from('mensajes_whatsapp')
+  const { data, error } = await withSedeFilter(supabase.from('mensajes_whatsapp'))
     .select('id')
     .eq('wa_message_id', wa_message_id)
     .single();
@@ -182,8 +174,7 @@ export async function saveMensaje(mensaje: {
   wa_message_id?: string; cliente_id?: string;
 }) {
   if (!supabase) return null;
-  const { data, error } = await supabase
-    .from('mensajes_whatsapp').insert(mensaje).select().single();
+  const { data, error } = await withSedeFilter(supabase.from('mensajes_whatsapp')).insert(withSedeInsert(mensaje)).select().single();
   if (error) throw error;
   return data;
 }
@@ -191,8 +182,7 @@ export async function saveMensaje(mensaje: {
 // ─── Conversaciones ──────────────────────────────────────────────────────────
 export async function fetchConversacion(telefono: string) {
   if (!supabase) return null;
-  const { data, error } = await supabase
-    .from('conversaciones')
+  const { data, error } = await withSedeFilter(supabase.from('conversaciones'))
     .select('*')
     .eq('telefono', telefono)
     .single();
@@ -203,8 +193,7 @@ export async function fetchConversacion(telefono: string) {
 
 export async function fetchConversacionHistory(telefono: string, limit = 20) {
   if (!supabase) return null;
-  const { data, error } = await supabase
-    .from('mensajes_whatsapp')
+  const { data, error } = await withSedeFilter(supabase.from('mensajes_whatsapp'))
     .select('*')
     .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
     .order('created_at', { ascending: true })
@@ -222,9 +211,8 @@ export async function upsertConversacion(conv: {
   datos_cliente?: Record<string, string>;
 }) {
   if (!supabase) return null;
-  const { data, error } = await supabase
-    .from('conversaciones')
-    .upsert(conv, { onConflict: 'telefono' })
+  const { data, error } = await withSedeFilter(supabase.from('conversaciones'))
+    .upsert(withSedeInsert(conv), { onConflict: 'telefono' })
     .select()
     .single();
   if (error) throw error;
@@ -234,8 +222,7 @@ export async function upsertConversacion(conv: {
 // ─── Inventario ─────────────────────────────────────────────────────────────
 export async function fetchInventario(categoria?: string) {
   if (!supabase) return null;
-  let query = supabase
-    .from('inventario')
+  let query = withSedeFilter(supabase.from('inventario'))
     .select('*')
     .eq('activo', true)
     .order('orden', { ascending: true })
@@ -248,8 +235,7 @@ export async function fetchInventario(categoria?: string) {
 
 export async function updateInventarioStock(id: string, stock: number) {
   if (!supabase) return null;
-  const { data, error } = await supabase
-    .from('inventario')
+  const { data, error } = await withSedeFilter(supabase.from('inventario'))
     .update({ stock, updated_at: new Date().toISOString() })
     .eq('id', id)
     .select()
@@ -271,9 +257,8 @@ export async function updateInventarioOrder(items: { id: string, orden: number }
 
 export async function createInventarioItem(item: Partial<InventarioItem>) {
   if (!supabase) return null;
-  const { data, error } = await supabase
-    .from('inventario')
-    .insert(item)
+  const { data, error } = await withSedeFilter(supabase.from('inventario'))
+    .insert(withSedeInsert(item))
     .select()
     .single();
   if (error) throw error;
@@ -282,8 +267,7 @@ export async function createInventarioItem(item: Partial<InventarioItem>) {
 
 export async function updateInventarioItem(id: string, updates: Partial<InventarioItem>) {
   if (!supabase) return null;
-  const { data, error } = await supabase
-    .from('inventario')
+  const { data, error } = await withSedeFilter(supabase.from('inventario'))
     .update({ ...updates, updated_at: new Date().toISOString() })
     .eq('id', id)
     .select()
@@ -295,8 +279,7 @@ export async function updateInventarioItem(id: string, updates: Partial<Inventar
 export async function deleteInventarioItem(id: string) {
   if (!supabase) return null;
   // Soft delete by setting activo to false
-  const { error } = await supabase
-    .from('inventario')
+  const { error } = await withSedeFilter(supabase.from('inventario'))
     .update({ activo: false, updated_at: new Date().toISOString() })
     .eq('id', id);
   if (error) throw error;
@@ -311,10 +294,10 @@ export async function fetchDashboardStats() {
     { count: serviciosActivos },
     { count: conversacionesHoy },
   ] = await Promise.all([
-    supabase.from('clientes').select('*', { count: 'exact', head: true }),
-    supabase.from('vehiculos').select('*', { count: 'exact', head: true }),
-    supabase.from('servicios').select('*', { count: 'exact', head: true }).in('estado', ['pendiente', 'en_proceso']),
-    supabase.from('mensajes_whatsapp').select('*', { count: 'exact', head: true })
+    withSedeFilter(supabase.from('clientes')).select('*', { count: 'exact', head: true }),
+    withSedeFilter(supabase.from('vehiculos')).select('*', { count: 'exact', head: true }),
+    withSedeFilter(supabase.from('servicios')).select('*', { count: 'exact', head: true }).in('estado', ['pendiente', 'en_proceso']),
+    withSedeFilter(supabase.from('mensajes_whatsapp')).select('*', { count: 'exact', head: true })
       .gte('created_at', new Date().toISOString().split('T')[0]),
   ]);
   return { totalClientes, totalVehiculos, serviciosActivos, conversacionesHoy };
@@ -326,8 +309,7 @@ export async function fetchVentasSilenciadores() {
   const last30Days = new Date();
   last30Days.setDate(last30Days.getDate() - 30);
   
-  const { data, error } = await supabase
-    .from('ventas_silenciadores')
+  const { data, error } = await withSedeFilter(supabase.from('ventas_silenciadores'))
     .select('*')
     .gte('fecha', last30Days.toISOString())
     .order('fecha', { ascending: false });

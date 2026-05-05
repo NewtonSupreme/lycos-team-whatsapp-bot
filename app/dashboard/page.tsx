@@ -14,6 +14,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import StatusBadge from '@/components/ui/status-badge';
 import { formatCurrency, formatRelativeTime, tipoServicioLabel } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
+import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
+import { useSedeStore } from '@/lib/store/useSedeStore';
+import { MapPin, ShieldCheck } from 'lucide-react';
 
 // ── Types ────────────────────────────────────────────────────
 interface DashboardStats {
@@ -90,6 +93,7 @@ function getVzlaFirstDayString() {
 }
 
 export default function DashboardPage() {
+  const { currentSede, userRole } = useSedeStore();
   const [mounted, setMounted] = useState(false);
   const [stats, setStats] = useState<DashboardStats>({
     totalClientes: null, totalVehiculos: null, serviciosActivos: null,
@@ -134,27 +138,27 @@ export default function DashboardPage() {
       { data: convs },
       { data: waMsgs },
     ] = await Promise.all([
-      supabase.from('clientes').select('*', { count: 'exact', head: true }),
-      supabase.from('vehiculos').select('*', { count: 'exact', head: true }),
-      supabase.from('servicios').select('*', { count: 'exact', head: true }).in('estado', ['pendiente', 'en_progreso', 'en_proceso']),
-      supabase.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).gte('created_at', `${today}T00:00:00`).lt('created_at', `${today}T23:59:59`),
+      withSedeFilter(supabase.from('clientes')).select('*', { count: 'exact', head: true }),
+      withSedeFilter(supabase.from('vehiculos')).select('*', { count: 'exact', head: true }),
+      withSedeFilter(supabase.from('servicios')).select('*', { count: 'exact', head: true }).in('estado', ['pendiente', 'en_progreso', 'en_proceso']),
+      withSedeFilter(supabase.from('mensajes_whatsapp')).select('*', { count: 'exact', head: true }).gte('created_at', `${today}T00:00:00`).lt('created_at', `${today}T23:59:59`),
       // Conversaciones que tuvieron un mensaje hoy
-      supabase.from('conversaciones').select('*', { count: 'exact', head: true }).gte('ultimo_mensaje_at', `${today}T00:00:00`),
+      withSedeFilter(supabase.from('conversaciones')).select('*', { count: 'exact', head: true }).gte('ultimo_mensaje_at', `${today}T00:00:00`),
       // Conversaciones que tuvieron un mensaje este mes
-      supabase.from('conversaciones').select('*', { count: 'exact', head: true }).gte('ultimo_mensaje_at', `${firstDay}T00:00:00`),
-      supabase.from('citas').select('*', { count: 'exact', head: true }).eq('fecha', today),
-      supabase.from('servicios').select('*', { count: 'exact', head: true }).eq('estado', 'completado'),
-      supabase.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true),
+      withSedeFilter(supabase.from('conversaciones')).select('*', { count: 'exact', head: true }).gte('ultimo_mensaje_at', `${firstDay}T00:00:00`),
+      withSedeFilter(supabase.from('citas')).select('*', { count: 'exact', head: true }).eq('fecha', today),
+      withSedeFilter(supabase.from('servicios')).select('*', { count: 'exact', head: true }).eq('estado', 'completado'),
+      withSedeFilter(supabase.from('mensajes_whatsapp')).select('*', { count: 'exact', head: true }).eq('es_ia', true),
       // Recent services
-      supabase.from('servicios').select('id, descripcion, tipo, estado, costo_estimado, created_at').order('created_at', { ascending: false }).limit(5),
+      withSedeFilter(supabase.from('servicios')).select('id, descripcion, tipo, estado, costo_estimado, created_at').order('created_at', { ascending: false }).limit(5),
       // Recent conversations
-      supabase.from('conversaciones').select('id, telefono, ultimo_mensaje, ultimo_mensaje_at, mensajes_sin_leer, estado, datos_cliente').order('ultimo_mensaje_at', { ascending: false }).limit(6),
+      withSedeFilter(supabase.from('conversaciones')).select('id, telefono, ultimo_mensaje, ultimo_mensaje_at, mensajes_sin_leer, estado, datos_cliente').order('ultimo_mensaje_at', { ascending: false }).limit(6),
       // WA messages today per hour
-      supabase.from('mensajes_whatsapp').select('created_at').gte('created_at', `${today}T00:00:00`).lt('created_at', `${today}T23:59:59`).eq('tipo', 'entrante'),
+      withSedeFilter(supabase.from('mensajes_whatsapp')).select('created_at').gte('created_at', `${today}T00:00:00`).lt('created_at', `${today}T23:59:59`).eq('tipo', 'entrante'),
       // Silenciadores ultimos 7 dias
-      supabase.from('ventas_silenciadores').select('fecha, cantidad').gte('fecha', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()),
+      withSedeFilter(supabase.from('ventas_silenciadores')).select('fecha, cantidad').gte('fecha', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()),
       // Servicios registrados ultimos 7 dias
-      supabase.from('servicios').select('created_at').gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()),
+      withSedeFilter(supabase.from('servicios')).select('created_at').gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()),
     ]);
 
     setStats({
@@ -196,7 +200,7 @@ export default function DashboardPage() {
     }
     
     // Extracted Silenciadores
-    const dataSilenciadores = await supabase.from('ventas_silenciadores').select('fecha, cantidad').gte('fecha', new Date(Date.now() - 7 * 86400000).toISOString());
+    const dataSilenciadores = await withSedeFilter(supabase.from('ventas_silenciadores')).select('fecha, cantidad').gte('fecha', new Date(Date.now() - 7 * 86400000).toISOString());
     if (dataSilenciadores.data) {
       dataSilenciadores.data.forEach((v: { fecha: string; cantidad: number }) => {
         const dateKey = v.fecha.split('T')[0];
@@ -207,7 +211,7 @@ export default function DashboardPage() {
     }
     
     // Extracted Servicios
-    const dataServicios = await supabase.from('servicios').select('created_at').gte('created_at', new Date(Date.now() - 7 * 86400000).toISOString());
+    const dataServicios = await withSedeFilter(supabase.from('servicios')).select('created_at').gte('created_at', new Date(Date.now() - 7 * 86400000).toISOString());
     if (dataServicios.data) {
       dataServicios.data.forEach((s: { created_at: string }) => {
         const dateKey = s.created_at.split('T')[0];
@@ -260,9 +264,23 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
             Panel Principal
           </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
+          <div className="flex flex-wrap items-center gap-3 mt-1">
+            <p className="text-sm text-muted-foreground">
             Bienvenido de vuelta · {new Date().toLocaleDateString('es-VE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-          </p>
+            </p>
+            {mounted && (
+              <div className="flex items-center gap-2 border-l border-border pl-3">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-500 text-[11px] font-semibold">
+                  <MapPin className="w-3 h-3" />
+                  {currentSede?.nombre || 'Sede no seleccionada'}
+                </div>
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-500 text-[10px] font-bold uppercase tracking-wider">
+                  <ShieldCheck className="w-3 h-3" />
+                  {userRole}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-500/10 border border-green-500/20">

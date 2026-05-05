@@ -18,6 +18,7 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
+import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 
 const COLORS = ['bg-blue-500/20 text-blue-400','bg-purple-500/20 text-purple-400','bg-green-500/20 text-green-400','bg-orange-500/20 text-orange-400','bg-pink-500/20 text-pink-400','bg-cyan-500/20 text-cyan-400'];
 

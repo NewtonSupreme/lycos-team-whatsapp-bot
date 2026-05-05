@@ -4,10 +4,13 @@ import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
 import MobileBottomNav from '@/components/layout/MobileBottomNav';
 import { useAppStore } from '@/lib/store';
+import { useSedeStore } from '@/lib/store/useSedeStore';
+import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { sidebarOpen, setSidebarOpen, setUser } = useAppStore();
+  const { sidebarOpen, setSidebarOpen, setUser, user } = useAppStore();
+  const { setAvailableSedes, setUserRole, setCurrentSede, currentSede } = useSedeStore();
 
   // En móvil (< 1024px), cerrar sidebar automáticamente al montar
   useEffect(() => {
@@ -60,6 +63,46 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       .catch(() => {});
   }, [setUser]);
 
+  // Load Sede Data
+  useEffect(() => {
+    async function loadSedes() {
+      if (!user?.id) return;
+      
+      // 1. Get user role and assigned sede directly from usuarios table
+      const { data: userSede } = await supabase
+        .from('usuarios')
+        .select('sede_id, rol')
+        .eq('id', user.id)
+        .single();
+        
+      if (userSede) {
+        setUserRole(userSede.rol as any);
+      } else {
+        // Fallback or Admin default
+        setUserRole(user.rol === 'admin' ? 'admin' : 'empleado');
+      }
+
+      // 2. Get all sedes
+      const { data: sedesData } = await supabase.from('sedes').select('*');
+      if (sedesData) {
+        setAvailableSedes(sedesData);
+        
+        if (!currentSede) {
+          // Si el usuario tiene una sede asignada, seleccionarla por defecto
+          if (userSede?.sede_id) {
+            const miSede = sedesData.find(s => s.id === userSede.sede_id);
+            if (miSede) setCurrentSede(miSede);
+          } else {
+            // Sino, selecciona la primera o la Principal
+            const principal = sedesData.find(s => s.es_principal) || sedesData[0];
+            if (principal) setCurrentSede(principal);
+          }
+        }
+      }
+    }
+    loadSedes();
+  }, [user?.id]);
+
   return (
     <div suppressHydrationWarning className="min-h-screen bg-background dot-pattern">
       <Sidebar />
@@ -70,7 +113,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <Header />
         {/* pb-20 en móvil para que el bottom nav no tape el contenido */}
         <main className="flex-1 p-4 md:p-6 pb-24 lg:pb-6">
-          <div className="page-enter">
+          <div key={currentSede?.id} className="page-enter">
             {children}
           </div>
         </main>

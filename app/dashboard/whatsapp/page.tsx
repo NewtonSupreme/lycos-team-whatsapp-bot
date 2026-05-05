@@ -9,6 +9,8 @@ import {
 import { supabase, syncClientData } from '@/lib/supabase';
 import { Vehiculo } from '@/types';
 import { cn, formatRelativeTime } from '@/lib/utils';
+import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
+import { useSedeStore } from '@/lib/store/useSedeStore';
 
 const QUICK_REPLIES = [
   '¡Hola! ¿En qué le puedo ayudar? 😊',
@@ -282,7 +284,7 @@ export default function WhatsAppPage() {
     setLoadingMsgs(true);
     setHasMoreAbove(false);
 
-    const { data } = await supabase.from('mensajes_whatsapp')
+    const { data } = await withSedeFilter(supabase.from('mensajes_whatsapp'))
       .select('*')
       .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
       .is('deleted_at', null)
@@ -309,13 +311,13 @@ export default function WhatsAppPage() {
     
     // 1. Log to activity_log for traceability
     try {
-      await supabase!.from('activity_log').insert({
+      await withSedeFilter(supabase!.from('activity_log')).insert(withSedeInsert({
         usuario: 'Administrador',
         accion: 'delete_message',
         modulo: 'whatsapp',
         detalles: `Eliminado mensaje de ${msg.from_number}: "${msg.body.substring(0, 80)}..."`,
         ip_address: 'CRM_UI'
-      });
+      }));
     } catch {}
 
     // 2. Soft delete
@@ -347,7 +349,7 @@ export default function WhatsAppPage() {
 
   const restoreMsg = async (id: string) => {
     if (!confirm('¿Deseas restaurar este mensaje al chat original?')) return;
-    const { error } = await supabase!.from('mensajes_whatsapp').update({ deleted_at: null }).eq('id', id);
+    const { error } = await withSedeFilter(supabase!.from('mensajes_whatsapp')).update({ deleted_at: null }).eq('id', id);
     if (!error) {
       setAuditMsgs(prev => prev.filter(m => m.id !== id));
       if (selected && msgs.some(m => m.id === id)) {
@@ -366,7 +368,7 @@ export default function WhatsAppPage() {
     setLoadingMore(true);
 
     const oldest = msgs[0].created_at;
-    const { data } = await supabase.from('mensajes_whatsapp')
+    const { data } = await withSedeFilter(supabase.from('mensajes_whatsapp'))
       .select('*')
       .or(`from_number.eq.${selected.telefono},to_number.eq.${selected.telefono}`)
       .is('deleted_at', null)
@@ -413,7 +415,7 @@ export default function WhatsAppPage() {
     const realMsgs = latest.filter(m => !m.id.startsWith('tmp-'));
     const lastTs = realMsgs.length ? realMsgs[realMsgs.length - 1].created_at : new Date(0).toISOString();
 
-    const { data } = await supabase.from('mensajes_whatsapp')
+    const { data } = await withSedeFilter(supabase.from('mensajes_whatsapp'))
       .select('*')
       .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
       .is('deleted_at', null)
@@ -429,7 +431,7 @@ export default function WhatsAppPage() {
   const loadVehicles = useCallback(async (clientId: string) => {
     if (!supabase) return;
     setLoadingVehicles(true);
-    const { data } = await supabase.from('vehiculos').select('*').eq('cliente_id', clientId).eq('estado', 'activo');
+    const { data } = await withSedeFilter(supabase.from('vehiculos')).select('*').eq('cliente_id', clientId).eq('estado', 'activo');
     setSelectedVehicles(data || []);
     setLoadingVehicles(false);
   }, []);
@@ -538,7 +540,7 @@ export default function WhatsAppPage() {
     }
 
     if (supabase && (conv.mensajes_sin_leer ?? 0) > 0) {
-      supabase.from('conversaciones')
+      withSedeFilter(supabase.from('conversaciones'))
         .update({ mensajes_sin_leer: 0 })
         .eq('telefono', conv.telefono)
         .then(() => loadConvs());
@@ -648,7 +650,7 @@ export default function WhatsAppPage() {
   const setMode = async (mode: 'bot' | 'humano') => {
     if (!selected || !supabase || togglingMode) return;
     setTogglingMode(true);
-    await supabase.from('conversaciones').update({ estado: mode }).eq('telefono', selected.telefono);
+    await withSedeFilter(supabase.from('conversaciones')).update({ estado: mode }).eq('telefono', selected.telefono);
     await loadConvs();
     setTogglingMode(false);
   };
@@ -672,11 +674,11 @@ export default function WhatsAppPage() {
 
       // 1. Update clientes
       if (selected.cliente_id) {
-        await supabase.from('clientes').update({ nombre, apellido }).eq('id', selected.cliente_id);
+        await withSedeFilter(supabase.from('clientes')).update({ nombre, apellido }).eq('id', selected.cliente_id);
       }
 
       // 2. Update conversaciones
-      await supabase.from('conversaciones').update({
+      await withSedeFilter(supabase.from('conversaciones')).update({
         datos_cliente: {
           ...selected.datos_cliente,
           nombre: fullName
@@ -896,10 +898,27 @@ export default function WhatsAppPage() {
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  const { currentSede } = useSedeStore();
+  const isSanAntonio = currentSede?.nombre === 'San Antonio de los Altos';
+
   if (!mounted) return null;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 relative">
+      {!isSanAntonio && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-md bg-background/50 rounded-2xl">
+          <div className="bg-card border border-border shadow-2xl rounded-2xl p-8 max-w-md text-center flex flex-col items-center gap-4">
+            <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+              <MessageSquare className="w-8 h-8 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold mb-2">Módulo No Disponible</h2>
+              <p className="text-muted-foreground text-sm">El módulo de WhatsApp CRM está configurado exclusivamente para la sede de <strong>San Antonio de los Altos</strong> en este momento.</p>
+            </div>
+          </div>
+        </div>
+      )}
+      <div className={cn("space-y-3 transition-opacity duration-300", !isSanAntonio && "opacity-30 pointer-events-none")}>
       {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
@@ -1560,6 +1579,7 @@ export default function WhatsAppPage() {
           </div>
         </div>
       )}
+    </div>
     </div>
   );
 }

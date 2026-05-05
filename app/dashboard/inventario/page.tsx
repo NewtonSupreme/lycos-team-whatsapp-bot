@@ -21,6 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
+import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 
 const CATEGORIES: { value: InventarioCategoria; label: string }[] = [
   { value: 'silenciador', label: 'Silenciadores' },
