@@ -189,21 +189,42 @@ export default function InventarioPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+    
+    // Normalizar datos
+    const cleanForm = {
+      ...form,
+      codigo: form.codigo?.trim() || null
+    };
+
     try {
+      // Validar duplicados localmente antes de enviar
+      if (cleanForm.codigo) {
+        const duplicado = items.find(i => 
+          i.codigo?.toLowerCase() === cleanForm.codigo?.toLowerCase() && 
+          (!editingItem || i.id !== editingItem.id)
+        );
+        
+        if (duplicado) {
+          alert(`Error: El código "${cleanForm.codigo}" ya está en uso por el producto "${duplicado.nombre}".`);
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
       if (editingItem) {
-        await updateInventarioItem(editingItem.id, form);
+        await updateInventarioItem(editingItem.id, cleanForm);
         
         logActivity({
           usuario: user?.nombre || 'Sistema',
           modulo: 'Inventario',
           accion: 'Actualizó producto',
-          detalles: `${form.nombre} (${form.codigo || 'S/N'})`,
+          detalles: `${cleanForm.nombre} (${cleanForm.codigo || 'S/N'})`,
           referencia_id: editingItem.id,
           referencia_tabla: 'inventario'
         });
       } else {
         const newItem = await createInventarioItem({
-          ...form,
+          ...cleanForm,
           orden: items.length
         });
         
@@ -212,8 +233,8 @@ export default function InventarioPage() {
             usuario: user?.nombre || 'Sistema',
             modulo: 'Inventario',
             accion: 'Creó producto',
-            detalles: `${form.nombre} (${form.codigo || 'S/N'})`,
-            referencia_id: newItem[0]?.id,
+            detalles: `${cleanForm.nombre} (${cleanForm.codigo || 'S/N'})`,
+            referencia_id: newItem.id,
             referencia_tabla: 'inventario'
           });
         }
@@ -223,7 +244,11 @@ export default function InventarioPage() {
     } catch (error: any) {
       console.error('Error saving item:', error);
       const msg = error.message || 'Error desconocido';
-      alert(`Error al guardar el producto: ${msg}\n\nVerifica que la base de datos tenga todas las columnas necesarias.`);
+      if (msg.includes('unique constraint')) {
+        alert(`Error: El código ya existe. Por favor usa un código diferente.`);
+      } else {
+        alert(`Error al guardar el producto: ${msg}`);
+      }
     } finally {
       setIsSubmitting(false);
     }
