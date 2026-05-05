@@ -35,6 +35,7 @@ export default function EmpleadosPage() {
   }, [currentSede]);
 
   async function fetchSedes() {
+    if (!supabase) return;
     const { data } = await supabase.from("sedes").select("*");
     if (data) {
       setSedes(data);
@@ -45,6 +46,7 @@ export default function EmpleadosPage() {
   }
 
   async function fetchEmpleados() {
+    if (!supabase) return;
     setLoading(true);
     // Ideally we query a joined view or custom function.
     // Assuming we have access to usuarios table
