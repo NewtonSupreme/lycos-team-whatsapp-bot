@@ -68,6 +68,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     async function loadSedes() {
       if (!user?.id) return;
       
+      if (!supabase) return;
       // 1. Get user role and assigned sede directly from usuarios table
       const { data: userSede } = await supabase
         .from('usuarios')
@@ -82,6 +83,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         setUserRole(user.rol === 'admin' ? 'admin' : 'empleado');
       }
 
+      if (!supabase) return;
       // 2. Get all sedes
       const { data: sedesData } = await supabase.from('sedes').select('*');
       if (sedesData) {
