@@ -264,8 +264,7 @@ export default function WhatsAppPage() {
   // ── Load conversations ──────────────────────────────────────
   const loadConvs = useCallback(async () => {
     if (!supabase) return;
-    const { data } = await supabase
-      .from('conversaciones')
+    const { data } = await withSedeFilter(supabase.from('conversaciones'))
       .select('*, clientes(id, nombre, apellido, telefono)')
       .order('ultimo_mensaje_at', { ascending: false })
       .limit(1000);
@@ -478,10 +477,9 @@ export default function WhatsAppPage() {
         if (cur) {
           const phone = cur.telefono;
           if (newMsg.from_number === phone || newMsg.to_number === phone) {
-            setMsgs(prev => {
-              const withoutOptimistic = prev.filter(m => !m.id.startsWith('tmp-'));
-              return mergeMessages(withoutOptimistic, [newMsg]);
-            });
+            // We fetch instead of just adding to ensure we get any other messages 
+            // that might have arrived in the same batch or while the app was backgrounded
+            fetchNewMsgs(phone);
           }
         }
         loadConvs();
@@ -505,18 +503,12 @@ export default function WhatsAppPage() {
         realtimeConnectedRef.current = connected;
       });
 
-    // Only poll if WS is down; if connected, poll less aggressively
+    // Poll as fallback for Realtime silence or connection issues
     const poll = setInterval(() => {
       const cur = selectedRef.current;
-      // If realtime is live, only do a light conv refresh every 10s
-      if (realtimeConnectedRef.current) {
-        loadConvs();
-      } else {
-        // Fallback: aggressive polling when WS is down
-        if (cur) fetchNewMsgs(cur.telefono);
-        loadConvs();
-      }
-    }, 10000);
+      if (cur) fetchNewMsgs(cur.telefono);
+      loadConvs();
+    }, 8000);
 
     return () => {
       sb?.removeChannel(channel);

@@ -89,16 +89,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       if (sedesData) {
         setAvailableSedes(sedesData);
         
-        if (!currentSede) {
-          // Si el usuario tiene una sede asignada, seleccionarla por defecto
-          if (userSede?.sede_id) {
-            const miSede = sedesData.find(s => s.id === userSede.sede_id);
-            if (miSede) setCurrentSede(miSede);
-          } else {
-            // Sino, selecciona la primera o la Principal
-            const principal = sedesData.find(s => s.es_principal) || sedesData[0];
-            if (principal) setCurrentSede(principal);
-          }
+        // Auto-select sede based on user assignment (force once per user session)
+        const miSede = userSede?.sede_id ? sedesData.find(s => s.id === userSede.sede_id) : null;
+        const sessionKey = `sede_synced_${user.id}`;
+        const isSynced = sessionStorage.getItem(sessionKey);
+
+        if (!isSynced && miSede) {
+          // If it's a new session for this user, FORCE their assigned sede
+          setCurrentSede(miSede);
+          sessionStorage.setItem(sessionKey, 'true');
+          console.log(`📍 Sede auto-seleccionada por usuario: ${miSede.nombre}`);
+        } else if (!currentSede) {
+          // Fallback only if nothing is selected and no assignment found
+          const principal = miSede || sedesData.find(s => s.es_principal) || sedesData[0];
+          if (principal) setCurrentSede(principal);
         }
       }
     }

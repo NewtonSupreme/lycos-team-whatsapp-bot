@@ -614,6 +614,21 @@ export async function POST(request: NextRequest) {
       // Save incoming (blocking to capture exact time)
       let insertedTimestamp = new Date().toISOString();
       if (db) {
+        // Look up existing sede_id for this conversation
+        let effectiveSedeId = DEFAULT_SEDE_ID;
+        try {
+          const { data: existingConv } = await db.from('conversaciones')
+            .select('sede_id')
+            .eq('telefono', from)
+            .maybeSingle();
+          if (existingConv?.sede_id) {
+            effectiveSedeId = existingConv.sede_id;
+            console.log(`🏢 Sede detectada para ${from}: ${effectiveSedeId}`);
+          }
+        } catch (e) {
+          console.error('Error buscando sede_id:', e);
+        }
+
         try {
           const { data } = await db.from('mensajes_whatsapp').insert({
             from_number: from,
@@ -623,7 +638,7 @@ export async function POST(request: NextRequest) {
             wa_message_id,
             media_url: currentMediaId,
             media_type: currentMediaType,
-            sede_id: DEFAULT_SEDE_ID
+            sede_id: effectiveSedeId
           }).select('created_at').single();
           if (data?.created_at) insertedTimestamp = data.created_at;
 
@@ -1476,12 +1491,23 @@ async function updateConversation(db: ReturnType<typeof getDb>, from: string, la
 
   void (async () => {
     try {
+      // Look up existing sede_id to avoid overwriting it with default
+      let effectiveSedeId = DEFAULT_SEDE_ID;
+      const { data: existing } = await db.from('conversaciones')
+        .select('sede_id')
+        .eq('telefono', from)
+        .maybeSingle();
+      
+      if (existing?.sede_id) {
+        effectiveSedeId = existing.sede_id;
+      }
+
       const updateData: any = {
         telefono: from, 
         ultimo_mensaje: lastMsg.substring(0, 500),
         ultimo_mensaje_at: new Date().toISOString(), 
         memoria,
-        sede_id: DEFAULT_SEDE_ID
+        sede_id: effectiveSedeId
       };
       if (linkedClientId) updateData.cliente_id = linkedClientId;
 

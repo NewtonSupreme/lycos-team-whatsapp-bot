@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js'; // test
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { Vehiculo, InventarioItem } from '@/types';
 

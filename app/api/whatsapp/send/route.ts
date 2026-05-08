@@ -113,6 +113,21 @@ export async function POST(request: NextRequest) {
     const dbKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
     if (dbUrl && dbKey) {
       const db = createClient(dbUrl, dbKey);
+      
+      // Look up existing sede_id for this conversation
+      let effectiveSedeId = DEFAULT_SEDE_ID;
+      try {
+        const { data: existingConv } = await db.from('conversaciones')
+          .select('sede_id')
+          .eq('telefono', to.replace(/[^0-9]/g, ''))
+          .maybeSingle();
+        if (existingConv?.sede_id) {
+          effectiveSedeId = existingConv.sede_id;
+        }
+      } catch (e) {
+        console.error('Error buscando sede_id:', e);
+      }
+
       await db.from('mensajes_whatsapp').insert({
         from_number: 'system',
         to_number: to.replace(/[^0-9]/g, ''),
@@ -122,14 +137,14 @@ export async function POST(request: NextRequest) {
         es_ia: false,
         ...(waMessageId ? { wa_message_id: waMessageId } : {}),
         ...(mediaId ? { media_url: mediaId, media_type: mediaType } : {}),
-        sede_id: DEFAULT_SEDE_ID
+        sede_id: effectiveSedeId
       });
       await db.from('conversaciones').upsert({
         telefono: to.replace(/[^0-9]/g, ''),
         ultimo_mensaje: message,
         ultimo_mensaje_at: new Date().toISOString(),
         estado: 'humano',
-        sede_id: DEFAULT_SEDE_ID
+        sede_id: effectiveSedeId
       }, { onConflict: 'telefono' });
     }
 
