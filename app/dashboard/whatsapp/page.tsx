@@ -129,7 +129,7 @@ function detectMediaType(body: string): 'image' | 'video' | 'audio' | 'document'
   return null;
 }
 
-function MediaBubble({ msg, isOut }: { msg: RawMsg; isOut: boolean }) {
+function MediaBubble({ msg, isOut, onImageClick }: { msg: RawMsg; isOut: boolean; onImageClick: (url: string) => void }) {
   const { body, media_url, media_type } = msg;
   
   const proxyUrl = media_url ? `/api/whatsapp/media/${media_url}` : null;
@@ -156,7 +156,7 @@ function MediaBubble({ msg, isOut }: { msg: RawMsg; isOut: boolean }) {
   return (
     <div className="flex flex-col gap-1">
       {type === 'image' && proxyUrl ? (
-        <img src={proxyUrl} alt="Imagen" className="rounded-lg max-w-full max-h-64 object-cover cursor-pointer hover:opacity-90 transition-opacity" style={{ border: `1px solid ${color}` }} onClick={() => window.open(proxyUrl, '_blank')} />
+        <img src={proxyUrl} alt="Imagen" className="rounded-lg max-w-full max-h-64 object-cover cursor-pointer hover:opacity-90 transition-opacity" style={{ border: `1px solid ${color}` }} onClick={() => onImageClick(proxyUrl)} />
       ) : type === 'video' && proxyUrl ? (
         <video src={proxyUrl} controls className="rounded-lg max-w-full max-h-64" style={{ border: `1px solid ${color}` }} />
       ) : type === 'audio' && proxyUrl ? (
@@ -228,6 +228,7 @@ export default function WhatsAppPage() {
   const [viewMode, setViewMode] = useState<'chat' | 'audit'>('chat');
   const [auditMsgs, setAuditMsgs] = useState<any[]>([]);
   const [loadingAudit, setLoadingAudit] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1255,7 +1256,7 @@ export default function WhatsAppPage() {
                                 <span className="text-[10px] font-medium">Bot IA</span>
                               </div>
                             )}
-                            <MediaBubble msg={msg} isOut={isOut} />
+                            <MediaBubble msg={msg} isOut={isOut} onImageClick={setPreviewImage} />
                             <div className="flex items-center gap-1 justify-end mt-1 flex-shrink-0" style={{ marginRight: '-2px' }}>
                               <span className="text-[10px]" style={{ color: 'rgba(233,237,239,0.6)' }}>{formatTime(msg.created_at)}</span>
                               {isOut && (
@@ -1573,5 +1574,28 @@ export default function WhatsAppPage() {
       )}
     </div>
     </div>
+
+    {/* Native Image Preview Modal */}
+    {previewImage && (
+      <div 
+        className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-4 md:p-12 animate-in fade-in duration-200 backdrop-blur-sm"
+        onClick={() => setPreviewImage(null)}
+      >
+        <button 
+          className="absolute top-6 right-6 p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-full transition-all z-[210] md:top-10 md:right-10"
+          onClick={() => setPreviewImage(null)}
+        >
+          <X className="w-10 h-10" />
+        </button>
+        <div className="relative max-w-full max-h-full flex items-center justify-center p-2">
+          <img 
+            src={previewImage} 
+            className="max-w-full max-h-[90vh] object-contain shadow-2xl rounded-lg animate-in zoom-in-95 duration-200 border border-white/10" 
+            alt="Preview"
+            onClick={(e) => e.stopPropagation()} 
+          />
+        </div>
+      </div>
+    )}
   );
 }
