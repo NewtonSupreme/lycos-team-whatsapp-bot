@@ -204,20 +204,33 @@ export default function SilenciadoresPage() {
         </div>
 
         {canViewAll() && (
-          <div className="flex items-center gap-2 bg-secondary/30 p-1.5 rounded-2xl border border-border/50">
-            <MapPin className="w-4 h-4 text-primary ml-2" />
-            <span className="text-xs font-bold text-muted-foreground uppercase mr-1">Filtrar Sede:</span>
-            <Select value={globalSedeFilter} onValueChange={setGlobalSedeFilter}>
-              <SelectTrigger className="w-[180px] bg-background/50 border-none h-9 text-xs font-bold focus:ring-0">
-                <SelectValue placeholder="Todas las sedes" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todas las sedes</SelectItem>
-                {sedes.map(s => (
-                  <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="flex flex-wrap items-center gap-2 bg-secondary/20 p-1 rounded-2xl border border-border/50">
+            <button
+              onClick={() => setGlobalSedeFilter('all')}
+              className={cn(
+                "px-4 py-2 rounded-xl text-xs font-bold uppercase transition-all",
+                globalSedeFilter === 'all' 
+                  ? "bg-primary text-white shadow-lg shadow-primary/30" 
+                  : "text-muted-foreground hover:bg-background/50"
+              )}
+            >
+              Todas
+            </button>
+            {sedes.map(s => (
+              <button
+                key={s.id}
+                onClick={() => setGlobalSedeFilter(s.id)}
+                className={cn(
+                  "px-4 py-2 rounded-xl text-xs font-bold uppercase transition-all flex items-center gap-2",
+                  globalSedeFilter === s.id 
+                    ? "bg-primary text-white shadow-lg shadow-primary/30" 
+                    : "text-muted-foreground hover:bg-background/50"
+                )}
+              >
+                <MapPin className={cn("w-3 h-3", globalSedeFilter === s.id ? "text-white" : "text-primary")} />
+                {s.nombre}
+              </button>
+            ))}
           </div>
         )}
       </div>
