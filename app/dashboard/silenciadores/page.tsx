@@ -1,11 +1,16 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Package, Plus, TrendingUp, Calendar, AlertCircle, Trash } from 'lucide-react';
+import { Package, Plus, TrendingUp, Calendar, AlertCircle, Trash, MapPin } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
+import { useSedeStore } from '@/lib/store/useSedeStore';
+import { updateInventarioStock } from '@/lib/supabase';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 
 interface VentaSilenciador {
   id: string;
@@ -13,20 +18,34 @@ interface VentaSilenciador {
   cantidad: number;
   modelo: string | null;
   notas: string | null;
+  sede_id: string;
   created_at: string;
+  sede?: { nombre: string };
+}
+
+interface ProductoInventario {
+  id: string;
+  nombre: string;
+  stock: number;
+  categoria: string;
 }
 
 export default function SilenciadoresPage() {
   const [ventas, setVentas] = useState<VentaSilenciador[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [cantidad, setCantidad] = useState(1);
-  const [modelo, setModelo] = useState('');
+  const [selectedProductoId, setSelectedProductoId] = useState('');
+  const [selectedSedeId, setSelectedSedeId] = useState('');
   const [notas, setNotas] = useState('');
   const [loading, setLoading] = useState(true);
+  const [productos, setProductos] = useState<ProductoInventario[]>([]);
+  const [sedes, setSedes] = useState<any[]>([]);
+
+  const { currentSede, canViewAll } = useSedeStore();
 
   // States for delete
   const deleteVenta = async (id: string) => {
-    if (!confirm('¿Seguro que deseas eliminar este registro?')) return;
+    if (!confirm('¿Seguro que deseas eliminar este registro? (Esto NO devolverá el stock automáticamente)')) return;
     if (!supabase) return;
     const { error } = await withSedeFilter(supabase.from('ventas_silenciadores')).delete().eq('id', id);
     if (!error) {
@@ -34,6 +53,28 @@ export default function SilenciadoresPage() {
       fetchVentas();
     } else {
       alert('Error eliminando la venta.');
+    }
+  };
+
+  const fetchProductosSedes = async () => {
+    if (!supabase) return;
+    
+    // Fetch products (Silenciadores and Resonadores)
+    const { data: prodData } = await withSedeFilter(supabase.from('inventario'))
+      .select('id, nombre, stock, categoria')
+      .in('categoria', ['silenciador', 'resonador'])
+      .eq('activo', true)
+      .order('nombre');
+    
+    if (prodData) setProductos(prodData);
+
+    // Fetch sedes
+    const { data: sedeData } = await supabase.from('sedes').select('*').order('nombre');
+    if (sedeData) {
+      setSedes(sedeData);
+      if (!selectedSedeId && currentSede) {
+        setSelectedSedeId(currentSede.id);
+      }
     }
   };
 
@@ -51,7 +92,10 @@ export default function SilenciadoresPage() {
 
     const { data: rawData, error } = await supabase
       .from('ventas_silenciadores')
-      .select('*')
+      .select(`
+        *,
+        sede:sedes(nombre)
+      `)
       .gte('fecha', last30Days.toISOString())
       .order('fecha', { ascending: false });
 
@@ -85,6 +129,7 @@ export default function SilenciadoresPage() {
 
   useEffect(() => {
     fetchVentas();
+    fetchProductosSedes();
     
     // Realtime subscription
     if (!supabase) return;
@@ -100,26 +145,46 @@ export default function SilenciadoresPage() {
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supabase) return;
+    if (!selectedProductoId) return alert("Por favor selecciona un producto");
     if (cantidad <= 0) return alert("La cantidad debe ser mayor a 0");
 
-    setIsAdding(true);
-    const { error } = await withSedeFilter(supabase.from('ventas_silenciadores')).insert(withSedeInsert({
-      cantidad,
-      modelo: modelo.trim() || null,
-      notas: notas.trim() || null,
-      fecha: new Date().toISOString()
-    }));
+    const producto = productos.find(p => p.id === selectedProductoId);
+    if (!producto) return alert("Producto no encontrado");
 
-    if (error) {
-      console.error('Error adding:', error);
-      alert('Hubo un error al registrar la venta.');
-    } else {
+    if (producto.stock < cantidad) {
+      if (!confirm(`Stock insuficiente (${producto.stock}). ¿Deseas registrar la venta de todos modos?`)) return;
+    }
+
+    setIsAdding(true);
+    try {
+      // 1. Insert sale
+      const { error: saleError } = await supabase.from('ventas_silenciadores').insert({
+        cantidad,
+        modelo: producto.nombre,
+        notas: notas.trim() || null,
+        fecha: new Date().toISOString(),
+        sede_id: selectedSedeId || currentSede?.id
+      });
+
+      if (saleError) throw saleError;
+
+      // 2. Update Inventory Stock
+      const newStock = Math.max(0, producto.stock - cantidad);
+      await updateInventarioStock(selectedProductoId, newStock);
+
+      // 3. Reset and Refresh
       setCantidad(1);
-      setModelo('');
+      setSelectedProductoId('');
       setNotas('');
       await fetchVentas();
+      await fetchProductosSedes();
+      alert('Venta registrada y stock actualizado.');
+    } catch (error: any) {
+      console.error('Error in handleAdd:', error);
+      alert('Hubo un error: ' + error.message);
+    } finally {
+      setIsAdding(false);
     }
-    setIsAdding(false);
   };
 
   return (
@@ -182,28 +247,58 @@ export default function SilenciadoresPage() {
             <CardContent>
               <form onSubmit={handleAdd} className="space-y-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Cantidad Vendida</label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={cantidad}
-                    onChange={e => setCantidad(parseInt(e.target.value) || 0)}
-                    className="w-full rounded-xl bg-background border border-border px-3 py-2 text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50 transition-all font-semibold"
-                    required
-                  />
+                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Producto en Inventario</Label>
+                  <Select value={selectedProductoId} onValueChange={setSelectedProductoId}>
+                    <SelectTrigger className="bg-background/50 border-primary/20 h-11">
+                      <SelectValue placeholder="Selecciona un producto..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {productos.map(p => (
+                        <SelectItem key={p.id} value={p.id}>
+                          <div className="flex justify-between items-center w-full gap-4">
+                            <span>{p.nombre}</span>
+                            <Badge variant={p.stock <= 0 ? "destructive" : "outline"} className="ml-auto text-[10px]">
+                              Stock: {p.stock}
+                            </Badge>
+                          </div>
+                        </SelectItem>
+                      ))}
+                      {productos.length === 0 && (
+                        <div className="p-2 text-xs text-muted-foreground text-center">No hay silenciadores en inventario</div>
+                      )}
+                    </SelectContent>
+                  </Select>
                 </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Modelo (Opcional)</label>
-                  <input
-                    type="text"
-                    value={modelo}
-                    onChange={e => setModelo(e.target.value)}
-                    placeholder="Ej. CL40, Flowmaster"
-                    className="w-full rounded-xl bg-background border border-border px-3 py-2 text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50 transition-all"
-                  />
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Cantidad</Label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={cantidad}
+                      onChange={e => setCantidad(parseInt(e.target.value) || 0)}
+                      className="w-full rounded-xl bg-background border border-border px-3 py-2 h-11 text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50 transition-all font-semibold"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Sede</Label>
+                    <Select value={selectedSedeId} onValueChange={setSelectedSedeId} disabled={!canViewAll()}>
+                      <SelectTrigger className="bg-background/50 border-primary/20 h-11">
+                        <SelectValue placeholder="Sede" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {sedes.map(s => (
+                          <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
+
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Notas (Opcional)</label>
+                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Notas (Opcional)</Label>
                   <input
                     type="text"
                     value={notas}
@@ -216,7 +311,7 @@ export default function SilenciadoresPage() {
                   type="submit"
                   disabled={isAdding}
                   className={cn(
-                    "w-full rounded-xl py-2.5 px-4 font-semibold text-sm transition-all text-white relative overflow-hidden group",
+                    "w-full rounded-xl py-2.5 px-4 font-semibold text-sm transition-all text-white relative overflow-hidden group mt-2",
                     isAdding ? "bg-primary/50 cursor-not-allowed" : "bg-primary hover:bg-primary/90 active:scale-[0.98]"
                   )}
                 >
@@ -249,9 +344,9 @@ export default function SilenciadoresPage() {
                   <table className="w-full text-sm text-left">
                     <thead className="text-xs text-muted-foreground uppercase bg-secondary/30">
                       <tr>
-                        <th className="px-4 py-3 rounded-tl-lg">Fecha</th>
+                        <th className="px-4 py-3 rounded-tl-lg">Fecha / Sede</th>
                         <th className="px-4 py-3">Cantidad</th>
-                        <th className="px-4 py-3">Modelo</th>
+                        <th className="px-4 py-3">Producto</th>
                         <th className="px-4 py-3">Notas</th>
                         <th className="px-4 py-3 rounded-tr-lg w-16"></th>
                       </tr>
@@ -259,10 +354,18 @@ export default function SilenciadoresPage() {
                     <tbody>
                       {ventas.map((v) => (
                         <tr key={v.id} className="border-b border-border/30 hover:bg-white/5 transition-colors">
-                          <td className="px-4 py-3 text-xs text-muted-foreground">
-                            {new Date(v.fecha).toLocaleString('es-VE', { 
-                              day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' 
-                            })}
+                          <td className="px-4 py-3">
+                            <div className="flex flex-col">
+                              <span className="text-xs text-muted-foreground">
+                                {new Date(v.fecha).toLocaleString('es-VE', { 
+                                  day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' 
+                                })}
+                              </span>
+                              <span className="text-[10px] font-bold text-primary flex items-center gap-1 uppercase tracking-tighter mt-0.5">
+                                <MapPin className="w-2.5 h-2.5" />
+                                {v.sede?.nombre || 'Sede'}
+                              </span>
+                            </div>
                           </td>
                           <td className="px-4 py-3">
                             <span className="inline-flex items-center justify-center bg-primary/20 text-primary font-bold px-2.5 py-0.5 rounded-full">
