@@ -40,6 +40,7 @@ export default function SilenciadoresPage() {
   const [loading, setLoading] = useState(true);
   const [productos, setProductos] = useState<ProductoInventario[]>([]);
   const [sedes, setSedes] = useState<any[]>([]);
+  const [globalSedeFilter, setGlobalSedeFilter] = useState<string>('all');
 
   const { currentSede, canViewAll } = useSedeStore();
 
@@ -113,10 +114,14 @@ export default function SilenciadoresPage() {
     const hace7Dias = new Date();
     hace7Dias.setDate(hace7Dias.getDate() - 7);
 
+    const filteredData = globalSedeFilter === 'all' 
+      ? data 
+      : data.filter(v => v.sede_id === globalSedeFilter);
+
     let hoyCount = 0;
     let semanaCount = 0;
 
-    data?.forEach(v => {
+    filteredData?.forEach(v => {
       const vDate = new Date(v.fecha);
       if (vDate >= hoyDate) hoyCount += v.cantidad;
       if (vDate >= hace7Dias) semanaCount += v.cantidad;
@@ -125,7 +130,7 @@ export default function SilenciadoresPage() {
     setHoy(hoyCount);
     setSemana(semanaCount);
     setLoading(false);
-  }, []);
+  }, [globalSedeFilter]);
 
   useEffect(() => {
     fetchVentas();
@@ -188,29 +193,50 @@ export default function SilenciadoresPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-5xl">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="space-y-6 max-w-6xl mx-auto">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2" style={{ fontFamily: 'Syne, sans-serif' }}>
+          <h1 className="text-3xl font-bold flex items-center gap-3" style={{ fontFamily: 'Syne, sans-serif' }}>
             <span className="text-gradient hover-glow">Ventas de Silenciadores</span>
-            <Package className="w-6 h-6 text-primary animate-float" />
+            <Package className="w-8 h-8 text-primary animate-float" />
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">Registra y monitorea las ventas de escapes y silenciadores</p>
+          <p className="text-sm text-muted-foreground mt-1">Control de ventas y stock sincronizado por sede.</p>
         </div>
+
+        {canViewAll() && (
+          <div className="flex items-center gap-2 bg-secondary/30 p-1.5 rounded-2xl border border-border/50">
+            <MapPin className="w-4 h-4 text-primary ml-2" />
+            <span className="text-xs font-bold text-muted-foreground uppercase mr-1">Filtrar Sede:</span>
+            <Select value={globalSedeFilter} onValueChange={setGlobalSedeFilter}>
+              <SelectTrigger className="w-[180px] bg-background/50 border-none h-9 text-xs font-bold focus:ring-0">
+                <SelectValue placeholder="Todas las sedes" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas las sedes</SelectItem>
+                {sedes.map(s => (
+                  <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="glass-card stat-card rounded-2xl p-5 border border-primary/20 bg-primary/5">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-primary/20 flex items-center justify-center text-primary">
               <TrendingUp className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-sm text-muted-foreground font-medium">Vendidos Hoy</p>
+              <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Vendidos Hoy</p>
               <p className="text-3xl font-bold text-foreground">
                 {loading ? '...' : hoy}
               </p>
+              {globalSedeFilter !== 'all' && (
+                <p className="text-[9px] text-primary font-bold mt-1 uppercase">Solo Sede Seleccionada</p>
+              )}
             </div>
           </div>
         </div>
@@ -220,10 +246,22 @@ export default function SilenciadoresPage() {
               <Calendar className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-sm text-muted-foreground font-medium">Últimos 7 Días</p>
+              <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Últimos 7 Días</p>
               <p className="text-3xl font-bold text-foreground">
                 {loading ? '...' : semana}
               </p>
+            </div>
+          </div>
+        </div>
+        <div className="glass-card stat-card rounded-2xl p-5 border border-green-500/20 bg-green-500/5">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-green-500/20 flex items-center justify-center text-green-600">
+              <Package className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Sedes Activas</p>
+              <p className="text-3xl font-bold text-foreground">{sedes.length}</p>
+              <p className="text-[9px] text-green-600 font-bold mt-1 uppercase">Reportando ventas</p>
             </div>
           </div>
         </div>
@@ -352,19 +390,23 @@ export default function SilenciadoresPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {ventas.map((v) => (
-                        <tr key={v.id} className="border-b border-border/30 hover:bg-white/5 transition-colors">
+                      {ventas
+                        .filter(v => globalSedeFilter === 'all' || v.sede_id === globalSedeFilter)
+                        .map((v) => (
+                        <tr key={v.id} className="border-b border-border/30 hover:bg-white/5 transition-colors group">
                           <td className="px-4 py-3">
                             <div className="flex flex-col">
-                              <span className="text-xs text-muted-foreground">
+                              <span className="text-xs text-muted-foreground group-hover:text-foreground transition-colors">
                                 {new Date(v.fecha).toLocaleString('es-VE', { 
                                   day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' 
                                 })}
                               </span>
-                              <span className="text-[10px] font-bold text-primary flex items-center gap-1 uppercase tracking-tighter mt-0.5">
-                                <MapPin className="w-2.5 h-2.5" />
-                                {v.sede?.nombre || 'Sede'}
-                              </span>
+                              <div className="flex items-center gap-1.5 mt-1">
+                                <Badge variant="secondary" className="text-[9px] px-1.5 py-0 rounded-md bg-primary/10 text-primary border-primary/20 uppercase font-bold">
+                                  <MapPin className="w-2.5 h-2.5 mr-1" />
+                                  {v.sede?.nombre || 'Sede'}
+                                </Badge>
+                              </div>
                             </div>
                           </td>
                           <td className="px-4 py-3">
