@@ -23,6 +23,7 @@ async function firePushNotification(payload: {
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const DEFAULT_SEDE_ID = process.env.WHATSAPP_DEFAULT_SEDE_ID || '310595c5-5258-47fa-9b69-5ad9932685a7';
 
 // ─── AI Models — ordered by priority (primary first, then fallback) ──────────
 const GEMINI_MODELS = [
@@ -621,7 +622,8 @@ export async function POST(request: NextRequest) {
             tipo: 'entrante',
             wa_message_id,
             media_url: currentMediaId,
-            media_type: currentMediaType
+            media_type: currentMediaType,
+            sede_id: DEFAULT_SEDE_ID
           }).select('created_at').single();
           if (data?.created_at) insertedTimestamp = data.created_at;
 
@@ -676,7 +678,7 @@ export async function POST(request: NextRequest) {
               ultimo_mensaje: messageBody.substring(0, 200),
               ultimo_mensaje_at: new Date().toISOString(),
               mensajes_sin_leer: 1,
-            }).eq('telefono', from);
+            }).eq('telefono', from).eq('sede_id', DEFAULT_SEDE_ID);
             // Extra push: human mode means you MUST respond manually
             void firePushNotification({
               title: `🆘 Respuesta manual requerida`,
@@ -698,7 +700,7 @@ export async function POST(request: NextRequest) {
         console.log(`🤖 [${from}] Entering processCoreLogic...`);
         const phone = from.replace(/[^0-9]/g, ''); // Normalize
         // Update is_processing to true
-        await db.from('conversaciones').update({ is_processing: true }).eq('telefono', phone);
+        await db.from('conversaciones').update({ is_processing: true }).eq('telefono', phone).eq('sede_id', DEFAULT_SEDE_ID);
 
         // Mark any OLD pending messages from THIS user as superseded
         // (new message will be processed fresh — avoids duplicate replies)
@@ -712,7 +714,7 @@ export async function POST(request: NextRequest) {
         try {
           await processCoreLogic(db, phone, messageBody, wa_message_id, waProfileName);
         } finally {
-          await db.from('conversaciones').update({ is_processing: false }).eq('telefono', phone);
+          await db.from('conversaciones').update({ is_processing: false }).eq('telefono', phone).eq('sede_id', DEFAULT_SEDE_ID);
         }
         console.log(`✅ [${phone}] processCoreLogic finished.`);
       } // end for loop
@@ -1302,7 +1304,7 @@ async function processIntents(
   if (memChanged) {
     ctx.memoria = newMemoria; // update in-place for this run
     try {
-      await db.from('conversaciones').upsert({ telefono: from, memoria: newMemoria }, { onConflict: 'telefono' });
+      await db.from('conversaciones').upsert({ telefono: from, memoria: newMemoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
     } catch (e) { console.error('Error saving memoria:', e); }
   }
 
@@ -1358,7 +1360,8 @@ async function getOrCreateClientAndVehicle(
       const { data: newClient, error: clientErr } = await db.from('clientes').insert({
         nombre: parts[0],
         apellido: parts.slice(1).join(' ') || '(WhatsApp)',
-        telefono: phone
+        telefono: phone,
+        sede_id: DEFAULT_SEDE_ID
       }).select('id').single();
       if (clientErr) { console.error('Error creando cliente:', clientErr.message); }
       clientId = newClient?.id;
@@ -1397,7 +1400,8 @@ async function getOrCreateClientAndVehicle(
             marca: marca || 'Desconocida',
             modelo: modelo || 'Modelo',
             anio: parseInt(anio || '2024'), // NOT NULL constraint fix
-            estado: 'activo'
+            estado: 'activo',
+            sede_id: DEFAULT_SEDE_ID
           }).select('id').single();
           if (vehErr) { console.error('Error creando vehiculo con placa:', vehErr.message); }
           vehicleId = newVeh?.id;
@@ -1424,7 +1428,8 @@ async function getOrCreateClientAndVehicle(
             marca: marca,
             modelo: modelo || 'Modelo',
             ...(anio ? { anio: parseInt(anio) } : {}),
-            estado: 'activo'
+            estado: 'activo',
+            sede_id: DEFAULT_SEDE_ID
           }).select('id').single();
           if (vehErr) { console.error('Error creando vehiculo sin placa:', vehErr.message); }
           vehicleId = newVeh?.id;
@@ -1445,7 +1450,7 @@ async function getOrCreateClientAndVehicle(
           nombre: fullName || name,
           wa_name: waProfileName || undefined
         }
-      }).eq('telefono', phone);
+      }).eq('telefono', phone).eq('sede_id', DEFAULT_SEDE_ID);
     }
 
   } catch (e) { console.error('Error in getOrCreateClientAndVehicle:', e); }
@@ -1476,7 +1481,7 @@ async function updateConversation(db: ReturnType<typeof getDb>, from: string, la
         ultimo_mensaje: lastMsg.substring(0, 500),
         ultimo_mensaje_at: new Date().toISOString(), 
         memoria,
-        updated_at: new Date().toISOString()
+        sede_id: DEFAULT_SEDE_ID
       };
       if (linkedClientId) updateData.cliente_id = linkedClientId;
 
@@ -1529,7 +1534,8 @@ async function sendMsg(to: string, body: string, preview: boolean = false, reply
           body,
           tipo: 'saliente',
           wa_message_id: wa_id,
-          es_ia: true
+          es_ia: true,
+          sede_id: DEFAULT_SEDE_ID
         });
       } catch (e) {
         console.error('Error guardando mensaje saliente en DB:', e);
@@ -1609,7 +1615,8 @@ async function sendImageMsg(to: string, imageSlug: string, caption?: string, rep
           body: `[Imagen: ${imageSlug}] ${caption || ''}`,
           tipo: 'saliente',
           wa_message_id: wa_id,
-          es_ia: true
+          es_ia: true,
+          sede_id: DEFAULT_SEDE_ID
         });
       } catch (e) {
         console.error('Error guardando imagen saliente en DB:', e);
@@ -1670,7 +1677,7 @@ async function sendContactCard(to: string, phone: string, displayName: string): 
         estado: 'humano',
         ultimo_mensaje: `[Tarjeta de contacto: ${displayName}]`,
         ultimo_mensaje_at: new Date().toISOString()
-      }).eq('telefono', cleanTo);
+      }).eq('telefono', cleanTo).eq('sede_id', DEFAULT_SEDE_ID);
     }
   } catch (e) {
     console.error('❌ sendContactCard:', e);
@@ -1722,7 +1729,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             wa_profile_name: waProfileName || null,
             inserted_timestamp: new Date().toISOString(),
             intentos: 0,
-            status: 'pending'
+            status: 'pending',
+            sede_id: DEFAULT_SEDE_ID
           }).select('id').single();
           pendingId = pData?.id || null;
           console.log(`💾 [${from}] Persistencia temprana activada (ID: ${pendingId})`);
@@ -1822,7 +1830,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               ctx.memoria.nombre = aiDetectedName;
               try {
                 if (db) {
-                  await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria }, { onConflict: 'telefono' });
+                  await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
                   await getOrCreateClientAndVehicle(db, from, aiDetectedName, '', '', undefined, waProfileName);
                   console.log(`🤖 AI Nombre Extraido y Guardado: ${aiDetectedName}`);
                 }
@@ -1873,13 +1881,13 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               }
               
               if (existingId) {
-                const { error: updErr } = await db.from('inventario').update(updateObj).eq('id', existingId);
+                const { error: updErr } = await db.from('inventario').update(updateObj).eq('id', existingId).eq('sede_id', DEFAULT_SEDE_ID);
                 if (updErr) {
                   // Fallback si la columna 'marca' no existe en la DB real
                   if (updErr.message.includes('marca') || updErr.code === 'PGRST204') {
                     console.warn(`⚠️ Omitiendo columna 'marca' inexistente para ${nombre}`);
                     delete updateObj.marca;
-                    await db.from('inventario').update(updateObj).eq('id', existingId);
+                    await db.from('inventario').update(updateObj).eq('id', existingId).eq('sede_id', DEFAULT_SEDE_ID);
                   } else {
                     console.error(`❌ Error actualizando stock de ${nombre}:`, updErr);
                     throw updErr;
@@ -1887,13 +1895,13 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 }
                 console.log(`✅ ADMIN: Stock ACTUALIZADO en DB: ${nombre}`);
               } else {
-                const { error: insErr } = await db.from('inventario').insert(updateObj);
+                const { error: insErr } = await db.from('inventario').insert({ ...updateObj, sede_id: DEFAULT_SEDE_ID });
                 if (insErr) {
                   // Fallback si la columna 'marca' no existe en la DB real
                   if (insErr.message.includes('marca') || insErr.code === 'PGRST204') {
                     console.warn(`⚠️ Omitiendo columna 'marca' inexistente para ${nombre}`);
                     delete updateObj.marca;
-                    await db.from('inventario').insert(updateObj);
+                    await db.from('inventario').insert({ ...updateObj, sede_id: DEFAULT_SEDE_ID });
                   } else {
                     console.error(`❌ Error insertando nuevo producto ${nombre}:`, insErr);
                     throw insErr;
@@ -1925,10 +1933,10 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 fecha, hora, cliente_id: clientId, vehiculo_id: vehId, estado, descripcion: desc, telefono: from
               };
               if (id && id !== 'id_opcional' && id.length > 5 && db) {
-                await db.from('citas').update(citaObj).eq('id', id);
+                await db.from('citas').update(citaObj).eq('id', id).eq('sede_id', DEFAULT_SEDE_ID);
                 console.log(`📅 ADMIN: Cita actualizada: ${id}`);
               } else if (db) {
-                await db.from('citas').insert(citaObj);
+                await db.from('citas').insert({ ...citaObj, sede_id: DEFAULT_SEDE_ID });
                 console.log(`📅 ADMIN: Nueva cita creada por administrador`);
               }
             } catch (e) { console.error('Error in CITA_UPSERT:', e); }
@@ -1939,7 +1947,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           if (citaDeleteMatch && db) {
             try {
               const target = citaDeleteMatch[1].trim();
-              await db.from('citas').delete().eq('id', target);
+                await db.from('citas').delete().eq('id', target).eq('sede_id', DEFAULT_SEDE_ID);
               console.log(`📅 ADMIN: Cita eliminada: ${target}`);
             } catch (e) { console.error('Error in CITA_DELETE:', e); }
           }
@@ -1951,10 +1959,10 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               const [, id, name, last, tel, ced, dir] = Array.from(m).map(s => s?.trim());
               const clientObj = { nombre: name, apellido: last, telefono: tel, cedula: ced || null, direccion: dir || null };
               if (id && id !== 'id_opcional' && id.length > 5 && db) {
-                await db.from('clientes').update(clientObj).eq('id', id);
+                await db.from('clientes').update(clientObj).eq('id', id).eq('sede_id', DEFAULT_SEDE_ID);
                 console.log(`👤 ADMIN: Cliente actualizado: ${id}`);
               } else if (db) {
-                await db.from('clientes').insert(clientObj);
+                await db.from('clientes').insert({ ...clientObj, sede_id: DEFAULT_SEDE_ID });
                 console.log(`👤 ADMIN: Nuevo cliente agregado por administrador`);
               }
             } catch (e) { console.error('Error in CLIENTE_UPSERT:', e); }
@@ -2031,6 +2039,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                   nombre_cliente: userName || from,
                   vehiculo_info: vehiculoInfo || null,
                   placa: placa || null,
+                  sede_id: DEFAULT_SEDE_ID
                 });
                 console.log(`📅 AUTO-CITA IA: ${fecha} ${hora} | ${descripcionFinal} | client_id: ${clientId} | veh_id: ${vehicleId} | isNew: ${isNew}`);
               }
@@ -2080,6 +2089,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               inserted_timestamp: new Date().toISOString(),
               intentos: 0,
               status: 'pending',
+              sede_id: DEFAULT_SEDE_ID
             });
             console.log(`💾 [${from}] Mensaje guardado en cola pendiente para reintento por cron.`);
           }
@@ -2090,7 +2100,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
         // Marcar como completado si llegamos hasta aquí con éxito
         if (db && pendingId) {
-          await db.from('mensajes_pendientes_ia').update({ status: 'completed' }).eq('id', pendingId);
+          await db.from('mensajes_pendientes_ia').update({ status: 'completed' }).eq('id', pendingId).eq('sede_id', DEFAULT_SEDE_ID);
         }
 
         await updateConversation(db, from, messageBody, ctx.memoria, r?.clientId);

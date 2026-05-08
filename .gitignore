@@ -27,3 +27,16 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .kilocode/mcp.json
+
+# Scratch & Temporary
+scratch/
+temp/
+test-*.js
+import_excel.js
+check_excel.js
+get-schema.js
+*.xlsx
+*.jpg
+*.pdf
+db_check.txt
+dolarapi.json

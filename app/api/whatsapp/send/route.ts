@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
+const DEFAULT_SEDE_ID = process.env.WHATSAPP_DEFAULT_SEDE_ID || '310595c5-5258-47fa-9b69-5ad9932685a7';
+
 export async function POST(request: NextRequest) {
   try {
     let to = '', message = '', file: File | null = null;
@@ -120,12 +122,14 @@ export async function POST(request: NextRequest) {
         es_ia: false,
         ...(waMessageId ? { wa_message_id: waMessageId } : {}),
         ...(mediaId ? { media_url: mediaId, media_type: mediaType } : {}),
+        sede_id: DEFAULT_SEDE_ID
       });
       await db.from('conversaciones').upsert({
         telefono: to.replace(/[^0-9]/g, ''),
         ultimo_mensaje: message,
         ultimo_mensaje_at: new Date().toISOString(),
         estado: 'humano',
+        sede_id: DEFAULT_SEDE_ID
       }, { onConflict: 'telefono' });
     }
 

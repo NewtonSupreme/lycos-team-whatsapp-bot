@@ -14,6 +14,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { processCoreLogic } from '../webhook/route';
 
+const DEFAULT_SEDE_ID = process.env.WHATSAPP_DEFAULT_SEDE_ID || '310595c5-5258-47fa-9b69-5ad9932685a7';
+
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
@@ -94,6 +96,7 @@ export async function POST(request: NextRequest) {
       .from('mensajes_whatsapp')
       .select('id, from_number, media_url, media_type, wa_message_id, body, tipo')
       .eq('id', messageId)
+      .eq('sede_id', DEFAULT_SEDE_ID)
       .single();
 
     if (msgErr || !msg) {
@@ -157,7 +160,7 @@ export async function POST(request: NextRequest) {
     console.log(`✅ [redescribe] Descripción: "${description.substring(0, 80)}"`);
 
     // 4. Actualizar el body del mensaje en la DB
-    await db.from('mensajes_whatsapp').update({ body: newBody }).eq('id', messageId);
+    await db.from('mensajes_whatsapp').update({ body: newBody }).eq('id', messageId).eq('sede_id', DEFAULT_SEDE_ID);
 
     // 5. Ejecutar processCoreLogic para que la IA responda con el contenido real de la imagen
     const fromNumber = msg.from_number;
