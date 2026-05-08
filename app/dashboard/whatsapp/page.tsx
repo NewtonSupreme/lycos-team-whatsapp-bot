@@ -897,6 +897,7 @@ export default function WhatsAppPage() {
   if (!mounted) return null;
 
   return (
+    <>
     <div className="space-y-3 relative">
       {!isSanAntonio && (
         <div className="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-md bg-background/50 rounded-2xl">
@@ -1597,5 +1598,6 @@ export default function WhatsAppPage() {
         </div>
       </div>
     )}
+    </>
   );
 }
