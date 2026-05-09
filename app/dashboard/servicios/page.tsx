@@ -410,7 +410,7 @@ export default function ServiciosPage() {
     const ch = supabase.channel('servicios-citas')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'citas' }, () => loadCitas())
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    return () => { if (supabase) supabase.removeChannel(ch); };
   }, [loadCitas]);
 
   const updateEstado = async (id: string, estado: string) => {

@@ -636,6 +636,7 @@ export async function POST(request: NextRequest) {
             body: messageBody,
             tipo: 'entrante',
             wa_message_id,
+            quoted_wa_id: message.context?.id || null,
             media_url: currentMediaId,
             media_type: currentMediaType,
             sede_id: effectiveSedeId

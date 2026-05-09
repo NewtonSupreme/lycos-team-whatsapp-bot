@@ -5,13 +5,14 @@ const DEFAULT_SEDE_ID = process.env.WHATSAPP_DEFAULT_SEDE_ID || '310595c5-5258-4
 
 export async function POST(request: NextRequest) {
   try {
-    let to = '', message = '', file: File | null = null, location: any = null, previewUrl = false;
+    let to = '', message = '', file: File | null = null, location: any = null, previewUrl = false, quotedMessageId = '';
     const contentType = request.headers.get('content-type') || '';
     
     if (contentType.includes('multipart/form-data')) {
       const fd = await request.formData();
       to = (fd.get('to') as string) || '';
       message = (fd.get('message') as string) || '';
+      quotedMessageId = (fd.get('quoted_message_id') as string) || '';
       const f = fd.get('file');
       if (f && typeof f === 'object' && (f as File).name) {
         file = f as File;
@@ -22,6 +23,7 @@ export async function POST(request: NextRequest) {
       message = body.message || '';
       location = body.location || null;
       previewUrl = body.preview_url === true;
+      quotedMessageId = body.quoted_message_id || '';
     }
 
     if (!to && (!message && !file)) {
@@ -70,6 +72,10 @@ export async function POST(request: NextRequest) {
         recipient_type: 'individual',
         to: to.replace(/[^0-9]/g, ''),
       };
+
+      if (quotedMessageId) {
+        payload.context = { message_id: quotedMessageId };
+      }
 
       if (location) {
         payload.type = 'location';
@@ -147,6 +153,7 @@ export async function POST(request: NextRequest) {
         es_ia: false,
         ...(waMessageId ? { wa_message_id: waMessageId } : {}),
         ...(mediaId ? { media_url: mediaId, media_type: mediaType } : {}),
+        ...(quotedMessageId ? { quoted_wa_id: quotedMessageId } : {}),
         sede_id: effectiveSedeId
       });
       await db.from('conversaciones').upsert({

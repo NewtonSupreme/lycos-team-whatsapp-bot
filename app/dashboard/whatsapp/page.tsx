@@ -22,9 +22,9 @@ const QUICK_REPLIES = [
 ];
 
 const SEDE_LOCATIONS = [
-  { id: 'sa', name: 'San Antonio', emoji: '📍', mapUrl: 'https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA' },
-  { id: 'cz', name: 'Carrizal (Principal)', emoji: '🏠', mapUrl: 'https://maps.app.goo.gl/cxLGkqWtsf5qogMB6' },
-  { id: 'ccs', name: 'Caracas', emoji: '🏙️', mapUrl: 'https://maps.app.goo.gl/aeHGdzUumhpBep719' },
+  { id: 'sa', name: 'San Antonio', emoji: '📍', mapUrl: 'https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', lat: 10.3744153, lng: -66.9721822, address: 'San Antonio de los Altos, Miranda' },
+  { id: 'cz', name: 'Carrizal (Principal)', emoji: '🏠', mapUrl: 'https://maps.app.goo.gl/cxLGkqWtsf5qogMB6', lat: 10.3534289, lng: -66.993931, address: 'Carrizal, Miranda' },
+  { id: 'ccs', name: 'Caracas', emoji: '🏙️', mapUrl: 'https://maps.app.goo.gl/aeHGdzUumhpBep719', lat: 10.4784978, lng: -66.9125422, address: 'E/S PDV Nuevo Prado, Caracas' },
 ];
 
 interface RawMsg {
@@ -175,7 +175,7 @@ function LocationBubble({ body, isOut }: { body: string; isOut: boolean }) {
   );
 }
 
-function MediaBubble({ msg, isOut, onImageClick }: { msg: RawMsg; isOut: boolean; onImageClick: (url: string) => void }) {
+function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isOut: boolean; onImageClick: (url: string) => void; quotedMsg?: RawMsg | null }) {
   const { body, media_url, media_type } = msg;
 
   // Detect location messages (sent by bot or panel)
@@ -207,6 +207,17 @@ function MediaBubble({ msg, isOut, onImageClick }: { msg: RawMsg; isOut: boolean
 
   return (
     <div className="flex flex-col gap-1">
+      {quotedMsg && (
+        <div className="mb-1.5 p-2 rounded-md bg-black/20 border-l-4 border-[#00a884] overflow-hidden opacity-80 cursor-pointer hover:bg-black/30 transition-colors"
+             onClick={() => document.getElementById(`msg-${quotedMsg.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
+          <div className="text-[10px] font-bold text-[#00a884] mb-0.5">
+            {quotedMsg.tipo === 'saliente' ? 'Tú' : 'Cliente'}
+          </div>
+          <div className="text-[11px] text-[#8696a0] line-clamp-2 italic">
+            {quotedMsg.body || (quotedMsg.media_type ? `[${quotedMsg.media_type}]` : 'Mensaje')}
+          </div>
+        </div>
+      )}
       {type === 'image' && proxyUrl ? (
         <img src={proxyUrl} alt="Imagen" className="rounded-lg max-w-full max-h-64 object-cover cursor-pointer hover:opacity-90 transition-opacity" style={{ border: `1px solid ${color}` }} onClick={() => onImageClick(proxyUrl)} />
       ) : type === 'video' && proxyUrl ? (
@@ -253,6 +264,7 @@ function MediaBubble({ msg, isOut, onImageClick }: { msg: RawMsg; isOut: boolean
 // ── Main Component ────────────────────────────────────────────
 export default function WhatsAppPage() {
   const [convs, setConvs] = useState<RawConv[]>([]);
+  const [replyingTo, setReplyingTo] = useState<RawMsg | null>(null);
   const [selected, setSelected] = useState<RawConv | null>(null);
   const [msgs, setMsgs] = useState<RawMsg[]>([]);
   const [message, setMessage] = useState('');
@@ -625,6 +637,7 @@ export default function WhatsAppPage() {
             tipo: 'saliente',
             estado: 'enviado',
             es_ia: false,
+            quoted_wa_id: replyingTo?.wa_message_id,
             created_at: new Date().toISOString(),
           };
 
@@ -641,6 +654,7 @@ export default function WhatsAppPage() {
           const fd = new FormData();
           fd.append('to', selected.telefono);
           if (i === 0 && body) fd.append('message', body);
+          if (replyingTo?.wa_message_id) fd.append('quoted_message_id', replyingTo.wa_message_id);
           fd.append('file', file);
           await fetch('/api/whatsapp/send', { method: 'POST', body: fd });
         }
@@ -655,6 +669,7 @@ export default function WhatsAppPage() {
           tipo: 'saliente',
           estado: 'enviado',
           es_ia: false,
+          quoted_wa_id: replyingTo?.wa_message_id,
           created_at: new Date().toISOString(),
         };
         setMsgs(prev => [...prev, optimistic]);
@@ -662,9 +677,12 @@ export default function WhatsAppPage() {
         const fd = new FormData();
         fd.append('to', selected.telefono);
         fd.append('message', body);
+        if (replyingTo?.wa_message_id) fd.append('quoted_message_id', replyingTo.wa_message_id);
         await fetch('/api/whatsapp/send', { method: 'POST', body: fd });
       }
 
+      setReplyingTo(null);
+      await fetchNewMsgs(selected.telefono);
       // Clear files after success
       files.forEach(f => URL.revokeObjectURL(f.url));
       setFiles([]);
@@ -884,6 +902,7 @@ export default function WhatsAppPage() {
     }
   };
 
+
   // ── Reactions ──────────────────────────────────────────────────
   const handleReact = async (msg: RawMsg, emoji: string) => {
     if (!selected || !msg.wa_message_id || sending) return;
@@ -918,11 +937,25 @@ export default function WhatsAppPage() {
   const handleSendLocation = async (sede: typeof SEDE_LOCATIONS[0]) => {
     if (!selected || sending) return;
     setSending(true);
-    // Build label exactly as the bot does for location messages
     const label = `📍 Sede ${sede.name}: ${sede.mapUrl}`;
     try {
-      // Send as text with preview_url:true → WhatsApp renders native rich map card automatically
+      // Send as native location + follow up with text link for convenience
       const res = await fetch('/api/whatsapp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: selected.telefono,
+          location: {
+            latitude: sede.lat,
+            longitude: sede.lng,
+            name: `Lycos Team - ${sede.name}`,
+            address: sede.address
+          }
+        }),
+      });
+      
+      // Also send the text link to ensure they have the exact map url if native map fails to load
+      await fetch('/api/whatsapp/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -931,6 +964,7 @@ export default function WhatsAppPage() {
           preview_url: true,
         }),
       });
+
       if (res.ok) {
         await fetchNewMsgs(selected.telefono);
         await loadConvs();
@@ -1055,6 +1089,7 @@ export default function WhatsAppPage() {
     const formData = new FormData();
     formData.append('to', selected.telefono);
     formData.append('file', blob, `voice-note-${Date.now()}.${extension}`);
+    if (replyingTo?.wa_message_id) formData.append('quoted_message_id', replyingTo.wa_message_id);
     
     try {
       const res = await fetch('/api/whatsapp/send', {
@@ -1428,7 +1463,7 @@ export default function WhatsAppPage() {
                             </span>
                           </div>
                         )}
-                        <div className={cn('flex w-full group relative', isOut ? 'justify-end' : 'justify-start')} style={{ marginBottom: '2px' }}>
+                        <div id={`msg-${msg.id}`} className={cn('flex w-full group relative', isOut ? 'justify-end' : 'justify-start')} style={{ marginBottom: '2px' }}>
                           <div
                             className="relative max-w-[88%] md:max-w-[75%] rounded-lg px-3 py-2 shadow-sm flex flex-col min-w-[60px]"
                             style={{ background: isOut ? '#005c4b' : '#202c33', opacity: isOptimistic ? 0.75 : 1, borderRadius: isOut ? '8px 8px 2px 8px' : '8px 8px 8px 2px' }}
@@ -1458,7 +1493,10 @@ export default function WhatsAppPage() {
                                 <span className="text-[10px] font-medium">Bot IA</span>
                               </div>
                             )}
-                            <MediaBubble msg={msg} isOut={isOut} onImageClick={setPreviewImage} />
+                             {(() => {
+                               const quoted = msg.quoted_wa_id ? msgs.find(m => m.wa_message_id === msg.quoted_wa_id) : null;
+                               return <MediaBubble msg={msg} isOut={isOut} onImageClick={setPreviewImage} quotedMsg={quoted} />;
+                             })()}
                             <div className="flex items-center gap-1 justify-end mt-1 flex-shrink-0" style={{ marginRight: '-2px' }}>
                               <span className="text-[10px]" style={{ color: 'rgba(233,237,239,0.6)' }}>{formatTime(msg.created_at)}</span>
                               {isOut && (
@@ -1498,6 +1536,24 @@ export default function WhatsAppPage() {
                 {/* Input area */}
                 <div className="flex flex-col flex-shrink-0" style={{ background: '#202c33', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
                   
+                  {/* Reply Preview */}
+                  {replyingTo && (
+                    <div className="px-3 py-2 border-b border-white/5 bg-[#111b21] flex items-center gap-3 animate-in slide-in-from-bottom-1 duration-200">
+                      <div className="w-1 self-stretch rounded-full bg-[#00a884]" />
+                      <div className="flex-1 min-w-0 py-1">
+                        <div className="text-[11px] font-bold text-[#00a884]">
+                          {replyingTo.tipo === 'saliente' ? 'Tú' : (selected?.datos_cliente?.nombre || selected?.telefono || 'Cliente')}
+                        </div>
+                        <div className="text-xs text-[#8696a0] truncate">
+                          {replyingTo.body || (replyingTo.media_type ? `[${replyingTo.media_type}]` : 'Mensaje')}
+                        </div>
+                      </div>
+                      <button onClick={() => setReplyingTo(null)} className="p-1.5 rounded-full hover:bg-white/5 text-[#8696a0]">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+
                   {/* File Preview */}
                   {files.length > 0 && (
                     <div className="p-3 border-b border-white/5 flex gap-3 overflow-x-auto custom-scrollbar">
@@ -1586,7 +1642,12 @@ export default function WhatsAppPage() {
                       />
                       
                       {message.trim() || files.length > 0 ? (
-                        <button onClick={handleSend} disabled={sending} className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-all shadow-lg" style={{ background: '#00a884' }}>
+                        <button 
+                          onClick={() => { handleSend(); setReplyingTo(null); }} 
+                          disabled={sending} 
+                          className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-all shadow-lg" 
+                          style={{ background: '#00a884' }}
+                        >
                           <Send className={cn('w-4 h-4', sending && 'animate-pulse')} style={{ color: '#e9edef' }} />
                         </button>
                       ) : (
