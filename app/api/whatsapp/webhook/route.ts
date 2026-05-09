@@ -41,9 +41,12 @@ const TT_LINK = 'https://www.tiktok.com/@lycos.team?_r=1&_t=ZS-94prPaQnR5E';
 
 function getDb() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-  // Usar SERVICE_ROLE_KEY si está disponible para saltar RLS en acciones de admin
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-  if (!url || !key) return null;
+  
+  if (!url || !key) {
+    console.error('❌ Missing Supabase URL or KEY in process.env');
+    return null;
+  }
   return createClient(url, key);
 }
 
@@ -438,9 +441,10 @@ export async function GET(request: NextRequest) {
 
 // ─── POST: Receive messages ────────────────────────────────────────────────────
 export async function POST(request: NextRequest) {
+  console.log('--- NUEVA PETICION WEBHOOK POST ---');
   try {
     const body = await request.json();
-    console.log('📬 Webhook POST received:', JSON.stringify(body).substring(0, 100));
+    console.log('📬 Webhook Body:', JSON.stringify(body).substring(0, 500));
 
     // Legacy retry handler removed — now uses piggyback strategy
 
@@ -641,7 +645,7 @@ export async function POST(request: NextRequest) {
         }
 
         try {
-          const { data } = await db.from('mensajes_whatsapp').insert({
+          const { data, error } = await db.from('mensajes_whatsapp').insert({
             from_number: from,
             to_number: 'system',
             body: messageBody,
@@ -652,6 +656,10 @@ export async function POST(request: NextRequest) {
             media_type: currentMediaType,
             sede_id: effectiveSedeId
           }).select('created_at').single();
+          
+          if (error) {
+            console.error('❌ Error Supabase al insertar mensaje:', error.message, error.details, error.hint);
+          }
           if (data?.created_at) insertedTimestamp = data.created_at;
 
           // ── Push notification: new WhatsApp message ──────────────────────
