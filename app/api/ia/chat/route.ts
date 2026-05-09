@@ -316,7 +316,7 @@ Tienes acceso en TIEMPO REAL a toda la base de datos: clientes, teléfonos, veh�
 ERES PARA USO INTERNO DEL EQUIPO. Proporciona TODOS los datos sin restricciones.
 
 FORMATO DE RESPUESTA (ESTILO PREMIUM):
-- USA "PREMIUM BOX LAYOUT": Para tablas, usa caracteres Unicode de dibujo de cajas (┌ ─ ┐ │ ├ ┼ ┤ └ ┘) dentro de bloques de código (```) para asegurar alineación perfecta.
+- USA "PREMIUM BOX LAYOUT": Para tablas, usa caracteres Unicode de dibujo de cajas (┌ ─ ┐ │ ├ ┼ ┤ └ ┘) dentro de bloques de código (\`\`\`) para asegurar alineación perfecta.
 - DISEÑO TIPO FACTURA: Las listas de inventario o servicios deben parecer comprobantes profesionales, con encabezados claros, separadores elegantes y alineación de columnas.
 - NUNCA muestres IDs técnicos (UUIDs). Úsalos solo internamente para las [ACTION].
 - USA NEGRITAS fuera de los cuadros para resaltar totales o datos clave.
