@@ -965,50 +965,58 @@ export default function WhatsAppPage() {
           }
         }),
       });
-      
-      // 2. Send Interactive Message with Buttons
-      await fetch('/api/whatsapp/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: selected.telefono,
-          interactive: {
-            type: 'button',
-            header: {
-              type: 'text',
-              text: `Sede ${sede.name}`
-            },
-            body: {
-              text: `Aquí tienes la ubicación exacta de nuestra sede ${sede.name}. Haz clic en el mapa arriba o usa el enlace:\n\n🔗 ${sede.mapUrl}\n\n📍 ${sede.address}`
-            },
-            footer: {
-              text: '¿Deseas agendar una cita?'
-            },
-            action: {
-              buttons: [
-                {
-                  type: 'reply',
-                  reply: {
-                    id: `cita_${sede.id}`,
-                    title: 'Agendar Cita 📅'
-                  }
-                },
-                {
-                  type: 'reply',
-                  reply: {
-                    id: 'precios',
-                    title: 'Ver Precios 💰'
-                  }
-                }
-              ]
-            }
-          }
-        }),
-      });
 
       if (res.ok) {
-        await fetchNewMsgs(selected.telefono);
-        await loadConvs();
+        // 2. Send Interactive Message with Buttons
+        const res2 = await fetch('/api/whatsapp/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: selected.telefono,
+            interactive: {
+              type: 'button',
+              header: {
+                type: 'text',
+                text: `Sede ${sede.name}`
+              },
+              body: {
+                text: `Aquí tienes la ubicación exacta de nuestra sede ${sede.name}. Haz clic en el mapa arriba o usa el enlace:\n\n🔗 ${sede.mapUrl}\n\n📍 ${sede.address}`
+              },
+              footer: {
+                text: '¿Deseas agendar una cita?'
+              },
+              action: {
+                buttons: [
+                  {
+                    type: 'reply',
+                    reply: {
+                      id: `cita_${sede.id}`,
+                      title: 'Agendar Cita 📅'
+                    }
+                  },
+                  {
+                    type: 'reply',
+                    reply: {
+                      id: 'precios',
+                      title: 'Ver Precios 💰'
+                    }
+                  }
+                ]
+              }
+            }
+          }),
+        });
+
+        if (res2.ok) {
+          await fetchNewMsgs(selected.telefono);
+          await loadConvs();
+        } else {
+          const errData = await res2.json();
+          alert('Error en mensaje interactivo: ' + (errData.error || 'Error desconocido'));
+        }
+      } else {
+        const errData = await res.json();
+        alert('Error en mensaje de ubicación: ' + (errData.error || 'Error desconocido'));
       }
     } catch (e) {
       console.error('Error enviando ubicación:', e);
@@ -1204,10 +1212,10 @@ export default function WhatsAppPage() {
         await fetchNewMsgs(selected.telefono);
         await loadConvs();
       } else {
-        const err = await res.text();
-        console.error('Error de API enviando audio:', err);
+        const errData = await res.json();
+        console.error('Error de API enviando audio:', errData);
         setMsgs(prev => prev.filter(m => m.id !== optimisticId));
-        alert('Error al enviar: ' + err);
+        alert('Error al enviar audio: ' + (errData.error || 'Error desconocido') + (errData.details ? ` (${errData.details})` : ''));
       }
     } catch (err) {
       console.error('Error enviando audio:', err);

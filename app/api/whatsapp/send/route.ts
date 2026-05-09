@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
         fdMeta.append('file', file, fileName);
         fdMeta.append('type', mimeType);
         
-        const upRes = await fetch(`https://graph.facebook.com/v18.0/${phoneId}/media`, {
+        const upRes = await fetch(`https://graph.facebook.com/v21.0/${phoneId}/media`, {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${token}` },
           body: fdMeta
@@ -71,13 +71,17 @@ export async function POST(request: NextRequest) {
         
         if (upData.id) {
           mediaId = upData.id;
+          console.log(`✅ Media subida con éxito: ${mediaId} (${mimeType})`);
           if (mimeType.startsWith('image/')) mediaType = 'image';
           else if (mimeType.startsWith('video/')) mediaType = 'video';
           else if (mimeType.startsWith('audio/')) mediaType = 'audio';
           else mediaType = 'document';
         } else {
-          console.error('❌ Error subiendo media a Meta:', JSON.stringify(upData));
-          return NextResponse.json({ error: 'Fallo al subir archivo a WhatsApp: ' + (upData.error?.message || 'Error desconocido') }, { status: 400 });
+          console.error('❌ Error subiendo media a Meta:', JSON.stringify(upData, null, 2));
+          return NextResponse.json({ 
+            error: 'Fallo al subir archivo a WhatsApp', 
+            details: upData.error?.message || 'Error desconocido en subida de media'
+          }, { status: 400 });
         }
       }
       // 2. Send Message
@@ -126,7 +130,7 @@ export async function POST(request: NextRequest) {
       }
 
       const response = await fetch(
-        `https://graph.facebook.com/v18.0/${phoneId}/messages`,
+        `https://graph.facebook.com/v21.0/${phoneId}/messages`,
         {
           method: 'POST',
           headers: {
@@ -139,12 +143,17 @@ export async function POST(request: NextRequest) {
 
       if (!response.ok) {
         const err = await response.json();
-        console.error('❌ Meta API Error (Manual Send):', JSON.stringify(err));
-        return NextResponse.json({ error: err.error?.message || 'Error enviando mensaje' }, { status: 400 });
+        console.error('❌ Meta API Error (Messages):', JSON.stringify(err, null, 2));
+        return NextResponse.json({ 
+          error: err.error?.message || 'Error enviando mensaje',
+          code: err.error?.code,
+          subcode: err.error?.error_subcode
+        }, { status: 400 });
       }
 
       const data = await response.json();
       waMessageId = data.messages?.[0]?.id || null;
+      console.log(`✅ Mensaje enviado a Meta. ID: ${waMessageId}`);
     }
 
     // Save to Supabase + mark conversation as 'humano' to pause bot
