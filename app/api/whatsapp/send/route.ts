@@ -89,6 +89,10 @@ export async function POST(request: NextRequest) {
         payload.type = mediaType;
         payload[mediaType] = { id: mediaId };
         
+        if (mediaType === 'audio') {
+          payload[mediaType].voice = true;
+        }
+        
         if (mediaType === 'document' && file?.name) {
           payload[mediaType].filename = file.name;
         }
@@ -147,7 +151,9 @@ export async function POST(request: NextRequest) {
       await db.from('mensajes_whatsapp').insert({
         from_number: 'system',
         to_number: to.replace(/[^0-9]/g, ''),
-        body: location ? `[Ubicación: ${location.name || 'Sede'}]` : message,
+        body: location 
+          ? `[Ubicación: ${location.name || 'Sede'}]` 
+          : (mediaType === 'audio' && !message ? '[Mensaje de voz]' : message),
         tipo: 'saliente',
         estado: 'enviado',
         es_ia: false,

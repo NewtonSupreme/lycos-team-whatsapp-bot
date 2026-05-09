@@ -184,7 +184,7 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
     return <LocationBubble body={body} isOut={isOut} />;
   }
 
-  const proxyUrl = media_url ? `/api/whatsapp/media/${media_url}` : null;
+  const proxyUrl = media_url ? (media_url.startsWith('blob:') ? media_url : `/api/whatsapp/media/${media_url}`) : null;
   const type = media_type || detectMediaType(body);
   // Detect failed audio transcription using the exact body text saved by the webhook
   const isFailedAudio = type === 'audio' && body?.includes('no se pudo transcribir');
@@ -301,6 +301,7 @@ export default function WhatsAppPage() {
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const isHoldingRef = useRef(false);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1013,10 +1014,17 @@ export default function WhatsAppPage() {
 
   const startRecording = async (e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
+    isHoldingRef.current = true;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = getSupportedMimeType();
       
+      // If user released before permission/stream was ready
+      if (!isHoldingRef.current) {
+        stream.getTracks().forEach(t => t.stop());
+        return;
+      }
+
+      const mimeType = getSupportedMimeType();
       const options = mimeType ? { mimeType } : {};
       const mediaRecorder = new MediaRecorder(stream, options);
       mediaRecorderRef.current = mediaRecorder;
@@ -1031,7 +1039,8 @@ export default function WhatsAppPage() {
         const audioBlob = new Blob(audioChunksRef.current, { type: recordedType });
         
         if (!isRecordingCancelled && audioBlob.size > 100) { // Min size check
-          const extension = recordedType.includes('ogg') ? 'ogg' : 'webm';
+          // Use .ogg for better Meta API compatibility if it's an opus stream
+          const extension = recordedType.includes('ogg') || recordedType.includes('opus') ? 'ogg' : 'webm';
           await sendAudioMessage(audioBlob, extension);
         }
         stream.getTracks().forEach(track => track.stop());
@@ -1044,15 +1053,34 @@ export default function WhatsAppPage() {
       setIsRecordingCancelled(false);
       setSlideOffset(0);
       
-      mediaRecorder.start(200); // Collect data every 200ms
+      mediaRecorder.start(200); 
       recordingTimerRef.current = setInterval(() => {
         setRecordingTime(prev => prev + 1);
       }, 1000);
     } catch (err) {
       console.error('Error al acceder al micrófono:', err);
       alert('Error: No se pudo activar el micrófono. Verifica los permisos de tu navegador.');
+      isHoldingRef.current = false;
     }
   };
+
+  // Add global listeners to handle releases outside the button
+  useEffect(() => {
+    const handleGlobalRelease = () => {
+      if (isHoldingRef.current) {
+        isHoldingRef.current = false;
+        stopRecording(true);
+      }
+    };
+    if (isRecording) {
+      window.addEventListener('mouseup', handleGlobalRelease);
+      window.addEventListener('touchend', handleGlobalRelease);
+    }
+    return () => {
+      window.removeEventListener('mouseup', handleGlobalRelease);
+      window.removeEventListener('touchend', handleGlobalRelease);
+    };
+  }, [isRecording]);
 
   const handleRecordingMove = (e: React.MouseEvent | React.TouchEvent) => {
     if (!isRecording || isRecordingCancelled) return;
@@ -1067,6 +1095,7 @@ export default function WhatsAppPage() {
   };
 
   const stopRecording = (shouldSend: boolean) => {
+    isHoldingRef.current = false;
     if (!isRecording) return;
     
     if (recordingTimerRef.current) {
@@ -1085,10 +1114,29 @@ export default function WhatsAppPage() {
   const sendAudioMessage = async (blob: Blob, extension: string) => {
     if (!selected) return;
     setSending(true);
+
+    const blobUrl = URL.createObjectURL(blob);
+    const optimisticId = `tmp-audio-${Date.now()}`;
+    const optimistic: RawMsg = {
+      id: optimisticId,
+      from_number: 'system',
+      to_number: selected.telefono,
+      body: '',
+      tipo: 'saliente',
+      estado: 'enviado',
+      media_url: blobUrl,
+      media_type: 'audio',
+      created_at: new Date().toISOString()
+    };
+    
+    setMsgs(prev => [...prev, optimistic]);
+    scrollToBottom(true);
     
     const formData = new FormData();
     formData.append('to', selected.telefono);
-    formData.append('file', blob, `voice-note-${Date.now()}.${extension}`);
+    // Use audio/ogg for Meta API if we suspect it's opus, otherwise use recorded type
+    const sendBlob = new Blob([blob], { type: extension === 'ogg' ? 'audio/ogg' : blob.type });
+    formData.append('file', sendBlob, `voice-note-${Date.now()}.${extension}`);
     if (replyingTo?.wa_message_id) formData.append('quoted_message_id', replyingTo.wa_message_id);
     
     try {
@@ -1097,17 +1145,22 @@ export default function WhatsAppPage() {
         body: formData,
       });
       if (res.ok) {
+        // Refresh to get the real message from DB
         await fetchNewMsgs(selected.telefono);
         await loadConvs();
-        scrollToBottom(true);
       } else {
         const err = await res.text();
         console.error('Error de API enviando audio:', err);
+        // Remove optimistic on failure
+        setMsgs(prev => prev.filter(m => m.id !== optimisticId));
+        alert('Error al enviar mensaje de voz: ' + err);
       }
     } catch (err) {
       console.error('Error enviando audio:', err);
+      setMsgs(prev => prev.filter(m => m.id !== optimisticId));
     } finally {
       setSending(false);
+      setReplyingTo(null);
     }
   };
 
