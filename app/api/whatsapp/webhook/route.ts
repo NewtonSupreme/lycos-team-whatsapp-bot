@@ -27,8 +27,8 @@ const DEFAULT_SEDE_ID = process.env.WHATSAPP_DEFAULT_SEDE_ID || '310595c5-5258-4
 
 // ─── AI Models — ordered by priority (primary first, then fallback) ──────────
 const GEMINI_MODELS = [
-  'gemini-2.5-flash---',              // [PRIMARY]
-  'gemini-3.1-flash-lite----',         // [FALLBACK]
+  'gemini-1.5-flash',              // [PRIMARY]
+  'gemini-1.5-flash-8b',         // [FALLBACK]
 ] as const;
 
 const ASESOR_PHONE = '584123343519';
@@ -651,7 +651,6 @@ export async function POST(request: NextRequest) {
             body: messageBody,
             tipo: 'entrante',
             wa_message_id,
-            quoted_wa_id: message.context?.id || null,
             media_url: currentMediaId,
             media_type: currentMediaType,
             sede_id: effectiveSedeId
@@ -2195,4 +2194,11 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         }
 
         await updateConversation(db, from, messageBody, ctx.memoria, r?.clientId);
+      } // end for loop
+
+    return NextResponse.json({ status: 'ok' });
+  } catch (e: any) {
+    console.error('❌ Webhook error:', e);
+    return NextResponse.json({ error: 'Internal error', details: e.message }, { status: 500 });
+  }
 }

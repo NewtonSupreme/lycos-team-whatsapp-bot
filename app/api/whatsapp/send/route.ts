@@ -169,7 +169,6 @@ export async function POST(request: NextRequest) {
         es_ia: false,
         ...(waMessageId ? { wa_message_id: waMessageId } : {}),
         ...(mediaId ? { media_url: mediaId, media_type: mediaType } : {}),
-        ...(quotedMessageId ? { quoted_wa_id: quotedMessageId } : {}),
         sede_id: effectiveSedeId
       });
       await db.from('conversaciones').upsert({
