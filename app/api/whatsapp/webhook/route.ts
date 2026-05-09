@@ -700,11 +700,13 @@ export async function POST(request: NextRequest) {
 
           if (convData?.estado === 'humano') {
             console.log(`👤 [${from}] Conversación en control humano — bot silenciado.`);
-            // Update last message in CRM so admin sees it, incrementing unread count
+            // Update last message in CRM so admin sees it, incrementing unread count properly
+            const { data: convUnread } = await db.from('conversaciones').select('mensajes_sin_leer').eq('telefono', from).eq('sede_id', effectiveSedeId).maybeSingle();
+            const currentUnread = (convUnread?.mensajes_sin_leer ?? 0) + 1;
             await db.from('conversaciones').update({
               ultimo_mensaje: messageBody.substring(0, 200),
               ultimo_mensaje_at: new Date().toISOString(),
-              mensajes_sin_leer: 1,
+              mensajes_sin_leer: currentUnread,
             }).eq('telefono', from).eq('sede_id', effectiveSedeId);
             // Extra push: human mode means you MUST respond manually
             void firePushNotification({
@@ -1544,7 +1546,7 @@ async function sendMsg(to: string, body: string, preview: boolean = false, reply
       payload.context = { message_id: replyToId };
     }
 
-    const resp = await fetch(`https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`, {
+    const resp = await fetch(`https://graph.facebook.com/v21.0/${WHATSAPP_PHONE_ID}/messages`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
@@ -1626,7 +1628,7 @@ async function sendImageMsg(to: string, imageSlug: string, caption?: string, rep
       payload.context = { message_id: replyToId };
     }
 
-    const resp = await fetch(`https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`, {
+    const resp = await fetch(`https://graph.facebook.com/v21.0/${WHATSAPP_PHONE_ID}/messages`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
@@ -1676,7 +1678,7 @@ async function sendContactCard(to: string, phone: string, displayName: string): 
   const cleanTo = to.replace(/[^0-9]/g, '');
   
   try {
-    const resp = await fetch(`https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`, {
+    const resp = await fetch(`https://graph.facebook.com/v21.0/${WHATSAPP_PHONE_ID}/messages`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1835,6 +1837,16 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           
           await delay(800);
           await sendMsg(from, '¿Deseas agendar una cita en esta sede o tienes alguna otra duda? 😊');
+          return;
+        } else {
+          // El cliente respondió algo que no coincide con ninguna sede.
+          // Reseteamos el flag para no quedar atrapados y re-preguntamos.
+          console.log(`📍 [${from}] Respuesta de sede no reconocida: "${bodyClean}". Reseteando flag y re-preguntando.`);
+          delete ctx.memoria.awaiting_location_choice;
+          if (db) {
+            await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+          }
+          await sendMsg(from, 'Disculpa, no entendí la sede. Por favor responde con el nombre o número:\n\n1️⃣ San Antonio de los Altos\n2️⃣ Carrizal (Principal)\n3️⃣ Caracas (El Cementerio) 😊');
           return;
         }
       }

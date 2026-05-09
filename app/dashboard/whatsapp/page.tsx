@@ -357,18 +357,32 @@ export default function WhatsAppPage() {
     setLoadingMsgs(true);
     setHasMoreAbove(false);
 
-    const { data } = await withSedeFilter(supabase.from('mensajes_whatsapp'))
+    // Try with sede filter first
+    let { data } = await withSedeFilter(supabase.from('mensajes_whatsapp'))
       .select('*')
       .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
       .is('deleted_at', null)
-      .order('created_at', { ascending: false }) // newest first
+      .order('created_at', { ascending: false })
       .limit(60);
+
+    // Fallback: if no messages with sede filter, load without it
+    // (handles messages saved with wrong or missing sede_id)
+    if (!data || data.length === 0) {
+      const fallback = await supabase
+        .from('mensajes_whatsapp')
+        .select('*')
+        .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(60);
+      data = fallback.data;
+    }
 
     setLoadingMsgs(false);
 
     if (!data) return;
 
-    const sorted = [...data].reverse() as RawMsg[]; // display oldest→newest
+    const sorted = [...data].reverse() as RawMsg[];
     setMsgs(sorted);
     setHasMoreAbove(data.length === 60);
 
@@ -488,7 +502,8 @@ export default function WhatsAppPage() {
     const realMsgs = latest.filter(m => !m.id.startsWith('tmp-'));
     const lastTs = realMsgs.length ? realMsgs[realMsgs.length - 1].created_at : new Date(0).toISOString();
 
-    const { data } = await withSedeFilter(supabase.from('mensajes_whatsapp'))
+    // First try with sede filter
+    let { data } = await withSedeFilter(supabase.from('mensajes_whatsapp'))
       .select('*')
       .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
       .is('deleted_at', null)
@@ -496,10 +511,25 @@ export default function WhatsAppPage() {
       .order('created_at', { ascending: true })
       .limit(20);
 
+    // Fallback: if sede filter returned nothing, try without sede filter
+    // This handles messages saved with wrong/missing sede_id by the webhook
+    if (!data || data.length === 0) {
+      const fallback = await supabase
+        .from('mensajes_whatsapp')
+        .select('*')
+        .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
+        .is('deleted_at', null)
+        .gt('created_at', lastTs)
+        .order('created_at', { ascending: true })
+        .limit(20);
+      data = fallback.data;
+    }
+
     if (data && data.length > 0) {
       setMsgs(prev => mergeMessages(prev, data as RawMsg[]));
+      scrollToBottom();
     }
-  }, []);
+  }, [scrollToBottom]);
 
   const loadVehicles = useCallback(async (clientId: string) => {
     if (!supabase) return;
@@ -550,13 +580,24 @@ export default function WhatsAppPage() {
         const cur = selectedRef.current;
         if (cur) {
           const phone = cur.telefono;
+          // Match incoming (from client) OR outgoing bot reply (to_number = phone, from_number = 'system')
           if (newMsg.from_number === phone || newMsg.to_number === phone) {
-            // We fetch instead of just adding to ensure we get any other messages 
-            // that might have arrived in the same batch or while the app was backgrounded
             fetchNewMsgs(phone);
           }
         }
         loadConvs();
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'mensajes_whatsapp' }, (payload) => {
+        // Handle reactions, transcription updates, etc.
+        const updated = payload.new as RawMsg;
+        const cur = selectedRef.current;
+        if (cur) {
+          const phone = cur.telefono;
+          if (updated.from_number === phone || updated.to_number === phone) {
+            // Update just the affected message in state without full reload
+            setMsgs(prev => prev.map(m => m.id === updated.id ? { ...m, ...updated } : m));
+          }
+        }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'conversaciones' }, () => {
         loadConvs();
@@ -577,12 +618,12 @@ export default function WhatsAppPage() {
         realtimeConnectedRef.current = connected;
       });
 
-    // Poll as fallback for Realtime silence or connection issues
+    // Poll as fallback for Realtime silence or connection issues (every 5s)
     const poll = setInterval(() => {
       const cur = selectedRef.current;
       if (cur) fetchNewMsgs(cur.telefono);
       loadConvs();
-    }, 8000);
+    }, 5000);
 
     return () => {
       sb?.removeChannel(channel);
