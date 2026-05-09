@@ -5,7 +5,7 @@ const DEFAULT_SEDE_ID = process.env.WHATSAPP_DEFAULT_SEDE_ID || '310595c5-5258-4
 
 export async function POST(request: NextRequest) {
   try {
-    let to = '', message = '', file: File | null = null;
+    let to = '', message = '', file: File | null = null, location: any = null, previewUrl = false;
     const contentType = request.headers.get('content-type') || '';
     
     if (contentType.includes('multipart/form-data')) {
@@ -20,6 +20,8 @@ export async function POST(request: NextRequest) {
       const body = await request.json();
       to = body.to;
       message = body.message || '';
+      location = body.location || null;
+      previewUrl = body.preview_url === true;
     }
 
     if (!to && (!message && !file)) {
@@ -69,7 +71,15 @@ export async function POST(request: NextRequest) {
         to: to.replace(/[^0-9]/g, ''),
       };
 
-      if (mediaId && mediaType) {
+      if (location) {
+        payload.type = 'location';
+        payload.location = {
+          latitude: location.latitude,
+          longitude: location.longitude,
+          name: location.name || 'Lycos Team',
+          address: location.address || ''
+        };
+      } else if (mediaId && mediaType) {
         payload.type = mediaType;
         payload[mediaType] = { id: mediaId };
         
@@ -83,7 +93,7 @@ export async function POST(request: NextRequest) {
         }
       } else {
         payload.type = 'text';
-        payload.text = { preview_url: false, body: message };
+        payload.text = { preview_url: previewUrl, body: message };
       }
 
       const response = await fetch(
@@ -131,7 +141,7 @@ export async function POST(request: NextRequest) {
       await db.from('mensajes_whatsapp').insert({
         from_number: 'system',
         to_number: to.replace(/[^0-9]/g, ''),
-        body: message,
+        body: location ? `[Ubicación: ${location.name || 'Sede'}]` : message,
         tipo: 'saliente',
         estado: 'enviado',
         es_ia: false,
@@ -141,7 +151,7 @@ export async function POST(request: NextRequest) {
       });
       await db.from('conversaciones').upsert({
         telefono: to.replace(/[^0-9]/g, ''),
-        ultimo_mensaje: message,
+        ultimo_mensaje: location ? `📍 Ubicación: ${location.name || 'Sede'}` : message,
         ultimo_mensaje_at: new Date().toISOString(),
         estado: 'humano',
         sede_id: effectiveSedeId

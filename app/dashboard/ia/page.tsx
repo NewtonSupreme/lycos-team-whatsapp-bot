@@ -257,9 +257,9 @@ export default function IAPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Sidebar History */}
-        <div className="lg:col-span-3 flex flex-col h-[calc(100vh-220px)] min-h-[500px] rounded-2xl border border-border/50 bg-card/20 overflow-hidden">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Sidebar History - Order 2 on mobile, 1 on desktop */}
+        <div className="order-2 lg:order-1 lg:col-span-3 flex flex-col h-[400px] lg:h-[calc(100vh-220px)] lg:min-h-[500px] rounded-2xl border border-border/50 bg-card/20 overflow-hidden">
           <div className="p-4 border-b border-border/30">
             <Button onClick={clearChat} className="w-full gap-2 bg-primary/10 text-primary hover:bg-primary/20 border-primary/20">
               <Plus className="w-4 h-4" /> Nuevo Chat
@@ -311,8 +311,8 @@ export default function IAPage() {
           </div>
         </div>
 
-        {/* Chat Area */}
-        <div className="lg:col-span-6 flex flex-col h-[calc(100vh-220px)] min-h-[500px] rounded-2xl border border-border/50 overflow-hidden bg-card/30">
+        {/* Chat Area - Order 1 on mobile, 2 on desktop */}
+        <div className="order-1 lg:order-2 lg:col-span-6 flex flex-col h-[500px] lg:h-[calc(100vh-220px)] lg:min-h-[500px] rounded-2xl border border-border/50 overflow-hidden bg-card/30">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-border/30 bg-card/40">
             <div className="flex items-center gap-3">
@@ -423,8 +423,8 @@ export default function IAPage() {
           </div>
         </div>
 
-        {/* Right sidebar Stats */}
-        <div className="lg:col-span-3 space-y-4">
+        {/* Right sidebar Stats - Order 3 on mobile */}
+        <div className="order-3 lg:col-span-3 space-y-4">
           {/* Quick questions */}
           <Card>
             <CardHeader className="pb-2">

@@ -4,7 +4,7 @@ import {
   MessageSquare, Send, Bot, User,
   Smile, CheckCheck, Check, X, RefreshCw, UserCheck, Wifi, WifiOff, Search, Clock,
   Image as ImageIcon, Video, Volume2, FileText, ChevronDown, Car, Calendar, Hash, Info,
-  Copy, Trash, Zap, Paperclip, Mic, UserPlus, Trash2, RotateCcw
+  Copy, Trash, Zap, Paperclip, Mic, UserPlus, Trash2, RotateCcw, MapPin, Navigation
 } from 'lucide-react';
 import { supabase, syncClientData } from '@/lib/supabase';
 import { Vehiculo } from '@/types';
@@ -19,6 +19,12 @@ const QUICK_REPLIES = [
   '¿Podría indicarnos su marca/modelo y año?',
   'Tenemos disponibilidad mañana. 📅',
   'Le envío los precios en un momento. 💰',
+];
+
+const SEDE_LOCATIONS = [
+  { id: 'sa', name: 'San Antonio', emoji: '📍', mapUrl: 'https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA' },
+  { id: 'cz', name: 'Carrizal (Principal)', emoji: '🏠', mapUrl: 'https://maps.app.goo.gl/cxLGkqWtsf5qogMB6' },
+  { id: 'ccs', name: 'Caracas', emoji: '🏙️', mapUrl: 'https://maps.app.goo.gl/aeHGdzUumhpBep719' },
 ];
 
 interface RawMsg {
@@ -129,9 +135,54 @@ function detectMediaType(body: string): 'image' | 'video' | 'audio' | 'document'
   return null;
 }
 
+function LocationBubble({ body, isOut }: { body: string; isOut: boolean }) {
+  // body format: "📍 Sede [Name]: https://maps.app..."
+  const urlMatch = body.match(/(https:\/\/maps\.app\.goo\.gl\/[\w]+)/);
+  const url = urlMatch ? urlMatch[1] : null;
+  // Extract sede name — everything between first space and the colon before url
+  const nameMatch = body.match(/Sede\s([^:]+):/);
+  const sedeName = nameMatch ? nameMatch[1].trim() : 'Lycos Team';
+  return (
+    <a
+      href={url || '#'}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex flex-col rounded-lg overflow-hidden max-w-[240px] no-underline"
+      style={{ border: '1px solid rgba(255,255,255,0.12)', background: isOut ? 'rgba(0,88,67,0.5)' : 'rgba(42,57,66,0.7)' }}
+    >
+      {/* Map thumbnail via static maps API (no key needed for thumbnail) */}
+      <div className="relative w-full h-24 bg-[#1a2632] flex items-center justify-center overflow-hidden">
+        <div className="absolute inset-0" style={{ background: 'linear-gradient(135deg,#1c3a2c 0%,#0d2518 100%)' }} />
+        <div className="relative flex flex-col items-center gap-1">
+          <svg viewBox="0 0 24 24" className="w-8 h-8" fill="none">
+            <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#25d366"/>
+            <circle cx="12" cy="9" r="2.5" fill="#fff"/>
+          </svg>
+          <span className="text-[9px] font-bold uppercase tracking-widest" style={{ color: '#25d366' }}>Ver en Maps</span>
+        </div>
+        {/* Fake map grid lines */}
+        <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)', backgroundSize: '24px 24px' }} />
+      </div>
+      <div className="flex items-center gap-2 px-2.5 py-2">
+        <MapPin className="w-4 h-4 flex-shrink-0" style={{ color: '#25d366' }} />
+        <div className="flex flex-col min-w-0">
+          <span className="text-[12px] font-semibold truncate" style={{ color: '#e9edef' }}>Lycos Team</span>
+          <span className="text-[10px] truncate" style={{ color: '#8696a0' }}>{sedeName}</span>
+        </div>
+      </div>
+    </a>
+  );
+}
+
 function MediaBubble({ msg, isOut, onImageClick }: { msg: RawMsg; isOut: boolean; onImageClick: (url: string) => void }) {
   const { body, media_url, media_type } = msg;
-  
+
+  // Detect location messages (sent by bot or panel)
+  const isLocationMsg = body?.startsWith('📍 Sede') || body?.startsWith('[Ubicación:') || body?.match(/maps\.app\.goo\.gl/);
+  if (isLocationMsg) {
+    return <LocationBubble body={body} isOut={isOut} />;
+  }
+
   const proxyUrl = media_url ? `/api/whatsapp/media/${media_url}` : null;
   const type = media_type || detectMediaType(body);
   // Detect failed audio transcription using the exact body text saved by the webhook
@@ -855,6 +906,34 @@ export default function WhatsAppPage() {
   };
 
   // ── Send Advisor Contact ──────────────────────────────────────
+  const handleSendLocation = async (sede: typeof SEDE_LOCATIONS[0]) => {
+    if (!selected || sending) return;
+    setSending(true);
+    // Build label exactly as the bot does for location messages
+    const label = `📍 Sede ${sede.name}: ${sede.mapUrl}`;
+    try {
+      // Send as text with preview_url:true → WhatsApp renders native rich map card automatically
+      const res = await fetch('/api/whatsapp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: selected.telefono,
+          message: label,
+          preview_url: true,
+        }),
+      });
+      if (res.ok) {
+        await fetchNewMsgs(selected.telefono);
+        await loadConvs();
+      }
+    } catch (e) {
+      console.error('Error enviando ubicación:', e);
+    } finally {
+      setSending(false);
+    }
+  };
+
+
   const handleSendContact = async () => {
     if (!selected || sendingContact) return;
     if (!confirm(`¿Enviar tarjeta de contacto del Asesor a ${displayName(selected)}?`)) return;
@@ -1435,18 +1514,43 @@ export default function WhatsAppPage() {
                     </div>
 
                     {/* Send Contact Button */}
-                    <div className="mt-4 pt-4 border-t border-white/5">
-                      <button
-                        onClick={handleSendContact}
-                        disabled={sendingContact}
-                        className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-bold transition-all shadow-sm bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 disabled:opacity-50"
-                      >
-                        {sendingContact ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
-                        <span>Enviar Contacto Asesor</span>
-                      </button>
-                      <p className="text-[9px] mt-2 px-1 text-center leading-tight" style={{ color: '#8696a0' }}>
-                        Envía la tarjeta VCard del Asesor Lycos para que el cliente guarde el contacto.
-                      </p>
+                    <div className="mt-4 pt-4 border-t border-white/5 space-y-4">
+                      {/* Native Locations Section */}
+                      <div className="space-y-2">
+                        <h3 className="text-[11px] font-bold uppercase tracking-wider flex items-center gap-2" style={{ color: '#8696a0' }}>
+                          <MapPin className="w-3.5 h-3.5" /> Enviar Ubicaciones GPS
+                        </h3>
+                        <div className="grid grid-cols-1 gap-1.5">
+                          {SEDE_LOCATIONS.map(sede => (
+                            <button
+                              key={sede.id}
+                              onClick={() => handleSendLocation(sede)}
+                              disabled={sending}
+                              className="flex items-center justify-between w-full p-2.5 rounded-xl text-[11px] font-medium transition-all bg-white/5 border border-white/5 hover:bg-white/10 hover:border-white/10 group"
+                            >
+                              <div className="flex items-center gap-2">
+                                <Navigation className="w-3 h-3 text-blue-400 opacity-50 group-hover:opacity-100" />
+                                <span style={{ color: '#e9edef' }}>{sede.name.replace('Sede ', '')}</span>
+                              </div>
+                              <Send className="w-2.5 h-2.5 opacity-20 group-hover:opacity-60" />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="pt-2">
+                        <button
+                          onClick={handleSendContact}
+                          disabled={sendingContact}
+                          className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-bold transition-all shadow-sm bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 disabled:opacity-50"
+                        >
+                          {sendingContact ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
+                          <span>Enviar Contacto Asesor</span>
+                        </button>
+                        <p className="text-[9px] mt-2 px-1 text-center leading-tight" style={{ color: '#8696a0' }}>
+                          Envía la tarjeta VCard del Asesor Lycos para que el cliente guarde el contacto.
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </div>

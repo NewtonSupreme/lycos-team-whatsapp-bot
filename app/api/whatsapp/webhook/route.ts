@@ -1671,9 +1671,9 @@ async function sendContactCard(to: string, phone: string, displayName: string): 
         messaging_product: 'whatsapp', recipient_type: 'individual',
         to: cleanTo, type: 'contacts',
         contacts: [{
-          name: { formatted_name: displayName, first_name: 'Asesor', last_name: 'Lycos Team' },
+          name: { formatted_name: displayName, first_name: displayName.split(' ')[0], last_name: displayName.split(' ').slice(1).join(' ') || 'Lycos Team' },
           phones: [{ phone: `+${cleanPhone}`, type: 'WORK', wa_id: cleanPhone }],
-          org: { company: 'Lycos Team', title: 'Asesor' },
+          org: { company: 'Lycos Team', title: 'Sede' },
         }],
       }),
     });
@@ -1775,23 +1775,56 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         return;
       }
 
-      // Location intent (GPS + Video)
-      if (isLocationRequest(lowerBody)) {
-        console.log(`📍 [${from}] Intento de ubicación detectado. Enviando secuencia...`);
-        await sendMsg(from, '¡Con gusto! 📍 Aquí tienes nuestra ubicación exacta en San Antonio de los Altos y un video de cómo llegar desde la Panamericana 👇');
-        await delay(800);
-        // Map Link
-        await sendMsg(from, '📍 *Google Maps:* https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
-        await delay(1000);
-        // Video Link
-        await sendMsg(from, '🎥 *Video de cómo llegar:* https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
-        await delay(800);
-      await sendMsg(from, '¿Tienes alguna otra duda o quieres agendar una cita? 😊');
+      // 📍 Location Flow (Multi-sede)
+      const isLocationChoice = ctx.memoria?.awaiting_location_choice === true;
+      const bodyClean = lowerBody.trim();
+
+      if (isLocationRequest(lowerBody) && !isLocationChoice) {
+        console.log(`📍 [${from}] Preguntando por sede para ubicación...`);
+        await sendMsg(from, '¡Con gusto! 📍 Contamos con 3 sedes disponibles. ¿Cuál te queda más cerca?\n\n1️⃣ *San Antonio de los Altos*\n2️⃣ *Carrizal* (Principal)\n3️⃣ *Caracas* (El Cementerio)\n\nResponde con el nombre de la ciudad o el número para enviarte el GPS exacto. 😊');
         
-        await updateConversation(db, from, messageBody, ctx.memoria);
-        
-        // Append system note to avoid AI redundancy
-        messageBody += '\n[SISTEMA: Ya se le envió la ubicación y el video de cómo llegar al cliente automáticamente. NO los repitas en tu respuesta.]';
+        ctx.memoria.awaiting_location_choice = true;
+        if (db) {
+          await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+        }
+        return; 
+      }
+
+      if (isLocationChoice) {
+        let locationSent = false;
+        if (bodyClean.includes('san antonio') || bodyClean === '1') {
+          await sendMsg(from, '📍 *Sede San Antonio de los Altos:* https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
+          await delay(800);
+          await sendMsg(from, '🎥 *Video de cómo llegar:* https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
+          locationSent = true;
+        } else if (bodyClean.includes('carrizal') || bodyClean === '2') {
+          await sendMsg(from, '📍 *Sede Carrizal (Principal):* https://maps.app.goo.gl/cxLGkqWtsf5qogMB6', true);
+          locationSent = true;
+        } else if (bodyClean.includes('caracas') || bodyClean.includes('cementerio') || bodyClean === '3') {
+          await sendMsg(from, '📍 *Sede Caracas (El Cementerio):* https://maps.app.goo.gl/aeHGdzUumhpBep719', true);
+          locationSent = true;
+        }
+
+        if (locationSent) {
+          delete ctx.memoria.awaiting_location_choice;
+          if (db) {
+            await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+          }
+          await delay(800);
+          await sendMsg(from, 'También te comparto el contacto de nuestras 3 sedes por si necesitas llamar:');
+          await delay(500);
+          
+          // Enviar las 3 tarjetas de contacto
+          await sendContactCard(from, '584123343519', 'Sede San Antonio');
+          await delay(400);
+          await sendContactCard(from, '584123343519', 'Sede Carrizal');
+          await delay(400);
+          await sendContactCard(from, '584123343519', 'Sede Caracas');
+          
+          await delay(800);
+          await sendMsg(from, '¿Deseas agendar una cita en esta sede o tienes alguna otra duda? 😊');
+          return;
+        }
       }
 
       // Medical certificate intent (Handled by AI, but we prevent location trigger)
