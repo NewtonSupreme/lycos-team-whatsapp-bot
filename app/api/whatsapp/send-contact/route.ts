@@ -81,9 +81,8 @@ export async function POST(request: NextRequest) {
         wa_message_id: waMessageId
       });
 
-      // Also set mode to human
+      // Update last message metadata (without changing mode)
       await db.from('conversaciones').update({
-        estado: 'humano',
         ultimo_mensaje: `[Tarjeta de contacto: ${ASESOR_DISPLAY_NAME}]`,
         ultimo_mensaje_at: new Date().toISOString()
       }).eq('telefono', normalizedTo);

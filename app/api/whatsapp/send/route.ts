@@ -5,7 +5,7 @@ const DEFAULT_SEDE_ID = process.env.WHATSAPP_DEFAULT_SEDE_ID || '310595c5-5258-4
 
 export async function POST(request: NextRequest) {
   try {
-    let to = '', message = '', file: File | null = null, location: any = null, previewUrl = false, quotedMessageId = '';
+    let to = '', message = '', file: File | null = null, location: any = null, interactive: any = null, previewUrl = false, quotedMessageId = '';
     const contentType = request.headers.get('content-type') || '';
     
     if (contentType.includes('multipart/form-data')) {
@@ -22,6 +22,7 @@ export async function POST(request: NextRequest) {
       to = body.to;
       message = body.message || '';
       location = body.location || null;
+      interactive = body.interactive || null;
       previewUrl = body.preview_url === true;
       quotedMessageId = body.quoted_message_id || '';
     }
@@ -106,6 +107,9 @@ export async function POST(request: NextRequest) {
         if (message && mediaType !== 'audio') {
           payload[mediaType].caption = message;
         }
+      } else if (interactive) {
+        payload.type = 'interactive';
+        payload.interactive = interactive;
       } else {
         payload.type = 'text';
         payload.text = { preview_url: previewUrl, body: message };
@@ -163,7 +167,7 @@ export async function POST(request: NextRequest) {
         to_number: to.replace(/[^0-9]/g, ''),
         body: location 
           ? `[Ubicación: ${location.name || 'Sede'}]` 
-          : (mediaType === 'audio' && !message ? '[Mensaje de voz]' : message),
+          : (interactive ? `[Botones: ${interactive.body?.text || 'Interactivo'}]` : (mediaType === 'audio' && !message ? '[Mensaje de voz]' : message)),
         tipo: 'saliente',
         estado: 'enviado',
         es_ia: false,
@@ -173,9 +177,10 @@ export async function POST(request: NextRequest) {
       });
       await db.from('conversaciones').upsert({
         telefono: to.replace(/[^0-9]/g, ''),
-        ultimo_mensaje: location ? `📍 Ubicación: ${location.name || 'Sede'}` : message,
+        ultimo_mensaje: location ? `📍 Ubicación: ${location.name || 'Sede'}` : (interactive ? `🔘 ${interactive.body?.text || 'Interactivo'}` : message),
         ultimo_mensaje_at: new Date().toISOString(),
-        estado: 'humano',
+        // Solo pasar a humano si es un texto directo (no ubicación ni botones)
+        ...((!location && !interactive) ? { estado: 'humano' } : {}),
         sede_id: effectiveSedeId
       }, { onConflict: 'telefono' });
     }

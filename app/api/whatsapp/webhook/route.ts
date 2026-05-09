@@ -1719,9 +1719,8 @@ async function sendContactCard(to: string, phone: string, displayName: string): 
         es_ia: true 
       });
 
-      // 2. Marcar como modo humano
+      // 2. Actualizar último mensaje (sin cambiar modo)
       await db.from('conversaciones').update({
-        estado: 'humano',
         ultimo_mensaje: `[Tarjeta de contacto: ${displayName}]`,
         ultimo_mensaje_at: new Date().toISOString()
       }).eq('telefono', cleanTo).eq('sede_id', DEFAULT_SEDE_ID);
@@ -1814,16 +1813,22 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
       if (isLocationChoice) {
         let locationSent = false;
+        let selectedSedeName = '';
+        const selectedSedePhone = '584123343519'; // Asumiendo que es el mismo para todos por ahora
+
         if (bodyClean.includes('san antonio') || bodyClean === '1') {
           await sendMsg(from, '📍 *Sede San Antonio de los Altos:* https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
           await delay(800);
           await sendMsg(from, '🎥 *Video de cómo llegar:* https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
+          selectedSedeName = 'Sede San Antonio';
           locationSent = true;
         } else if (bodyClean.includes('carrizal') || bodyClean === '2') {
           await sendMsg(from, '📍 *Sede Carrizal (Principal):* https://maps.app.goo.gl/cxLGkqWtsf5qogMB6', true);
+          selectedSedeName = 'Sede Carrizal';
           locationSent = true;
         } else if (bodyClean.includes('caracas') || bodyClean.includes('cementerio') || bodyClean === '3') {
           await sendMsg(from, '📍 *Sede Caracas (El Cementerio):* https://maps.app.goo.gl/aeHGdzUumhpBep719', true);
+          selectedSedeName = 'Sede Caracas';
           locationSent = true;
         }
 
@@ -1833,15 +1838,11 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
           }
           await delay(800);
-          await sendMsg(from, 'También te comparto el contacto de nuestras 3 sedes por si necesitas llamar:');
+          await sendMsg(from, `También te comparto el contacto de la ${selectedSedeName} por si necesitas llamar:`);
           await delay(500);
           
-          // Enviar las 3 tarjetas de contacto
-          await sendContactCard(from, '584123343519', 'Sede San Antonio');
-          await delay(400);
-          await sendContactCard(from, '584123343519', 'Sede Carrizal');
-          await delay(400);
-          await sendContactCard(from, '584123343519', 'Sede Caracas');
+          // Enviar solo la tarjeta de la sede seleccionada
+          await sendContactCard(from, selectedSedePhone, selectedSedeName);
           
           await delay(800);
           await sendMsg(from, '¿Deseas agendar una cita en esta sede o tienes alguna otra duda? 😊');
@@ -2164,7 +2165,9 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             await sendMsg(from, tiktokMatch[0], true, wa_message_id);
           } else {
             const hasUrl = /https?:\/\//.test(cleanedAi);
-            await sendMsg(from, cleanedAi, hasUrl, wa_message_id);
+            if (cleanedAi.trim()) {
+              await sendMsg(from, cleanedAi, hasUrl, wa_message_id);
+            }
           }
         }
       } else {

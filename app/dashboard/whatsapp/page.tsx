@@ -992,23 +992,8 @@ export default function WhatsAppPage() {
     setSending(true);
     const label = `📍 Sede ${sede.name}: ${sede.mapUrl}`;
     try {
-      // Send as native location + follow up with text link for convenience
+      // Send the text link with preview
       const res = await fetch('/api/whatsapp/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: selected.telefono,
-          location: {
-            latitude: sede.lat,
-            longitude: sede.lng,
-            name: `Lycos Team - ${sede.name}`,
-            address: sede.address
-          }
-        }),
-      });
-
-      // Also send the text link to ensure they have the exact map url if native map fails to load
-      await fetch('/api/whatsapp/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
