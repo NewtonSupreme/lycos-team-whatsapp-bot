@@ -136,6 +136,7 @@ function InvoiceModal({ cita, inventory, onClose }: { cita: CitaServicio; invent
   };
 
   const handleFinalizeSale = async () => {
+    if (!supabase) return;
     try {
       setIsSaving(true);
       
@@ -409,7 +410,7 @@ export default function ServiciosPage() {
     const ch = supabase.channel('servicios-citas')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'citas' }, () => loadCitas())
       .subscribe();
-    return () => { supabase?.removeChannel(ch); };
+    return () => { supabase.removeChannel(ch); };
   }, [loadCitas]);
 
   const updateEstado = async (id: string, estado: string) => {

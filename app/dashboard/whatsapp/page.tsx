@@ -39,6 +39,7 @@ interface RawMsg {
   media_type?: string | null;
   reaccion?: string | null;
   wa_message_id?: string | null;
+  quoted_wa_id?: string | null;
   created_at: string;
 }
 

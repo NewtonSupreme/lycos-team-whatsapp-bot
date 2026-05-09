@@ -96,6 +96,7 @@ export interface MensajeWhatsApp {
   es_ia?: boolean;
   wa_message_id?: string;
   cliente_id?: string;
+  quoted_wa_id?: string;
 }
 
 export interface Conversacion {
