@@ -338,12 +338,26 @@ export default function WhatsAppPage() {
   // ── Load conversations ──────────────────────────────────────
   const loadConvs = useCallback(async () => {
     if (!supabase) return;
-    const { data } = await withSedeFilter(supabase.from('conversaciones'))
+    
+    // 1. Try with sede filter (architecture standard)
+    let { data } = await withSedeFilter(supabase.from('conversaciones'))
       .select('*, clientes(id, nombre, apellido, telefono)')
       .order('ultimo_mensaje_at', { ascending: false })
       .limit(1000);
+    
+    // 2. Fallback: if no conversations for current branch, try San Antonio (primary branch)
+    if (!data || data.length === 0) {
+      const { data: fallback } = await supabase.from('conversaciones')
+        .select('*, clientes(id, nombre, apellido, telefono)')
+        .eq('sede_id', '310595c5-5258-47fa-9b69-5ad9932685a7')
+        .order('ultimo_mensaje_at', { ascending: false })
+        .limit(1000);
+      data = fallback;
+    }
+    
     if (!data) return;
     setConvs(data as unknown as RawConv[]);
+    
     if (selectedRef.current) {
       const fresh = (data as unknown as RawConv[]).find(c => c.id === selectedRef.current!.id);
       if (fresh) setSelected(fresh);
@@ -357,7 +371,7 @@ export default function WhatsAppPage() {
     setLoadingMsgs(true);
     setHasMoreAbove(false);
 
-    // Try with sede filter first
+    // 1. Try with sede filter
     let { data } = await withSedeFilter(supabase.from('mensajes_whatsapp'))
       .select('*')
       .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
@@ -365,21 +379,19 @@ export default function WhatsAppPage() {
       .order('created_at', { ascending: false })
       .limit(60);
 
-    // Fallback: if no messages with sede filter, load without it
-    // (handles messages saved with wrong or missing sede_id)
+    // 2. Fallback to San Antonio
     if (!data || data.length === 0) {
-      const fallback = await supabase
-        .from('mensajes_whatsapp')
+      const { data: fallback } = await supabase.from('mensajes_whatsapp')
         .select('*')
         .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
+        .eq('sede_id', '310595c5-5258-47fa-9b69-5ad9932685a7')
         .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(60);
-      data = fallback.data;
+      data = fallback;
     }
 
     setLoadingMsgs(false);
-
     if (!data) return;
 
     const sorted = [...data].reverse() as RawMsg[];
@@ -502,7 +514,7 @@ export default function WhatsAppPage() {
     const realMsgs = latest.filter(m => !m.id.startsWith('tmp-'));
     const lastTs = realMsgs.length ? realMsgs[realMsgs.length - 1].created_at : new Date(0).toISOString();
 
-    // First try with sede filter
+    // 1. Try with sede filter
     let { data } = await withSedeFilter(supabase.from('mensajes_whatsapp'))
       .select('*')
       .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
@@ -511,18 +523,17 @@ export default function WhatsAppPage() {
       .order('created_at', { ascending: true })
       .limit(20);
 
-    // Fallback: if sede filter returned nothing, try without sede filter
-    // This handles messages saved with wrong/missing sede_id by the webhook
+    // 2. Fallback to San Antonio
     if (!data || data.length === 0) {
-      const fallback = await supabase
-        .from('mensajes_whatsapp')
+      const { data: fallback } = await supabase.from('mensajes_whatsapp')
         .select('*')
         .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
+        .eq('sede_id', '310595c5-5258-47fa-9b69-5ad9932685a7')
         .is('deleted_at', null)
         .gt('created_at', lastTs)
         .order('created_at', { ascending: true })
         .limit(20);
-      data = fallback.data;
+      data = fallback;
     }
 
     if (data && data.length > 0) {
