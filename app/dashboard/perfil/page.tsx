@@ -153,6 +153,7 @@ export default function PerfilPage() {
   useEffect(() => {
     if (!user || !supabase) return;
     const fetchProfile = async () => {
+      if (!supabase) return;
       const { data } = await supabase.from('usuarios').select('*').eq('id', user.id).maybeSingle();
       if (data) {
         setProfile({
