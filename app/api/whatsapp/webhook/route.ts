@@ -512,6 +512,17 @@ export async function POST(request: NextRequest) {
         const filename = message.document?.filename || 'Documento';
         console.log(`📄 [${from}] Recibido documento: ${filename}`);
         messageBody = `[Documento: ${filename}]`;
+      } else if (message.type === 'interactive') {
+        const interactive = message.interactive;
+        if (interactive.type === 'button_reply') {
+          messageBody = interactive.button_reply.title;
+          console.log(`🔘 [${from}] Botón presionado: ${messageBody} (${interactive.button_reply.id})`);
+        } else if (interactive.type === 'list_reply') {
+          messageBody = interactive.list_reply.title;
+          console.log(`📜 [${from}] Lista seleccionada: ${messageBody} (${interactive.list_reply.id})`);
+        } else {
+          messageBody = '[Interactivo]';
+        }
       } else if (message.type === 'image') {
         const imageId = message.image?.id;
         currentMediaId = imageId || null;
@@ -520,7 +531,7 @@ export async function POST(request: NextRequest) {
         const captionStr = rawCaption ? ` - Mensaje del cliente adjunto: "${rawCaption}"` : '';
         if (imageId && WHATSAPP_TOKEN) {
           try {
-            const mediaUrlResp = await fetch(`https://graph.facebook.com/v18.0/${imageId}`, {
+            const mediaUrlResp = await fetch(`https://graph.facebook.com/v21.0/${imageId}`, {
               headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
             });
             if (mediaUrlResp.ok) {
@@ -565,7 +576,7 @@ export async function POST(request: NextRequest) {
         currentMediaType = 'audio';
         if (audioId && WHATSAPP_TOKEN) {
           try {
-            const mediaUrlResp = await fetch(`https://graph.facebook.com/v18.0/${audioId}`, {
+            const mediaUrlResp = await fetch(`https://graph.facebook.com/v21.0/${audioId}`, {
               headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
             });
             if (mediaUrlResp.ok) {
@@ -613,9 +624,9 @@ export async function POST(request: NextRequest) {
 
       // Save incoming (blocking to capture exact time)
       let insertedTimestamp = new Date().toISOString();
+      let effectiveSedeId = DEFAULT_SEDE_ID;
       if (db) {
         // Look up existing sede_id for this conversation
-        let effectiveSedeId = DEFAULT_SEDE_ID;
         try {
           const { data: existingConv } = await db.from('conversaciones')
             .select('sede_id')
@@ -694,7 +705,7 @@ export async function POST(request: NextRequest) {
               ultimo_mensaje: messageBody.substring(0, 200),
               ultimo_mensaje_at: new Date().toISOString(),
               mensajes_sin_leer: 1,
-            }).eq('telefono', from).eq('sede_id', DEFAULT_SEDE_ID);
+            }).eq('telefono', from).eq('sede_id', effectiveSedeId);
             // Extra push: human mode means you MUST respond manually
             void firePushNotification({
               title: `🆘 Respuesta manual requerida`,
@@ -715,11 +726,10 @@ export async function POST(request: NextRequest) {
 
         console.log(`🤖 [${from}] Entering processCoreLogic...`);
         const phone = from.replace(/[^0-9]/g, ''); // Normalize
-        // Update is_processing to true
-        await db.from('conversaciones').update({ is_processing: true }).eq('telefono', phone).eq('sede_id', DEFAULT_SEDE_ID);
+        // Update is_processing to true using the correct sede
+        await db.from('conversaciones').update({ is_processing: true }).eq('telefono', phone).eq('sede_id', effectiveSedeId);
 
         // Mark any OLD pending messages from THIS user as superseded
-        // (new message will be processed fresh — avoids duplicate replies)
         try {
           await db.from('mensajes_pendientes_ia')
             .update({ status: 'completed', error_log: 'Supersedido por nuevo mensaje.' })
@@ -730,7 +740,7 @@ export async function POST(request: NextRequest) {
         try {
           await processCoreLogic(db, phone, messageBody, wa_message_id, waProfileName);
         } finally {
-          await db.from('conversaciones').update({ is_processing: false }).eq('telefono', phone).eq('sede_id', DEFAULT_SEDE_ID);
+          await db.from('conversaciones').update({ is_processing: false }).eq('telefono', phone).eq('sede_id', effectiveSedeId);
         }
         console.log(`✅ [${phone}] processCoreLogic finished.`);
       } // end for loop
@@ -746,7 +756,7 @@ export async function POST(request: NextRequest) {
 async function markMessageAsRead(messageId: string) {
   if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
   try {
-    await fetch(`https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`, {
+    await fetch(`https://graph.facebook.com/v21.0/${WHATSAPP_PHONE_ID}/messages`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
