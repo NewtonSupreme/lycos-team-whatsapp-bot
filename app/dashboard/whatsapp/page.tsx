@@ -119,10 +119,20 @@ function displayName(conv: RawConv): string {
 
 function mergeMessages(existing: RawMsg[], incoming: RawMsg[]): RawMsg[] {
   const map = new Map(existing.map(m => [m.id, m]));
-  for (const m of incoming) map.set(m.id, m);
-  return Array.from(map.values()).sort(
-    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-  );
+  for (const m of incoming) {
+    // If we have a real version of an optimistic message, it will have a different ID.
+    // The filter below handles removing stale optimistic messages.
+    map.set(m.id, m);
+  }
+  return Array.from(map.values())
+    .filter(m => {
+      // Keep all real messages
+      if (!m.id.startsWith('tmp-')) return true;
+      // Only keep optimistic messages if they are recent (less than 45 seconds old)
+      const age = Date.now() - new Date(m.created_at).getTime();
+      return age < 45000;
+    })
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 }
 
 // ── Detect media type in message body ────────────────────────
@@ -1005,7 +1015,7 @@ export default function WhatsAppPage() {
 
   // ── Audio Recording Logic ────────────────────────────────────
   const getSupportedMimeType = () => {
-    const types = ['audio/ogg; codecs=opus', 'audio/webm; codecs=opus', 'audio/webm', 'audio/aac', 'audio/wav'];
+    const types = ['audio/ogg; codecs=opus', 'audio/webm; codecs=opus', 'audio/mp4', 'audio/webm', 'audio/aac', 'audio/wav'];
     for (const type of types) {
       if (MediaRecorder.isTypeSupported(type)) return type;
     }
@@ -1145,6 +1155,8 @@ export default function WhatsAppPage() {
         body: formData,
       });
       if (res.ok) {
+        // Remove optimistic immediately so it doesn't duplicate when fetchNewMsgs brings the real one
+        setMsgs(prev => prev.filter(m => m.id !== optimisticId));
         // Refresh to get the real message from DB
         await fetchNewMsgs(selected.telefono);
         await loadConvs();

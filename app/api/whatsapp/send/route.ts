@@ -89,7 +89,9 @@ export async function POST(request: NextRequest) {
         payload.type = mediaType;
         payload[mediaType] = { id: mediaId };
         
-        if (mediaType === 'audio') {
+        // Meta is EXTREMELY strict with voice notes. Only OGG/Opus is officially supported for voice:true.
+        // If we're not sure it's a real OGG, we send it as regular audio to ensure it actually arrives.
+        if (mediaType === 'audio' && (file?.type === 'audio/ogg' || file?.name?.endsWith('.ogg'))) {
           payload[mediaType].voice = true;
         }
         
