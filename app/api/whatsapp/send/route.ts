@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
         const upData = await upRes.json();
         if (upData.id) {
           mediaId = upData.id;
-<<<<<<< HEAD
+          const mimeType = file.type || '';
           console.log(`✅ Media subida con éxito: ${mediaId} (${mimeType})`);
           if (mimeType.startsWith('image/')) mediaType = 'image';
           else if (mimeType.startsWith('video/')) mediaType = 'video';
@@ -68,15 +68,6 @@ export async function POST(request: NextRequest) {
             error: 'Fallo al subir archivo a WhatsApp', 
             details: upData.error?.message || 'Error desconocido en subida de media'
           }, { status: 400 });
-=======
-          if (file.type.startsWith('image/')) mediaType = 'image';
-          else if (file.type.startsWith('video/')) mediaType = 'video';
-          else if (file.type.startsWith('audio/')) mediaType = 'audio';
-          else mediaType = 'document';
-        } else {
-          console.error('❌ Error subiendo media a Meta:', JSON.stringify(upData));
-          return NextResponse.json({ error: 'Fallo al subir archivo a WhatsApp' }, { status: 400 });
->>>>>>> parent of beeccc5 (fix notas de voz y mensajes interactivos en ubicacion)
         }
       }
 

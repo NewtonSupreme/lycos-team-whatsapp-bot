@@ -954,9 +954,7 @@ export default function WhatsAppPage() {
           }
         }),
       });
-<<<<<<< HEAD
-=======
-      
+
       // Also send the text link to ensure they have the exact map url if native map fails to load
       await fetch('/api/whatsapp/send', {
         method: 'POST',
@@ -967,7 +965,6 @@ export default function WhatsAppPage() {
           preview_url: true,
         }),
       });
->>>>>>> parent of beeccc5 (fix notas de voz y mensajes interactivos en ubicacion)
 
       if (res.ok) {
         // 2. Send Interactive Message with Buttons
@@ -1200,18 +1197,10 @@ export default function WhatsAppPage() {
         await fetchNewMsgs(selected.telefono);
         await loadConvs();
       } else {
-<<<<<<< HEAD
         const errData = await res.json();
         console.error('Error de API enviando audio:', errData);
         setMsgs(prev => prev.filter(m => m.id !== optimisticId));
         alert('Error al enviar audio: ' + (errData.error || 'Error desconocido') + (errData.details ? ` (${errData.details})` : ''));
-=======
-        const err = await res.text();
-        console.error('Error de API enviando audio:', err);
-        // Remove optimistic on failure
-        setMsgs(prev => prev.filter(m => m.id !== optimisticId));
-        alert('Error al enviar mensaje de voz: ' + err);
->>>>>>> parent of beeccc5 (fix notas de voz y mensajes interactivos en ubicacion)
       }
     } catch (err) {
       console.error('Error enviando audio:', err);
