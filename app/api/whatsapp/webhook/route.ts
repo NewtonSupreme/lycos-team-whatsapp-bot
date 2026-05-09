@@ -1755,11 +1755,12 @@ function delay(ms: number): Promise<void> { return new Promise(r => setTimeout(r
 
 
 export async function processCoreLogic(db: ReturnType<typeof getDb>, from: string, messageBody: string, wa_message_id: string | null, waProfileName?: string) {
-      // Load context + exchange rates in parallel
-      const [ctx, rates] = await Promise.all([
-        loadConversationContext(db, from, messageBody),
-        fetchExchangeRates(),
-      ]);
+  try {
+    // Load context + exchange rates in parallel
+    const [ctx, rates] = await Promise.all([
+      loadConversationContext(db, from, messageBody),
+      fetchExchangeRates(),
+    ]);
 
       const lowerBody = messageBody.toLowerCase();
 
@@ -2188,17 +2189,13 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         }
       }
 
-        // Marcar como completado si llegamos hasta aquí con éxito
-        if (db && pendingId) {
-          await db.from('mensajes_pendientes_ia').update({ status: 'completed' }).eq('id', pendingId).eq('sede_id', DEFAULT_SEDE_ID);
-        }
+      // Marcar como completado si llegamos hasta aquí con éxito
+      if (db && pendingId) {
+        await db.from('mensajes_pendientes_ia').update({ status: 'completed' }).eq('id', pendingId).eq('sede_id', DEFAULT_SEDE_ID);
+      }
 
-        await updateConversation(db, from, messageBody, ctx.memoria, r?.clientId);
-      } // end for loop
-
-    return NextResponse.json({ status: 'ok' });
+      await updateConversation(db, from, messageBody, ctx.memoria, r?.clientId);
   } catch (e: any) {
-    console.error('❌ Webhook error:', e);
-    return NextResponse.json({ error: 'Internal error', details: e.message }, { status: 500 });
+    console.error('❌ Webhook error in processCoreLogic:', e);
   }
 }
