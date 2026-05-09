@@ -769,6 +769,7 @@ interface Memoria {
   nombre?: string;
   vehiculos?: { marca: string; modelo: string; anio?: string }[];
   notas?: string;
+  awaiting_location_choice?: boolean;
 }
 interface ConversationContext {
   historia: { role: string; parts: { text: string }[] }[];

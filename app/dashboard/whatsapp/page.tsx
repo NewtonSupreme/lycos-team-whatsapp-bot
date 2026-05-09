@@ -280,6 +280,14 @@ export default function WhatsAppPage() {
   const [auditMsgs, setAuditMsgs] = useState<any[]>([]);
   const [loadingAudit, setLoadingAudit] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [isRecordingCancelled, setIsRecordingCancelled] = useState(false);
+  const [recordingStartX, setRecordingStartX] = useState(0);
+  const [slideOffset, setSlideOffset] = useState(0);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -953,11 +961,106 @@ export default function WhatsAppPage() {
         alert('Error al enviar la tarjeta de contacto');
       }
     } catch (e) {
-      console.error('Error sendContact:', e);
-      alert('Error de conexión');
+      console.error('Error enviando contacto:', e);
     } finally {
       setSendingContact(false);
     }
+  };
+
+  // ── Audio Recording Logic ────────────────────────────────────
+  const startRecording = async (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/ogg; codecs=opus' });
+        if (!isRecordingCancelled && audioBlob.size > 0) {
+          await sendAudioMessage(audioBlob);
+        }
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      const startX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+      setRecordingStartX(startX);
+      setIsRecording(true);
+      setRecordingTime(0);
+      setIsRecordingCancelled(false);
+      setSlideOffset(0);
+      
+      mediaRecorder.start();
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error('Error al acceder al micrófono:', err);
+      alert('No se pudo acceder al micrófono. Por favor, asegúrate de dar los permisos necesarios.');
+    }
+  };
+
+  const handleRecordingMove = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!isRecording) return;
+    const currentX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+    const offset = Math.max(0, recordingStartX - currentX);
+    setSlideOffset(offset);
+    
+    if (offset > 100) { // Cancel threshold
+      setIsRecordingCancelled(true);
+      stopRecording(false);
+    }
+  };
+
+  const stopRecording = (shouldSend: boolean) => {
+    if (!isRecording) return;
+    
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+
+    setIsRecording(false);
+    setSlideOffset(0);
+  };
+
+  const sendAudioMessage = async (blob: Blob) => {
+    if (!selected) return;
+    setSending(true);
+    
+    const formData = new FormData();
+    formData.append('to', selected.telefono);
+    formData.append('file', blob, 'voice-note.ogg');
+    
+    try {
+      const res = await fetch('/api/whatsapp/send', {
+        method: 'POST',
+        body: formData,
+      });
+      if (res.ok) {
+        await fetchNewMsgs(selected.telefono);
+        await loadConvs();
+      }
+    } catch (err) {
+      console.error('Error enviando audio:', err);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   const filtered = convs.filter(c => {
@@ -1397,32 +1500,81 @@ export default function WhatsAppPage() {
                     </div>
                   )}
 
-                  <div className="flex items-center gap-2 px-3 py-3">
-                    <button onClick={() => setShowQuickReplies(!showQuickReplies)} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors flex-shrink-0">
-                      <Smile className="w-5 h-5" style={{ color: '#aebac1' }} />
-                    </button>
-                    
-                    <button onClick={() => fileInputRef.current?.click()} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors flex-shrink-0 mr-1 relative">
-                      <Paperclip className="w-5 h-5" style={{ color: '#aebac1' }} />
-                      {files.length > 0 && (
-                         <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#00a884] text-black text-[9px] font-bold rounded-full flex items-center justify-center pointer-events-none border border-[#202c33]">
-                           {files.length}
-                         </span>
-                      )}
-                    </button>
-                    <input type="file" multiple ref={fileInputRef} onChange={handleFileChange} className="hidden" accept="image/*,video/*,.pdf,.doc,.docx" />
+                    <div className="flex items-center gap-2 px-3 py-3 relative min-h-[52px]">
+                      {isRecording && (
+                        <div 
+                          className="absolute inset-0 z-20 flex items-center px-4 bg-[#202c33] animate-in fade-in slide-in-from-right-4 duration-200"
+                          onMouseMove={handleRecordingMove}
+                          onTouchMove={handleRecordingMove}
+                          onMouseUp={() => stopRecording(true)}
+                          onTouchEnd={() => stopRecording(true)}
+                        >
+                          <div className="flex items-center gap-3 w-full">
+                            <div className="flex items-center gap-2 animate-pulse">
+                              <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
+                              <span className="text-sm font-medium text-white">{formatDuration(recordingTime)}</span>
+                            </div>
+                            
+                            <div className="flex-1 text-center">
+                              <span 
+                                className="text-sm text-[#8696a0] transition-transform duration-100 block"
+                                style={{ transform: `translateX(-${slideOffset}px)`, opacity: 1 - (slideOffset / 100) }}
+                              >
+                                {slideOffset > 20 ? 'Suelta para cancelar' : 'Desliza para cancelar'}
+                              </span>
+                            </div>
 
-                    <input
-                      ref={inputRef} value={message} onChange={e => setMessage(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-                      placeholder={isWindowOpen ? (files.length > 0 ? (files.length === 1 ? 'Añade un comentario...' : 'El comentario irá con el primer archivo...') : 'Escribe un mensaje') : 'Ventana de 24h cerrada'}
-                      className="flex-1 py-2 px-4 rounded-lg text-sm outline-none"
-                      style={{ background: '#2a3942', color: '#e9edef', border: 'none' }}
-                    />
-                    <button onClick={handleSend} disabled={(!message.trim() && files.length === 0) || sending} className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-all" style={{ background: (message.trim() || files.length > 0) && !sending ? '#00a884' : '#2a3942', opacity: (!message.trim() && files.length === 0) || sending ? 0.5 : 1 }}>
-                      <Send className={cn('w-4 h-4', sending && 'animate-pulse')} style={{ color: '#e9edef' }} />
-                    </button>
-                  </div>
+                            <button 
+                              onClick={() => { setIsRecordingCancelled(true); stopRecording(false); }}
+                              className="text-red-500 text-xs font-bold uppercase hover:opacity-80 px-2"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      <button onClick={() => setShowQuickReplies(!showQuickReplies)} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors flex-shrink-0">
+                        <Smile className="w-5 h-5" style={{ color: '#aebac1' }} />
+                      </button>
+                      
+                      <button onClick={() => fileInputRef.current?.click()} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors flex-shrink-0 mr-1 relative">
+                        <Paperclip className="w-5 h-5" style={{ color: '#aebac1' }} />
+                        {files.length > 0 && (
+                           <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#00a884] text-black text-[9px] font-bold rounded-full flex items-center justify-center pointer-events-none border border-[#202c33]">
+                             {files.length}
+                           </span>
+                        )}
+                      </button>
+                      <input type="file" multiple ref={fileInputRef} onChange={handleFileChange} className="hidden" accept="image/*,video/*,.pdf,.doc,.docx" />
+
+                      <input
+                        ref={inputRef} value={message} onChange={e => setMessage(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                        placeholder={isWindowOpen ? (files.length > 0 ? (files.length === 1 ? 'Añade un comentario...' : 'El comentario irá con el primer archivo...') : 'Escribe un mensaje') : 'Ventana de 24h cerrada'}
+                        className="flex-1 py-2 px-4 rounded-lg text-sm outline-none"
+                        style={{ background: '#2a3942', color: '#e9edef', border: 'none' }}
+                      />
+                      
+                      {message.trim() || files.length > 0 ? (
+                        <button onClick={handleSend} disabled={sending} className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-all shadow-lg" style={{ background: '#00a884' }}>
+                          <Send className={cn('w-4 h-4', sending && 'animate-pulse')} style={{ color: '#e9edef' }} />
+                        </button>
+                      ) : (
+                        <button 
+                          onMouseDown={startRecording}
+                          onTouchStart={startRecording}
+                          onMouseUp={() => stopRecording(true)}
+                          onTouchEnd={() => stopRecording(true)}
+                          className={cn(
+                            "w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-300",
+                            isRecording ? "bg-red-500 scale-125 shadow-xl z-30" : "bg-white/5 hover:bg-white/10"
+                          )}
+                        >
+                          <Mic className={cn("w-5 h-5", isRecording ? "text-white" : "text-[#aebac1]")} />
+                        </button>
+                      )}
+                    </div>
                 </div>
               </div>
 
