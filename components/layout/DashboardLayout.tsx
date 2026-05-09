@@ -38,6 +38,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           email: u.email || `${u.username}@lycosteam.com`, 
           nombre: u.nombre, 
           rol: u.rol, 
+          avatar_url: u.avatar_url,
           created_at: '' 
         });
         return;
@@ -55,6 +56,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             email: user.email || `${user.username}@lycosteam.com`, 
             nombre: user.nombre, 
             rol: user.rol, 
+            avatar_url: user.avatar_url,
             created_at: '' 
           });
           sessionStorage.setItem('lycos_user', JSON.stringify(user));

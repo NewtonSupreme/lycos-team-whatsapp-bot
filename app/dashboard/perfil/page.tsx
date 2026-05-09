@@ -29,7 +29,7 @@ function StatusBadge({ status, message }: { status: Status; message?: string }) 
   );
 }
 
-// Modal Carrusel para registro de huella
+// Modal Carrusel para registro de huella (Diseño Premium Original)
 function BiometricModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -60,40 +60,25 @@ function BiometricModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
     if (step < steps.length - 1) {
       setStep(step + 1);
     } else {
-      // Logic for Registration
       setLoading(true);
       setError('');
       try {
-        // 1. Get options from server
         const optionsRes = await fetch('/api/auth/webauthn/register-options', { method: 'POST' });
         if (!optionsRes.ok) {
           const errData = await optionsRes.json();
-          console.error('Register options error:', errData);
-          throw new Error(errData.error || errData.details || 'No se pudieron obtener las opciones de registro');
+          throw new Error(errData.error || 'Error en opciones');
         }
         const options = await optionsRes.json();
-
-        // 2. Start browser registration
         const regResp = await startRegistration(options);
-
-        // 3. Verify on server
         const verifyRes = await fetch('/api/auth/webauthn/register-verify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(regResp)
         });
-
-        if (verifyRes.ok) {
-          onSuccess();
-        } else {
-          const data = await verifyRes.json();
-          console.error('Register verify error:', data);
-          throw new Error(data.error || data.details || 'Error en la verificación');
-        }
-      } catch (err: unknown) {
-        console.error(err);
-        const msg = err instanceof Error ? err.message : 'Error al registrar biometría. Intenta de nuevo.';
-        setError(msg);
+        if (verifyRes.ok) onSuccess();
+        else throw new Error('Verificación fallida');
+      } catch (err: any) {
+        setError(err.message || 'Error al registrar biometría');
         setLoading(false);
       }
     }
@@ -150,7 +135,7 @@ export default function PerfilPage() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [profile, setProfile] = useState({
-    nombre: '', email: '', telefono: '', bio: '', username: ''
+    nombre: '', email: '', telefono: '', bio: '', username: '', rol: ''
   });
   const [profileStatus, setProfileStatus] = useState<Status>('idle');
   const [profileError, setProfileError] = useState('');
@@ -165,16 +150,10 @@ export default function PerfilPage() {
   const [showBioModal, setShowBioModal] = useState(false);
   const [hasBiometry, setHasBiometry] = useState(false);
 
-  // Load user data
   useEffect(() => {
     if (!user || !supabase) return;
-    const sb = supabase;
     const fetchProfile = async () => {
-      const { data } = await sb
-        .from('usuarios')
-        .select('nombre, email, telefono, bio, username, avatar_url')
-        .eq('id', user.id)
-        .maybeSingle();
+      const { data } = await supabase.from('usuarios').select('*').eq('id', user.id).maybeSingle();
       if (data) {
         setProfile({
           nombre: data.nombre || '',
@@ -182,23 +161,16 @@ export default function PerfilPage() {
           telefono: data.telefono || '',
           bio: data.bio || '',
           username: data.username || '',
+          rol: data.rol || '',
         });
         setAvatarUrl(data.avatar_url || null);
       }
-
-      // Check biometry - buscar por usuario_id
-      console.log('Checking biometry for user.id:', user.id);
-      const { data: credData, error: credErr } = await sb
-        .from('webauthn_credentials')
-        .select('id')
-        .eq('usuario_id', user.id);
-      console.log('Biometry check result:', { credData, credErr });
+      const { data: credData } = await supabase.from('webauthn_credentials').select('id').eq('usuario_id', user.id);
       setHasBiometry((credData?.length || 0) > 0);
     };
     fetchProfile();
   }, [user]);
 
-  // Save profile
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supabase || !user) return;
@@ -212,8 +184,7 @@ export default function PerfilPage() {
         updated_at: new Date().toISOString()
       }).eq('id', user.id);
 
-      if (error) throw new Error(error.message);
-
+      if (error) throw error;
       setUser({ ...user, nombre: profile.nombre });
 
       await withSedeFilter(supabase.from('logs_actividad')).insert(withSedeInsert({
@@ -225,14 +196,13 @@ export default function PerfilPage() {
 
       setProfileStatus('saved');
       setTimeout(() => setProfileStatus('idle'), 3000);
-    } catch (err: unknown) {
-      setProfileError(err instanceof Error ? err.message : 'Error desconocido');
+    } catch (err: any) {
+      setProfileError(err.message);
       setProfileStatus('error');
       setTimeout(() => setProfileStatus('idle'), 3000);
     }
   };
 
-  // Change password
   const handleChangePwd = async (e: React.FormEvent) => {
     e.preventDefault();
     setPwdError('');
@@ -247,26 +217,26 @@ export default function PerfilPage() {
       return;
     }
     setPwdStatus('saving');
-    const res = await fetch('/api/auth/me', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ currentPassword: pwd.current, newPassword: pwd.nuevo }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      setPwdStatus('saved');
-      setPwd({ current: '', nuevo: '', confirmar: '' });
-      setTimeout(() => setPwdStatus('idle'), 3000);
-    } else {
-      setPwdError(data.error || 'Error al cambiar contraseña');
+    try {
+      const res = await fetch('/api/auth/me', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword: pwd.current, newPassword: pwd.nuevo }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setPwdStatus('saved');
+        setPwd({ current: '', nuevo: '', confirmar: '' });
+        setTimeout(() => setPwdStatus('idle'), 3000);
+      } else {
+        throw new Error(data.error || 'Error al cambiar contraseña');
+      }
+    } catch (err: any) {
+      setPwdError(err.message);
       setPwdStatus('error');
       setTimeout(() => setPwdStatus('idle'), 3000);
     }
   };
-
-  if (pwdError) {
-    // Show error in UI (we already show it in StatusBadge but this silences the lint)
-  }
 
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -275,16 +245,14 @@ export default function PerfilPage() {
     try {
       const ext = file.name.split('.').pop();
       const path = `avatars/${user.id}.${ext}`;
-      const { error: uploadErr } = await supabase.storage
-        .from('avatars')
-        .upload(path, file, { upsert: true });
+      const { error: uploadErr } = await supabase.storage.from('avatars').upload(path, file, { upsert: true });
       if (uploadErr) throw uploadErr;
       const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
-      const avatarPublicUrl = urlData.publicUrl;
-      await supabase.from('usuarios').update({ avatar_url: avatarPublicUrl }).eq('id', user.id);
-      setAvatarUrl(avatarPublicUrl);
+      await supabase.from('usuarios').update({ avatar_url: urlData.publicUrl }).eq('id', user.id);
+      setAvatarUrl(urlData.publicUrl);
+      setUser({ ...user, avatar_url: urlData.publicUrl });
     } catch (err) {
-      console.error('Error subiendo avatar:', err);
+      console.error(err);
     }
     setUploadingAvatar(false);
   };
@@ -304,7 +272,6 @@ export default function PerfilPage() {
             <div className="relative flex-shrink-0">
               <div className="w-24 h-24 rounded-2xl overflow-hidden bg-primary/10 border-2 border-primary/20 flex items-center justify-center">
                 {avatarUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
                   <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
                 ) : (
                   <span className="text-3xl font-bold text-primary" style={{ fontFamily: 'Syne, sans-serif' }}>{initials}</span>
@@ -326,7 +293,7 @@ export default function PerfilPage() {
               <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3 mt-3">
                 <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary/10 border border-primary/20 text-xs text-primary font-medium">
                   <Shield className="w-3.5 h-3.5" />
-                  {user?.rol === 'admin' ? 'Administrador' : 'Operador'}
+                  {profile.rol === 'admin' || profile.rol === 'administrador' ? 'Administrador' : (profile.rol?.charAt(0).toUpperCase() + profile.rol?.slice(1)) || 'Operador'}
                 </span>
                 <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Calendar className="w-3.5 h-3.5" />
@@ -379,10 +346,14 @@ export default function PerfilPage() {
               <form onSubmit={handleChangePwd} className="space-y-3">
                 <Input type="password" required value={pwd.current} onChange={e => setPwd(p => ({ ...p, current: e.target.value }))} placeholder="Contraseña actual" />
                 <Input type="password" required minLength={6} value={pwd.nuevo} onChange={e => setPwd(p => ({ ...p, nuevo: e.target.value }))} placeholder="Nueva contraseña" />
-                <Button type="submit" disabled={pwdStatus === 'saving'} className="w-full h-10 gap-2">
-                  {pwdStatus === 'saving' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
-                  Actualizar Contraseña
-                </Button>
+                <Input type="password" required minLength={6} value={pwd.confirmar} onChange={e => setPwd(p => ({ ...p, confirmar: e.target.value }))} placeholder="Confirmar contraseña" />
+                <div className="flex flex-col gap-2 pt-1">
+                  <StatusBadge status={pwdStatus} message={pwdError} />
+                  <Button type="submit" disabled={pwdStatus === 'saving'} className="w-full h-10 gap-2">
+                    {pwdStatus === 'saving' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+                    Actualizar Contraseña
+                  </Button>
+                </div>
               </form>
             </CardContent>
           </Card>

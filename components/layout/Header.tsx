@@ -4,7 +4,7 @@ import { Bell, Search, Menu, X, MessageSquare, Calendar, Wrench } from 'lucide-r
 import { useAppStore } from '@/lib/store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { cn, getInitials } from '@/lib/utils';
 import { ThemeToggle } from './ThemeToggle';
 import { supabase } from '@/lib/supabase';
@@ -389,6 +389,7 @@ export default function Header() {
       {/* User */}
       <div className="flex items-center gap-2 pl-2 border-l border-border/30">
         <Avatar className="w-7 h-7">
+          <AvatarImage src={user?.avatar_url} />
           <AvatarFallback className="text-[10px]">
             {user ? getInitials(user.nombre) : 'AD'}
           </AvatarFallback>

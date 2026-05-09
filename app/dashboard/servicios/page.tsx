@@ -3,13 +3,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Wrench, Search, Calendar, Clock,
   CheckCircle, AlertCircle, Loader2, RefreshCw, User, Car,
-  Phone, ChevronDown, X
+  Phone, ChevronDown, X, Banknote, BadgeCheck
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
 import { Button } from '@/components/ui/button';
-import { Eye, Download, FileText } from 'lucide-react';
+import { Eye, Download, FileText, Plus, Trash2 } from 'lucide-react';
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 
@@ -68,28 +68,66 @@ function timeAgo(ts: string) {
   return `hace ${Math.floor(h / 24)}d`;
 }
 
-function InvoiceModal({ cita, onClose }: { cita: CitaServicio; onClose: () => void }) {
-  const clienteName = cita.clientes
+function InvoiceModal({ cita, inventory, onClose }: { cita: CitaServicio; inventory: any[]; onClose: () => void }) {
+  const [clientName, setClientName] = useState(cita.clientes
     ? `${cita.clientes.nombre} ${cita.clientes.apellido}`
-    : cita.nombre_cliente || 'Consumidor Final';
-  
-  const vehicleStr = cita.vehiculos
-    ? `${cita.vehiculos.marca} ${cita.vehiculos.modelo}${cita.vehiculos.anio ? ' ' + cita.vehiculos.anio : ''} (${cita.vehiculos.placa})`
-    : cita.vehiculo_info || '—';
+    : cita.nombre_cliente || 'Consumidor Final');
 
-  const total = cita.costo_estimado || 0;
-  const items = [{
-    descripcion: cita.descripcion || SERVICIO_LABELS[cita.tipo_servicio] || 'Servicio General',
-    cantidad: 1,
-    precio_unitario: total,
-    total: total
-  }];
+  const [vehicleStr, setVehicleStr] = useState(cita.vehiculos
+    ? `${cita.vehiculos.marca} ${cita.vehiculos.modelo} (${cita.vehiculos.placa})`
+    : cita.vehiculo_info || '—');
+
+  // Initialize items with matching logic
+  const [items, setItems] = useState(() => {
+    // Attempt matching
+    const match = inventory.find((i: any) => 
+      (cita.descripcion || '').toLowerCase().includes(i.nombre.toLowerCase().trim()) ||
+      i.nombre.toLowerCase().trim().includes((cita.descripcion || '').toLowerCase().trim()) ||
+      (SERVICIO_LABELS[cita.tipo_servicio] || '').toLowerCase().includes(i.nombre.toLowerCase().trim())
+    );
+
+    const price = match?.precio_usd || cita.costo_estimado || 0;
+    return [{
+      descripcion: cita.descripcion || SERVICIO_LABELS[cita.tipo_servicio] || 'Servicio General',
+      cantidad: 1,
+      precio_unitario: price,
+      total: price
+    }];
+  });
+
+  const addItem = () => {
+    setItems([...items, { descripcion: '', cantidad: 1, precio_unitario: 0, total: 0 }]);
+  };
+
+  const removeItem = (index: number) => {
+    if (items.length > 1) {
+      setItems(items.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateItem = (index: number, field: string, value: any) => {
+    const newItems = [...items];
+    const item = { ...newItems[index], [field]: value };
+    
+    if (field === 'cantidad' || field === 'precio_unitario') {
+      item.total = (item.cantidad || 0) * (item.precio_unitario || 0);
+    }
+    
+    newItems[index] = item;
+    setItems(newItems);
+  };
+
+  const total = items.reduce((sum, item) => sum + (item.total || 0), 0);
+
+  const [isSaving, setIsSaving] = useState(false);
+  const [showPaymentConfirm, setShowPaymentConfirm] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<'efectivo_usd' | 'zelle' | 'pago_movil' | 'punto_de_venta' | 'efectivo_ves'>('efectivo_usd');
 
   const handleDownload = () => {
     generateInvoicePDF({
       id: cita.id,
       fecha: cita.fecha,
-      cliente: clienteName,
+      cliente: clientName,
       vehiculo: vehicleStr,
       items: items,
       total: total,
@@ -97,16 +135,79 @@ function InvoiceModal({ cita, onClose }: { cita: CitaServicio; onClose: () => vo
     });
   };
 
+  const handleFinalizeSale = async () => {
+    try {
+      setIsSaving(true);
+      
+      // 1. Prepare breakdown JSON for "ventas_dia" compatibility
+      const itemsJson = JSON.stringify(items, null, 2);
+      const finalNotas = `[FACTURA_IA_START]\n${itemsJson}\n[FACTURA_IA_END]\n\nNotas adicionales: ${cita.descripcion || 'Sin notas'}`;
+
+      // 2. Insert into ventas_dia (Cierre de Caja)
+      const { error: ventaError } = await withSedeFilter(supabase.from('ventas_dia')).insert(withSedeInsert({
+        fecha: new Date().toISOString().split('T')[0],
+        cliente: clientName,
+        total_ingresos: total,
+        total_servicios: items.length,
+        total_clientes: 1,
+        desglose: items,
+        metodos_pago: { [paymentMethod]: total },
+        notas: finalNotas,
+        creado_por: 'Admin'
+      }));
+
+      if (ventaError) throw ventaError;
+
+      // 3. Update Cita status to completed
+      const { error: citaError } = await withSedeFilter(supabase.from('citas'))
+        .update({ estado: 'completada' })
+        .eq('id', cita.id);
+
+      if (citaError) throw citaError;
+
+      // 4. Log Activity
+      logActivity({
+        usuario: 'Admin',
+        modulo: 'Servicios',
+        accion: 'Venta Finalizada',
+        detalles: `Venta registrada para ${clientName} por $${total.toFixed(2)}`,
+        referencia_id: cita.id,
+        referencia_tabla: 'citas'
+      });
+
+      // 5. Trigger PDF Download
+      handleDownload();
+
+      // 6. Close and Success
+      alert('¡Venta registrada con éxito en el cierre de caja!');
+      onClose();
+      window.location.reload(); // Refresh to show updated status
+    } catch (err: any) {
+      console.error(err);
+      alert('Error al registrar la venta: ' + err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-card border border-border rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-[100] grid place-items-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="relative bg-card border border-border rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
         <div className="flex items-center justify-between p-4 border-b border-border/30 bg-muted/20">
           <h2 className="text-sm font-bold flex items-center gap-2">
-            <FileText className="w-4 h-4 text-primary" /> Vista Previa de Factura
+            <FileText className="w-4 h-4 text-primary" /> Editor de Factura en Tiempo Real
           </h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-white/5 flex items-center justify-center">
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={addItem}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 text-primary text-[10px] font-bold hover:bg-primary/20 transition-colors uppercase tracking-wider"
+            >
+              <Plus className="w-3 h-3" /> Añadir Item
+            </button>
+            <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-white/5 flex items-center justify-center">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
         
         <div className="p-6 overflow-y-auto bg-white text-slate-900 font-sans">
@@ -127,32 +228,76 @@ function InvoiceModal({ cita, onClose }: { cita: CitaServicio; onClose: () => vo
             <div className="grid grid-cols-2 gap-8 mb-8 pb-8 border-b border-slate-100">
               <div>
                 <p className="text-[9px] font-bold text-slate-400 uppercase mb-2">Cliente:</p>
-                <p className="text-xs font-bold text-slate-900">{clienteName}</p>
+                <input 
+                  className="w-full text-xs font-bold text-slate-900 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-primary focus:outline-none transition-colors"
+                  value={clientName}
+                  onChange={(e) => setClientName(e.target.value)}
+                />
                 <p className="text-[10px] text-slate-500 mt-1">{cita.telefono || '—'}</p>
               </div>
               <div className="text-right">
                 <p className="text-[9px] font-bold text-slate-400 uppercase mb-2">Vehículo:</p>
-                <p className="text-xs text-slate-600 font-bold">{vehicleStr}</p>
-                <p className="text-[10px] text-slate-500 mt-1">Estado: {cita.estado.toUpperCase()}</p>
+                <input 
+                  className="w-full text-right text-xs text-slate-600 font-bold bg-transparent border-b border-transparent hover:border-slate-200 focus:border-primary focus:outline-none transition-colors"
+                  value={vehicleStr}
+                  onChange={(e) => setVehicleStr(e.target.value)}
+                />
               </div>
             </div>
 
             <table className="w-full text-xs mb-8">
               <thead>
                 <tr className="border-b-2 border-slate-900">
-                  <th className="text-left py-2 font-bold text-slate-900">Descripción del Trabajo</th>
+                  <th className="text-left py-2 font-bold text-slate-900">Descripción del Trabajo / Repuesto</th>
                   <th className="text-center py-2 font-bold text-slate-900 w-16">Cant.</th>
                   <th className="text-right py-2 font-bold text-slate-900 w-24">Precio</th>
                   <th className="text-right py-2 font-bold text-slate-900 w-24">Total</th>
+                  <th className="w-8"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {items.map((item, i) => (
-                  <tr key={i}>
-                    <td className="py-3 text-slate-700">{item.descripcion}</td>
-                    <td className="py-3 text-center text-slate-600">{item.cantidad}</td>
-                    <td className="py-3 text-right text-slate-600">${item.precio_unitario.toFixed(2)}</td>
-                    <td className="py-3 text-right font-medium text-slate-900">${item.total.toFixed(2)}</td>
+                  <tr key={i} className="group">
+                    <td className="py-3">
+                      <input 
+                        className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-primary focus:outline-none transition-colors py-1"
+                        value={item.descripcion}
+                        placeholder="Descripción del item..."
+                        onChange={(e) => updateItem(i, 'descripcion', e.target.value)}
+                      />
+                    </td>
+                    <td className="py-3">
+                      <input 
+                        type="number"
+                        className="w-full text-center bg-transparent border-b border-transparent hover:border-slate-200 focus:border-primary focus:outline-none transition-colors py-1"
+                        value={item.cantidad}
+                        onChange={(e) => updateItem(i, 'cantidad', parseInt(e.target.value) || 0)}
+                      />
+                    </td>
+                    <td className="py-3">
+                      <div className="flex items-center justify-end">
+                        <span className="text-slate-400 mr-1">$</span>
+                        <input 
+                          type="number"
+                          className="w-20 text-right bg-transparent border-b border-transparent hover:border-slate-200 focus:border-primary focus:outline-none transition-colors py-1"
+                          value={item.precio_unitario}
+                          onChange={(e) => updateItem(i, 'precio_unitario', parseFloat(e.target.value) || 0)}
+                        />
+                      </div>
+                    </td>
+                    <td className="py-3 text-right font-bold text-slate-900">
+                      ${(item.total || 0).toFixed(2)}
+                    </td>
+                    <td className="py-3 text-right">
+                      {items.length > 1 && (
+                        <button 
+                          onClick={() => removeItem(i)}
+                          className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all p-1"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -160,31 +305,59 @@ function InvoiceModal({ cita, onClose }: { cita: CitaServicio; onClose: () => vo
 
             <div className="flex justify-end pt-4">
               <div className="w-48 space-y-2">
-                <div className="flex justify-between text-xs font-black text-slate-900 pt-2 border-t border-slate-200">
-                  <span>TOTAL</span>
-                  <span className="text-primary">${total.toFixed(2)}</span>
+                <div className="flex justify-between text-xs font-black text-slate-900 pt-2 border-t-2 border-slate-900">
+                  <span>TOTAL FACTURA</span>
+                  <span className="text-primary text-sm">${total.toFixed(2)}</span>
                 </div>
               </div>
             </div>
 
-            {cita.descripcion && (
-              <div className="mt-12 pt-4 border-t border-slate-100">
-                <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Observaciones Técnicas:</p>
-                <p className="text-[10px] text-slate-500 leading-relaxed italic">
-                  {cita.descripcion}
-                </p>
-              </div>
-            )}
+            <div className="mt-12 pt-4 border-t border-slate-100">
+              <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Notas / Garantía:</p>
+              <textarea 
+                className="w-full text-[10px] text-slate-500 leading-relaxed italic bg-transparent border-none focus:ring-0 resize-none min-h-[60px]"
+                defaultValue={cita.descripcion || 'Servicio realizado bajo estándares de calidad Lycos Team.'}
+              />
+            </div>
           </div>
         </div>
 
-        <div className="p-4 border-t border-border/30 bg-muted/20 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm hover:bg-white/5 transition-colors">
-            Cerrar
-          </button>
-          <Button onClick={handleDownload} className="gap-2">
-            <Download className="w-4 h-4" /> Descargar PDF Profesional
-          </Button>
+        <div className="p-4 border-t border-border/30 bg-muted/20 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-muted-foreground uppercase">Cobrar por:</span>
+            <select 
+              value={paymentMethod}
+              onChange={(e: any) => setPaymentMethod(e.target.value)}
+              className="bg-background border border-border rounded-lg px-2 py-1 text-xs focus:ring-1 focus:ring-primary focus:outline-none"
+            >
+              <option value="efectivo_usd">Efectivo USD</option>
+              <option value="zelle">Zelle</option>
+              <option value="pago_movil">Pago Móvil</option>
+              <option value="punto_de_venta">Punto de Venta</option>
+              <option value="efectivo_ves">Efectivo VES</option>
+            </select>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm hover:bg-white/5 transition-colors">
+              Cancelar
+            </button>
+            <Button 
+              onClick={() => {
+                if(confirm(`¿Confirmar registro de venta por $${total.toFixed(2)} a ${clientName}?`)) {
+                  handleFinalizeSale();
+                }
+              }} 
+              disabled={isSaving}
+              className="gap-2 px-6 bg-green-600 hover:bg-green-700 text-white font-bold"
+            >
+              {isSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <BadgeCheck className="w-4 h-4" />}
+              Registrar Venta y Cobrar
+            </Button>
+            <Button variant="outline" onClick={handleDownload} className="gap-2">
+              <Download className="w-4 h-4" /> Solo PDF
+            </Button>
+          </div>
         </div>
       </div>
     </div>
@@ -199,11 +372,16 @@ export default function ServiciosPage() {
   const [filterEstado, setFilterEstado] = useState('todos');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [selectedCita, setSelectedCita] = useState<CitaServicio | null>(null);
+  const [inventory, setInventory] = useState<any[]>([]);
 
   const loadCitas = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
     try {
+      // Load inventory for price matching
+      const { data: invData } = await supabase.from('inventario').select('nombre, precio_usd').eq('activo', true);
+      setInventory(invData || []);
+
       // Load citas with joined client and vehicle data
       const { data, error } = await supabase
         .from('citas')
@@ -398,16 +576,17 @@ export default function ServiciosPage() {
                   : cita.nombre_cliente || '—';
                 const clientePhone = cita.clientes?.telefono || cita.telefono || '';
                 const vehicleStr = cita.vehiculos
-                  ? `${cita.vehiculos.marca} ${cita.vehiculos.modelo}${cita.vehiculos.anio ? ' ' + cita.vehiculos.anio : ''}`
+                  ? `${cita.vehiculos.marca} ${cita.vehiculos.modelo}`
                   : cita.vehiculo_info || '—';
                 const placaStr = cita.vehiculos?.placa || cita.placa || '';
                 const tipoLabel = SERVICIO_LABELS[cita.tipo_servicio] || cita.tipo_servicio;
 
                 return (
-                <tr
-                  key={cita.id}
-                  className="border-b border-border/10 hover:bg-white/2 transition-colors"
-                >
+                  <tr 
+                    key={cita.id} 
+                    className="border-b border-border/10 hover:bg-white/2 transition-colors cursor-pointer group"
+                    onClick={() => setSelectedCita(cita)}
+                  >
                   {/* Servicio/Descripción */}
                   <td className="px-4 py-3">
                     <div className="flex items-start gap-2.5">
@@ -530,6 +709,7 @@ export default function ServiciosPage() {
       {selectedCita && (
         <InvoiceModal
           cita={selectedCita}
+          inventory={inventory}
           onClose={() => setSelectedCita(null)}
         />
       )}

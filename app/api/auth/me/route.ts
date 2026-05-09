@@ -24,7 +24,7 @@ export async function GET() {
 
     const { data: user } = await db
       .from('usuarios')
-      .select('id, username, nombre, email, rol')
+      .select('id, username, nombre, email, rol, avatar_url')
       .eq('username', username)
       .single();
 
@@ -34,17 +34,11 @@ export async function GET() {
     return NextResponse.json({ user: null });
   }
 }
-
 export async function POST(request: NextRequest) {
   try {
     const cookieStore = await cookies();
     const username = cookieStore.get('lycos_session')?.value;
     if (!username) return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
-
-    // Admin cannot change password through this endpoint
-    if (username === 'administrador') {
-      return NextResponse.json({ error: 'El administrador no puede cambiar su contraseña por este panel' }, { status: 403 });
-    }
 
     const { currentPassword, newPassword } = await request.json();
     if (!currentPassword || !newPassword) {
@@ -77,7 +71,8 @@ export async function POST(request: NextRequest) {
     if (error) return NextResponse.json({ error: 'Error al actualizar contraseña' }, { status: 500 });
 
     return NextResponse.json({ success: true });
-  } catch {
-    return NextResponse.json({ error: 'Error en el servidor' }, { status: 500 });
+  } catch (error: any) {
+    console.error('Error in POST /api/auth/me:', error);
+    return NextResponse.json({ error: 'Error en el servidor: ' + error.message }, { status: 500 });
   }
 }

@@ -77,6 +77,7 @@ export interface Cita {
   nombre_cliente?: string;
   vehiculo_info?: string;
   duracion_minutos?: number;
+  costo_estimado?: number;
   created_at: string;
   cliente?: Cliente;
   vehiculo?: Vehiculo;

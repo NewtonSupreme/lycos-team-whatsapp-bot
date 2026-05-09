@@ -82,10 +82,10 @@
   .chat-bubble-out { @apply bg-primary/10 border border-primary/20 rounded-2xl rounded-br-sm px-4 py-2.5 max-w-xs; }
   .dot-pattern { position: relative; }
   .dot-pattern::before { content: ''; position: absolute; inset: 0; background-image: radial-gradient(circle, var(--border) 1.5px, transparent 1.5px); background-size: 24px 24px; opacity: 0.4; pointer-events: none; z-index: 0; }
-  .page-enter { animation: fadeIn 0.35s ease-out forwards; position: relative; z-index: 1; }
+  .page-enter { animation: fadeIn 0.35s ease-out forwards; }
 }
 
-@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes slideIn { from { transform: translateX(-100%); } to { transform: translateX(0); } }
 @keyframes pulse-glow { 0%,100% { box-shadow: 0 0 8px rgba(249,115,22,0.2); } 50% { box-shadow: 0 0 20px rgba(249,115,22,0.4); } }
 @keyframes truck-move {

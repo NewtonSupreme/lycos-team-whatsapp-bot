@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { getInitials } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 
@@ -169,6 +169,7 @@ export default function Sidebar() {
           {/* User info */}
           <div className={cn('flex items-center gap-2 px-2 py-2 mt-1 rounded-lg', !sidebarOpen && 'justify-center')}>
             <Avatar className="w-7 h-7 flex-shrink-0">
+              <AvatarImage src={user?.avatar_url} />
               <AvatarFallback className="text-[10px]">
                 {mounted && user ? getInitials(user.nombre) : 'AD'}
               </AvatarFallback>

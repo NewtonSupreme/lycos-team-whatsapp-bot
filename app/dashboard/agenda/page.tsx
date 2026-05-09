@@ -60,6 +60,7 @@ export default function AgendaPage() {
     descripcion: '', 
     estado: 'pendiente', 
     notas: '',
+    costo_estimado: 0,
     // Campos para nuevo cliente
     nuevo_cliente: {
       nombre: '',
@@ -128,6 +129,7 @@ export default function AgendaPage() {
       descripcion:'', 
       estado:'pendiente', 
       notas:'',
+      costo_estimado: 0,
       nuevo_cliente: { nombre: '', apellido: '', telefono: '', marca: '', modelo: '', placa: '' }
     });
     setShowModal(true);
@@ -148,6 +150,7 @@ export default function AgendaPage() {
       descripcion:'HORARIO OCUPADO', 
       estado:'ocupado', 
       notas:'',
+      costo_estimado: 0,
       nuevo_cliente: { nombre: '', apellido: '', telefono: '', marca: '', modelo: '', placa: '' }
     });
     setShowModal(true);
@@ -167,6 +170,7 @@ export default function AgendaPage() {
       descripcion:c.descripcion||'', 
       estado:c.estado, 
       notas:c.notas||'',
+      costo_estimado: c.costo_estimado || 0,
       nuevo_cliente: { nombre: '', apellido: '', telefono: '', marca: '', modelo: '', placa: '' }
     });
     setShowModal(true);
@@ -184,7 +188,8 @@ export default function AgendaPage() {
           tipo_servicio: form.tipo_servicio,
           descripcion: form.descripcion,
           estado: form.estado,
-          notas: form.notas
+          notas: form.notas,
+          costo_estimado: form.costo_estimado
         });
         logActivity({
           usuario: user?.nombre || 'Sistema',
@@ -251,7 +256,8 @@ export default function AgendaPage() {
           tipo_servicio: form.tipo_servicio,
           descripcion: form.descripcion,
           estado: form.estado,
-          notas: form.notas
+          notas: form.notas,
+          costo_estimado: form.costo_estimado
         });
         logActivity({
           usuario: user?.nombre || 'Sistema',
@@ -270,7 +276,8 @@ export default function AgendaPage() {
           tipo_servicio: form.tipo_servicio,
           descripcion: form.descripcion,
           estado: form.estado,
-          notas: form.notas
+          notas: form.notas,
+          costo_estimado: form.costo_estimado
         });
         logActivity({
           usuario: user?.nombre || 'Sistema',
@@ -729,13 +736,19 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">Estado</label>
-                <Select value={form.estado} onValueChange={v => setForm(p => ({ ...p, estado: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{ESTADOS_CITA.map(e => <SelectItem key={e} value={e}>{e.charAt(0).toUpperCase()+e.slice(1)}</SelectItem>)}</SelectContent>
-                </Select>
+                <label className="text-xs font-medium text-muted-foreground">Costo Estimado ($)</label>
+                <Input type="number" value={form.costo_estimado} onChange={e => setForm(p => ({ ...p, costo_estimado: parseFloat(e.target.value) || 0 }))} placeholder="0.00" />
               </div>
             </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Estado</label>
+              <Select value={form.estado} onValueChange={v => setForm(p => ({ ...p, estado: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{ESTADOS_CITA.map(e => <SelectItem key={e} value={e}>{e.charAt(0).toUpperCase()+e.slice(1)}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">Descripción / Motivo</label>
               <Input value={form.descripcion} onChange={e => setForm(p => ({ ...p, descripcion: e.target.value }))} placeholder="¿Qué le hace falta al carro?" />
