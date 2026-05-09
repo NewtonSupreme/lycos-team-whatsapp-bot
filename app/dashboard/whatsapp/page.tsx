@@ -118,21 +118,22 @@ function displayName(conv: RawConv): string {
 }
 
 function mergeMessages(existing: RawMsg[], incoming: RawMsg[]): RawMsg[] {
-  const map = new Map(existing.map(m => [m.id, m]));
-  for (const m of incoming) {
-    // If we have a real version of an optimistic message, it will have a different ID.
-    // The filter below handles removing stale optimistic messages.
-    map.set(m.id, m);
-  }
-  return Array.from(map.values())
-    .filter(m => {
-      // Keep all real messages
-      if (!m.id.startsWith('tmp-')) return true;
-      // Only keep optimistic messages if they are recent (less than 45 seconds old)
+  const map = new Map();
+  // Add existing, but skip stale optimistic ones
+  existing.forEach(m => {
+    if (m.id.startsWith('tmp-')) {
       const age = Date.now() - new Date(m.created_at).getTime();
-      return age < 45000;
-    })
-    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      if (age > 30000) return; // Drop optimistic messages older than 30s
+    }
+    map.set(m.id, m);
+  });
+  // Add incoming (real messages from DB will overwrite if they have same ID, 
+  // but they have UUIDs, so we rely on the filter in sendAudioMessage to remove the tmp- one)
+  incoming.forEach(m => map.set(m.id, m));
+  
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
 }
 
 // ── Detect media type in message body ────────────────────────
@@ -950,7 +951,7 @@ export default function WhatsAppPage() {
     setSending(true);
     const label = `📍 Sede ${sede.name}: ${sede.mapUrl}`;
     try {
-      // Send as native location + follow up with text link for convenience
+      // 1. Send Native Location (shows the interactive pin/card in WhatsApp)
       const res = await fetch('/api/whatsapp/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -965,14 +966,43 @@ export default function WhatsAppPage() {
         }),
       });
       
-      // Also send the text link to ensure they have the exact map url if native map fails to load
+      // 2. Send Interactive Message with Buttons
       await fetch('/api/whatsapp/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to: selected.telefono,
-          message: label,
-          preview_url: true,
+          interactive: {
+            type: 'button',
+            header: {
+              type: 'text',
+              text: `Sede ${sede.name}`
+            },
+            body: {
+              text: `Aquí tienes la ubicación exacta de nuestra sede ${sede.name}. Haz clic en el mapa arriba o usa el enlace:\n\n🔗 ${sede.mapUrl}\n\n📍 ${sede.address}`
+            },
+            footer: {
+              text: '¿Deseas agendar una cita?'
+            },
+            action: {
+              buttons: [
+                {
+                  type: 'reply',
+                  reply: {
+                    id: `cita_${sede.id}`,
+                    title: 'Agendar Cita 📅'
+                  }
+                },
+                {
+                  type: 'reply',
+                  reply: {
+                    id: 'precios',
+                    title: 'Ver Precios 💰'
+                  }
+                }
+              ]
+            }
+          }
         }),
       });
 
@@ -1015,9 +1045,17 @@ export default function WhatsAppPage() {
 
   // ── Audio Recording Logic ────────────────────────────────────
   const getSupportedMimeType = () => {
-    const types = ['audio/ogg; codecs=opus', 'audio/webm; codecs=opus', 'audio/mp4', 'audio/webm', 'audio/aac', 'audio/wav'];
+    // WhatsApp Voice Messages (Notes) MUST be ogg/opus.
+    // Basic audio can be m4a (mp4), mp3, aac.
+    const types = [
+      'audio/ogg; codecs=opus', 
+      'audio/webm; codecs=opus', 
+      'audio/mp4', 
+      'audio/aac', 
+      'audio/webm'
+    ];
     for (const type of types) {
-      if (MediaRecorder.isTypeSupported(type)) return type;
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)) return type;
     }
     return '';
   };
@@ -1048,9 +1086,14 @@ export default function WhatsAppPage() {
         const recordedType = mediaRecorder.mimeType || 'audio/webm';
         const audioBlob = new Blob(audioChunksRef.current, { type: recordedType });
         
-        if (!isRecordingCancelled && audioBlob.size > 100) { // Min size check
-          // Use .ogg for better Meta API compatibility if it's an opus stream
-          const extension = recordedType.includes('ogg') || recordedType.includes('opus') ? 'ogg' : 'webm';
+        if (!isRecordingCancelled && audioBlob.size > 100) { 
+          let extension = 'ogg';
+          if (recordedType.includes('mp4') || recordedType.includes('m4a')) extension = 'm4a';
+          else if (recordedType.includes('aac')) extension = 'aac';
+          else if (recordedType.includes('webm') && !recordedType.includes('opus')) extension = 'webm';
+          // If it's webm/opus, we call it .ogg as it's the closest thing Meta accepts for voice
+          else extension = 'ogg';
+
           await sendAudioMessage(audioBlob, extension);
         }
         stream.getTracks().forEach(track => track.stop());
@@ -1155,17 +1198,16 @@ export default function WhatsAppPage() {
         body: formData,
       });
       if (res.ok) {
-        // Remove optimistic immediately so it doesn't duplicate when fetchNewMsgs brings the real one
+        // Remove optimistic immediately
         setMsgs(prev => prev.filter(m => m.id !== optimisticId));
-        // Refresh to get the real message from DB
+        // Refresh
         await fetchNewMsgs(selected.telefono);
         await loadConvs();
       } else {
         const err = await res.text();
         console.error('Error de API enviando audio:', err);
-        // Remove optimistic on failure
         setMsgs(prev => prev.filter(m => m.id !== optimisticId));
-        alert('Error al enviar mensaje de voz: ' + err);
+        alert('Error al enviar: ' + err);
       }
     } catch (err) {
       console.error('Error enviando audio:', err);
