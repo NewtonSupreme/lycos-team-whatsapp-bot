@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Users, Car, Wrench, MessageSquare, Bot,
   Calendar, CheckCircle, ArrowRight, Zap, RefreshCw,
-  Coins, TrendingUp, DollarSign
+  Coins, TrendingUp, DollarSign, MapPin, ShieldCheck
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
@@ -14,9 +14,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import StatusBadge from '@/components/ui/status-badge';
 import { formatCurrency, formatRelativeTime, tipoServicioLabel } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
-import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
+import { withSedeFilter } from '@/lib/db-filters';
 import { useSedeStore } from '@/lib/store/useSedeStore';
-import { MapPin, ShieldCheck } from 'lucide-react';
 
 // ── Types ────────────────────────────────────────────────────
 interface DashboardStats {
@@ -110,7 +109,7 @@ export default function DashboardPage() {
 
   const loadRates = useCallback(async () => {
     try {
-      const resp = await fetch('/api/rates');
+      const resp = await fetch(`/api/rates?t=${Date.now()}`);
       const data = await resp.json();
       if (!data.error) setRates(data);
     } catch (e) {
@@ -120,129 +119,119 @@ export default function DashboardPage() {
 
   const loadData = useCallback(async () => {
     if (!supabase) return;
-    loadRates();
+    setLoading(true);
+    await loadRates();
     const today = getVzlaDateString();
     const firstDay = getVzlaFirstDayString();
 
-    const [
-      { count: clientes },
-      { count: vehiculos },
-      { count: serviciosActivos },
-      { count: mensajesHoy },
-      { count: conversacionesHoy },
-      { count: conversacionesMes },
-      { count: citasHoy },
-      { count: completados },
-      { count: mensajesIA },
-      { data: servicios },
-      { data: convs },
-      { data: waMsgs },
-    ] = await Promise.all([
-      withSedeFilter(supabase.from('clientes')).select('*', { count: 'exact', head: true }),
-      withSedeFilter(supabase.from('vehiculos')).select('*', { count: 'exact', head: true }),
-      withSedeFilter(supabase.from('servicios')).select('*', { count: 'exact', head: true }).in('estado', ['pendiente', 'en_progreso', 'en_proceso']),
-      withSedeFilter(supabase.from('mensajes_whatsapp')).select('*', { count: 'exact', head: true }).gte('created_at', `${today}T00:00:00`).lt('created_at', `${today}T23:59:59`),
-      // Conversaciones que tuvieron un mensaje hoy
-      withSedeFilter(supabase.from('conversaciones')).select('*', { count: 'exact', head: true }).gte('ultimo_mensaje_at', `${today}T00:00:00`),
-      // Conversaciones que tuvieron un mensaje este mes
-      withSedeFilter(supabase.from('conversaciones')).select('*', { count: 'exact', head: true }).gte('ultimo_mensaje_at', `${firstDay}T00:00:00`),
-      withSedeFilter(supabase.from('citas')).select('*', { count: 'exact', head: true }).eq('fecha', today),
-      withSedeFilter(supabase.from('servicios')).select('*', { count: 'exact', head: true }).eq('estado', 'completado'),
-      withSedeFilter(supabase.from('mensajes_whatsapp')).select('*', { count: 'exact', head: true }).eq('es_ia', true),
-      // Recent services
-      withSedeFilter(supabase.from('servicios')).select('id, descripcion, tipo, estado, costo_estimado, created_at').order('created_at', { ascending: false }).limit(5),
-      // Recent conversations
-      withSedeFilter(supabase.from('conversaciones')).select('id, telefono, ultimo_mensaje, ultimo_mensaje_at, mensajes_sin_leer, estado, datos_cliente').order('ultimo_mensaje_at', { ascending: false }).limit(6),
-      // WA messages today per hour
-      withSedeFilter(supabase.from('mensajes_whatsapp')).select('created_at').gte('created_at', `${today}T00:00:00`).lt('created_at', `${today}T23:59:59`).eq('tipo', 'entrante'),
-      // Silenciadores ultimos 7 dias
-      withSedeFilter(supabase.from('ventas_silenciadores')).select('fecha, cantidad').gte('fecha', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()),
-      // Servicios registrados ultimos 7 dias
-      withSedeFilter(supabase.from('servicios')).select('created_at').gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()),
-    ]);
+    try {
+      const [
+        { count: clientes },
+        { count: vehiculos },
+        { count: serviciosActivos },
+        { count: mensajesHoy },
+        { count: conversacionesHoy },
+        { count: conversacionesMes },
+        { count: citasHoy },
+        { count: completados },
+        { count: mensajesIA },
+        { data: servicios },
+        { data: convs },
+        { data: waMsgs },
+      ] = await Promise.all([
+        withSedeFilter(supabase.from('clientes')).select('*', { count: 'exact', head: true }),
+        withSedeFilter(supabase.from('vehiculos')).select('*', { count: 'exact', head: true }),
+        withSedeFilter(supabase.from('servicios')).select('*', { count: 'exact', head: true }).in('estado', ['pendiente', 'en_progreso', 'en_proceso']),
+        withSedeFilter(supabase.from('mensajes_whatsapp')).select('*', { count: 'exact', head: true }).gte('created_at', `${today}T00:00:00`).lt('created_at', `${today}T23:59:59`),
+        withSedeFilter(supabase.from('conversaciones')).select('*', { count: 'exact', head: true }).gte('ultimo_mensaje_at', `${today}T00:00:00`),
+        withSedeFilter(supabase.from('conversaciones')).select('*', { count: 'exact', head: true }).gte('ultimo_mensaje_at', `${firstDay}T00:00:00`),
+        withSedeFilter(supabase.from('citas')).select('*', { count: 'exact', head: true }).eq('fecha', today),
+        withSedeFilter(supabase.from('servicios')).select('*', { count: 'exact', head: true }).eq('estado', 'completado'),
+        withSedeFilter(supabase.from('mensajes_whatsapp')).select('*', { count: 'exact', head: true }).eq('es_ia', true),
+        withSedeFilter(supabase.from('servicios')).select('id, descripcion, tipo, estado, costo_estimado, created_at').order('created_at', { ascending: false }).limit(5),
+        withSedeFilter(supabase.from('conversaciones')).select('id, telefono, ultimo_mensaje, ultimo_mensaje_at, mensajes_sin_leer, estado, datos_cliente').order('ultimo_mensaje_at', { ascending: false }).limit(6),
+        withSedeFilter(supabase.from('mensajes_whatsapp')).select('created_at').gte('created_at', `${today}T00:00:00`).lt('created_at', `${today}T23:59:59`).eq('tipo', 'entrante'),
+      ]);
 
-    setStats({
-      totalClientes: clientes,
-      totalVehiculos: vehiculos,
-      serviciosActivos: serviciosActivos,
-      mensajesHoy: mensajesHoy,
-      conversacionesHoy: conversacionesHoy,
-      conversacionesMes: conversacionesMes,
-      citasHoy: citasHoy,
-      serviciosCompletados: completados,
-      mensajesIA: mensajesIA,
-    });
-
-    setRecentServicios((servicios as RecentServicio[]) || []);
-    setRecentConvs((convs as RecentConv[]) || []);
-
-    // Build hourly chart for today's WA messages
-    if (waMsgs) {
-      const hourMap: Record<string, number> = {};
-      for (let h = 8; h <= 18; h++) hourMap[`${h}:00`] = 0;
-      waMsgs.forEach((m: { created_at: string }) => {
-        const d = new Date(m.created_at);
-        const vzlaH = new Date(d.getTime() + d.getTimezoneOffset() * 60000 + (-4 * 60) * 60000);
-        const hKey = `${vzlaH.getHours()}:00`;
-        hourMap[hKey] = (hourMap[hKey] || 0) + 1;
+      setStats({
+        totalClientes: clientes,
+        totalVehiculos: vehiculos,
+        serviciosActivos: serviciosActivos,
+        mensajesHoy: mensajesHoy,
+        conversacionesHoy: conversacionesHoy,
+        conversacionesMes: conversacionesMes,
+        citasHoy: citasHoy,
+        serviciosCompletados: completados,
+        mensajesIA: mensajesIA,
       });
-      setWaChart(Object.entries(hourMap).map(([hora, mensajes]) => ({ hora, mensajes })));
-    }
 
-    // Build daily chart for Silenciadores and Servicios
-    const silMap: Record<string, number> = {};
-    const servMap: Record<string, number> = {};
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date(Date.now() - i * 86400000);
-      const dateKey = d.toISOString().split('T')[0];
-      silMap[dateKey] = 0;
-      servMap[dateKey] = 0;
-    }
-    
-    // Extracted Silenciadores
-    const dataSilenciadores = await withSedeFilter(supabase.from('ventas_silenciadores')).select('fecha, cantidad').gte('fecha', new Date(Date.now() - 7 * 86400000).toISOString());
-    if (dataSilenciadores.data) {
-      dataSilenciadores.data.forEach((v: { fecha: string; cantidad: number }) => {
-        const dateKey = v.fecha.split('T')[0];
-        if (silMap[dateKey] !== undefined) {
-          silMap[dateKey] += v.cantidad;
-        }
-      });
-    }
-    
-    // Extracted Servicios
-    const dataServicios = await withSedeFilter(supabase.from('servicios')).select('created_at').gte('created_at', new Date(Date.now() - 7 * 86400000).toISOString());
-    if (dataServicios.data) {
-      dataServicios.data.forEach((s: { created_at: string }) => {
-        const dateKey = s.created_at.split('T')[0];
-        if (servMap[dateKey] !== undefined) {
-          servMap[dateKey] += 1;
-        }
-      });
-    }
+      setRecentServicios((servicios as RecentServicio[]) || []);
+      setRecentConvs((convs as RecentConv[]) || []);
 
-    setSilenciadoresChart(Object.entries(silMap).map(([fecha, vendidos]) => ({
-      fecha: new Date(fecha).toLocaleDateString('es-VE', { weekday: 'short', day: 'numeric' }),
-      vendidos,
-    })));
-    setServiciosChart(Object.entries(servMap).map(([fecha, trabajos]) => ({
-      fecha: new Date(fecha).toLocaleDateString('es-VE', { weekday: 'short', day: 'numeric' }),
-      trabajos,
-    })));
+      if (waMsgs) {
+        const hourMap: Record<string, number> = {};
+        for (let h = 8; h <= 18; h++) hourMap[`${h}:00`] = 0;
+        waMsgs.forEach((m: { created_at: string }) => {
+          const d = new Date(m.created_at);
+          const vzlaH = new Date(d.getTime() + d.getTimezoneOffset() * 60000 + (-4 * 60) * 60000);
+          const hKey = `${vzlaH.getHours()}:00`;
+          hourMap[hKey] = (hourMap[hKey] || 0) + 1;
+        });
+        setWaChart(Object.entries(hourMap).map(([hora, mensajes]) => ({ hora, mensajes })));
+      }
 
-    setLoading(false);
-  }, []);
+      // Build daily chart for Silenciadores and Servicios
+      const silMap: Record<string, number> = {};
+      const servMap: Record<string, number> = {};
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(Date.now() - i * 86400000);
+        const dateKey = d.toISOString().split('T')[0];
+        silMap[dateKey] = 0;
+        servMap[dateKey] = 0;
+      }
+      
+      const dataSilenciadores = await withSedeFilter(supabase.from('ventas_silenciadores')).select('fecha, cantidad').gte('fecha', new Date(Date.now() - 7 * 86400000).toISOString());
+      if (dataSilenciadores.data) {
+        dataSilenciadores.data.forEach((v: { fecha: string; cantidad: number }) => {
+          const dateKey = v.fecha.split('T')[0];
+          if (silMap[dateKey] !== undefined) silMap[dateKey] += v.cantidad;
+        });
+      }
+      
+      const dataServiciosChart = await withSedeFilter(supabase.from('servicios')).select('created_at').gte('created_at', new Date(Date.now() - 7 * 86400000).toISOString());
+      if (dataServiciosChart.data) {
+        dataServiciosChart.data.forEach((s: { created_at: string }) => {
+          const dateKey = s.created_at.split('T')[0];
+          if (servMap[dateKey] !== undefined) servMap[dateKey] += 1;
+        });
+      }
+
+      setSilenciadoresChart(Object.entries(silMap).map(([fecha, vendidos]) => ({
+        fecha: new Date(fecha).toLocaleDateString('es-VE', { weekday: 'short', day: 'numeric' }),
+        vendidos,
+      })));
+      setServiciosChart(Object.entries(servMap).map(([fecha, trabajos]) => ({
+        fecha: new Date(fecha).toLocaleDateString('es-VE', { weekday: 'short', day: 'numeric' }),
+        trabajos,
+      })));
+
+    } catch (error) {
+      console.error('Error loading dashboard data:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [loadRates]);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    if (mounted) loadData();
+  }, [mounted, loadData, currentSede]);
 
   useEffect(() => {
-    if (!supabase) return;
+    if (!supabase || !mounted) return;
     const tables = ['mensajes_whatsapp', 'conversaciones', 'servicios', 'citas', 'clientes', 'vehiculos', 'ventas_silenciadores'];
     const channels = tables.map(table =>
       supabase!.channel(`dashboard-${table}`)
@@ -250,9 +239,9 @@ export default function DashboardPage() {
         .subscribe()
     );
     return () => { channels.forEach(ch => supabase?.removeChannel(ch)); };
-  }, [loadData]);
+  }, [mounted, loadData]);
 
-  const fmt = (val: number | null) => val === null ? 'null' : val.toLocaleString();
+  const fmt = (val: number | null) => val === null ? '...' : val.toLocaleString();
 
   if (!mounted) return null;
 
@@ -268,18 +257,16 @@ export default function DashboardPage() {
             <p className="text-sm text-muted-foreground">
             Bienvenido de vuelta · {new Date().toLocaleDateString('es-VE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
             </p>
-            {mounted && (
-              <div className="flex items-center gap-2 border-l border-border pl-3">
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-500 text-[11px] font-semibold">
-                  <MapPin className="w-3 h-3" />
-                  {currentSede?.nombre || 'Sede no seleccionada'}
-                </div>
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-500 text-[10px] font-bold uppercase tracking-wider">
-                  <ShieldCheck className="w-3 h-3" />
-                  {userRole}
-                </div>
+            <div className="flex items-center gap-2 border-l border-border pl-3">
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-500 text-[11px] font-semibold">
+                <MapPin className="w-3 h-3" />
+                {currentSede?.nombre || 'Sede no seleccionada'}
               </div>
-            )}
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-500 text-[10px] font-bold uppercase tracking-wider">
+                <ShieldCheck className="w-3 h-3" />
+                {userRole}
+              </div>
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -308,8 +295,13 @@ export default function DashboardPage() {
               <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
                 <TrendingUp className="w-6 h-6 text-blue-500" />
               </div>
-              <div>
-                <p className="text-[10px] text-blue-500 font-bold uppercase tracking-widest mb-0.5">Tasa Oficial BCV</p>
+              <div className="flex-1">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] text-blue-500 font-bold uppercase tracking-widest mb-0.5">Tasa Oficial BCV</p>
+                  <span className="text-[9px] text-muted-foreground bg-white/5 px-1.5 py-0.5 rounded">
+                    {new Date(rates.fetchedAt).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  </span>
+                </div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
                     Bs. {rates.bcv.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -327,8 +319,13 @@ export default function DashboardPage() {
               <div className="w-12 h-12 rounded-xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center">
                 <RefreshCw className="w-6 h-6 text-orange-500" />
               </div>
-              <div>
-                <p className="text-[10px] text-orange-500 font-bold uppercase tracking-widest mb-0.5">Binance P2P (USDT)</p>
+              <div className="flex-1">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] text-orange-500 font-bold uppercase tracking-widest mb-0.5">Binance P2P (USDT)</p>
+                  <span className="text-[9px] text-muted-foreground bg-white/5 px-1.5 py-0.5 rounded">
+                    {new Date(rates.fetchedAt).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  </span>
+                </div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
                     Bs. {rates.binance.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -345,7 +342,7 @@ export default function DashboardPage() {
         <StatCard title="Clientes" value={fmt(stats.totalClientes)} icon={Users} color="blue" delay={0} />
         <StatCard title="Vehículos" value={fmt(stats.totalVehiculos)} icon={Car} color="cyan" delay={50} />
         <StatCard title="Servicios Activos" value={fmt(stats.serviciosActivos)} icon={Wrench} subtitle="en taller ahora" color="orange" delay={100} />
-        <StatCard title="Mensajes Hoy" value={fmt(stats.mensajesHoy)} icon={MessageSquare} subtitle={`${stats.conversacionesHoy ?? 'null'} chats activos hoy`} color="purple" delay={150} />
+        <StatCard title="Mensajes Hoy" value={fmt(stats.mensajesHoy)} icon={MessageSquare} subtitle={`${stats.conversacionesHoy ?? '...'} chats activos hoy`} color="purple" delay={150} />
         <StatCard title="Citas Hoy" value={fmt(stats.citasHoy)} icon={Calendar} subtitle="programadas" color="blue" delay={200} />
         <StatCard title="Completados" value={fmt(stats.serviciosCompletados)} icon={CheckCircle} subtitle="servicios totales" color="green" delay={250} />
         <StatCard title="Respuestas IA" value={fmt(stats.mensajesIA)} icon={Bot} subtitle="mensajes automáticos" color="purple" delay={300} />

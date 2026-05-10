@@ -83,7 +83,7 @@ interface ExchangeRates {
 
 let ratesCache: ExchangeRates | null = null;
 let ratesCacheTime = 0;
-const RATES_TTL = 30 * 60 * 1000; // 30 minutes
+const RATES_TTL = 5 * 60 * 1000; // 5 minutes (more frequent updates as requested)
 
 async function fetchExchangeRates(): Promise<ExchangeRates | null> {
   if (ratesCache && Date.now() - ratesCacheTime < RATES_TTL) return ratesCache;
@@ -114,12 +114,12 @@ async function fetchExchangeRates(): Promise<ExchangeRates | null> {
           countries: [], proMerchantAds: false, shieldMerchantAds: false,
           publisherType: null, payTypes: ["PagoMovil"], classifies: ["mass", "profession", "user"]
         }),
+        cache: 'no-store',
         signal: AbortSignal.timeout(5000)
       });
       if (respBin.ok) {
         const binData = await respBin.json();
         if (binData.data && binData.data.length > 3) {
-          // Skip first 2 ads (often low-limit outliers) and average next 5
           const marketAds = binData.data.slice(2, 7);
           binanceRate = marketAds.reduce((acc: number, ad: any) => acc + parseFloat(ad.adv.price), 0) / marketAds.length;
         } else if (binData.data && binData.data.length > 0) {
@@ -133,7 +133,7 @@ async function fetchExchangeRates(): Promise<ExchangeRates | null> {
 
     if (!binanceRate) {
       try {
-        const tempResp = await fetch('https://ve.dolarapi.com/v1/dolares/paralelo');
+        const tempResp = await fetch('https://ve.dolarapi.com/v1/dolares/paralelo', { cache: 'no-store' });
         if (tempResp.ok) {
           const parEntry: any = await tempResp.json();
           binanceRate = parseFloat(parEntry?.promedio || parEntry?.precio || 0);

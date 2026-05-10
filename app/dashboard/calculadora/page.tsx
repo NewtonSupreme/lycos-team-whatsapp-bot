@@ -34,7 +34,7 @@ export default function CalculadoraPage() {
   useEffect(() => {
     const fetchRates = async () => {
       try {
-        const res = await fetch('/api/rates');
+        const res = await fetch(`/api/rates?t=${Date.now()}`);
         const data = await res.json();
         if (data.bcv && data.binance) {
           setRates({ bcv: data.bcv, binance: data.binance });
@@ -128,6 +128,26 @@ export default function CalculadoraPage() {
             <div className="flex items-center justify-between">
               <CardTitle className="text-lg flex items-center gap-2">
                 <ArrowRightLeft className="w-4 h-4 text-primary" /> Conversor de Divisas
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className={cn("h-6 w-6 rounded-full", loadingRates && "animate-spin")}
+                  onClick={() => {
+                    setLoadingRates(true);
+                    fetch(`/api/rates?t=${Date.now()}`)
+                      .then(r => r.json())
+                      .then(data => {
+                        if (data.bcv && data.binance) {
+                          setRates({ bcv: data.bcv, binance: data.binance });
+                          setTasa(activeRate === 'bcv' ? data.bcv : data.binance);
+                        }
+                      })
+                      .catch(console.error)
+                      .finally(() => setLoadingRates(false));
+                  }}
+                >
+                  <RefreshCw className="w-3 h-3" />
+                </Button>
               </CardTitle>
               <div className="flex items-center gap-2 bg-muted/50 px-2 py-1 rounded-lg border border-border/50">
                 <span className="text-[10px] font-bold text-muted-foreground uppercase">Tasa BCV:</span>

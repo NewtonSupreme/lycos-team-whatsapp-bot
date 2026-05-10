@@ -65,7 +65,7 @@ export default function InventarioPage() {
 
   const fetchRates = async () => {
     try {
-      const res = await fetch('/api/rates');
+      const res = await fetch(`/api/rates?t=${Date.now()}`);
       const data = await res.json();
       setRates({ 
         bcv: data.bcv || 0, 
@@ -105,6 +105,9 @@ export default function InventarioPage() {
       const data = await fetchInventario();
       console.log('📦 Datos recibidos del inventario:', data?.length || 0, 'ítems');
       if (data) setItems(data as InventarioItem[]);
+      
+      // Sincronizar también las tasas al recargar datos
+      await fetchRates();
     } catch (error) {
       console.error('Error loading inventory:', error);
     } finally {
