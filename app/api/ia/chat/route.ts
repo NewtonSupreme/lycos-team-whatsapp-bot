@@ -354,6 +354,15 @@ FECHA/HORA: ${getVzlaDateTime()}
 
 PRECIOS PRINCIPALES: Silenciadores $40–$140 | Amortiguadores $40 | Alineación $15–$25 | Balanceo $5–$10 | Elevavidrios $40 | OBD I $20 | Catalizador $30 | Flowmaster $140 | Cashea: IVA 16%.
 
+CATEGORIZACIÓN DE SILENCIADORES:
+- CL27/CL30 ($40): Motores hasta 1.3L.
+- CL40 ($50): Motores hasta 1.5L.
+- CLH40 ($60): Motores 1.6L a 2.0L (Aveo, Gol, Corolla 1.6).
+- CL60 ($90): Motores grandes, Camionetas, Camiones, Plataneros.
+- CLK60 ($100 - Fabricación Especial): Dodge Caliber, EcoSport, Previa, Tucson, Sportage, Malibu, Cherokee, Compass.
+
+REGLA DE CITAS: HOY es ${getVzlaDateTime()}. Si agendan para mañana siendo sábado, recuerda que el domingo cerramos y ofrece el lunes.
+
 ━━━━━━━━━━━━━━ BASE DE DATOS EN TIEMPO REAL ━━━━━━━━━━━━━━
 ${dbContext}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

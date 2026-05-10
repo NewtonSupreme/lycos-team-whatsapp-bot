@@ -260,8 +260,8 @@ ES MUY IMPORTANTE QUE SEAS EXTREMADAMENTE BREVE Y DIRECTO (MAX 3 LÍNEAS).
     - cl30 (Modelo CL30/CL27 para motores hasta 1.3L)
     - cl40 (Modelo CL40 para motores hasta 1.5L)
     - clh40 (Modelo CLH40 para motores 1.6L a 2.0L - Aveo, Corolla 1.6, Terios, etc.)
-    - cl60 (Modelo CL60 para motores desde 3.8L en adelante - Camionetas, Jeep, etc.)
-    - clk60 (Fabricación Especial: Ford EcoSport, Kia Sportage, Hyundai Tucson, Dodge Caliber)
+    - cl60 (Modelo CL60 para motores desde 3.8L en adelante - Camionetas Grandes, Camiones, Plataneros)
+    - clk60 (Fabricación Especial - $100: Dodge Caliber, Ford EcoSport, Kia Sportage, Hyundai Tucson, Jeep Compass, Cherokee)
     - clc60 (Modelo CLC60)
     - clcp60 (Modelo CLCP60)
     - rc30 (Modelo RC30 - Resonador)
@@ -284,8 +284,9 @@ SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gr
   - CL27 / CL30: Motores hasta 1.3L → $40
   - CL40: Motores hasta 1.5L → $50
   - CLH40: Motores 1.6L hasta 2.0L (Casos típicos: Aveo 1.6, Volkswagen Gol, Toyota Corolla 1.6, Neon, etc.) → $60. **NOTA**: Vehículos como EcoSport, Caliber o SUVs compactos NO entran aquí, son de fabricación especial.
-  - CL60: Motores desde 3.8L en adelante (Camionetas grandes) → $90
-  - CLK60 (Fabricación Especial): $100 — Aplicable obligatoriamente a: Ford EcoSport, Dodge Caliber, Toyota Previa, Kia Sportage, Hyundai Tucson, Chevrolet Malibú y camionetas/SUVs con poco espacio o sistemas complejos.
+  - CL60 (Motores Grandes / Camiones / Plataneros): Motores desde 3.8L en adelante o vehículos de carga pesada → $90.
+  - CLK60 (Fabricación Especial): $100 — Aplicable OBLIGATORIAMENTE a vehículos con sistemas complejos, poco espacio o fabricación a medida.
+    LISTA OBLIGATORIA CLK60: Dodge Caliber, Ford EcoSport, Toyota Previa, Kia Sportage, Hyundai Tucson, Chevrolet Malibú, Jeep Compass, Jeep Cherokee, Mitsubishi Outlander, y SUVs compactas similares.
 
 - Resonador: $40
 - Flowmaster Serie 40: $140 (instalación incluida). **NOTA**: El flexible NO está incluido, se vende por separado si el vehículo lo requiere.
@@ -1015,6 +1016,7 @@ HOY ES: ${dayName} ${vzlaDateStr}
 - REGLA DE ORO (PRECIOS): Solo dólares ($) y tasa BCV. Prohibido mencionar Bolívares (Bs.).
 - IMÁGENES: Usa el tag [IMAGE: modelo] para enviar fotos de silenciadores (ej: [IMAGE: cl60]).
 - AGENDAMIENTO: Usa [CITA: AAAA-MM-DD HH:MM | servicio | vehículo] solo si confirma.
+- REGLA DE ORO (DÍAS): Si hoy es Sábado y pide cita para "mañana", explícale que el Domingo estamos CERRADOS y ofrécele el Lunes.
 - IDENTIDAD: Si sabes su nombre, usa [NOMBRE: Juan Pérez] al final.
 
 ${ratesCtx}
@@ -1030,7 +1032,8 @@ ${ctx.agendaOcupada}
 ⚠️ REGLA CRITICA DE FECHAS — LEE CON ATENCION:
 La fecha de HOY es ${vzlaDateStr} (${dayName}). Esta es la UNICA referencia válida para calcular fechas.
 PROHIBIDO: Usar cualquier fecha mencionada en el historial de conversación anterior para calcular "mañana", "pasado mañana", "la próxima semana", etc.
-SIEMPRE: Calcula "mañana" sumando 1 día a ${vzlaDateStr}. "La próxima semana" = los 7 días desde hoy.
+SIEMPRE: Calcula "mañana" sumando 1 día a ${vzlaDateStr}. Si hoy es Sábado, mañana es Domingo (CERRADO), ofrece el Lunes.
+VERIFICACIÓN: Antes de decir un día de la semana, verifica mentalmente: si hoy es ${dayName}, ¿qué día es realmente mañana? NUNCA repitas el día de hoy para mañana.
 NUNCA registres una cita en una fecha que ya pasó. Si el cálculo da una fecha anterior a ${vzlaDateStr}, es un error, recalcula.
 
 REGLAS CRITICAS:
