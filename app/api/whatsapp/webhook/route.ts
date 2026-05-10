@@ -27,8 +27,8 @@ const DEFAULT_SEDE_ID = process.env.WHATSAPP_DEFAULT_SEDE_ID || '310595c5-5258-4
 
 // ─── AI Models — ordered by priority (primary first, then fallback) ──────────
 const GEMINI_MODELS = [
-  'gemini-2.5-flash---',              // [PRIMARY]
-  'gemini-3.1-flash-lite----',         // [FALLBACK]
+  'gemini-2.5-flash',              // [PRIMARY]
+  'gemini-3.1-flash-lite',         // [FALLBACK]
 ] as const;
 
 const ASESOR_PHONE = '584123343519';
