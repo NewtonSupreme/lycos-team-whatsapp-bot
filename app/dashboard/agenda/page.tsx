@@ -914,7 +914,7 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
                         className="h-8 w-8 p-0"
                         onClick={() => {
                           setFilterDialogOpen(false);
-                          handleEditCita(cita);
+                          openEdit(cita);
                         }}
                       >
                         <Edit className="h-4 w-4" />
