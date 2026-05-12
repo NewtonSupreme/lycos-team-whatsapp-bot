@@ -132,7 +132,7 @@ export default function InventarioPage() {
       console.log('✅ Orden guardado');
       
       // Log activity once for the whole reorder
-      logActivity({
+      await logActivity({
         usuario: user?.nombre || 'Sistema',
         modulo: 'Inventario',
         accion: 'Reordenó inventario',
@@ -219,7 +219,7 @@ export default function InventarioPage() {
       if (editingItem) {
         await updateInventarioItem(editingItem.id, cleanForm);
         
-        logActivity({
+        await logActivity({
           usuario: user?.nombre || 'Sistema',
           modulo: 'Inventario',
           accion: 'Actualizó producto',
@@ -234,7 +234,7 @@ export default function InventarioPage() {
         });
         
         if (newItem) {
-          logActivity({
+          await logActivity({
             usuario: user?.nombre || 'Sistema',
             modulo: 'Inventario',
             accion: 'Creó producto',
@@ -266,7 +266,7 @@ export default function InventarioPage() {
       
       // Log activity
       const item = items.find(i => i.id === id);
-      logActivity({
+      await logActivity({
         usuario: user?.nombre || 'Sistema',
         modulo: 'Inventario',
         accion: 'Actualizó stock',
@@ -287,7 +287,7 @@ export default function InventarioPage() {
       try {
         await deleteInventarioItem(id);
         
-        logActivity({
+        await logActivity({
           usuario: user?.nombre || 'Sistema',
           modulo: 'Inventario',
           accion: 'Eliminó producto',
