@@ -46,7 +46,7 @@ export default function InventarioPage() {
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState<InventarioItem | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [rates, setRates] = useState<{ bcv: number; paralelo: number } | null>(null);
+  const [rates, setRates] = useState<{ bcv: number; binance: number } | null>(null);
   const [lastRateUpdate, setLastRateUpdate] = useState<string>('');
   const [mounted, setMounted] = useState(false);
 
@@ -70,7 +70,7 @@ export default function InventarioPage() {
       const data = await res.json();
       setRates({ 
         bcv: data.bcv || 0, 
-        paralelo: data.paralelo || data.binance || 0 
+        binance: data.binance || data.paralelo || 0 
       });
       setLastRateUpdate(new Date(data.fetchedAt || Date.now()).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' }));
     } catch (error) {
@@ -572,10 +572,10 @@ export default function InventarioPage() {
                           {rates && item.precio_usd && (
                             <div className="flex flex-col items-center gap-0.5 mt-1">
                               <div className="flex items-center gap-1 text-[10px] text-blue-400 font-bold bg-blue-500/5 px-1.5 rounded border border-blue-500/10" title="Precio calculado a tasa BCV">
-                                <span>BCV: Bs. {(item.precio_bs * rates.bcv).toFixed(2)}</span>
+                                <span>BCV: Bs. {((item.precio_bs || 0) * rates.bcv).toFixed(2)}</span>
                               </div>
                               <div className="flex items-center gap-1 text-[10px] text-orange-400 font-bold bg-orange-500/5 px-1.5 rounded border border-orange-500/10" title="Precio a tasa Binance">
-                                <span>P2P: Bs. {(item.precio_usd * rates.binance).toFixed(2)}</span>
+                                <span>P2P: Bs. {((item.precio_usd || 0) * rates.binance).toFixed(2)}</span>
                               </div>
                             </div>
                           )}
