@@ -70,6 +70,7 @@ export default function ServiciosPage() {
   const [invoiceCita, setInvoiceCita] = useState<CitaServicio | null>(null);
   const [inventory, setInventory] = useState<any[]>([]);
   const [selectedForDual, setSelectedForDual] = useState<string[]>([]);
+  const [mounted, setMounted] = useState(false);
 
   const loadCitas = useCallback(async () => {
     if (!supabase) return;
@@ -94,7 +95,10 @@ export default function ServiciosPage() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { loadCitas(); }, [loadCitas]);
+  useEffect(() => { 
+    loadCitas(); 
+    setMounted(true);
+  }, [loadCitas]);
 
   const handleDelete = async (id: string) => {
     if (!confirm('¿Estás seguro de eliminar este ticket de servicio? Esta acción no se puede deshacer.')) return;
@@ -136,11 +140,18 @@ export default function ServiciosPage() {
       
       setCitas(prev => prev.map(c => c.id === id ? { ...c, estado: nuevoEstado, seguimiento: newSeguimiento } : c));
       
+      const clienteObj = cita.clientes ? `${cita.clientes.nombre} ${cita.clientes.apellido}` : (cita.nombre_cliente || 'Cliente');
+      const sedeName = 'Carrizal (Principal)'; // O detectar según la lógica de sedes
+      
       logActivity({
         usuario: user?.nombre || 'Admin',
         modulo: 'Servicios',
-        accion: 'Cambió estado',
-        detalles: `Ticket #${id.slice(0,5)}: ${cita.estado} -> ${nuevoEstado}`
+        accion: nuevoEstado === 'confirmada' ? 'Confirmó cita' : 'Cambió estado',
+        detalles: nuevoEstado === 'confirmada' 
+          ? `Cita confirmada: ${clienteObj} en la sede de ${sedeName}`
+          : `Ticket #${id.slice(0,5)}: ${cita.estado} -> ${nuevoEstado}`,
+        referencia_id: id,
+        referencia_tabla: 'citas'
       });
     } catch (err: any) { alert('Error: ' + err.message); }
   };
@@ -206,6 +217,8 @@ export default function ServiciosPage() {
     generateInvoicePDF(dataList);
     setSelectedForDual([]);
   };
+
+  if (!mounted) return null;
 
   return (
     <div className="space-y-6 max-w-[1600px] mx-auto pb-10">

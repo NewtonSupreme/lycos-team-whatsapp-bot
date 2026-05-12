@@ -1009,23 +1009,11 @@ async function getAIResponse(
 FECHA/HORA VENEZUELA: ${vzlaDateTime}
 HOY ES: ${dayName} ${vzlaDateStr}
 
-⚠️ REGLA CRITICA (FECHAS Y BREVEDAD) — LEE CON ATENCION:
-- BREVEDAD ABSOLUTA: Prohibido exceder las 3-4 LÍNEAS. Sé directo.
-- FECHA ACTUAL: HOY es ${vzlaDateStr} (${dayName}). Usa ESTA fecha para todo. Ignora fechas del historial.
-- NUNCA uses asteriscos (*) en tus respuestas. Texto plano siempre.
-- REGLA DE ORO (PRECIOS): Solo dólares ($) y tasa BCV. Prohibido mencionar Bolívares (Bs.).
-- IMÁGENES: Usa el tag [IMAGE: modelo] para enviar fotos de silenciadores (ej: [IMAGE: cl60]).
-- AGENDAMIENTO: Usa [CITA: AAAA-MM-DD HH:MM | servicio | vehículo] solo si confirma.
-- REGLA DE ORO (DÍAS): Si hoy es Sábado y pide cita para "mañana", explícale que el Domingo estamos CERRADOS y ofrécele el Lunes.
-- IDENTIDAD: Si sabes su nombre, usa [NOMBRE: Juan Pérez] al final.
-
-${ratesCtx}
-
 SALUDO_APROPIADO: ${greeting} — USA ESTE SALUDO EXACTO al inicio cuando sea sesión nueva. NO uses otro.
 SESION: ${ctx.isNewSession ? `NUEVA — saluda con "${greeting}" + mensaje de bienvenida` : 'CONTINUA — ve al tema, sin repetir saludo ni bienvenida'}
 ${memoriaStr}
 ${ctx.citasInfo}
-${(ctx as any).historialTecnico || ''}
+${ctx.historialTecnico || ''}
 ${ctx.inventarioInfo}
 ${ctx.agendaOcupada}
 
@@ -1033,9 +1021,6 @@ ${ctx.agendaOcupada}
 La fecha de HOY es ${vzlaDateStr} (${dayName}). Esta es la UNICA referencia válida para calcular fechas.
 PROHIBIDO: Usar cualquier fecha mencionada en el historial de conversación anterior para calcular "mañana", "pasado mañana", "la próxima semana", etc.
 SIEMPRE: Calcula "mañana" sumando 1 día a ${vzlaDateStr}. Si hoy es Sábado, mañana es Domingo (CERRADO), ofrece el Lunes.
-VERIFICACIÓN: Antes de decir un día de la semana, verifica mentalmente: si hoy es ${dayName}, ¿qué día es realmente mañana? NUNCA repitas el día de hoy para mañana.
-NUNCA registres una cita en una fecha que ya pasó. Si el cálculo da una fecha anterior a ${vzlaDateStr}, es un error, recalcula.
-
 REGLAS CRITICAS:
 - BREVEDAD: Tus respuestas NO DEBEN EXCEDER las 3 líneas. Sé extremadamente directo.
 
@@ -1433,12 +1418,13 @@ async function getOrCreateClientAndVehicle(
           console.log(`🚗 Vehículo existente (por placa): ${vehicleId}`);
         } else {
           // Create new vehicle with plate
+          const yearVal = parseInt(anio || '2025');
           const { data: newVeh, error: vehErr } = await db.from('vehiculos').insert({
             cliente_id: clientId,
             placa: placa.toUpperCase(),
             marca: marca || 'Desconocida',
             modelo: modelo || 'Modelo',
-            anio: parseInt(anio || '2024'), // NOT NULL constraint fix
+            anio: isNaN(yearVal) ? 2025 : yearVal,
             estado: 'activo',
             sede_id: DEFAULT_SEDE_ID
           }).select('id').single();
@@ -1462,11 +1448,12 @@ async function getOrCreateClientAndVehicle(
           console.log(`🚗 Vehículo existente (por marca): ${vehicleId}`);
         } else {
           // Create without plate
+          const yearVal = parseInt(anio || '2025');
           const { data: newVeh, error: vehErr } = await db.from('vehiculos').insert({
             cliente_id: clientId,
             marca: marca,
             modelo: modelo || 'Modelo',
-            ...(anio ? { anio: parseInt(anio) } : {}),
+            anio: isNaN(yearVal) ? 2025 : yearVal,
             estado: 'activo',
             sede_id: DEFAULT_SEDE_ID
           }).select('id').single();
@@ -1933,6 +1920,35 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             }
         }
 
+        // ── Process INTERES Tag [INTERES: servicio | vehiculo | notas] ──
+        const interesMatch = cleanedAi.match(/\[INTERES:\s*([^|\]]+?)(?:\s*\|\s*([^|\]]+?))?(?:\s*\|\s*([^\]]+?))?\s*\]/i);
+        if (interesMatch && db) {
+          const servicio = interesMatch[1]?.trim();
+          const vehiculo = interesMatch[2]?.trim();
+          const notas = interesMatch[3]?.trim();
+          cleanedAi = cleanedAi.replace(/\[INTERES:[^\]]+\]/gi, '').trim();
+
+          try {
+            const userName = ctx.memoria?.nombre || '';
+            const { clientId, vehicleId } = await getOrCreateClientAndVehicle(
+              db, from, userName, vehiculo || '', '', undefined, waProfileName
+            );
+
+            await db.from('citas').insert({
+              fecha: getVzlaDateString(), // Fecha de hoy como placeholder
+              hora: '00:00', // Hora placeholder para prospectos
+              telefono: from,
+              cliente_id: clientId || null,
+              vehiculo_id: vehicleId || null,
+              tipo_servicio: 'otro',
+              descripcion: `PROSPECTO: ${servicio}${notas ? ' (' + notas + ')' : ''}`,
+              estado: 'pendiente', // Usamos pendiente pero con descripción de prospecto
+              sede_id: DEFAULT_SEDE_ID
+            });
+            console.log(`💡 INTERES DETECTADO: ${servicio} para ${from}`);
+          } catch (e) { console.error('Error guardando interes:', e); }
+        }
+
         // ── ADMIN: Process management tags ────────────────────────────────
         const isAdmin = ADMIN_PHONES.includes(from || '') || ctx.memoria?.nombre?.toLowerCase().includes('leandro');
         
@@ -2106,12 +2122,12 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
               // ── Composed description with client name + (WhatsApp) ──────────
               const clientLabel = userName
-                ? `${userName} (WhatsApp)`
-                : `${from} (WhatsApp)`;
+                ? `${userName}`
+                : `${from}`;
               const descripcionFinal = [
                 servicio || 'Servicio por WhatsApp',
-                vehiculoInfo ? `| ${vehiculoInfo}` : '',
-                `| ${clientLabel}`,
+                vehiculoInfo ? `- ${vehiculoInfo}` : '',
+                placa ? `[${placa}]` : '',
               ].filter(Boolean).join(' ');
 
               // ── Deduplicate ──────────────────────────────────────────────────

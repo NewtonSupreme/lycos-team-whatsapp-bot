@@ -48,6 +48,7 @@ export default function InventarioPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [rates, setRates] = useState<{ bcv: number; paralelo: number } | null>(null);
   const [lastRateUpdate, setLastRateUpdate] = useState<string>('');
+  const [mounted, setMounted] = useState(false);
 
   // Form state
   const [form, setForm] = useState({
@@ -92,6 +93,7 @@ export default function InventarioPage() {
       })
       .subscribe();
 
+    setMounted(true);
     return () => {
       clearInterval(interval);
       supabase?.removeChannel(channel);
@@ -301,6 +303,8 @@ export default function InventarioPage() {
     }
   };
 
+  if (!mounted) return null;
+
   return (
     <div className="space-y-6">
       {/* Header section */}
@@ -457,7 +461,7 @@ export default function InventarioPage() {
                   <th className="px-6 py-3 text-left w-10"></th>
                   <th className="px-6 py-3 text-left">Producto</th>
                   <th className="px-6 py-3 text-center">Stock</th>
-                  <th className="px-6 py-3 text-center">Precio (USD)</th>
+                  <th className="px-6 py-3 text-center">Dólares Divisa</th>
                   <th className="px-6 py-3 text-center">Estado</th>
                   <th className="px-6 py-3 text-right">Acciones</th>
                 </tr>
@@ -567,8 +571,8 @@ export default function InventarioPage() {
                           
                           {rates && item.precio_usd && (
                             <div className="flex flex-col items-center gap-0.5 mt-1">
-                              <div className="flex items-center gap-1 text-[10px] text-blue-400 font-bold bg-blue-500/5 px-1.5 rounded border border-blue-500/10" title="Precio a tasa BCV">
-                                <span>BCV: Bs. {(item.precio_usd * rates.bcv).toFixed(2)}</span>
+                              <div className="flex items-center gap-1 text-[10px] text-blue-400 font-bold bg-blue-500/5 px-1.5 rounded border border-blue-500/10" title="Precio calculado a tasa BCV">
+                                <span>BCV: Bs. {(item.precio_bs * rates.bcv).toFixed(2)}</span>
                               </div>
                               <div className="flex items-center gap-1 text-[10px] text-orange-400 font-bold bg-orange-500/5 px-1.5 rounded border border-orange-500/10" title="Precio a tasa Binance">
                                 <span>P2P: Bs. {(item.precio_usd * rates.paralelo).toFixed(2)}</span>
@@ -699,7 +703,7 @@ export default function InventarioPage() {
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="precio" className="text-xs font-bold uppercase text-muted-foreground">Precio (USD)</Label>
+                <Label htmlFor="precio" className="text-xs font-bold uppercase text-muted-foreground">Dólares Divisa</Label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-bold">$</span>
                   <Input 
@@ -714,16 +718,16 @@ export default function InventarioPage() {
                 </div>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="precio_bs" className="text-xs font-bold uppercase text-muted-foreground">Precio (Bs.D)</Label>
+                <Label htmlFor="precio_bs" className="text-xs font-bold uppercase text-muted-foreground">Dólares BCV</Label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-xs font-bold">Bs</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-bold">$</span>
                   <Input 
                     id="precio_bs"
                     type="number"
                     step="0.01"
                     value={form.precio_bs}
                     onChange={e => setForm({...form, precio_bs: parseFloat(e.target.value) || 0})}
-                    className="pl-8 bg-background/50 font-bold text-muted-foreground border-primary/20"
+                    className="pl-7 bg-background/50 font-bold text-muted-foreground border-primary/20"
                     placeholder="0.00"
                   />
                 </div>

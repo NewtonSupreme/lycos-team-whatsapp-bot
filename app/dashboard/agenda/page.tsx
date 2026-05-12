@@ -1,6 +1,6 @@
 'use client';
 import React, { useEffect } from 'react';
-import { MessageSquare, Calendar, Clock, User, Car, Filter, ChevronLeft, ChevronRight, Plus, X, Check, Search, UserCheck, RefreshCw, Lock } from 'lucide-react';
+import { MessageSquare, Calendar, Clock, User, Car, Filter, ChevronLeft, ChevronRight, Plus, X, Check, Search, UserCheck, RefreshCw, Lock, Edit } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -51,6 +51,8 @@ export default function AgendaPage() {
   const [isNewClient, setIsNewClient] = React.useState(false);
   const [isBlockedMode, setIsBlockedMode] = React.useState(false);
   const [isTemporalClient, setIsTemporalClient] = React.useState(false);
+  const [selectedFilter, setSelectedFilter] = React.useState<{ label: string, type: string } | null>(null);
+  const [filterDialogOpen, setFilterDialogOpen] = React.useState(false);
   const [form, setForm] = React.useState({ 
     cliente_id: '', 
     vehiculo_id: '', 
@@ -323,6 +325,24 @@ export default function AgendaPage() {
     try {
       await updateCita(id, { estado });
 
+      if (estado === 'confirmada') {
+        const cliente = getCliente(cita?.cliente_id || '');
+        const nombreCliente = cliente ? `${cliente.nombre} ${cliente.apellido}` : (cita?.nombre_cliente || 'Cliente');
+        const sedeName = (cita?.sede_id === '310595c5-5258-47fa-9b69-5ad9932685a7') ? 'Carrizal (Principal)' : 'Sede desconocida';
+        
+        logActivity({
+          usuario: user?.nombre || 'Sistema',
+          modulo: 'Agenda',
+          accion: 'Confirmó cita',
+          detalles: `Cita confirmada: ${nombreCliente} en la sede de ${sedeName}`,
+          referencia_id: id,
+          referencia_tabla: 'citas'
+        });
+        console.log(`🔔 SISTEMA: Cita confirmada de ${nombreCliente} en ${sedeName}`);
+        // Opcional: Podríamos añadir un setStatusMessage si existiera el estado, 
+        // pero el logActivity ya cumple con la notificación al sistema.
+      }
+
       // Auto-enviar WhatsApp si se confirma la cita
       if (estado === 'confirmada' && cita) {
         const cliente = getCliente(cita.cliente_id);
@@ -364,8 +384,63 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
 
   const getTodayStr = () => new Date().toISOString().split('T')[0];
   const countConfirmadas = (citas || []).filter(c => c.estado === 'confirmada').length;
-  const countPendientes = (citas || []).filter(c => c.estado === 'pendiente').length;
+  const countPendientes = (citas || []).filter(c => c.estado === 'pendiente' && !c.descripcion?.includes('PROSPECTO:')).length;
+  const countCompletadas = (citas || []).filter(c => c.estado === 'completada').length;
+  const countProspectos = (citas || []).filter(c => c.descripcion?.includes('PROSPECTO:')).length;
   const citasHoyCount = getCitasForDate(getTodayStr()).length;
+
+  // Calculo semanal (próximos 7 días)
+  const today = new Date();
+  const nextWeek = new Date();
+  nextWeek.setDate(today.getDate() + 7);
+  const citasSemanaCount = (citas || []).filter(c => {
+    const d = new Date(c.fecha + 'T12:00:00');
+    return d >= today && d <= nextWeek;
+  }).length;
+
+  // Calculo mensual (mes actual)
+  const citasMesCount = (citas || []).filter(c => {
+    const d = new Date(c.fecha + 'T12:00:00');
+    return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+  }).length;
+
+  const getRangeStr = (filteredCitas: any[]) => {
+    if (!filteredCitas || filteredCitas.length === 0) return 'Sin registros';
+    const dates = filteredCitas.map(c => new Date(c.fecha + 'T12:00:00').getTime());
+    const min = new Date(Math.min(...dates));
+    const max = new Date(Math.max(...dates));
+    const fmt = (d: Date) => d.toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit' });
+    return `${fmt(min)} al ${fmt(max)}`;
+  };
+
+  const handleStatClick = (label: string, type: string) => {
+    setSelectedFilter({ label, type });
+    setFilterDialogOpen(true);
+  };
+
+  const getFilteredCitas = (type: string) => {
+    const todayStr = getTodayStr();
+    const today = new Date();
+    const nextWeek = new Date();
+    nextWeek.setDate(today.getDate() + 7);
+
+    switch (type) {
+      case 'hoy': return getCitasForDate(todayStr);
+      case 'semana': return (citas || []).filter(c => {
+        const d = new Date(c.fecha + 'T12:00:00');
+        return d >= today && d <= nextWeek;
+      });
+      case 'mes': return (citas || []).filter(c => {
+        const d = new Date(c.fecha + 'T12:00:00');
+        return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+      });
+      case 'pendientes': return (citas || []).filter(c => c.estado === 'pendiente' && !c.descripcion?.includes('PROSPECTO:'));
+      case 'prospectos': return (citas || []).filter(c => c.descripcion?.includes('PROSPECTO:'));
+      case 'confirmadas': return (citas || []).filter(c => c.estado === 'confirmada');
+      case 'completadas': return (citas || []).filter(c => c.estado === 'completada');
+      default: return [];
+    }
+  };
 
   if (!mounted) return null;
 
@@ -380,7 +455,7 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Agenda</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">{citas.length} citas programadas</p>
+          <p className="text-sm text-muted-foreground mt-0.5">{citasHoyCount} citas para hoy · {citasSemanaCount} esta semana</p>
         </div>
           <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
             <Button onClick={handleOpenBlock} variant="outline" className="glass-card border-rose-500/30 text-rose-400 hover:bg-rose-500/10">
@@ -395,17 +470,28 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {[
-          { label: 'Total Citas', value: citas.length, color: 'text-foreground' },
-          { label: 'Confirmadas', value: countConfirmadas, color: 'text-green-400' },
-          { label: 'Pendientes', value: countPendientes, color: 'text-yellow-400' },
-          { label: 'Hoy', value: citasHoyCount, color: 'text-primary' },
+          { label: 'Hoy', value: citasHoyCount, color: 'text-primary', type: 'hoy', range: getTodayStr().split('-').reverse().slice(0,2).join('/') },
+          { label: 'Esta Semana', value: citasSemanaCount, color: 'text-blue-400', type: 'semana', range: getRangeStr(getFilteredCitas('semana')) },
+          { label: 'Mes Actual', value: citasMesCount, color: 'text-purple-400', type: 'mes', range: getRangeStr(getFilteredCitas('mes')) },
+          { label: 'Prospectos', value: countProspectos, color: 'text-cyan-400', type: 'prospectos', range: 'Por llamar / Interés' },
+          { label: 'Pendientes', value: countPendientes, color: 'text-yellow-400', type: 'pendientes', range: getRangeStr(getFilteredCitas('pendientes')) },
+          { label: 'Confirmadas', value: countConfirmadas, color: 'text-green-400', type: 'confirmadas', range: getRangeStr(getFilteredCitas('confirmadas')) },
+          { label: 'Completadas', value: countCompletadas, color: 'text-emerald-400', type: 'completadas', range: getRangeStr(getFilteredCitas('completadas')) },
         ].map(s => (
-          <div key={s.label} className="stat-card border border-border/50">
-            <p className="text-xs text-muted-foreground">{s.label}</p>
+          <button 
+            key={s.label} 
+            onClick={() => handleStatClick(s.label, s.type)}
+            className="stat-card border border-border/50 p-3 bg-white/2 hover:bg-white/5 transition-all cursor-pointer text-left group"
+          >
+            <div className="flex justify-between items-start">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">{s.label}</p>
+              <div className="w-1.5 h-1.5 rounded-full bg-current opacity-0 group-hover:opacity-100 transition-opacity" />
+            </div>
             <p className={`text-2xl font-bold mt-1 ${s.color}`} style={{ fontFamily: 'Syne, sans-serif' }}>{s.value}</p>
-          </div>
+            <p className="text-[9px] text-muted-foreground/60 mt-1.5 font-medium">{s.range}</p>
+          </button>
         ))}
       </div>
 
@@ -533,7 +619,10 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/20">
-                {citas.sort((a,b) => (a.fecha+a.hora).localeCompare(b.fecha+b.hora)).slice(0,8).map(cita => {
+                {citas
+                  .filter(c => c.fecha >= new Date().toISOString().split('T')[0])
+                  .sort((a,b) => (a.fecha+a.hora).localeCompare(b.fecha+b.hora))
+                  .slice(0,8).map(cita => {
                   const cliente = getCliente(cita.cliente_id);
                   const vehiculo = getVehiculo(cita.vehiculo_id);
                   return (
@@ -778,6 +867,76 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
       </Dialog>
     </>
     )}
+      {/* Dialog para ver lista filtrada de citas */}
+      <Dialog open={filterDialogOpen} onOpenChange={setFilterDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col glass-card border-white/10">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
+              Citas: {selectedFilter?.label}
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="overflow-y-auto mt-4 pr-1">
+            {selectedFilter && getFilteredCitas(selectedFilter.type).length > 0 ? (
+              <div className="space-y-3">
+                {getFilteredCitas(selectedFilter.type).map((cita: any) => {
+                  const cliente = getCliente(cita.cliente_id);
+                  const vehiculo = getVehiculo(cita.vehiculo_id);
+                  return (
+                    <div 
+                      key={cita.id} 
+                      className="p-3 border border-white/5 bg-white/5 rounded-lg flex items-center justify-between hover:bg-white/10 transition-colors"
+                    >
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${
+                            cita.estado === 'confirmada' ? 'bg-green-500' : 
+                            cita.estado === 'pendiente' ? 'bg-yellow-500' : 
+                            cita.estado === 'completada' ? 'bg-emerald-500' : 'bg-gray-500'
+                          }`} />
+                          <p className="font-bold text-sm">
+                            {cliente ? `${cliente.nombre} ${cliente.apellido}` : (cita.nombre_cliente || cita.telefono)}
+                          </p>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          📅 {cita.fecha} | 🕒 {cita.hora}
+                        </p>
+                        {vehiculo && (
+                          <p className="text-[10px] text-primary mt-0.5">
+                            🚗 {vehiculo.marca} {vehiculo.modelo} {cita.placa ? `[${cita.placa}]` : ''}
+                          </p>
+                        )}
+                        <p className="text-xs mt-1.5 italic line-clamp-1">{cita.descripcion}</p>
+                      </div>
+                      <Button 
+                        size="sm" 
+                        variant="ghost" 
+                        className="h-8 w-8 p-0"
+                        onClick={() => {
+                          setFilterDialogOpen(false);
+                          handleEditCita(cita);
+                        }}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="py-10 text-center text-muted-foreground">
+                No hay citas registradas en esta categoría.
+              </div>
+            )}
+          </div>
+          
+          <div className="mt-6 flex justify-end">
+            <Button variant="outline" onClick={() => setFilterDialogOpen(false)}>
+              Cerrar
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
