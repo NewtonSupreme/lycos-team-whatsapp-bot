@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
+import { useSedeStore } from "@/lib/store/useSedeStore";
 import { Button } from '@/components/ui/button';
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
@@ -719,13 +720,15 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
         .select('nombre, rol')
         .in('rol', ['mecanico', 'jefe_taller', 'admin', 'empleado']);
       
-      const suggestions = (users || []).map(u => ({ 
+      const suggestions = (users || []).map((u: any) => ({ 
         nombre: u.nombre, 
         rol: (u.rol === 'jefe_taller' || u.rol === 'mecanico' ? u.rol : 'mecanico') 
       }));
       
       // Unique by name
-      const uniqueSuggestions = suggestions.filter((v, i, a) => a.findIndex(t => t.nombre === v.nombre) === i);
+      const uniqueSuggestions = suggestions.filter((v: any, i: number, a: any[]) => 
+        a.findIndex((t: any) => t.nombre === v.nombre) === i
+      );
       setStaffSuggestions(uniqueSuggestions);
     };
     fetchData();
@@ -786,7 +789,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
               password_hash: 'NO_ACCESS_STAFF',
               rol: e.rol,
               activo: false,
-              sede_id: currentSede.id
+              sede_id: currentSede?.id || ''
             })
           });
           
@@ -1496,7 +1499,8 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
         total: secondTotal,
         iva_aplicado: secondWithIva,
         tasa_bcv: rates.bcv,
-        total_ves: secondTotal * (rates.bcv || 36.5)
+        total_ves: secondTotal * (rates.bcv || 36.5),
+        notas: secondCita.descripcion || undefined
       });
     }
 
