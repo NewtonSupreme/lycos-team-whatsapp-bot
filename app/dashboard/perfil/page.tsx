@@ -301,7 +301,7 @@ export default function PerfilPage() {
               <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3 mt-3">
                 <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary/10 border border-primary/20 text-xs text-primary font-medium">
                   <Shield className="w-3.5 h-3.5" />
-                  {profile.rol === 'admin' || profile.rol === 'administrador' ? 'Administrador' : (profile.rol?.charAt(0).toUpperCase() + profile.rol?.slice(1)) || 'Operador'}
+                  {profile.rol === 'admin' ? 'Administrador' : (profile.rol?.charAt(0).toUpperCase() + profile.rol?.slice(1)) || 'Operador'}
                 </span>
                 <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Calendar className="w-3.5 h-3.5" />

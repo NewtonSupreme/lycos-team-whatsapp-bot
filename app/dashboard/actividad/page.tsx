@@ -72,7 +72,7 @@ export default function ActividadPage() {
   const [filterModule, setFilterModule] = useState('todos');
   const [filterUser, setFilterUser] = useState('todos');
 
-  const isAdmin = user?.rol === 'admin' || user?.rol === 'administrador';
+  const isAdmin = user?.rol === 'admin';
 
   const loadLogs = useCallback(async () => {
     if (!supabase) return;
