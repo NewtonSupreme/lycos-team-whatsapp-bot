@@ -18,7 +18,7 @@ export async function POST(req: Request) {
       }
     });
 
-    const { email, nombre, apellido, sede_id, rol, activo, password_hash } = await req.json();
+    const { email, nombre, apellido, sede_id, rol, activo, password_hash, telefono } = await req.json();
 
     if (!email || !nombre || !sede_id || !rol) {
       return NextResponse.json({ error: 'Faltan datos requeridos' }, { status: 400 });
@@ -43,7 +43,8 @@ export async function POST(req: Request) {
       password_hash: password_hash || 'lycos2026', 
       rol: rol,
       activo: activo !== undefined ? activo : true,
-      sede_id: sede_id
+      sede_id: sede_id,
+      telefono: telefono || null
     }).select().single();
 
     if (error) {

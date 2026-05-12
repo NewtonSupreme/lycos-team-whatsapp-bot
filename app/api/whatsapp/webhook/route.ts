@@ -398,8 +398,12 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
    - [CITA_DELETE: id]
    - [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion]
 
-DATOS DISPONIBLES:
-Se te proporcionará el inventario completo, citas y clientes con sus IDs correspondientes. Utiliza estos IDs para las actualizaciones y eliminaciones.
+DATOS DISPONIBLES Y KPIs:
+Se te proporciona el inventario completo, citas, clientes y las métricas (mensajes enviados, ventas de hoy) divididas por sedes. 
+Si el administrador no especifica una sede, dale la información global de las 3 sedes o agrupada. Si pide una sede específica, filtra los datos usando el campo "Sede: " que aparece en la información inyectada.
+
+IMÁGENES:
+Si el administrador te envía una imagen, recibirás en tu historial un texto con la descripción de la imagen analizada por otro modelo de visión. Evalúa la pieza/producto y pregúntale de forma proactiva al administrador si desea registrarla en el inventario. Si confirma, genera el tag \`[STOCK_UPSERT: ...]\` con los datos deducidos (o pregunta el precio y stock si faltan).
 `;
 
 export const dynamic = 'force-dynamic';
@@ -801,6 +805,7 @@ interface ConversationContext {
   agendaOcupada: string;
   historialTecnico: string;
   estado?: string; // Mode: 'ia' or 'humano'
+  isAdmin?: boolean;
 }
 
 async function loadConversationContext(
@@ -816,23 +821,44 @@ async function loadConversationContext(
   let agendaOcupada = '';
   let isNewSession = true;
   let estado = 'ia';
+  
   if (!db) return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado };
-
+  
   const phone = from.replace(/[^0-9]/g, '');
 
-  // Message history
+  let adminName = '';
+  let isAdmin = false;
+
   try {
+    // Determinar si el usuario es un Administrador del Bot IA
+    const { data: adminCheck } = await db.from('usuarios')
+      .select('nombre')
+      .eq('telefono', phone)
+      .eq('rol', 'admin')
+      .eq('activo', true)
+      .maybeSingle();
+      
+    if (adminCheck) {
+      isAdmin = true;
+      adminName = adminCheck.nombre;
+    }
+  } catch (e) { console.error('Error checking admin status:', e); }
+
+  try {
+    // History (Memory clipping for admins to prevent context bloat)
+    const historyLimit = isAdmin ? 6 : 50; 
     const { data: msgs } = await db
       .from('mensajes_whatsapp')
       .select('body, tipo, created_at')
       .or(`from_number.eq.${from},to_number.eq.${from}`)
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
-      .limit(50); // Increased memory
+      .limit(historyLimit);
+      
     if (msgs && msgs.length > 0) {
       const filtered = msgs
         .filter(m => !(m.body === currentMessage && m.tipo === 'entrante'))
-        .slice(0, 48).reverse();
+        .slice(0, isAdmin ? 4 : 48).reverse();
       historia = filtered.map(m => ({ role: m.tipo === 'entrante' ? 'user' : 'model', parts: [{ text: m.body }] }));
       const latest = msgs[0];
       if (latest?.created_at) {
@@ -895,31 +921,68 @@ async function loadConversationContext(
     const endD = new Date(); endD.setDate(endD.getDate() + 7);
     const endStr = endD.toISOString().split('T')[0];
     
-    // For ADMIN: Load ALL data with IDs
-    const isAdmin = from === ASESOR_PHONE;
-    
-    if (isAdmin) {
-      const [{ data: allCitas }, { data: allInv }, { data: allClients }] = await Promise.all([
-        db.from('citas').select('*').gte('fecha', today).order('fecha').limit(20),
-        db.from('inventario').select('*').order('nombre'),
-        db.from('clientes').select('*').order('created_at', { ascending: false }).limit(20)
+    if (isAdmin || from === ASESOR_PHONE) {
+      const todayDateStr = today + 'T00:00:00Z';
+      const d = getVzlaDate();
+      const monthStr = d.toISOString().slice(0, 7) + '-01T00:00:00Z';
+      const dayOfWeek = d.getDay(); 
+      const diff = d.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+      const monday = new Date(d);
+      monday.setDate(diff);
+      monday.setHours(0,0,0,0);
+      const weekStr = monday.toISOString();
+
+      const [
+        { data: allCitas }, 
+        { data: allInv }, 
+        { data: allServs }, 
+        { data: allLogs },
+        { count: msgsToday },
+        { count: msgsWeek },
+        { count: msgsMonth }
+      ] = await Promise.all([
+        db.from('citas').select('*, sede:sedes(nombre)').gte('fecha', today).order('fecha').limit(30),
+        db.from('inventario').select('*, sede:sedes(nombre)').order('nombre'),
+        db.from('servicios').select('*, sede:sedes(nombre)').gte('created_at', todayDateStr).order('created_at', { ascending: false }).limit(30),
+        db.from('logs_actividad').select('*, sede:sedes(nombre)').gte('created_at', todayDateStr).order('created_at', { ascending: false }).limit(20),
+        db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', todayDateStr),
+        db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', weekStr),
+        db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', monthStr)
       ]);
       
+      const revenueToday = allServs?.reduce((sum, s) => sum + (Number(s.costo_final || s.costo_estimado || 0)), 0) || 0;
+
+      citasInfo = `\n--- [MODO DIOS] INFO DEL SISTEMA EN TIEMPO REAL ---\n`;
+      citasInfo += `Hola Admin ${adminName}.\n`;
+      citasInfo += `\n[KPIs DE HOY]\n`;
+      citasInfo += `- Mensajes IA enviados: Hoy (${msgsToday || 0}), Semana (${msgsWeek || 0}), Mes (${msgsMonth || 0})\n`;
+      citasInfo += `- Ingresos Registrados Hoy (Servicios): $${revenueToday}\n`;
+      
       if (allCitas && allCitas.length > 0) {
-        citasInfo = `\n--- TODAS LAS CITAS (ADMIN) ---\n` + allCitas.map(c => 
-          `ID: ${c.id} | ${c.fecha} ${c.hora} | ${c.nombre_cliente} | ${c.estado} | ${c.descripcion}`
+        citasInfo += `\n[CITAS PARA HOY Y PROXIMAS]\n` + allCitas.map(c => 
+          `ID: ${c.id} | Sede: ${c.sede?.nombre || 'General'} | ${c.fecha} ${c.hora} | Cliente: ${c.nombre_cliente} | Estado: ${c.estado}`
+        ).join('\n');
+      }
+      
+      if (allServs && allServs.length > 0) {
+        citasInfo += `\n\n[SERVICIOS DE HOY]\n` + allServs.map(s => 
+          `ID: ${s.id} | Sede: ${s.sede?.nombre || 'General'} | Tipo: ${s.tipo_servicio} | Estado: ${s.estado} | Costo: $${s.costo_estimado || s.costo_final || 0}`
+        ).join('\n');
+      }
+
+      if (allLogs && allLogs.length > 0) {
+        citasInfo += `\n\n[ACTIVIDAD RECIENTE DEL SISTEMA (Cierres/Ventas/Inventario)]\n` + allLogs.map(l => 
+          `Sede: ${l.sede?.nombre || 'General'} | ${l.usuario} - ${l.accion}: ${l.detalles || 'N/A'}`
         ).join('\n');
       }
       
       if (allInv && allInv.length > 0) {
-        inventarioInfo = `\n--- INVENTARIO COMPLETO (ADMIN) ---\n` + allInv.map(i =>
-          `ID: ${i.id} | ${i.nombre} [${i.codigo || 'SIN COD'}] | Stock: ${i.stock} | Precio: $${i.precio_usd} | Cat: ${i.categoria}`
+        inventarioInfo = `\n[INVENTARIO COMPLETO (POR SEDE)]\n` + allInv.map(i =>
+          `ID: ${i.id} | Sede: ${i.sede?.nombre || 'General'} | ${i.nombre} [${i.codigo || 'S/C'}] | Stock: ${i.stock} | Precio: $${i.precio_usd}`
         ).join('\n');
       }
 
-      historialTecnico = `\n--- CLIENTES RECIENTES (ADMIN) ---\n` + (allClients?.map(cl => 
-        `ID: ${cl.id} | ${cl.nombre} ${cl.apellido} | Tel: ${cl.telefono}`
-      ).join('\n') || 'No hay clientes recientes');
+      historialTecnico = `\n--- FIN DE DATOS DEL SISTEMA ---\nInstrucción estricta: Eres el asistente administrativo (Modo Dios). Debes dar la información precisa de lo que se te pide usando la data anterior. Puedes ejecutar comandos para modificar la base de datos si el admin te lo pide. No inventes nada.`;
 
     } else {
       // Logic for regular clients (same as before)
@@ -960,7 +1023,7 @@ async function loadConversationContext(
     }
   } catch (e) { console.error('Error loading context for admin/client:', e); }
 
-  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado };
+  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado, isAdmin };
 }
 
 // ─── AI Response ───────────────────────────────────────────────────────────────
@@ -981,12 +1044,11 @@ async function getAIResponse(
 ): Promise<string | null> {
   if (!GEMINI_API_KEY) return null;
 
-  // Un usuario es admin si su teléfono está en la lista O si su nombre en memoria contiene "Leandro"
-  const isAdmin = ADMIN_PHONES.includes(from || '') || 
-                  ctx.memoria?.nombre?.toLowerCase().includes('leandro');
+  // Un usuario es admin si el contexto lo indica
+  const isAdmin = !!ctx.isAdmin;
   
   if (isAdmin) {
-    console.log(`👤 MODO ADMIN DETECTADO: ${from} (Nombre en memoria: ${ctx.memoria?.nombre || 'Desconocido'})`);
+    console.log(`👤 MODO ADMIN DETECTADO: ${from} (Nombre en memoria/BD: ${ctx.memoria?.nombre || 'Desconocido'})`);
   }
   
   const knowledge = isAdmin ? ADMIN_KNOWLEDGE : LYCOS_KNOWLEDGE;
@@ -1664,7 +1726,17 @@ async function sendImageMsg(to: string, imageSlug: string, caption?: string, rep
   }
 }
 
-
+async function logActivityAdmin(db: any, usuario: string, accion: string, detalles: string, sede_id: string = DEFAULT_SEDE_ID) {
+  if (!db) return;
+  try {
+    await db.from('logs_actividad').insert({
+      usuario,
+      accion,
+      detalles,
+      sede_id
+    });
+  } catch (e) { console.error('❌ Error logActivityAdmin:', e); }
+}
 
 // ─── Send Native Contact Card ──────────────────────────────────────────────────
 async function sendContactCard(to: string, phone: string, displayName: string): Promise<void> {
@@ -2005,6 +2077,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                   }
                 }
                 console.log(`✅ ADMIN: Stock ACTUALIZADO en DB: ${nombre}`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Actualizó producto', `Actualizó ${nombre} (Stock: ${stock}) vía ChatBot`);
               } else {
                 const { error: insErr } = await db.from('inventario').insert({ ...updateObj, sede_id: DEFAULT_SEDE_ID });
                 if (insErr) {
@@ -2019,6 +2092,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                   }
                 }
                 console.log(`✅ ADMIN: Nuevo producto INSERTADO en DB: ${nombre}`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Creó producto', `Agregó ${nombre} (Stock: ${stock}) vía ChatBot`);
               }
             } catch (e) { 
               console.error('❌ Error en STOCK_UPSERT:', e);
@@ -2032,6 +2106,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               const target = stockDeleteMatch[1].trim();
               await db.from('inventario').update({ activo: false }).or(`id.eq.${target},codigo.eq.${target}`);
               console.log(`📦 ADMIN: Item de inventario desactivado: ${target}`);
+              await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Eliminó producto', `Desactivó producto ${target} vía ChatBot`);
             } catch (e) { console.error('Error in STOCK_DELETE:', e); }
           }
 
@@ -2046,9 +2121,11 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               if (id && id !== 'id_opcional' && id.length > 5 && db) {
                 await db.from('citas').update(citaObj).eq('id', id).eq('sede_id', DEFAULT_SEDE_ID);
                 console.log(`📅 ADMIN: Cita actualizada: ${id}`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Actualizó cita', `Cita ${id} actualizada vía ChatBot`);
               } else if (db) {
                 await db.from('citas').insert({ ...citaObj, sede_id: DEFAULT_SEDE_ID });
                 console.log(`📅 ADMIN: Nueva cita creada por administrador`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Agendó cita', `Cita para ${fecha} creada vía ChatBot`);
               }
             } catch (e) { console.error('Error in CITA_UPSERT:', e); }
           }
@@ -2072,9 +2149,11 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               if (id && id !== 'id_opcional' && id.length > 5 && db) {
                 await db.from('clientes').update(clientObj).eq('id', id).eq('sede_id', DEFAULT_SEDE_ID);
                 console.log(`👤 ADMIN: Cliente actualizado: ${id}`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Actualizó cliente', `Cliente actualizado vía ChatBot`);
               } else if (db) {
                 await db.from('clientes').insert({ ...clientObj, sede_id: DEFAULT_SEDE_ID });
                 console.log(`👤 ADMIN: Nuevo cliente agregado por administrador`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Creó cliente', `Cliente creado vía ChatBot`);
               }
             } catch (e) { console.error('Error in CLIENTE_UPSERT:', e); }
           }

@@ -22,7 +22,8 @@ export default function EmpleadosPage() {
     apellido: "",
     email: "",
     rol: "empleado",
-    sede_id: ""
+    sede_id: "",
+    telefono: ""
   });
 
   const { canViewAll, currentSede } = useSedeStore();
@@ -48,7 +49,7 @@ export default function EmpleadosPage() {
     if (!supabase) return;
     setLoading(true);
     let query = supabase.from("usuarios").select(`
-      id, rol, username, email, nombre,
+      id, rol, username, email, nombre, telefono,
       sede:sedes(id, nombre)
     `);
     
@@ -79,7 +80,7 @@ export default function EmpleadosPage() {
       if (!res.ok) throw new Error(data.error);
 
       alert("Personal registrado exitosamente.");
-      setFormData({ nombre: "", apellido: "", email: "", rol: "empleado", sede_id: sedes[0]?.id || "" });
+      setFormData({ nombre: "", apellido: "", email: "", rol: "empleado", sede_id: sedes[0]?.id || "", telefono: "" });
       fetchEmpleados();
     } catch (error: any) {
       alert("Error: " + error.message);
@@ -125,6 +126,7 @@ export default function EmpleadosPage() {
               <th className="px-4 py-3 whitespace-nowrap">Nombre</th>
               {showCredentials && <th className="px-4 py-3 whitespace-nowrap">Usuario / Email</th>}
               <th className="px-4 py-3 whitespace-nowrap">Sede</th>
+              <th className="px-4 py-3 whitespace-nowrap">Teléfono IA</th>
               <th className="px-4 py-3 text-right">Acciones</th>
             </tr>
           </thead>
@@ -157,6 +159,13 @@ export default function EmpleadosPage() {
                     <MapPin className="w-3.5 h-3.5 text-slate-400" />
                     {emp.sede?.nombre || 'Sin sede'}
                   </div>
+                </td>
+                <td className="px-4 py-3 text-xs text-slate-500 font-mono">
+                  {emp.telefono ? (
+                    <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 px-2 py-0.5 rounded">
+                      <Shield className="w-3 h-3" /> {emp.telefono}
+                    </span>
+                  ) : '-'}
                 </td>
                 <td className="px-4 py-3 text-right">
                   <Button 
@@ -208,11 +217,16 @@ export default function EmpleadosPage() {
                   <Input required value={formData.apellido} onChange={e => setFormData({ ...formData, apellido: e.target.value })} />
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label>Correo Electrónico (Opcional para Técnicos)</Label>
-                <Input type="email" required={formData.rol !== 'mecanico' && formData.rol !== 'jefe_taller'} value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Correo Electrónico</Label>
+                  <Input type="email" required={formData.rol !== 'mecanico' && formData.rol !== 'jefe_taller'} value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Teléfono WhatsApp (Para IA Admins)</Label>
+                  <Input placeholder="Ej: 584123343519" value={formData.telefono} onChange={e => setFormData({ ...formData, telefono: e.target.value })} />
+                </div>
               </div>
-              
               <div className="space-y-2">
                 <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Rol de Acceso</Label>
                 <Select value={formData.rol} onValueChange={v => setFormData({ ...formData, rol: v })}>
@@ -304,6 +318,24 @@ export default function EmpleadosPage() {
             </CardHeader>
             <CardContent className="p-0">
               {renderTable(empleados.filter(e => ['mecanico', 'jefe_taller'].includes(e.rol)), false)}
+            </CardContent>
+          </Card>
+
+          {/* SECCIÓN 3: ADMINISTRADORES DEL BOT IA */}
+          <Card className="border-emerald-200 dark:border-emerald-900/50 shadow-sm overflow-hidden bg-emerald-50/10">
+            <CardHeader className="bg-emerald-50/50 dark:bg-emerald-900/20 border-b border-emerald-100 dark:border-emerald-900/50">
+              <div className="flex items-center gap-2">
+                <Shield className="w-5 h-5 text-emerald-500" />
+                <div>
+                  <CardTitle className="text-lg text-emerald-800 dark:text-emerald-400">Administradores del Bot (Modo Dios IA)</CardTitle>
+                  <CardDescription className="text-emerald-600/80 dark:text-emerald-400/70">
+                    Números de WhatsApp con acceso total a inventario, cajas y servicios desde el Chatbot.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              {renderTable(empleados.filter(e => e.rol === 'admin' && e.telefono), true)}
             </CardContent>
           </Card>
         </div>
