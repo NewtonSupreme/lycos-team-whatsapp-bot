@@ -340,7 +340,7 @@ export default function InventarioPage() {
             <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-orange-500/20">
               <span className="text-[10px] font-bold text-orange-400">P2P</span>
             </div>
-            <span className="text-sm font-bold text-orange-400">Bs. {(rates.paralelo || 0).toFixed(2)}</span>
+            <span className="text-sm font-bold text-orange-400">Bs. {(rates.binance || 0).toFixed(2)}</span>
             <div className="flex items-center gap-0.5 ml-1 px-1.5 py-0.5 rounded-md bg-orange-500/10 text-[9px] font-bold text-orange-400 uppercase">
               Binance
             </div>
@@ -575,7 +575,7 @@ export default function InventarioPage() {
                                 <span>BCV: Bs. {(item.precio_bs * rates.bcv).toFixed(2)}</span>
                               </div>
                               <div className="flex items-center gap-1 text-[10px] text-orange-400 font-bold bg-orange-500/5 px-1.5 rounded border border-orange-500/10" title="Precio a tasa Binance">
-                                <span>P2P: Bs. {(item.precio_usd * rates.paralelo).toFixed(2)}</span>
+                                <span>P2P: Bs. {(item.precio_usd * rates.binance).toFixed(2)}</span>
                               </div>
                             </div>
                           )}
