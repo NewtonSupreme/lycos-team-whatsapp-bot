@@ -211,7 +211,7 @@ export default function ActividadPage() {
           className="px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm text-foreground focus:outline-none"
         >
           <option value="todos">Todos los módulos</option>
-          {modules.map(m => <option key={m} value={m}>{m}</option>)}
+          {modules.map((m, idx) => <option key={m || `mod-${idx}`} value={m}>{m}</option>)}
         </select>
         <select
           value={filterUser}
@@ -219,7 +219,7 @@ export default function ActividadPage() {
           className="px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm text-foreground focus:outline-none"
         >
           <option value="todos">Todos los usuarios</option>
-          {users.map(u => <option key={u} value={u}>{u}</option>)}
+          {users.map((u, idx) => <option key={u || `usr-${idx}`} value={u}>{u}</option>)}
         </select>
       </div>
 
@@ -248,7 +248,7 @@ export default function ActividadPage() {
               const colorClass = MODULE_COLORS[log.modulo] || 'text-gray-400 bg-gray-500/10 border-gray-500/20';
               return (
                 <div
-                  key={log.id}
+                  key={log.id || `log-${i}`}
                   className="flex items-start gap-3 p-4 hover:bg-white/2 transition-colors"
                   style={{ animationDelay: `${i * 20}ms` }}
                 >

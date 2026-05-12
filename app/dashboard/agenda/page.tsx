@@ -571,11 +571,11 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
               </div>
             ) : (
               <div className="space-y-2 max-h-80 overflow-y-auto">
-                {citasDelDia.sort((a,b) => a.hora.localeCompare(b.hora)).map(cita => {
+                {citasDelDia.sort((a,b) => a.hora.localeCompare(b.hora)).map((cita, idx) => {
                   const cliente = getCliente(cita.cliente_id);
                   const vehiculo = getVehiculo(cita.vehiculo_id);
                   return (
-                    <div key={cita.id} className={cn('p-3 rounded-xl border transition-all hover:opacity-90 cursor-pointer group', estadoColorMap[cita.estado] || 'bg-muted/30 border-border/30')} onClick={() => openEdit(cita)}>
+                    <div key={cita.id || `cita-dia-${idx}`} className={cn('p-3 rounded-xl border transition-all hover:opacity-90 cursor-pointer group', estadoColorMap[cita.estado] || 'bg-muted/30 border-border/30')} onClick={() => openEdit(cita)}>
                       <div className="flex items-center justify-between mb-1.5">
                         <div className="flex items-center gap-1.5">
                           <Clock className="w-3 h-3" />
@@ -879,12 +879,12 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
           <div className="overflow-y-auto mt-4 pr-1">
             {selectedFilter && getFilteredCitas(selectedFilter.type).length > 0 ? (
               <div className="space-y-3">
-                {getFilteredCitas(selectedFilter.type).map((cita: any) => {
+                {getFilteredCitas(selectedFilter.type).map((cita: any, idx: number) => {
                   const cliente = getCliente(cita.cliente_id);
                   const vehiculo = getVehiculo(cita.vehiculo_id);
                   return (
                     <div 
-                      key={cita.id} 
+                      key={cita.id || `cita-filter-${idx}`} 
                       className="p-3 border border-white/5 bg-white/5 rounded-lg flex items-center justify-between hover:bg-white/10 transition-colors"
                     >
                       <div className="flex-1">

@@ -33,6 +33,7 @@ interface CitaServicio {
   created_at: string;
   cliente_id: string | null;
   vehiculo_id: string | null;
+  sede_id?: string | null;
   costo_estimado?: number | null;
   seguimiento?: any[] | null;
   clientes?: { nombre: string; apellido: string; telefono: string } | null;

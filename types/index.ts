@@ -22,6 +22,7 @@ export interface Cliente {
   notas?: string;
   created_at: string;
   updated_at: string;
+  sede_id?: string;
   vehiculos?: Vehiculo[];
 }
 
@@ -38,6 +39,7 @@ export interface Vehiculo {
   estado: 'activo' | 'en_servicio' | 'listo' | 'inactivo';
   notas?: string;
   created_at: string;
+  sede_id?: string;
   cliente?: Cliente;
   servicios?: Servicio[];
 }
@@ -79,6 +81,7 @@ export interface Cita {
   duracion_minutos?: number;
   costo_estimado?: number;
   created_at: string;
+  sede_id?: string;
   cliente?: Cliente;
   vehiculo?: Vehiculo;
 }
@@ -139,6 +142,7 @@ export interface ActivityLog {
   detalles?: string | null;
   referencia_id?: string | null;
   referencia_tabla?: string | null;
+  sede_id?: string;
   created_at: string;
 }
 
