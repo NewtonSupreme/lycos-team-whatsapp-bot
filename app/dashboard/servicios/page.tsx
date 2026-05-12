@@ -708,6 +708,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
 
   useEffect(() => {
     const fetchData = async () => {
+      if (!supabase) return;
       // Fetch Clients
       const { data: clients } = await withSedeFilter(supabase.from('clientes'))
         .select('id, nombre, apellido, telefono, vehiculos(id, marca, modelo, placa)');
@@ -757,6 +758,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
   };
 
   const handleSave = async () => {
+    if (!supabase) return;
     if (!formData.nombre_cliente || !formData.vehiculo_info) {
       alert('Campos obligatorios incompletos');
       return;
