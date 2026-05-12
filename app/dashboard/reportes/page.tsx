@@ -954,7 +954,7 @@ function ScanModal({ onClose, onConfirm, modo }: {
 function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void }) {
   const handleDownload = () => {
     try {
-      generateInvoicePDF({
+      generateInvoicePDF([{
         id: venta.id,
         fecha: venta.fecha,
         cliente: venta.cliente || undefined,
@@ -964,7 +964,7 @@ function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void
         pago_usd: venta.pago_usd,
         pago_ves: venta.pago_ves,
         tasa_cambio: venta.tasa_cambio
-      });
+      }]);
     } catch (err) {
       alert('Error al generar PDF');
     }

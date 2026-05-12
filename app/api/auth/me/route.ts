@@ -19,7 +19,7 @@ export async function GET() {
     if (!db) {
       // Fallback: derive from cookie
       const nombre = username.charAt(0).toUpperCase() + username.slice(1);
-      return NextResponse.json({ user: { username, nombre, rol: username === 'administrador' ? 'admin' : 'usuario' } });
+      return NextResponse.json({ user: { username, nombre, rol: username === 'administrador' ? 'admin' : 'empleado' } });
     }
 
     const { data: user } = await db
