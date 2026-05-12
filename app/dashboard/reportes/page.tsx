@@ -152,8 +152,30 @@ function ManualModal({ onClose, onSave, initial }: {
   const [items, setItems] = useState<DesglosItem[]>(
     initial?.desglose?.length ? initial.desglose : [{ descripcion: '', cantidad: 1, precio_unitario: 0, total: 0 }]
   );
+  const [rates, setRates] = useState({ bcv: 0, binance: 0 });
+  const [rateType, setRateType] = useState<'bcv' | 'binance'>('bcv');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    const fetchRates = async () => {
+      try {
+        const res = await fetch('/api/rates');
+        const data = await res.json();
+        setRates({ bcv: data.bcv, binance: data.binance });
+        if (!initial?.tasa_cambio) {
+          setForm(f => ({ ...f, tasa_cambio: data.bcv }));
+        }
+      } catch (e) { console.error('Error fetching rates:', e); }
+    };
+    fetchRates();
+  }, [initial]);
+
+  useEffect(() => {
+    if (rates.bcv > 0) {
+      setForm(f => ({ ...f, tasa_cambio: rateType === 'bcv' ? rates.bcv : rates.binance }));
+    }
+  }, [rateType, rates]);
 
   const updateItem = (i: number, key: keyof DesglosItem, val: string | number) => {
     setItems(prev => {
@@ -169,8 +191,6 @@ function ManualModal({ onClose, onSave, initial }: {
   const totalFromItems = items.reduce((s, it) => s + Number(it.total), 0);
 
   useEffect(() => {
-    // If we have payment values but total_ingresos is 0 (new entry), we might want to sync
-    // But usually total_ingresos is the source of truth from items
     setForm(f => ({ ...f, total_ingresos: totalFromItems }));
   }, [totalFromItems]);
 
@@ -278,109 +298,97 @@ function ManualModal({ onClose, onSave, initial }: {
             </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-primary/5 border border-primary/20 space-y-4">
+          <div className="p-6 rounded-2xl bg-primary/5 border border-primary/20 space-y-6">
             <div className="flex items-center justify-between">
-              <p className="text-[10px] font-bold text-primary uppercase tracking-wider">Desglose de Pago (Detallado)</p>
-              <label className="flex items-center gap-2 cursor-pointer group">
-                <input
-                  type="checkbox"
-                  checked={form.con_iva}
-                  onChange={e => setForm(f => ({ ...f, con_iva: e.target.checked }))}
-                  className="w-3.5 h-3.5 rounded border-border text-primary focus:ring-primary/20"
-                />
-                <span className="text-[10px] font-bold text-muted-foreground group-hover:text-primary transition-colors">INCLUIR IVA (+16%)</span>
-              </label>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="space-y-1">
-                <label className="text-[10px] font-medium text-muted-foreground uppercase">Pago Móvil</label>
-                <input
-                  type="number" step="0.01"
-                  value={form.metodos_pago?.pago_movil}
-                  onChange={e => handlePaymentCalc('pago_movil', Number(e.target.value), true)}
-                  className="w-full px-2 py-1.5 rounded-lg border border-border/50 bg-background text-xs focus:ring-1 focus:ring-primary"
-                />
+              <div>
+                <p className="text-[10px] font-black text-primary uppercase tracking-[0.2em]">Desglose de Pago (Detallado)</p>
+                <p className="text-[9px] text-muted-foreground font-bold mt-1 uppercase">Selecciona los métodos y montos</p>
               </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-medium text-muted-foreground uppercase">Zelle</label>
-                <input
-                  type="number" step="0.01"
-                  value={form.metodos_pago?.zelle}
-                  onChange={e => handlePaymentCalc('zelle', Number(e.target.value), true)}
-                  className="w-full px-2 py-1.5 rounded-lg border border-border/50 bg-background text-xs focus:ring-1 focus:ring-primary"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-medium text-muted-foreground uppercase">Divisas (Efectivo)</label>
-                <input
-                  type="number" step="0.01"
-                  value={form.metodos_pago?.efectivo_usd}
-                  onChange={e => handlePaymentCalc('efectivo_usd', Number(e.target.value), true)}
-                  className="w-full px-2 py-1.5 rounded-lg border border-border/50 bg-background text-xs focus:ring-1 focus:ring-primary"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-medium text-muted-foreground uppercase">Efectivo Bs.</label>
-                <input
-                  type="number" step="0.01"
-                  value={form.metodos_pago?.efectivo_ves}
-                  onChange={e => handlePaymentCalc('efectivo_ves', Number(e.target.value), true)}
-                  className="w-full px-2 py-1.5 rounded-lg border border-border/50 bg-background text-xs focus:ring-1 focus:ring-primary"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-medium text-muted-foreground uppercase text-violet-400">Cashea</label>
-                <input
-                  type="number" step="0.01"
-                  value={form.metodos_pago?.cashea}
-                  onChange={e => handlePaymentCalc('cashea', Number(e.target.value), true)}
-                  className="w-full px-2 py-1.5 rounded-lg border border-violet-500/30 bg-violet-500/5 text-xs focus:ring-1 focus:ring-violet-400"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-medium text-muted-foreground uppercase">Transferencia</label>
-                <input
-                  type="number" step="0.01"
-                  value={form.metodos_pago?.transferencia}
-                  onChange={e => handlePaymentCalc('transferencia', Number(e.target.value), true)}
-                  className="w-full px-2 py-1.5 rounded-lg border border-border/50 bg-background text-xs focus:ring-1 focus:ring-primary"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-medium text-muted-foreground uppercase">Punto</label>
-                <input
-                  type="number" step="0.01"
-                  value={form.metodos_pago?.punto_de_venta}
-                  onChange={e => handlePaymentCalc('punto_de_venta', Number(e.target.value), true)}
-                  className="w-full px-2 py-1.5 rounded-lg border border-border/50 bg-background text-xs focus:ring-1 focus:ring-primary"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-medium text-muted-foreground uppercase">Tasa Cambio</label>
-                <input
-                  type="number" step="0.01"
-                  value={form.tasa_cambio}
-                  onChange={e => handlePaymentCalc('tasa_cambio', Number(e.target.value))}
-                  className="w-full px-2 py-1.5 rounded-lg border border-border/50 bg-background text-xs focus:ring-1 focus:ring-primary"
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-4 pt-2 border-t border-primary/10">
-              <div className="flex flex-col">
-                <span className="text-[10px] text-muted-foreground uppercase">Monto Bruto</span>
-                <span className="text-sm font-bold">${form.total_ingresos.toFixed(2)}</span>
-              </div>
-              {form.con_iva && (
-                <div className="flex flex-col">
-                  <span className="text-[10px] text-muted-foreground uppercase">IVA (16%)</span>
-                  <span className="text-sm font-bold text-orange-400">+${(form.total_ingresos * 0.16).toFixed(2)}</span>
+              <div className="flex items-center gap-3">
+                <div className="flex bg-muted/50 p-1 rounded-xl border border-border/50">
+                  <button 
+                    onClick={() => setRateType('bcv')}
+                    className={cn("px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all", rateType === 'bcv' ? "bg-white text-primary shadow-sm" : "text-muted-foreground")}
+                  >BCV</button>
+                  <button 
+                    onClick={() => setRateType('binance')}
+                    className={cn("px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all", rateType === 'binance' ? "bg-white text-primary shadow-sm" : "text-muted-foreground")}
+                  >Binance</button>
                 </div>
-              )}
-              <div className="flex flex-col ml-auto">
-                <span className="text-[10px] text-muted-foreground uppercase">Total Final</span>
-                <span className="text-lg font-black text-primary">${(form.total_ingresos * (form.con_iva ? 1.16 : 1)).toFixed(2)}</span>
+                <label className="flex items-center gap-2 cursor-pointer group bg-white px-3 py-1.5 rounded-xl border border-border/50 shadow-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.con_iva}
+                    onChange={e => setForm(f => ({ ...f, con_iva: e.target.checked }))}
+                    className="w-3.5 h-3.5 rounded border-border text-primary focus:ring-primary/20"
+                  />
+                  <span className="text-[10px] font-black text-slate-500 group-hover:text-primary transition-colors uppercase">IVA (+16%)</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {[
+                { id: 'efectivo_usd', label: 'Efectivo USD', color: 'text-green-500' },
+                { id: 'zelle', label: 'Zelle', color: 'text-violet-500' },
+                { id: 'pago_movil', label: 'Pago Móvil', color: 'text-blue-500' },
+                { id: 'punto_de_venta', label: 'Punto de Venta', color: 'text-orange-500' },
+                { id: 'efectivo_ves', label: 'Efectivo Bs.', color: 'text-slate-500' },
+                { id: 'cashea', label: 'Cashea', color: 'text-purple-400' },
+                { id: 'transferencia', label: 'Transferencia', color: 'text-sky-500' },
+                { id: 'otro', label: 'Otro / Especial', color: 'text-slate-400' },
+              ].map(method => (
+                <div key={method.id} className={cn(
+                  "flex items-center justify-between p-3 rounded-2xl border transition-all",
+                  (form.metodos_pago as any)[method.id] > 0 
+                    ? "bg-white border-primary/30 shadow-md" 
+                    : "bg-slate-50/50 border-border/20 opacity-70"
+                )}>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={(form.metodos_pago as any)[method.id] > 0}
+                      onChange={(e) => handlePaymentCalc(method.id, e.target.checked ? 0.01 : 0, true)}
+                      className="w-4 h-4 rounded border-gray-300 text-primary"
+                    />
+                    <span className={cn("text-[10px] font-black uppercase tracking-tight", method.color)}>{method.label}</span>
+                  </label>
+                  {(form.metodos_pago as any)[method.id] !== undefined && (
+                    <div className="flex items-center gap-1 bg-slate-50 px-3 py-1.5 rounded-xl border border-border/50">
+                      <span className="text-[10px] font-bold text-slate-400">$</span>
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        className="w-16 text-right text-xs font-black bg-transparent border-none p-0 focus:ring-0"
+                        value={(form.metodos_pago as any)[method.id]}
+                        onChange={(e) => handlePaymentCalc(method.id, parseFloat(e.target.value) || 0, true)}
+                      />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-primary/10">
+              <div className="flex items-center gap-6">
+                <div className="flex flex-col">
+                  <span className="text-[10px] text-muted-foreground font-black uppercase tracking-widest">Tasa ${rateType.toUpperCase()}</span>
+                  <span className="text-sm font-black text-slate-900">${form.tasa_cambio.toFixed(2)} Bs.</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[10px] text-muted-foreground font-black uppercase tracking-widest">Subtotal</span>
+                  <span className="text-sm font-black text-slate-900">${form.total_ingresos.toFixed(2)}</span>
+                </div>
+                {form.con_iva && (
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-orange-500 font-black uppercase tracking-widest">IVA (16%)</span>
+                    <span className="text-sm font-black text-orange-500">+${(form.total_ingresos * 0.16).toFixed(2)}</span>
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-col items-end">
+                <span className="text-[10px] text-primary font-black uppercase tracking-[0.2em]">Total Final</span>
+                <span className="text-2xl font-black text-primary tracking-tighter italic">${(form.total_ingresos * (form.con_iva ? 1.16 : 1)).toFixed(2)}</span>
               </div>
             </div>
           </div>
@@ -396,37 +404,44 @@ function ManualModal({ onClose, onSave, initial }: {
               </button>
             </div>
             <div className="space-y-2">
+              <div className="grid grid-cols-12 gap-2 mb-1 px-1">
+                <div className="col-span-1 text-[9px] font-black text-slate-300 uppercase text-center">#</div>
+                <div className="col-span-4 text-[9px] font-black text-slate-300 uppercase">Descripción del Servicio</div>
+                <div className="col-span-2 text-[9px] font-black text-slate-300 uppercase text-center">Cant.</div>
+                <div className="col-span-2 text-[9px] font-black text-slate-300 uppercase text-right">P. Unit.</div>
+                <div className="col-span-2 text-[9px] font-black text-slate-300 uppercase text-right pr-2">Total</div>
+              </div>
               {items.map((item, i) => (
-                <div key={i} className="grid grid-cols-12 gap-2 items-center group">
-                  <div className="col-span-1 text-[10px] font-bold text-muted-foreground text-center bg-muted/30 h-7 flex items-center justify-center rounded">
+                <div key={i} className="grid grid-cols-12 gap-2 items-center group bg-slate-50/30 p-1.5 rounded-xl border border-transparent hover:border-slate-100 transition-all">
+                  <div className="col-span-1 text-[10px] font-bold text-muted-foreground text-center bg-white h-7 flex items-center justify-center rounded-lg shadow-sm border border-slate-100">
                     {i + 1}
                   </div>
                   <input
-                    className="col-span-4 px-2 py-1.5 rounded-lg border border-border/40 bg-background/50 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-                    placeholder="Descripción del servicio"
+                    className="col-span-4 px-2 py-1.5 rounded-lg border-none bg-transparent text-xs font-bold text-slate-700 focus:ring-0"
+                    placeholder="Descripción..."
                     value={item.descripcion}
                     onChange={e => updateItem(i, 'descripcion', e.target.value)}
                   />
                   <input
-                    className="col-span-2 px-2 py-1.5 rounded-lg border border-border/40 bg-background/50 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-                    type="number" placeholder="Cant." min="1"
+                    className="col-span-2 px-2 py-1.5 rounded-lg border-none bg-transparent text-xs font-black text-slate-600 text-center focus:ring-0"
+                    type="number" placeholder="0" min="1"
                     value={item.cantidad}
                     onChange={e => updateItem(i, 'cantidad', Number(e.target.value))}
                   />
                   <input
-                    className="col-span-2 px-2 py-1.5 rounded-lg border border-border/40 bg-background/50 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-                    type="number" placeholder="$P/U" step="0.01"
+                    className="col-span-2 px-2 py-1.5 rounded-lg border-none bg-transparent text-xs font-black text-slate-600 text-right focus:ring-0"
+                    type="number" placeholder="0.00" step="0.01"
                     value={item.precio_unitario}
                     onChange={e => updateItem(i, 'precio_unitario', Number(e.target.value))}
                   />
-                  <div className="col-span-2 text-xs font-medium text-primary text-right pr-1">
+                  <div className="col-span-2 text-xs font-black text-primary text-right pr-2 italic">
                     ${Number(item.total).toFixed(2)}
                   </div>
                   <button
                     onClick={() => setItems(p => p.filter((_, j) => j !== i))}
-                    className="col-span-1 w-6 h-6 rounded hover:bg-destructive/20 text-destructive flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="col-span-1 w-7 h-7 rounded-lg hover:bg-destructive/10 text-destructive flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all"
                   >
-                    <X className="w-3 h-3" />
+                    <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
               ))}
@@ -487,6 +502,11 @@ function EgresoModal({ onClose, onSave, initial }: {
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  
+
+  
+
 
   const updateItem = (i: number, key: keyof DesglosItem, val: string | number) => {
     setItems(prev => {
@@ -1493,10 +1513,10 @@ export default function ReportesPage() {
       {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { label: 'Ingresos Totales', value: `$${totalIngresos.toFixed(2)}`, sub: 'Dinero recibido', icon: DollarSign, color: 'text-green-400 bg-green-500/10' },
-          { label: 'Egresos Totales', value: `$${totalEgresos.toFixed(2)}`, sub: 'Gastos y pagos', icon: ArrowDownCircle, color: 'text-rose-400 bg-rose-500/10' },
-          { label: 'Balance Neto', value: `$${balanceNeto.toFixed(2)}`, sub: 'Utilidad bruta', icon: TrendingUp, color: balanceNeto >= 0 ? 'text-blue-400 bg-blue-500/10' : 'text-rose-400 bg-rose-500/10' },
-          { label: 'Ticket Promedio', value: `$${ticketPromedio.toFixed(2)}`, sub: 'Venta por servicio', icon: Receipt, color: 'text-purple-400 bg-purple-500/10' },
+          { label: 'Ingresos Totales', value: `${totalIngresos.toFixed(2)}`, sub: 'Dinero recibido', icon: DollarSign, color: 'text-green-400 bg-green-500/10' },
+          { label: 'Egresos Totales', value: `${totalEgresos.toFixed(2)}`, sub: 'Gastos y pagos', icon: ArrowDownCircle, color: 'text-rose-400 bg-rose-500/10' },
+          { label: 'Balance Neto', value: `${balanceNeto.toFixed(2)}`, sub: 'Utilidad bruta', icon: TrendingUp, color: balanceNeto >= 0 ? 'text-blue-400 bg-blue-500/10' : 'text-rose-400 bg-rose-500/10' },
+          { label: 'Ticket Promedio', value: `${ticketPromedio.toFixed(2)}`, sub: 'Venta por servicio', icon: Receipt, color: 'text-purple-400 bg-purple-500/10' },
         ].map(({ label, value, sub, icon: Icon, color }) => (
           <div key={label} className="rounded-xl border border-border/50 bg-card/50 p-4">
             <div className="flex items-start justify-between">

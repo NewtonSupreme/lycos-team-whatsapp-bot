@@ -153,8 +153,15 @@ export default function PerfilPage() {
   useEffect(() => {
     if (!user || !supabase) return;
     const fetchProfile = async () => {
-      if (!supabase) return;
-      const { data } = await supabase.from('usuarios').select('*').eq('id', user.id).maybeSingle();
+      if (!supabase || !user?.id) return;
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id);
+      
+      const { data } = await supabase
+        .from('usuarios')
+        .select('*')
+        .eq(isUUID ? 'id' : 'username', user.id)
+        .maybeSingle();
+        
       if (data) {
         setProfile({
           nombre: data.nombre || '',
@@ -166,7 +173,7 @@ export default function PerfilPage() {
         });
         setAvatarUrl(data.avatar_url || null);
       }
-      const { data: credData } = await supabase.from('webauthn_credentials').select('id').eq('usuario_id', user.id);
+      const { data: credData } = await supabase.from('webauthn_credentials').select('id').eq('usuario_id', data?.id || user.id);
       setHasBiometry((credData?.length || 0) > 0);
     };
     fetchProfile();
@@ -183,7 +190,7 @@ export default function PerfilPage() {
         telefono: profile.telefono,
         bio: profile.bio,
         updated_at: new Date().toISOString()
-      }).eq('id', user.id);
+      }).eq(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id) ? 'id' : 'username', user.id);
 
       if (error) throw error;
       setUser({ ...user, nombre: profile.nombre });

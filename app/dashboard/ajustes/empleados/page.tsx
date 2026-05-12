@@ -8,8 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSedeStore } from "@/lib/store/useSedeStore";
-import { Loader2, Plus, Users, Shield, MapPin, Trash2, Mail, User } from "lucide-react";
-import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
+import { Loader2, Plus, Users, Shield, MapPin, Trash2, Mail, User, Wrench } from "lucide-react";
 
 export default function EmpleadosPage() {
   const [empleados, setEmpleados] = useState<any[]>([]);
@@ -40,7 +39,7 @@ export default function EmpleadosPage() {
     if (data) {
       setSedes(data);
       if (data.length > 0 && !formData.sede_id) {
-        setFormData(f => ({ ...f, sede_id: data[0].id }));
+        setFormData(f => ({ ...f, sede_id: currentSede?.id || data[0].id }));
       }
     }
   }
@@ -48,21 +47,16 @@ export default function EmpleadosPage() {
   async function fetchEmpleados() {
     if (!supabase) return;
     setLoading(true);
-    // Ideally we query a joined view or custom function.
-    // Assuming we have access to usuarios table
     let query = supabase.from("usuarios").select(`
       id, rol, username, email, nombre,
       sede:sedes(id, nombre)
     `);
     
-    // If not admin, restrict to current sede
-    if (!canViewAll() && currentSede) {
+    if (currentSede) {
       query = query.eq("sede_id", currentSede.id);
     }
 
     const { data } = await query;
-    // Note: To get names and emails, we might need a joined table or edge function since auth.users is restricted.
-    // For now, this lists the assignments.
     if (data) setEmpleados(data);
     setLoading(false);
   }
@@ -74,13 +68,17 @@ export default function EmpleadosPage() {
       const res = await fetch('/api/admin/create-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify({
+          ...formData,
+          activo: !(formData.rol === 'mecanico' || formData.rol === 'jefe_taller'),
+          password_hash: (formData.rol === 'mecanico' || formData.rol === 'jefe_taller') ? 'NO_ACCESS_STAFF' : 'lycos2026'
+        })
       });
       
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      alert("Usuario creado exitosamente con contraseña: lycos2026");
+      alert("Personal registrado exitosamente.");
       setFormData({ nombre: "", apellido: "", email: "", rol: "empleado", sede_id: sedes[0]?.id || "" });
       fetchEmpleados();
     } catch (error: any) {
@@ -109,6 +107,75 @@ export default function EmpleadosPage() {
     }
   }
 
+  const renderTable = (list: any[], showCredentials: boolean) => {
+    if (loading) return <div className="flex justify-center p-8"><Loader2 className="w-8 h-8 animate-spin text-slate-400" /></div>;
+    if (list.length === 0) return (
+      <div className="text-center py-12 text-slate-500">
+        <Users className="w-12 h-12 mx-auto text-slate-200 mb-3" />
+        <p>No hay personal registrado en esta sección.</p>
+      </div>
+    );
+
+    return (
+      <div className="w-full overflow-x-auto">
+        <table className="w-full text-sm text-left">
+          <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 font-medium border-b border-slate-200 dark:border-slate-800">
+            <tr>
+              <th className="px-4 py-3 whitespace-nowrap">Rol</th>
+              <th className="px-4 py-3 whitespace-nowrap">Nombre</th>
+              {showCredentials && <th className="px-4 py-3 whitespace-nowrap">Usuario / Email</th>}
+              <th className="px-4 py-3 whitespace-nowrap">Sede</th>
+              <th className="px-4 py-3 text-right">Acciones</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+            {list.map((emp) => (
+              <tr key={emp.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/50 transition-colors">
+                <td className="px-4 py-3">
+                  <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wider ${
+                    emp.rol === 'admin' ? 'bg-red-500/10 text-red-500 border-red-500/20' : 
+                    emp.rol === 'gerente' ? 'bg-blue-500/10 text-blue-500 border-blue-500/20' :
+                    emp.rol === 'jefe_taller' ? 'bg-primary/10 text-primary border-primary/20' :
+                    emp.rol === 'mecanico' ? 'bg-orange-500/10 text-orange-500 border-orange-500/20' :
+                    'bg-slate-500/10 text-slate-500 border-slate-500/20'
+                  }`}>
+                    {emp.rol === 'mecanico' ? <Wrench className="w-3 h-3" /> : <Shield className="w-3 h-3" />}
+                    {emp.rol.replace('_', ' ')}
+                  </div>
+                </td>
+                <td className="px-4 py-3 font-semibold whitespace-nowrap text-slate-700 dark:text-slate-200">{emp.nombre}</td>
+                {showCredentials && (
+                  <td className="px-4 py-3">
+                    <div className="flex flex-col min-w-[150px]">
+                      <span className="text-xs text-slate-600 dark:text-slate-400 font-mono">@{emp.username}</span>
+                      <span className="text-[10px] text-slate-400 truncate max-w-[200px]">{emp.email}</span>
+                    </div>
+                  </td>
+                )}
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-1.5 font-medium whitespace-nowrap text-xs text-slate-500">
+                    <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                    {emp.sede?.nombre || 'Sin sede'}
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className="text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                    onClick={() => handleDelete(emp.id, emp.nombre)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
   if (!mounted) return null;
   
   return (
@@ -126,8 +193,8 @@ export default function EmpleadosPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="lg:col-span-1 border-slate-200 dark:border-slate-800 shadow-sm h-fit sticky top-6">
           <CardHeader className="pb-4">
-            <CardTitle className="text-lg">Nuevo Empleado</CardTitle>
-            <CardDescription>La contraseña temporal será lycos2026</CardDescription>
+            <CardTitle className="text-lg">Nuevo Registro</CardTitle>
+            <CardDescription>Añade personal administrativo o técnico.</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -142,8 +209,8 @@ export default function EmpleadosPage() {
                 </div>
               </div>
               <div className="space-y-2">
-                <Label>Correo Electrónico</Label>
-                <Input type="email" required value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} />
+                <Label>Correo Electrónico (Opcional para Técnicos)</Label>
+                <Input type="email" required={formData.rol !== 'mecanico' && formData.rol !== 'jefe_taller'} value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} />
               </div>
               
               <div className="space-y-2">
@@ -154,20 +221,32 @@ export default function EmpleadosPage() {
                     <SelectItem value="empleado">
                       <div className="flex items-center gap-2">
                         <Shield className="w-4 h-4 text-slate-400" />
-                        <span>Empleado (Solo Sede)</span>
+                        <span>Empleado (Acceso Panel)</span>
                       </div>
                     </SelectItem>
                     <SelectItem value="gerente">
                       <div className="flex items-center gap-2">
                         <Shield className="w-4 h-4 text-blue-500" />
-                        <span>Gerente de Sede (Total Sede)</span>
+                        <span>Gerente de Sede</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="mecanico">
+                      <div className="flex items-center gap-2">
+                        <Wrench className="w-4 h-4 text-orange-500" />
+                        <span>Mecánico (Sin Acceso)</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="jefe_taller">
+                      <div className="flex items-center gap-2">
+                        <Shield className="w-4 h-4 text-primary" />
+                        <span>Jefe de Taller (Sin Acceso)</span>
                       </div>
                     </SelectItem>
                     {canViewAll() && (
                       <SelectItem value="admin">
                         <div className="flex items-center gap-2">
                           <Shield className="w-4 h-4 text-red-500" />
-                          <span>Administrador (Multi-Sede)</span>
+                          <span>Administrador</span>
                         </div>
                       </SelectItem>
                     )}
@@ -189,127 +268,45 @@ export default function EmpleadosPage() {
 
               <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white" disabled={saving}>
                 {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
-                Crear Usuario
+                Registrar Personal
               </Button>
             </form>
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-2 border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-          <CardHeader>
-            <CardTitle className="text-lg">Empleados Registrados</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            {loading ? (
-              <div className="flex justify-center p-8"><Loader2 className="w-8 h-8 animate-spin text-slate-400" /></div>
-            ) : (
-              <div className="w-full overflow-x-auto">
-                {/* Desktop Table View */}
-                <table className="w-full text-sm text-left hidden md:table">
-                  <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 font-medium border-b border-slate-200 dark:border-slate-800">
-                    <tr>
-                      <th className="px-4 py-3 whitespace-nowrap">Rol</th>
-                      <th className="px-4 py-3 whitespace-nowrap">Sede</th>
-                      <th className="px-4 py-3 whitespace-nowrap">Nombre</th>
-                      <th className="px-4 py-3 whitespace-nowrap">Usuario / Email</th>
-                      <th className="px-4 py-3 text-right">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {empleados.map((emp) => (
-                      <tr key={emp.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/50 transition-colors">
-                        <td className="px-4 py-3">
-                          <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wider ${
-                            emp.rol === 'admin' ? 'bg-red-500/10 text-red-500 border-red-500/20' : 
-                            emp.rol === 'gerente' ? 'bg-blue-500/10 text-blue-500 border-blue-500/20' :
-                            'bg-slate-500/10 text-slate-500 border-slate-500/20'
-                          }`}>
-                            <Shield className="w-3 h-3" />
-                            {emp.rol}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1.5 font-medium whitespace-nowrap">
-                            <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                            {emp.sede?.nombre || 'Sin sede'}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 font-semibold whitespace-nowrap">{emp.nombre}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-col min-w-[150px]">
-                            <span className="text-xs text-slate-600 dark:text-slate-400 font-mono">@{emp.username}</span>
-                            <span className="text-[10px] text-slate-400 truncate max-w-[200px]">{emp.email}</span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
-                            onClick={() => handleDelete(emp.id, emp.nombre)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-
-                {/* Mobile Card View */}
-                <div className="md:hidden divide-y divide-slate-200 dark:divide-slate-800">
-                  {empleados.map((emp) => (
-                    <div key={emp.id} className="p-4 space-y-3">
-                      <div className="flex justify-between items-start">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                             <h3 className="font-bold text-slate-900 dark:text-white">{emp.nombre}</h3>
-                             <div className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[9px] font-bold uppercase ${
-                              emp.rol === 'admin' ? 'bg-red-500/10 text-red-500 border-red-500/20' : 
-                              emp.rol === 'gerente' ? 'bg-blue-500/10 text-blue-500 border-blue-500/20' :
-                              'bg-slate-500/10 text-slate-500 border-slate-500/20'
-                            }`}>
-                              {emp.rol}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                            <MapPin className="w-3 h-3" />
-                            {emp.sede?.nombre || 'Sin sede'}
-                          </div>
-                        </div>
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          className="text-slate-400 hover:text-red-500"
-                          onClick={() => handleDelete(emp.id, emp.nombre)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 pt-1">
-                        <div className="flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 p-2 rounded-md">
-                          <User className="w-3 h-3 text-slate-400" />
-                          <span className="truncate">@{emp.username}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 p-2 rounded-md">
-                          <Mail className="w-3 h-3 text-slate-400" />
-                          <span className="truncate">{emp.email}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+        <div className="lg:col-span-2 space-y-6">
+          {/* SECCIÓN 1: PERSONAL CON ACCESO AL SISTEMA */}
+          <Card className="border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+            <CardHeader className="bg-slate-50/50 dark:bg-slate-900/50 border-b border-border/50">
+              <div className="flex items-center gap-2">
+                <Shield className="w-5 h-5 text-blue-500" />
+                <div>
+                  <CardTitle className="text-lg">Personal con Acceso al Sistema</CardTitle>
+                  <CardDescription>Administradores, gerentes y empleados autorizados para usar el panel</CardDescription>
                 </div>
-
-                {empleados.length === 0 && (
-                  <div className="text-center py-12 text-slate-500">
-                    <Users className="w-12 h-12 mx-auto text-slate-200 mb-3" />
-                    <p>No hay empleados registrados.</p>
-                  </div>
-                )}
               </div>
-            )}
-          </CardContent>
-        </Card>
+            </CardHeader>
+            <CardContent className="p-0">
+              {renderTable(empleados.filter(e => ['admin', 'gerente', 'empleado'].includes(e.rol)), true)}
+            </CardContent>
+          </Card>
+
+          {/* SECCIÓN 2: PERSONAL TÉCNICO (TALLER) - SIN ACCESO */}
+          <Card className="border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+            <CardHeader className="bg-slate-50/50 dark:bg-slate-900/50 border-b border-border/50">
+              <div className="flex items-center gap-2">
+                <Wrench className="w-5 h-5 text-orange-500" />
+                <div>
+                  <CardTitle className="text-lg">Personal Técnico (Taller)</CardTitle>
+                  <CardDescription>Mecánicos y Jefes de Taller (No tienen acceso al panel administrativo)</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              {renderTable(empleados.filter(e => ['mecanico', 'jefe_taller'].includes(e.rol)), false)}
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );

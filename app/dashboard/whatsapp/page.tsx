@@ -408,9 +408,9 @@ export default function WhatsAppPage() {
   const deleteMsg = async (msg: RawMsg) => {
     if (!confirm('¿Seguro que deseas eliminar este mensaje? Pasará a la papelera de auditoría.')) return;
     
-    // 1. Log to activity_log for traceability
+    // 1. Log to logs_actividad for traceability
     try {
-      await withSedeFilter(supabase!.from('activity_log')).insert(withSedeInsert({
+      await withSedeFilter(supabase!.from('logs_actividad')).insert(withSedeInsert({
         usuario: 'Administrador',
         accion: 'delete_message',
         modulo: 'whatsapp',

@@ -21,7 +21,7 @@ import { cn } from '@/lib/utils';
 export default function CalculadoraPage() {
   // Currency State
   const [tasa, setTasa] = useState<number>(36.5);
-  const [activeRate, setActiveRate] = useState<'bcv' | 'binance'>('bcv');
+  const [activeRate, setActiveRate] = useState<'bcv' | 'binance' | 'custom'>('bcv');
   const [rates, setRates] = useState<{ bcv: number; binance: number }>({ bcv: 36.5, binance: 40.2 });
   const [loadingRates, setLoadingRates] = useState(true);
   const [usdAmount, setUsdAmount] = useState<string>('');
@@ -50,13 +50,24 @@ export default function CalculadoraPage() {
     fetchRates();
   }, []);
 
-  const handleRateSelect = (type: 'bcv' | 'binance') => {
+  const handleRateSelect = (type: 'bcv' | 'binance' | 'custom') => {
     setActiveRate(type);
-    const newTasa = rates[type];
-    setTasa(newTasa);
-    // Recalculate VES if USD exists
-    if (usdAmount) {
-      setVesAmount((Number(usdAmount) * newTasa).toFixed(2));
+    if (type !== 'custom') {
+      const newTasa = rates[type];
+      setTasa(newTasa);
+      // Recalculate VES if USD exists
+      if (usdAmount) {
+        setVesAmount((Number(usdAmount) * newTasa).toFixed(2));
+      }
+    }
+  };
+
+  const handleManualTasaChange = (val: number) => {
+    setTasa(val);
+    if (activeRate === 'custom') {
+      if (usdAmount) {
+        setVesAmount((Number(usdAmount) * val).toFixed(2));
+      }
     }
   };
 
@@ -150,13 +161,22 @@ export default function CalculadoraPage() {
                   <RefreshCw className="w-3 h-3" />
                 </Button>
               </CardTitle>
-              <div className="flex items-center gap-2 bg-muted/50 px-2 py-1 rounded-lg border border-border/50">
-                <span className="text-[10px] font-bold text-muted-foreground uppercase">Tasa BCV:</span>
+              <div className={cn(
+                "flex items-center gap-2 px-2 py-1 rounded-lg border transition-all",
+                activeRate === 'custom' ? "bg-primary/10 border-primary/40 ring-2 ring-primary/20" : "bg-muted/50 border-border/50"
+              )}>
+                <span className="text-[10px] font-bold text-muted-foreground uppercase">
+                  {activeRate === 'custom' ? 'Tasa Libre:' : 'Tasa Actual:'}
+                </span>
                 <input 
                   type="number" 
                   value={tasa} 
-                  onChange={(e) => setTasa(Number(e.target.value))}
-                  className="w-12 bg-transparent text-xs font-bold text-primary focus:outline-none"
+                  onChange={(e) => handleManualTasaChange(Number(e.target.value))}
+                  disabled={activeRate !== 'custom'}
+                  className={cn(
+                    "w-12 bg-transparent text-xs font-bold focus:outline-none",
+                    activeRate === 'custom' ? "text-primary" : "text-muted-foreground"
+                  )}
                 />
               </div>
             </div>
@@ -182,6 +202,15 @@ export default function CalculadoraPage() {
                   )}
                 >
                   BINANCE: {rates.binance.toFixed(2)}
+                </button>
+                <button
+                  onClick={() => handleRateSelect('custom')}
+                  className={cn(
+                    "flex-1 px-3 py-2 rounded-lg text-[10px] font-bold transition-all",
+                    activeRate === 'custom' ? "bg-slate-700 text-white shadow-lg" : "text-muted-foreground hover:bg-white/5"
+                  )}
+                >
+                  PERSONALIZADA
                 </button>
               </div>
 

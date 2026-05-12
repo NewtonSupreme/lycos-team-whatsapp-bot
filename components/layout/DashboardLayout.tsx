@@ -72,10 +72,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       
       if (!supabase) return;
       // 1. Get user role and assigned sede directly from usuarios table
+      // Check if user.id is a UUID or a username
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id);
+      
       const { data: userSede } = await supabase
         .from('usuarios')
         .select('sede_id, rol')
-        .eq('id', user.id)
+        .eq(isUUID ? 'id' : 'username', user.id)
         .single();
         
       if (userSede) {

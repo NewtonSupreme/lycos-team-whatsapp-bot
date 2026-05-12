@@ -2,12 +2,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Activity, Search, Download, Bot, User, Wrench, MessageSquare,
-  Calendar, Settings, Shield, Car, RefreshCw, FileText, Loader2
+  Calendar, Settings, Shield, Car, RefreshCw, FileText, Loader2, Plus
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
+import { useAppStore } from '@/lib/store';
+import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 
 interface LogEntry {
   id: string;
@@ -63,21 +65,26 @@ function formatDateTime(ts: string): string {
 }
 
 export default function ActividadPage() {
+  const { user } = useAppStore();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterModule, setFilterModule] = useState('todos');
   const [filterUser, setFilterUser] = useState('todos');
 
+  const isAdmin = user?.rol === 'admin' || user?.rol === 'administrador';
+
   const loadLogs = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
     try {
-      const { data } = await supabase
-        .from('logs_actividad')
+      // Cargamos solo la actividad de la sede seleccionada (Multi-Sede)
+      const { data, error } = await withSedeFilter(supabase.from('logs_actividad'))
         .select('*')
         .order('created_at', { ascending: false })
         .limit(500);
+      
+      if (error) console.error('Error loading logs:', error);
       setLogs(data || []);
     } catch (e) {
       console.error(e);
@@ -129,6 +136,20 @@ export default function ActividadPage() {
     a.download = `actividad_${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
   };
+
+  if (!isAdmin) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <Shield className="w-16 h-16 text-destructive/20 mb-4" />
+        <h2 className="text-xl font-bold text-destructive" style={{ fontFamily: 'Syne, sans-serif' }}>
+          Acceso Denegado
+        </h2>
+        <p className="text-muted-foreground mt-2 max-w-sm">
+          Solo los administradores tienen permiso para ver el registro de actividad del sistema.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">

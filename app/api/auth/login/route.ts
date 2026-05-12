@@ -72,6 +72,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Credenciales inválidas o cuenta no autorizada' }, { status: 401 });
     }
 
+    // Explicitly block technical staff from logging in
+    if (user.rol === 'mecanico' || user.rol === 'jefe_taller') {
+      return NextResponse.json({ error: 'Este tipo de cuenta no tiene acceso al panel administrativo.' }, { status: 403 });
+    }
+
     if (user.password_hash !== password) {
       return NextResponse.json({ error: 'Contraseña incorrecta' }, { status: 401 });
     }

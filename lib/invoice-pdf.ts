@@ -19,189 +19,209 @@ interface InvoiceData {
   tasa_cambio?: number;
 }
 
-export const generateInvoicePDF = (data: InvoiceData) => {
-  const doc = new jsPDF() as any;
+export const generateInvoicePDF = (dataList: (InvoiceData & { iva_aplicado?: boolean; tasa_bcv?: number; total_ves?: number })[]) => {
+  // Orientation: Landscape (l), Unit: mm, Format: a4 (297x210)
+  const doc = new jsPDF('l', 'mm', 'a4') as any;
 
-  // Colors
-  const slate900 = [15, 23, 42] as [number, number, number];
-  const slate600 = [71, 85, 105] as [number, number, number];
-  const slate500 = [100, 116, 139] as [number, number, number];
-  const slate400 = [148, 163, 184] as [number, number, number];
-  const slate200 = [226, 232, 240] as [number, number, number];
-  const primaryOrange = [249, 115, 22] as [number, number, number];
+  const drawInvoice = (data: any, startX: number) => {
+    if (!data) return;
 
-  // Header - Lycos Team (Clean Style)
-  doc.setTextColor(...slate900);
-  doc.setFontSize(24);
-  doc.setFont('helvetica', 'bold');
-  doc.text('LYCOS TEAM', 20, 30);
+    // Colors
+    const black = [15, 23, 42] as [number, number, number];
+    const grayDark = [71, 85, 105] as [number, number, number];
+    const grayLight = [148, 163, 184] as [number, number, number];
+    const border = [226, 232, 240] as [number, number, number];
+    const orange = [249, 115, 22] as [number, number, number];
+    const white = [255, 255, 255] as [number, number, number];
 
-  doc.setTextColor(...slate500);
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'bold');
-  doc.text('TALLER AUTOMOTRIZ PROFESIONAL', 20, 36);
+    const margin = startX + 12;
+    const rightAlign = startX + 136.5;
 
-  doc.setTextColor(...slate400);
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'normal');
-  doc.text('San Antonio de los Altos, Edo. Miranda, Venezuela', 20, 41);
+    // ── Header Section ──────────────────────────────────────────
+    doc.setTextColor(...black);
+    doc.setFontSize(26);
+    doc.setFont('helvetica', 'bolditalic');
+    doc.text('LYCOS TEAM', margin, 25);
 
-  // Invoice Info (Top Right)
-  doc.setTextColor(...slate400);
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'bold');
-  doc.text('FACTURA', 190, 25, { align: 'right' });
-  
-  doc.setTextColor(...slate900);
-  doc.setFontSize(12);
-  doc.text(`#${data.id?.slice(0, 8).toUpperCase() || 'TEMP-' + Date.now().toString().slice(-6)}`, 190, 32, { align: 'right' });
-  
-  doc.setTextColor(...slate500);
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.text(data.fecha, 190, 38, { align: 'right' });
+    doc.setTextColor(...grayLight);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.text('MECÁNICA INTEGRAL', margin, 31);
 
-  // Divider
-  doc.setDrawColor(...slate200);
-  doc.line(20, 50, 190, 50);
-
-  // Info Grid
-  // Column 1: Billing
-  doc.setTextColor(...slate400);
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'bold');
-  doc.text('FACTURADO A:', 20, 60);
-  
-  doc.setTextColor(...slate900);
-  doc.setFontSize(10);
-  doc.text(data.cliente || 'Consumidor Final', 20, 66);
-  
-  doc.setTextColor(...slate500);
-  doc.setFontSize(9);
-  doc.text('Control de Cierre de Caja', 20, 71);
-  if (data.vehiculo) {
-    doc.text(`Vehículo: ${data.vehiculo}`, 20, 76);
-  }
-
-  // Column 2: Summary (Right Aligned)
-  doc.setTextColor(...slate400);
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'bold');
-  doc.text('RESUMEN:', 190, 60, { align: 'right' });
-  
-  doc.setTextColor(...slate600);
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  const itemsCount = data.items.length;
-  doc.text(`${itemsCount} Servicios realizados`, 190, 66, { align: 'right' });
-
-  // Table
-  const tableRows = data.items.map((item, i) => [
-    i + 1,
-    item.descripcion,
-    item.cantidad,
-    `$${item.precio_unitario.toFixed(2)}`,
-    `$${item.total.toFixed(2)}`
-  ]);
-
-  autoTable(doc, {
-    startY: 85,
-    head: [['#', 'Descripción', 'Cant.', 'Precio Unit.', 'Total']],
-    body: tableRows,
-    theme: 'plain',
-    headStyles: { 
-      fillColor: [255, 255, 255], 
-      textColor: slate900, 
-      fontSize: 9, 
-      fontStyle: 'bold',
-      lineColor: slate900,
-      lineWidth: { bottom: 1 }
-    },
-    styles: { 
-      fontSize: 8, 
-      textColor: slate600,
-      cellPadding: 3
-    },
-    columnStyles: {
-      0: { cellWidth: 10, halign: 'center' },
-      1: { cellWidth: 90 },
-      2: { halign: 'center' },
-      3: { halign: 'right' },
-      4: { halign: 'right', fontStyle: 'bold', textColor: slate900 }
-    },
-    margin: { left: 20, right: 20 }
-  });
-
-  // Totals
-  const finalY = (doc as any).lastAutoTable.finalY || 120;
-  
-  // Total line divider
-  doc.setDrawColor(...slate200);
-  doc.line(140, finalY + 5, 190, finalY + 5);
-
-  doc.setTextColor(...slate500);
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'normal');
-  doc.text('SUBTOTAL', 140, finalY + 12);
-  doc.text(`$${data.total.toFixed(2)}`, 190, finalY + 12, { align: 'right' });
-
-  let currentY = finalY + 20;
-
-  if ((data.pago_usd || 0) > 0) {
+    // Nota de Entrega Title (Top Right)
+    doc.setTextColor(...grayLight);
     doc.setFontSize(7);
-    doc.setTextColor(...slate400);
-    doc.text('PAGO USD ($)', 140, currentY);
-    doc.text(`$${Number(data.pago_usd).toFixed(2)}`, 190, currentY, { align: 'right' });
-    currentY += 5;
-  }
+    doc.setFont('helvetica', 'bold');
+    doc.text('NOTA DE ENTREGA #', rightAlign, 20, { align: 'right' });
+    
+    doc.setTextColor(...black);
+    doc.setFontSize(14);
+    doc.text(`${data.id?.slice(0, 8).toUpperCase() || 'TEMP-' + Date.now().toString().slice(-6)}`, rightAlign, 27, { align: 'right' });
+    
+    doc.setTextColor(...grayDark);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text(data.fecha, rightAlign, 33, { align: 'right' });
 
-  if ((data.pago_ves || 0) > 0) {
+    // Divider
+    doc.setDrawColor(...border);
+    doc.setLineWidth(0.4);
+    doc.line(margin, 38, rightAlign, 38);
+
+    // ── Client Info ─────────────────────────────────────────────
+    doc.setTextColor(...grayLight);
     doc.setFontSize(7);
-    doc.setTextColor(...slate400);
-    doc.text('PAGO VES (Bs.)', 140, currentY);
-    doc.text(`Bs. ${Number(data.pago_ves).toLocaleString('es-VE', { minimumFractionDigits: 2 })}`, 190, currentY, { align: 'right' });
-    currentY += 5;
-    if (data.tasa_cambio) {
-        doc.setFontSize(6);
-        doc.text(`Tasa: ${data.tasa_cambio} Bs/$`, 190, currentY, { align: 'right' });
-        currentY += 4;
+    doc.setFont('helvetica', 'bold');
+    doc.text('CLIENTE / TITULAR:', margin, 48);
+    
+    doc.setTextColor(...black);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(data.cliente?.toUpperCase() || 'CONSUMIDOR FINAL', margin, 54);
+    
+    doc.setTextColor(...grayLight);
+    doc.setFontSize(7);
+    doc.text('VEHÍCULO / MODELO:', rightAlign, 48, { align: 'right' });
+    
+    doc.setTextColor(...black);
+    doc.setFontSize(11);
+    doc.text(data.vehiculo?.toUpperCase() || '---', rightAlign, 54, { align: 'right' });
+
+    // ── Table ───────────────────────────────────────────────────
+    const tableRows = data.items.map((item: any) => [
+      item.descripcion.toUpperCase(),
+      item.cantidad,
+      `$${item.total.toFixed(2)}`
+    ]);
+
+    autoTable(doc, {
+      startY: 62,
+      head: [['DESCRIPCIÓN DEL SERVICIO', 'CANT', 'TOTAL USD']],
+      body: tableRows,
+      theme: 'plain',
+      headStyles: { 
+        fillColor: [255, 255, 255], 
+        textColor: black, 
+        fontSize: 8, 
+        fontStyle: 'bold',
+        lineColor: black,
+        lineWidth: { bottom: 1.2 }
+      },
+      styles: { 
+        fontSize: 8, 
+        textColor: [20, 20, 20],
+        cellPadding: 3,
+        font: 'helvetica'
+      },
+      columnStyles: {
+        0: { cellWidth: 'auto' },
+        1: { cellWidth: 15, halign: 'center' },
+        2: { cellWidth: 25, halign: 'right', fontStyle: 'bold', textColor: black }
+      },
+      margin: { left: margin, right: (startX === 0 ? 160.5 : 12) }
+    });
+
+    // ── Totals Section ──────────────────────────────────────────
+    const finalY = (doc as any).lastAutoTable.finalY || 100;
+    
+    // Total Box
+    const boxWidth = 75;
+    const boxX = rightAlign - boxWidth;
+    const boxY = finalY + 12;
+    const boxHeight = 25;
+
+    // Subtotal and IVA
+    doc.setTextColor(...grayLight);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.text('SUBTOTAL GENERAL', boxX, finalY + 5);
+    doc.setTextColor(...grayDark);
+    doc.text(`$${(data.total / (data.iva_aplicado ? 1.16 : 1)).toFixed(2)}`, rightAlign, finalY + 5, { align: 'right' });
+
+    if (data.iva_aplicado) {
+      doc.setTextColor(...grayLight);
+      doc.text('IVA (16%)', boxX, finalY + 10);
+      doc.setTextColor(...orange);
+      doc.text(`+$${(data.total - (data.total / 1.16)).toFixed(2)}`, rightAlign, finalY + 10, { align: 'right' });
     }
-  }
 
-  doc.setTextColor(...slate900);
-  doc.setFontSize(11);
-  doc.setFont('helvetica', 'bold');
-  doc.text('TOTAL', 140, currentY + 4);
-  
-  doc.setTextColor(...primaryOrange);
-  doc.text(`$${data.total.toFixed(2)}`, 190, currentY + 4, { align: 'right' });
+    // BLACK BOX
+    doc.setFillColor(...black);
+    doc.roundedRect(boxX, boxY, boxWidth, boxHeight, 2, 2, 'F');
 
-  // Notes
-  if (data.notas) {
-    const cleanNotes = data.notas.replace(/\[FACTURA_IA_START\][\s\S]*?\[FACTURA_IA_END\]/g, '').trim();
-    if (cleanNotes) {
-      doc.setTextColor(...slate400);
-      doc.setFontSize(8);
+    // Total USD
+    doc.setTextColor(180, 180, 180);
+    doc.setFontSize(8);
+    doc.text('MONTO TOTAL USD', boxX + 4, boxY + 8);
+    
+    doc.setTextColor(...orange);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bolditalic');
+    doc.text(`$${data.total.toFixed(2)}`, rightAlign - 4, boxY + 9, { align: 'right' });
+
+    // Total VES
+    doc.setDrawColor(255, 255, 255, 0.15);
+    doc.line(boxX + 4, boxY + 13, rightAlign - 4, boxY + 13);
+
+    doc.setTextColor(180, 180, 180);
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    doc.text('TOTAL EN BOLÍVARES (BS)', boxX + 4, boxY + 20);
+    
+    doc.setTextColor(...white);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    const vesTotal = data.total_ves || (data.total * (data.tasa_bcv || 36.5));
+    doc.text(`${vesTotal.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`, rightAlign - 4, boxY + 20, { align: 'right' });
+
+    // ── Bottom Info ─────────────────────────────────────────────
+    let infoY = boxY + boxHeight + 10;
+    
+    if (data.tasa_bcv) {
+      doc.setTextColor(...grayLight);
+      doc.setFontSize(7);
       doc.setFont('helvetica', 'bold');
-      doc.text('NOTAS:', 20, finalY + 35);
-      
-      doc.setTextColor(...slate500);
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'italic');
-      const splitNotes = doc.splitTextToSize(cleanNotes, 170);
-      doc.text(splitNotes, 20, finalY + 41);
+      doc.text(`TASA DE CAMBIO BCV: ${data.tasa_bcv} Bs/$`, margin, infoY);
+      infoY += 5;
     }
-  }
 
-  // Footer
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(...slate400);
-  doc.text('Generado por Lycos Team Sistema CRM - 2026', 105, 285, { align: 'center' });
-  doc.text('San Antonio de los Altos, Edo. Miranda, Venezuela', 105, 290, { align: 'center' });
+    // Notes if exists
+    if (data.notas) {
+      doc.setTextColor(...grayLight);
+      doc.setFontSize(7);
+      doc.text('NOTAS:', margin, infoY);
+      doc.setTextColor(...grayDark);
+      doc.setFontSize(7);
+      const splitNotes = doc.splitTextToSize(data.notas.toUpperCase(), 100);
+      doc.text(splitNotes, margin + 12, infoY);
+    }
+
+    doc.setTextColor(...grayLight);
+    doc.setFontSize(6);
+    doc.text('San Antonio de los Altos, Edo. Miranda - Lycos Team CRM 2026', startX + 74.25, 202, { align: 'center' });
+  };
+
+  // If we have only one invoice, draw it twice
+  const data1 = dataList[0];
+  const data2 = dataList.length > 1 ? dataList[1] : dataList[0];
+
+  drawInvoice(data1, 0);
+
+  // Draw Vertical Cutting Line
+  doc.setDrawColor(200, 200, 200);
+  doc.setLineWidth(0.1);
+  doc.setLineDashPattern([3, 3], 0);
+  doc.line(148.5, 10, 148.5, 200);
+  doc.setLineDashPattern([], 0);
+
+  drawInvoice(data2, 148.5);
 
   // Save
-  doc.save(`Factura_Lycos_${data.fecha}_${data.id?.slice(0, 4) || 'N'}.pdf`);
+  const fileName = dataList.length > 1 
+    ? `Dual_Lycos_${dataList[0].id?.slice(0,4)}_${dataList[1].id?.slice(0,4)}.pdf`
+    : `Nota_Lycos_${dataList[0].cliente?.replace(/\s/g, '_') || 'Cliente'}.pdf`;
+    
+  doc.save(fileName);
 };
 
 export const generateEgresoPDF = (data: InvoiceData & { categoria?: string }) => {
@@ -213,9 +233,9 @@ export const generateEgresoPDF = (data: InvoiceData & { categoria?: string }) =>
   const slate500 = [100, 116, 139] as [number, number, number];
   const slate400 = [148, 163, 184] as [number, number, number];
   const slate200 = [226, 232, 240] as [number, number, number];
-  const accentRed = [225, 29, 72] as [number, number, number]; // Rose-600
+  const accentRed = [225, 29, 72] as [number, number, number]; 
 
-  // Header - Lycos Team (Clean Style)
+  // Header 
   doc.setTextColor(...slate900);
   doc.setFontSize(24);
   doc.setFont('helvetica', 'bold');
@@ -226,43 +246,9 @@ export const generateEgresoPDF = (data: InvoiceData & { categoria?: string }) =>
   doc.setFont('helvetica', 'bold');
   doc.text('COMPROBANTE DE EGRESO / PAGO', 20, 36);
 
-  doc.setTextColor(...slate400);
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'normal');
-  doc.text('San Antonio de los Altos, Edo. Miranda, Venezuela', 20, 41);
-
-  // Voucher Info (Top Right)
-  doc.setTextColor(...slate400);
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'bold');
-  doc.text('EGRESO', 190, 25, { align: 'right' });
-  
-  doc.setTextColor(...slate900);
-  doc.setFontSize(12);
-  doc.text(`#${data.id?.slice(0, 8).toUpperCase() || 'EGR-' + Date.now().toString().slice(-6)}`, 190, 32, { align: 'right' });
-  
-  doc.setTextColor(...slate500);
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.text(data.fecha, 190, 38, { align: 'right' });
-
   // Divider
   doc.setDrawColor(...slate200);
   doc.line(20, 50, 190, 50);
-
-  // Info Grid
-  doc.setTextColor(...slate400);
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'bold');
-  doc.text('PAGADO A:', 20, 60);
-  
-  doc.setTextColor(...slate900);
-  doc.setFontSize(10);
-  doc.text(data.cliente || 'Proveedor / Otros', 20, 66);
-  
-  doc.setTextColor(...slate500);
-  doc.setFontSize(9);
-  doc.text(`Categoría: ${data.categoria || 'General'}`, 20, 71);
 
   // Table
   const tableRows = data.items.map((item, i) => [
@@ -286,27 +272,12 @@ export const generateEgresoPDF = (data: InvoiceData & { categoria?: string }) =>
       lineColor: slate900,
       lineWidth: { bottom: 1 }
     },
-    styles: { 
-      fontSize: 8, 
-      textColor: slate600,
-      cellPadding: 3
-    },
-    columnStyles: {
-      0: { cellWidth: 10, halign: 'center' },
-      1: { cellWidth: 90 },
-      2: { halign: 'center' },
-      3: { halign: 'right' },
-      4: { halign: 'right', fontStyle: 'bold', textColor: slate900 }
-    },
     margin: { left: 20, right: 20 }
   });
 
   // Totals
   const finalY = (doc as any).lastAutoTable.finalY || 120;
   
-  doc.setDrawColor(...slate200);
-  doc.line(140, finalY + 5, 190, finalY + 5);
-
   doc.setTextColor(...slate900);
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
@@ -314,13 +285,6 @@ export const generateEgresoPDF = (data: InvoiceData & { categoria?: string }) =>
   
   doc.setTextColor(...accentRed);
   doc.text(`$${data.total.toFixed(2)}`, 190, finalY + 15, { align: 'right' });
-
-  // Footer
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(...slate400);
-  doc.text('Este documento es un comprobante de egreso administrativo.', 105, 280, { align: 'center' });
-  doc.text('Lycos Team Sistema CRM - 2026', 105, 285, { align: 'center' });
 
   // Save
   doc.save(`Egreso_Lycos_${data.fecha}_${data.id?.slice(0, 4) || 'E'}.pdf`);

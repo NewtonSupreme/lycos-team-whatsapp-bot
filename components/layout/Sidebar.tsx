@@ -67,12 +67,20 @@ export default function Sidebar() {
     };
   }, []);
 
-  const navItems = navItemsConfig.map(item => {
-    if (item.label === 'WhatsApp') {
-      return { ...item, badge: unreadWa > 0 ? unreadWa.toString() : null };
-    }
-    return item;
-  });
+  const isAdmin = user?.rol === 'admin';
+
+  const navItems = navItemsConfig
+    .filter(item => {
+      if (item.label === 'Actividad' && !isAdmin) return false;
+      return true;
+    })
+    .map(item => {
+      if (item.label === 'WhatsApp') {
+        return { ...item, badge: unreadWa > 0 ? unreadWa.toString() : null };
+      }
+      return item;
+    });
+
 
   return (
     <>
