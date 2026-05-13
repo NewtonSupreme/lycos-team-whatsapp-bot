@@ -269,7 +269,10 @@ ES MUY IMPORTANTE QUE SEAS EXTREMADAMENTE BREVE Y DIRECTO (MAX 3 LÍNEAS).
 - RECORDATORIOS DE CITA: Menciónalos SOLO si el cliente pregunta por su cita o están tratando de agendar, pero no en cada mensaje.
 
 HORARIO: Lunes a Sábado 8:00 AM – 5:00 PM. DOMINGOS: CERRADO sin excepciones.
-UBICACION: San Antonio de los Altos, Altos Mirandinos, Miranda.
+UBICACION:
+- San Antonio de los Altos: San Antonio de los Altos, Altos Mirandinos, Miranda. (En San Antonio de los Altos, distribuidor de las minas al frente del Frescos Market nos encontramos).
+- Carrizal (Principal): Servicios Jadar Calle Raul Leoni, Municipio Carrizal cerca de eso.
+- Caracas (El Cementerio): E/S PDV Nuevo Prado Av. Roosevelt, Caracas cerca de esa bomba.
 
 SERVICIOS Y PRECIOS:
 
@@ -1645,6 +1648,66 @@ async function sendMsg(to: string, body: string, preview: boolean = false, reply
   }
 }
 
+// ─── Send WhatsApp Interactive Buttons ────────────────────────────────────────
+async function sendButtonMsg(to: string, bodyText: string, buttons: { id: string, title: string }[], footerText?: string, replyToId?: string | null) {
+  if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
+  try {
+    const payload: any = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: to.replace(/[^0-9]/g, ''),
+      type: 'interactive',
+      interactive: {
+        type: 'button',
+        body: { text: bodyText },
+        action: {
+          buttons: buttons.slice(0, 3).map(b => ({
+            type: 'reply',
+            reply: { id: b.id, title: b.title.substring(0, 20) } // WhatsApp limits title to 20 chars
+          }))
+        }
+      }
+    };
+    if (footerText) payload.interactive.footer = { text: footerText };
+    if (replyToId) payload.context = { message_id: replyToId };
+
+    const resp = await fetch(`https://graph.facebook.com/v21.0/${WHATSAPP_PHONE_ID}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!resp.ok) {
+      console.error('❌ Error enviando botones WhatsApp:', await resp.text());
+      return;
+    }
+
+    const data = await resp.json();
+    const wa_id = data.messages?.[0]?.id;
+    console.log(`📤 Botones enviados a ${to}. ID: ${wa_id}`);
+
+    const db = getDb();
+    if (db) {
+      try {
+        await db.from('mensajes_whatsapp').insert({
+          from_number: 'system',
+          to_number: to.replace(/[^0-9]/g, ''),
+          body: `[Botones: ${bodyText}]`,
+          tipo: 'saliente',
+          wa_message_id: wa_id,
+          es_ia: true,
+          sede_id: DEFAULT_SEDE_ID
+        });
+      } catch (e) { console.error('Error guardando botones en DB:', e); }
+    }
+  } catch (e) {
+    console.error('❌ Error en sendButtonMsg:', e);
+  }
+}
+
 // ─── Send WhatsApp Image ───────────────────────────────────────────────────────
 async function sendImageMsg(to: string, imageSlug: string, caption?: string, replyToId?: string | null) {
   if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
@@ -1795,7 +1858,12 @@ async function sendContactCard(to: string, phone: string, displayName: string): 
 
 // ─── Intent Detection ──────────────────────────────────────────────────────────
 function isLocationRequest(lower: string): boolean {
-  const locKeywords = ['ubicacion', 'ubicación', 'donde est', 'dónde est', 'donde quedan', 'dónde quedan', 'ubica', 'ubican', 'dirección', 'direccion', 'llegar', 'ubicado', 'gps', 'mapa', 'como llegar', 'cómo llegar'];
+  const locKeywords = [
+    'ubicacion', 'ubicación', 'donde est', 'dónde est', 'donde quedan', 'dónde quedan', 
+    'ubica', 'ubican', 'dirección', 'direccion', 'llegar', 'ubicado', 'gps', 'mapa', 
+    'como llegar', 'cómo llegar', 'y la de san antonio', 'y la de carrizal', 'y la de caracas',
+    'y la del cementerio', 'donde queda la de', 'donde es la de'
+  ];
   return locKeywords.some(k => lower.includes(k));
 }
 function isCertRequest(lower: string): boolean {
@@ -1859,18 +1927,54 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       }
 
       // 📍 Location Flow (Multi-sede)
-      const isLocationChoice = ctx.memoria?.awaiting_location_choice === true;
+      let isLocationChoice = ctx.memoria?.awaiting_location_choice === true;
       const bodyClean = lowerBody.trim();
 
-      if (isLocationRequest(lowerBody) && !isLocationChoice) {
-        console.log(`📍 [${from}] Preguntando por sede para ubicación...`);
-        await sendMsg(from, '¡Con gusto! 📍 Contamos con 3 sedes disponibles. ¿Cuál te queda más cerca?\n\n1️⃣ *San Antonio de los Altos*\n2️⃣ *Carrizal* (Principal)\n3️⃣ *Caracas* (El Cementerio)\n\nResponde con el nombre de la ciudad o el número para enviarte el GPS exacto. 😊');
+      if (isLocationRequest(lowerBody)) {
+        // Si el mensaje ya especifica la sede, saltamos directamente a enviarla
+        const bodyClean = lowerBody.trim();
+        let directChoice = false;
         
-        ctx.memoria.awaiting_location_choice = true;
-        if (db) {
-          await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+        if (bodyClean.includes('san antonio') || (isLocationChoice && bodyClean === '1')) {
+          // Ya tenemos la lógica abajo en isLocationChoice, pero para manejar "y la de San Antonio?" 
+          // cuando NO estamos en modo choice, activamos el modo choice y forzamos la entrada
+          ctx.memoria.awaiting_location_choice = true;
+          directChoice = true;
+        } else if (bodyClean.includes('carrizal') || (isLocationChoice && bodyClean === '2')) {
+          ctx.memoria.awaiting_location_choice = true;
+          directChoice = true;
+        } else if (bodyClean.includes('caracas') || bodyClean.includes('cementerio') || (isLocationChoice && bodyClean === '3')) {
+          ctx.memoria.awaiting_location_choice = true;
+          directChoice = true;
         }
-        return; 
+
+        if (!isLocationChoice && !directChoice) {
+          console.log(`📍 [${from}] Preguntando por sede para ubicación con botones...`);
+          
+          const buttons = [
+            { id: 'sede_1', title: 'San Antonio' },
+            { id: 'sede_2', title: 'Carrizal' },
+            { id: 'sede_3', title: 'Caracas' }
+          ];
+
+          await sendButtonMsg(
+            from, 
+            '¡Con gusto! 📍 Contamos con 3 sedes disponibles. ¿Cuál te queda más cerca?',
+            buttons,
+            'Selecciona una opción abajo'
+          );
+          
+          ctx.memoria.awaiting_location_choice = true;
+          if (db) {
+            await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+          }
+          return; 
+        }
+        
+        // Si es directChoice y no estábamos en modo choice, continuamos al bloque isLocationChoice
+        if (directChoice) {
+          isLocationChoice = true; // Forzamos localmente para este ciclo
+        }
       }
 
       if (isLocationChoice) {
@@ -1879,17 +1983,17 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         const selectedSedePhone = '584123343519'; // Asumiendo que es el mismo para todos por ahora
 
         if (bodyClean.includes('san antonio') || bodyClean === '1') {
-          await sendMsg(from, '📍 *Sede San Antonio de los Altos:* https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
+          await sendMsg(from, '📍 *Sede San Antonio de los Altos:*\n\nEn San Antonio de los Altos, distribuidor de las minas al frente del Frescos Market nos encontramos. 😊\n\n*Mapa:* https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
           await delay(800);
           await sendMsg(from, '🎥 *Video de cómo llegar:* https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
           selectedSedeName = 'Sede San Antonio';
           locationSent = true;
         } else if (bodyClean.includes('carrizal') || bodyClean === '2') {
-          await sendMsg(from, '📍 *Sede Carrizal (Principal):* https://maps.app.goo.gl/cxLGkqWtsf5qogMB6', true);
+          await sendMsg(from, '📍 *Sede Carrizal (Principal):*\n\nServicios Jadar Calle Raul Leoni, Municipio Carrizal cerca de eso. 😊\n\n*Mapa:* https://maps.app.goo.gl/cxLGkqWtsf5qogMB6', true);
           selectedSedeName = 'Sede Carrizal';
           locationSent = true;
         } else if (bodyClean.includes('caracas') || bodyClean.includes('cementerio') || bodyClean === '3') {
-          await sendMsg(from, '📍 *Sede Caracas (El Cementerio):* https://maps.app.goo.gl/aeHGdzUumhpBep719', true);
+          await sendMsg(from, '📍 *Sede Caracas (El Cementerio):*\n\nE/S PDV Nuevo Prado Av. Roosevelt, Caracas cerca de esa bomba. 😊\n\n*Mapa:* https://maps.app.goo.gl/aeHGdzUumhpBep719', true);
           selectedSedeName = 'Sede Caracas';
           locationSent = true;
         }
@@ -1913,7 +2017,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           // El cliente respondió algo que no coincide con ninguna sede.
           // Reseteamos el flag para no quedar atrapados y re-preguntamos.
           console.log(`📍 [${from}] Respuesta de sede no reconocida: "${bodyClean}". Reseteando flag y re-preguntando.`);
-          delete ctx.memoria.awaiting_location_choice;
+          // Mantenemos el flag para que el cliente pueda intentar de nuevo sin perder el contexto
+          // delete ctx.memoria.awaiting_location_choice;
           if (db) {
             await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
           }
