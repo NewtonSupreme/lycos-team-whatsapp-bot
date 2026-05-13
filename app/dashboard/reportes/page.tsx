@@ -1119,7 +1119,7 @@ function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void
                   <span>${venta.total_ingresos.toFixed(2)}</span>
                 </div>
                 
-                {(venta.con_iva || (venta.metodos_pago && Object.values(venta.metodos_pago).some(v => v > 0))) && (
+                {(venta.con_iva || (venta.metodos_pago && Object.values(venta.metodos_pago).some(v => (v ?? 0) > 0))) && (
                   <div className="pt-2 mt-2 border-t border-slate-100 space-y-1">
                     <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Métodos de Pago:</p>
                     {venta.metodos_pago?.pago_movil ? (
