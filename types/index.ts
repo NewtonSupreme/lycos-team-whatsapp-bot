@@ -9,6 +9,7 @@ export interface User {
   avatar_url?: string;
   telefono?: string;
   created_at: string;
+  sede_id?: string;
 }
 
 export interface Cliente {

@@ -266,16 +266,16 @@ export default function Header() {
 
       <div className="flex-1" />
 
-      {/* Status pill */}
-      <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-500/10 border border-green-500/20">
+      {/* Status pill - Solo en pantallas medianas o si hay espacio */}
+      <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-500/10 border border-green-500/20">
         <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
         <span className="text-[10px] text-green-400 font-medium">Bot activo</span>
       </div>
 
-      {/* Sede Selector */}
+      {/* Sede Selector - Ahora visible en móvil */}
       {canViewAll() && availableSedes.length > 0 && (
-        <div className="hidden md:flex items-center gap-2 mr-2">
-          <Building2 className="w-4 h-4 text-muted-foreground" />
+        <div className="flex items-center gap-1 sm:gap-2 mr-1 sm:mr-2">
+          <Building2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-muted-foreground shrink-0" />
           <Select
             value={currentSede?.id}
             onValueChange={(id) => {
@@ -283,8 +283,8 @@ export default function Header() {
               if (s) setCurrentSede(s);
             }}
           >
-            <SelectTrigger className="h-8 w-[200px] text-xs">
-              <SelectValue placeholder="Seleccionar Sede" />
+            <SelectTrigger className="h-8 w-[130px] sm:w-[200px] text-[10px] sm:text-xs">
+              <SelectValue placeholder="Sede" />
             </SelectTrigger>
             <SelectContent>
               {availableSedes.map(sede => (

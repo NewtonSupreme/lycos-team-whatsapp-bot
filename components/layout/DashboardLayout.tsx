@@ -39,6 +39,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           nombre: u.nombre, 
           rol: u.rol, 
           avatar_url: u.avatar_url,
+          sede_id: u.sede_id,
           created_at: '' 
         });
         return;
@@ -57,6 +58,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             nombre: user.nombre, 
             rol: user.rol, 
             avatar_url: user.avatar_url,
+            sede_id: user.sede_id,
             created_at: '' 
           });
           sessionStorage.setItem('lycos_user', JSON.stringify(user));
@@ -68,51 +70,35 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Load Sede Data
   useEffect(() => {
     async function loadSedes() {
-      if (!user?.id) return;
-      
-      if (!supabase) return;
-      // 1. Get user role and assigned sede directly from usuarios table
-      // Check if user.id is a UUID or a username
-      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id);
-      
-      const { data: userSede } = await supabase
-        .from('usuarios')
-        .select('sede_id, rol')
-        .eq(isUUID ? 'id' : 'username', user.id)
-        .single();
-        
-      if (userSede) {
-        setUserRole(userSede.rol as any);
-      } else {
-        // Fallback or Admin default
-        setUserRole(user.rol === 'admin' ? 'admin' : 'empleado');
-      }
+      if (!user?.id || !supabase) return;
 
-      if (!supabase) return;
-      // 2. Get all sedes
-      const { data: sedesData } = await supabase.from('sedes').select('*');
+      // 1. Set role immediately from user object
+      setUserRole(user.rol as any);
+
+      // 2. Get all available sedes
+      const { data: sedesData } = await supabase.from('sedes').select('*').order('nombre', { ascending: true });
       if (sedesData) {
         setAvailableSedes(sedesData);
         
-        // Auto-select sede based on user assignment (force once per user session)
-        const miSede = userSede?.sede_id ? sedesData.find(s => s.id === userSede.sede_id) : null;
-        const sessionKey = `sede_synced_${user.id}`;
+        // Auto-select logic: Prioritize user's assigned sede on first load
+        const sessionKey = `sede_synced_${user.id}_${user.sede_id || 'default'}`;
         const isSynced = sessionStorage.getItem(sessionKey);
+        const assignedSede = user.sede_id ? sedesData.find(s => s.id === user.sede_id) : null;
 
-        if (!isSynced && miSede) {
-          // If it's a new session for this user, FORCE their assigned sede
-          setCurrentSede(miSede);
+        if (!isSynced && assignedSede) {
+          // FORCE assigned sede on first entry of the session for this user
+          setCurrentSede(assignedSede);
           sessionStorage.setItem(sessionKey, 'true');
-          console.log(`📍 Sede auto-seleccionada por usuario: ${miSede.nombre}`);
+          console.log(`📍 Sede detectada automáticamente: ${assignedSede.nombre}`);
         } else if (!currentSede) {
-          // Fallback only if nothing is selected and no assignment found
-          const principal = miSede || sedesData.find(s => s.es_principal) || sedesData[0];
+          // Fallback if no selection exists
+          const principal = assignedSede || sedesData.find(s => s.es_principal) || sedesData[0];
           if (principal) setCurrentSede(principal);
         }
       }
     }
     loadSedes();
-  }, [user?.id]);
+  }, [user?.id, user?.sede_id, setAvailableSedes, setUserRole, setCurrentSede]);
 
   return (
     <div suppressHydrationWarning className="min-h-screen bg-background dot-pattern overflow-x-hidden">

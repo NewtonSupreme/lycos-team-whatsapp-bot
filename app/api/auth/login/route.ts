@@ -56,14 +56,14 @@ export async function POST(request: NextRequest) {
         sameSite: 'lax', maxAge: 60 * 60 * 24 * 7, path: '/',
       });
       // Get user ID from DB
-      const { data: dbUser } = await db.from('usuarios').select('id').eq('username', username).single();
-      return NextResponse.json({ success: true, id: dbUser?.id, nombre: username, username, rol: username === 'administrador' ? 'admin' : 'usuario' });
+      const { data: dbUser } = await db.from('usuarios').select('id, sede_id').eq('username', username).single();
+      return NextResponse.json({ success: true, id: dbUser?.id, nombre: username, username, rol: username === 'administrador' ? 'admin' : 'usuario', sede_id: dbUser?.sede_id });
     }
 
     // Look up user in DB
     const { data: user, error } = await db
       .from('usuarios')
-      .select('id, username, nombre, email, password_hash, rol, activo')
+      .select('id, username, nombre, email, password_hash, rol, activo, sede_id')
       .eq('username', username)
       .eq('activo', true)
       .single();
@@ -114,6 +114,7 @@ export async function POST(request: NextRequest) {
       nombre: user.nombre,
       username: user.username,
       rol: user.rol,
+      sede_id: user.sede_id
     });
   } catch {
     return NextResponse.json({ error: 'Error en el servidor' }, { status: 500 });
