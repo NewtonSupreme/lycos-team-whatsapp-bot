@@ -184,6 +184,7 @@ Sigue ESTRICTAMENTE estas reglas para dar precios al cliente:
      b) "Precio: $[MontoConvertido] a tasa BCV"
    - CONVERSIÓN: El MontoConvertido se calcula como: MontoOriginal * ${multiplier.toFixed(4)}.
     - **TABLA DE PRECIOS BCV FIJOS (OBLIGATORIO)**: Para los siguientes casos populares, **NO uses el cálculo matemático**, usa estos montos fijos:
+        * Si el precio Promo es **$40**, el precio BCV siempre es **$55**.
         * Si el precio Promo es **$60**, el precio BCV siempre es **$90**.
         * Si el precio Promo es **$90**, el precio BCV siempre es **$120**.
     - REDONDEO (Para otros montos): Redondea siempre el resultado final HACIA ARRIBA al múltiplo de 5 más cercano ($42 -> $45, $46 -> $50, etc.). NUNCA redondees hacia abajo.
@@ -193,7 +194,8 @@ Sigue ESTRICTAMENTE estas reglas para dar precios al cliente:
 
 3) PAGOS CON CASHEA (CRÍTICO):
    - BASE: Usa el "Precio a tasa BCV" (el precio estándar redondeado). NUNCA uses la "Promoción en divisas" para Cashea.
-   - IVA: Al precio base Estándar, súmale el 16% de IVA para obtener el Total Cashea.
+   - IVA: Al precio base BCV, súmale el 16% de IVA para obtener el Total Cashea.
+   - EJEMPLO OBLIGATORIO: Si el silenciador cuesta $60 (Promo), su precio BCV base es $90. El total Cashea con IVA es $104.4 a tasa BCV.
    - MONEDA: Presenta TODO el presupuesto (Total, Inicial y Cuotas) en dólares usando estrictamente el formato: **"$ [Monto] a tasa BCV"**. NUNCA digas "Bolívares" ni "Bs.".
    - REGLA DE DESGLOSE: Si el cliente indica su nivel de Cashea, calcula y muestra:
      a) Inicial: [Monto] a tasa BCV (Se paga en la caja del taller).
@@ -342,7 +344,7 @@ OTROS: Grúa (consultar asesor), Inventario de repuestos.
 
 CASHEA:
 - REGLA DE ORO CASHEA: Usa SIEMPRE el "Precio a tasa BCV" (el monto más alto) como base. La "Promoción en divisas" es solo para pagos al contado.
-- IVA: El IVA (16%) se suma al PRECIO TOTAL de la venta, no solo a la inicial.
+- IVA: El IVA (16%) se suma al PRECIO BCV TOTAL de la venta. Ejemplos: $40 Promo -> $55 BCV + IVA = $63.8 | $60 Promo -> $90 BCV + IVA = $104.4.
 - NIVELES: Pide el nivel del cliente SIEMPRE antes de dar el desglose final.
   - Nivel 1: 60% inicial.
   - Nivel 2: 50% inicial.
@@ -1073,7 +1075,7 @@ async function getAIResponse(
 
 FECHA/HORA VENEZUELA: ${vzlaDateTime}
 HOY ES: ${dayName} ${vzlaDateStr}
-
+${ratesCtx}
 SALUDO_APROPIADO: ${greeting} — USA ESTE SALUDO EXACTO al inicio cuando sea sesión nueva. NO uses otro.
 SESION: ${ctx.isNewSession ? `NUEVA — saluda con "${greeting}" + mensaje de bienvenida` : 'CONTINUA — ve al tema, sin repetir saludo ni bienvenida'}
 ${memoriaStr}
