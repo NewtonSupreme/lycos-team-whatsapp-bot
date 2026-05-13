@@ -43,9 +43,14 @@ interface VentaDia {
     efectivo_usd?: number;
     efectivo_ves?: number;
     cashea?: number;
+    cashea_usd?: number;
+    cashea_ves?: number;
     transferencia?: number;
     punto_de_venta?: number;
+    punto_de_venta_usd?: number;
+    punto_de_venta_ves?: number;
     otro?: number;
+    [key: string]: number | undefined;
   };
 }
 
@@ -209,9 +214,46 @@ function ManualModal({ onClose, onSave, initial }: {
     });
   };
 
+  // Helper to get total paid in USD
+  const getPaidTotalUSD = () => {
+    const mp = form.metodos_pago as any;
+    const tasa = form.tasa_cambio || 1;
+    
+    let total = 0;
+    // USD fields
+    total += Number(mp.efectivo_usd || 0);
+    total += Number(mp.zelle || 0);
+    total += Number(mp.otro || 0);
+    total += Number(mp.punto_de_venta_usd || 0);
+    total += Number(mp.cashea_usd || 0);
+    
+    // Compatibility check for old data
+    if (!mp.punto_de_venta_usd && !mp.punto_de_venta_ves) total += Number(mp.punto_de_venta || 0);
+    if (!mp.cashea_usd && !mp.cashea_ves) total += Number(mp.cashea || 0);
+
+    // VES fields (converted)
+    total += Number(mp.pago_movil || 0) / tasa;
+    total += Number(mp.efectivo_ves || 0) / tasa;
+    total += Number(mp.transferencia || 0) / tasa;
+    total += Number(mp.punto_de_venta_ves || 0) / tasa;
+    total += Number(mp.cashea_ves || 0) / tasa;
+
+    return total;
+  };
+
+  const totalFinal = form.total_ingresos * (form.con_iva ? 1.16 : 1);
+  const totalPagadoUSD = getPaidTotalUSD();
+  const restante = totalFinal - totalPagadoUSD;
+
   const handleSave = async () => {
     if (!form.fecha) { setError('La fecha es requerida'); return; }
     setSaving(true);
+    const mp = form.metodos_pago as any;
+    const tasa = form.tasa_cambio || 1;
+    
+    const pago_usd = Number(mp.efectivo_usd || 0) + Number(mp.zelle || 0) + Number(mp.otro || 0) + Number(mp.punto_de_venta_usd || 0) + Number(mp.cashea_usd || 0);
+    const pago_ves = Number(mp.pago_movil || 0) + Number(mp.efectivo_ves || 0) + Number(mp.transferencia || 0) + Number(mp.punto_de_venta_ves || 0) + Number(mp.cashea_ves || 0);
+
     try {
       await onSave({
         fecha: form.fecha,
@@ -221,8 +263,8 @@ function ManualModal({ onClose, onSave, initial }: {
         total_clientes: Number(form.total_clientes),
         notas: form.notas || null,
         desglose: items.filter(i => i.descripcion.trim()),
-        pago_usd: Number(form.pago_usd),
-        pago_ves: Number(form.pago_ves),
+        pago_usd: pago_usd,
+        pago_ves: pago_ves,
         tasa_cambio: Number(form.tasa_cambio),
         con_iva: form.con_iva,
         metodos_pago: form.metodos_pago,
@@ -329,41 +371,69 @@ function ManualModal({ onClose, onSave, initial }: {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {[
-                { id: 'efectivo_usd', label: 'Efectivo USD', color: 'text-green-500' },
-                { id: 'zelle', label: 'Zelle', color: 'text-violet-500' },
-                { id: 'pago_movil', label: 'Pago Móvil', color: 'text-blue-500' },
-                { id: 'punto_de_venta', label: 'Punto de Venta', color: 'text-orange-500' },
-                { id: 'efectivo_ves', label: 'Efectivo Bs.', color: 'text-slate-500' },
-                { id: 'cashea', label: 'Cashea', color: 'text-purple-400' },
-                { id: 'transferencia', label: 'Transferencia', color: 'text-sky-500' },
-                { id: 'otro', label: 'Otro / Especial', color: 'text-slate-400' },
+                { id: 'efectivo_usd', label: 'Efectivo USD', color: 'text-green-500', currency: '$' },
+                { id: 'zelle', label: 'Zelle', color: 'text-violet-500', currency: '$' },
+                { id: 'pago_movil', label: 'Pago Móvil', color: 'text-blue-500', currency: 'Bs' },
+                { id: 'punto_de_venta', label: 'Punto de Venta', color: 'text-orange-500', mixed: true },
+                { id: 'efectivo_ves', label: 'Efectivo Bs.', color: 'text-slate-500', currency: 'Bs' },
+                { id: 'cashea', label: 'Cashea', color: 'text-purple-400', mixed: true },
+                { id: 'transferencia', label: 'Transferencia', color: 'text-sky-500', currency: 'Bs' },
+                { id: 'otro', label: 'Otro / Especial', color: 'text-slate-400', currency: '$' },
               ].map(method => (
                 <div key={method.id} className={cn(
                   "flex items-center justify-between p-3 rounded-2xl border transition-all",
-                  (form.metodos_pago as any)[method.id] > 0 
+                  (method.mixed ? ((form.metodos_pago as any)[`${method.id}_usd`] > 0 || (form.metodos_pago as any)[`${method.id}_ves`] > 0) : (form.metodos_pago as any)[method.id] > 0)
                     ? "bg-white border-primary/30 shadow-md" 
                     : "bg-slate-50/50 border-border/20 opacity-70"
                 )}>
                   <label className="flex items-center gap-3 cursor-pointer">
                     <input 
                       type="checkbox" 
-                      checked={(form.metodos_pago as any)[method.id] > 0}
-                      onChange={(e) => handlePaymentCalc(method.id, e.target.checked ? 0.01 : 0, true)}
+                      checked={method.mixed ? ((form.metodos_pago as any)[`${method.id}_usd`] > 0 || (form.metodos_pago as any)[`${method.id}_ves`] > 0) : (form.metodos_pago as any)[method.id] > 0}
+                      onChange={(e) => {
+                        if (method.mixed) {
+                          handlePaymentCalc(`${method.id}_usd`, e.target.checked ? 0.01 : 0, true);
+                        } else {
+                          handlePaymentCalc(method.id, e.target.checked ? 0.01 : 0, true);
+                        }
+                      }}
                       className="w-4 h-4 rounded border-gray-300 text-primary"
                     />
                     <span className={cn("text-[10px] font-black uppercase tracking-tight", method.color)}>{method.label}</span>
                   </label>
-                  {(form.metodos_pago as any)[method.id] !== undefined && (
-                    <div className="flex items-center gap-1 bg-slate-50 px-3 py-1.5 rounded-xl border border-border/50">
-                      <span className="text-[10px] font-bold text-slate-400">$</span>
-                      <input 
-                        type="number" 
-                        step="0.01"
-                        className="w-16 text-right text-xs font-black bg-transparent border-none p-0 focus:ring-0"
-                        value={(form.metodos_pago as any)[method.id]}
-                        onChange={(e) => handlePaymentCalc(method.id, parseFloat(e.target.value) || 0, true)}
-                      />
+                  
+                  {method.mixed ? (
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-1 bg-slate-50 px-2 py-1 rounded-lg border border-border/50">
+                        <span className="text-[9px] font-bold text-slate-400">$</span>
+                        <input 
+                          type="number" step="0.01" className="w-12 text-right text-[10px] font-black bg-transparent border-none p-0 focus:ring-0"
+                          value={(form.metodos_pago as any)[`${method.id}_usd`] || 0}
+                          onChange={(e) => handlePaymentCalc(`${method.id}_usd`, parseFloat(e.target.value) || 0, true)}
+                        />
+                      </div>
+                      <div className="flex items-center gap-1 bg-slate-50 px-2 py-1 rounded-lg border border-border/50">
+                        <span className="text-[9px] font-bold text-slate-400">Bs</span>
+                        <input 
+                          type="number" step="0.01" className="w-12 text-right text-[10px] font-black bg-transparent border-none p-0 focus:ring-0"
+                          value={(form.metodos_pago as any)[`${method.id}_ves`] || 0}
+                          onChange={(e) => handlePaymentCalc(`${method.id}_ves`, parseFloat(e.target.value) || 0, true)}
+                        />
+                      </div>
                     </div>
+                  ) : (
+                    (form.metodos_pago as any)[method.id] !== undefined && (
+                      <div className="flex items-center gap-1 bg-slate-50 px-3 py-1.5 rounded-xl border border-border/50">
+                        <span className="text-[10px] font-bold text-slate-400">{method.currency}</span>
+                        <input 
+                          type="number" 
+                          step="0.01"
+                          className="w-16 text-right text-xs font-black bg-transparent border-none p-0 focus:ring-0"
+                          value={(form.metodos_pago as any)[method.id]}
+                          onChange={(e) => handlePaymentCalc(method.id, parseFloat(e.target.value) || 0, true)}
+                        />
+                      </div>
+                    )
                   )}
                 </div>
               ))}
@@ -388,7 +458,17 @@ function ManualModal({ onClose, onSave, initial }: {
               </div>
               <div className="flex flex-col items-end">
                 <span className="text-[10px] text-primary font-black uppercase tracking-[0.2em]">Total Final</span>
-                <span className="text-2xl font-black text-primary tracking-tighter italic">${(form.total_ingresos * (form.con_iva ? 1.16 : 1)).toFixed(2)}</span>
+                <span className="text-2xl font-black text-primary tracking-tighter italic">${totalFinal.toFixed(2)}</span>
+                {Math.abs(restante) > 0.01 && (
+                  <div className="flex flex-col items-end mt-1">
+                    <span className={cn("text-[9px] font-black uppercase tracking-widest", restante > 0 ? "text-orange-500" : "text-green-500")}>
+                      {restante > 0 ? 'Restante por pagar' : 'Cambio / Excedente'}
+                    </span>
+                    <span className={cn("text-sm font-black", restante > 0 ? "text-orange-500" : "text-green-500")}>
+                      ${Math.abs(restante).toFixed(2)}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -963,7 +1043,8 @@ function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void
         notas: venta.notas || undefined,
         pago_usd: venta.pago_usd,
         pago_ves: venta.pago_ves,
-        tasa_cambio: venta.tasa_cambio
+        tasa_bcv: venta.tasa_cambio,
+        iva_aplicado: venta.con_iva
       }]);
     } catch (err) {
       alert('Error al generar PDF');
@@ -1065,16 +1146,34 @@ function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void
                         <span>Bs. {venta.metodos_pago.efectivo_ves.toLocaleString('es-VE')}</span>
                       </div>
                     ) : null}
-                    {venta.metodos_pago?.cashea ? (
-                      <div className="flex justify-between text-[9px] text-violet-500 font-bold">
-                        <span>CASHEA</span>
-                        <span>${venta.metodos_pago.cashea.toFixed(2)}</span>
+                    {venta.metodos_pago?.cashea || venta.metodos_pago?.cashea_usd || venta.metodos_pago?.cashea_ves ? (
+                      <div className="flex flex-col gap-0.5 text-[9px]">
+                        <div className="flex justify-between text-violet-500 font-bold">
+                          <span>CASHEA</span>
+                          <span>
+                            {venta.metodos_pago?.cashea_usd ? `$${venta.metodos_pago.cashea_usd.toFixed(2)} ` : ''}
+                            {venta.metodos_pago?.cashea_ves ? `Bs. ${venta.metodos_pago.cashea_ves.toLocaleString('es-VE')} ` : ''}
+                            {(!venta.metodos_pago?.cashea_usd && !venta.metodos_pago?.cashea_ves && venta.metodos_pago?.cashea) ? `$${venta.metodos_pago.cashea.toFixed(2)}` : ''}
+                          </span>
+                        </div>
                       </div>
                     ) : null}
-                    {venta.metodos_pago?.punto_de_venta ? (
+                    {venta.metodos_pago?.punto_de_venta || venta.metodos_pago?.punto_de_venta_usd || venta.metodos_pago?.punto_de_venta_ves ? (
+                      <div className="flex flex-col gap-0.5 text-[9px]">
+                        <div className="flex justify-between text-orange-500 font-bold">
+                          <span>PUNTO DE VENTA</span>
+                          <span>
+                            {venta.metodos_pago?.punto_de_venta_usd ? `$${venta.metodos_pago.punto_de_venta_usd.toFixed(2)} ` : ''}
+                            {venta.metodos_pago?.punto_de_venta_ves ? `Bs. ${venta.metodos_pago.punto_de_venta_ves.toLocaleString('es-VE')} ` : ''}
+                            {(!venta.metodos_pago?.punto_de_venta_usd && !venta.metodos_pago?.punto_de_venta_ves && venta.metodos_pago?.punto_de_venta) ? `$${venta.metodos_pago.punto_de_venta.toFixed(2)}` : ''}
+                          </span>
+                        </div>
+                      </div>
+                    ) : null}
+                    {venta.metodos_pago?.transferencia ? (
                       <div className="flex justify-between text-[9px] text-slate-500">
-                        <span>PUNTO DE VENTA</span>
-                        <span>Bs. {venta.metodos_pago.punto_de_venta.toLocaleString('es-VE')}</span>
+                        <span>TRANSFERENCIA</span>
+                        <span>Bs. {venta.metodos_pago.transferencia.toLocaleString('es-VE')}</span>
                       </div>
                     ) : null}
                   </div>

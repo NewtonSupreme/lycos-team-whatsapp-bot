@@ -272,7 +272,7 @@ ES MUY IMPORTANTE QUE SEAS EXTREMADAMENTE BREVE Y DIRECTO (MAX 3 LÍNEAS).
 
 HORARIO: Lunes a Sábado 8:00 AM – 5:00 PM. DOMINGOS: CERRADO sin excepciones.
 UBICACION:
-- San Antonio de los Altos: San Antonio de los Altos, Altos Mirandinos, Miranda. (En San Antonio de los Altos, distribuidor de las minas al frente del Frescos Market nos encontramos).
+- San Antonio de los Altos: San Antonio de los Altos, Altos Mirandinos, Miranda. (En San Antonio de los Altos, distribuidor de las minas al frente del Frescos Market nos encontramos). 💡 BENEFICIOS EXCLUSIVOS: Si vienes a esta sede tienes revisión totalmente gratuita, instalación de la app del taller gratis y tecnología automotriz profesional.
 - Carrizal (Principal): Servicios Jadar Calle Raul Leoni, Municipio Carrizal cerca de eso.
 - Caracas (El Cementerio): E/S PDV Nuevo Prado Av. Roosevelt, Caracas cerca de esa bomba.
 
@@ -1966,6 +1966,9 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             'Selecciona una opción abajo'
           );
           
+          await delay(800);
+          await sendMsg(from, '💡 *Dato importante:* Si vienes a nuestra sede de San Antonio, cuentas con más beneficios exclusivos y otros servicios adicionales. 🚗🔧');
+          
           ctx.memoria.awaiting_location_choice = true;
           if (db) {
             await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
@@ -1988,6 +1991,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           await sendMsg(from, '📍 *Sede San Antonio de los Altos:*\n\nEn San Antonio de los Altos, distribuidor de las minas al frente del Frescos Market nos encontramos. 😊\n\n*Mapa:* https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
           await delay(800);
           await sendMsg(from, '🎥 *Video de cómo llegar:* https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
+          await delay(800);
+          await sendMsg(from, '🎁 *¡Beneficios Exclusivos en San Antonio!* 🎁\n\nSi vienes a nuestra sede de San Antonio, cuentas con beneficios como:\n✅ *Revisión totalmente gratuita.*\n✅ *Instalación de la app del taller GRATIS en Lycos Team.*\n✅ *Servicios y tecnología automotriz profesional.*\n\n¡Te esperamos! 🚗🔧', true);
           selectedSedeName = 'Sede San Antonio';
           locationSent = true;
         } else if (bodyClean.includes('carrizal') || bodyClean === '2') {
