@@ -21,6 +21,7 @@ export default function EmpleadosPage() {
     nombre: "",
     apellido: "",
     email: "",
+    username: "",
     rol: "empleado",
     sede_id: "",
     telefono: ""
@@ -80,7 +81,7 @@ export default function EmpleadosPage() {
       if (!res.ok) throw new Error(data.error);
 
       alert("Personal registrado exitosamente.");
-      setFormData({ nombre: "", apellido: "", email: "", rol: "empleado", sede_id: sedes[0]?.id || "", telefono: "" });
+      setFormData({ nombre: "", apellido: "", email: "", username: "", rol: "empleado", sede_id: sedes[0]?.id || "", telefono: "" });
       fetchEmpleados();
     } catch (error: any) {
       alert("Error: " + error.message);
@@ -216,6 +217,19 @@ export default function EmpleadosPage() {
                   <Label>Apellido</Label>
                   <Input required value={formData.apellido} onChange={e => setFormData({ ...formData, apellido: e.target.value })} />
                 </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Nombre de Usuario (Opcional)</Label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-mono text-sm">@</span>
+                  <Input 
+                    placeholder="usuario123" 
+                    className="pl-7 font-mono"
+                    value={formData.username} 
+                    onChange={e => setFormData({ ...formData, username: e.target.value.toLowerCase().replace(/\s+/g, '') })} 
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400">Si se deja vacío, se generará automáticamente.</p>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">

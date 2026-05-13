@@ -18,18 +18,34 @@ export async function POST(req: Request) {
       }
     });
 
-    const { email, nombre, apellido, sede_id, rol, activo, password_hash, telefono } = await req.json();
+    const { email, nombre, apellido, sede_id, rol, activo, password_hash, telefono, username: manualUsername } = await req.json();
 
     if (!email || !nombre || !sede_id || !rol) {
       return NextResponse.json({ error: 'Faltan datos requeridos' }, { status: 400 });
     }
 
-    const isTechnical = rol === 'mecanico' || rol === 'jefe_taller';
-    let username = email ? email.split('@')[0].toLowerCase() : nombre.replace(/\s+/g, '_').toLowerCase();
-    
-    // If it's technical staff or email is missing, ensure uniqueness with a timestamp
-    if (isTechnical || !email) {
-      username = `${username}_${Date.now()}`;
+    let username = manualUsername;
+
+    if (username) {
+      // Check if username already exists
+      const { data: existingUser } = await supabaseAdmin
+        .from('usuarios')
+        .select('id')
+        .eq('username', username)
+        .single();
+      
+      if (existingUser) {
+        return NextResponse.json({ error: 'El nombre de usuario ya está en uso' }, { status: 400 });
+      }
+    } else {
+      // Auto-generate if not provided
+      const isTechnical = rol === 'mecanico' || rol === 'jefe_taller';
+      username = email ? email.split('@')[0].toLowerCase() : nombre.replace(/\s+/g, '_').toLowerCase();
+      
+      // If it's technical staff or email is missing, ensure uniqueness with a timestamp
+      if (isTechnical || !email) {
+        username = `${username}_${Date.now()}`;
+      }
     }
 
     // Ensure email is not empty for the DB if not provided
