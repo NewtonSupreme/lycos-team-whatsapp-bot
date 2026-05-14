@@ -32,8 +32,7 @@ const GEMINI_MODELS = [
 ] as const;
 
 const ASESOR_PHONE = '584123343519';
-// Permitir múltiples administradores (hardcoded o vía env)
-const ADMIN_PHONES = [ASESOR_PHONE, '584241648710'].filter(Boolean);
+const ADMIN_PHONES = [ASESOR_PHONE, '584241648710', '584123193206'].filter(Boolean);
 
 const ASESOR_DISPLAY_NAME = 'Asesor Lycos Team';
 const IG_LINK = 'https://www.instagram.com/lycos.team?igsh=MzVwZ3NkbnN2OHk=';
@@ -1008,7 +1007,7 @@ async function loadConversationContext(
         { count: msgsMonth }
       ] = await Promise.all([
         db.from('citas').select('*, sede:sedes(nombre)').gte('fecha', monthStr).order('fecha').limit(100),
-        db.from('inventario').select('*, sede:sedes(nombre)').eq('activo', true).order('nombre'),
+        db.from('inventario').select('*, sede:sedes(nombre)').eq('activo', true).order('nombre').limit(200),
         db.from('servicios').select('*, sede:sedes(nombre)').gte('created_at', monthStr).order('created_at', { ascending: false }).limit(100),
         db.from('logs_actividad').select('*, sede:sedes(nombre)').gte('created_at', monthStr).order('created_at', { ascending: false }).limit(50),
         db.from('sedes').select('id, nombre'),
@@ -1257,8 +1256,8 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
   const contents = [...ctx.historia, { role: 'user', parts: [{ text: userMessage }] }];
 
   // ── ROBUST SEQUENTIAL RETRY STRATEGY ─────────────────────────────────────────
-  // Configuración de reintentos más agresiva para Vercel Hobby (10s total)
-  const ATTEMPTS_DELAYS = [500, 1500, 3000];
+  // Configuración de reintentos ajustada para Vercel (evitar timeout de 10s)
+  const ATTEMPTS_DELAYS = [300, 800, 1500];
   const MAX_ATTEMPTS = ATTEMPTS_DELAYS.length;
   
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
