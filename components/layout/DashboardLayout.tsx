@@ -32,17 +32,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       const cached = sessionStorage.getItem('lycos_user');
       if (cached) {
         const u = JSON.parse(cached);
-        setUser({ 
-          id: u.id || u.username, 
-          username: u.username, 
-          email: u.email || `${u.username}@lycosteam.com`, 
-          nombre: u.nombre, 
-          rol: u.rol, 
-          avatar_url: u.avatar_url,
-          sede_id: u.sede_id,
-          created_at: '' 
-        });
-        return;
+        // If it's an old cache without sede_id, ignore it and fetch fresh
+        if (u.sede_id) {
+          setUser({ 
+            id: u.id || u.username, 
+            username: u.username, 
+            email: u.email || `${u.username}@lycosteam.com`, 
+            nombre: u.nombre, 
+            rol: u.rol, 
+            avatar_url: u.avatar_url,
+            sede_id: u.sede_id,
+            created_at: '' 
+          });
+          return;
+        }
       }
     } catch { /* ignore */ }
 
@@ -80,20 +83,26 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       if (sedesData) {
         setAvailableSedes(sedesData);
         
-        // Auto-select logic: Prioritize user's assigned sede on first load
-        const sessionKey = `sede_synced_${user.id}_${user.sede_id || 'default'}`;
-        const isSynced = sessionStorage.getItem(sessionKey);
-        const assignedSede = user.sede_id ? sedesData.find(s => s.id === user.sede_id) : null;
+        // DEBUG LOGS
+        console.log(`[Multi-Sede] Usuario: ${user.username}, Sede asignada (ID): ${user.sede_id}`);
+        
+        // Auto-select logic: Always prioritize user's assigned sede on FIRST load of the session
+        const assignedSede = user.sede_id ? sedesData.find(s => s.id.toLowerCase() === user.sede_id?.toLowerCase()) : null;
 
-        if (!isSynced && assignedSede) {
-          // FORCE assigned sede on first entry of the session for this user
-          setCurrentSede(assignedSede);
-          sessionStorage.setItem(sessionKey, 'true');
-          console.log(`📍 Sede detectada automáticamente: ${assignedSede.nombre}`);
+        if (assignedSede) {
+          // We use a specific key to only force this ONCE per session/refresh
+          const sessionKey = `sede_synced_v5_${user.id}_${user.sede_id}`;
+          const isSynced = sessionStorage.getItem(sessionKey);
+          
+          if (!isSynced) {
+            console.log(`📍 Sede inicial sincronizada: ${assignedSede.nombre}`);
+            setCurrentSede(assignedSede);
+            sessionStorage.setItem(sessionKey, 'true');
+          }
         } else if (!currentSede) {
-          // Fallback if no selection exists
-          const principal = assignedSede || sedesData.find(s => s.es_principal) || sedesData[0];
-          if (principal) setCurrentSede(principal);
+          // Fallback only if no selection exists and no assignment found
+          const fallback = sedesData.find(s => s.es_principal) || sedesData[0];
+          if (fallback) setCurrentSede(fallback);
         }
       }
     }
