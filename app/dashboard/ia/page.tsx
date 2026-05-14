@@ -12,11 +12,16 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { useAppStore } from '@/lib/store';
+import { logActivity } from '@/lib/activity';
 
 interface Message { 
   id: string; 
   role: 'user' | 'assistant'; 
   content: string; 
+  user_name?: string;
   created_at: string; 
 }
 
@@ -48,15 +53,18 @@ export default function IAPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   
+  const { user } = useAppStore();
   const { currentSede } = useSedeStore();
-  const isSanAntonio = currentSede?.nombre === 'San Antonio de los Altos';
+  
+  const allowedSedes = ['San Antonio de los Altos', 'El cementerio (Caracas)'];
+  const isAllowedSede = currentSede && allowedSedes.includes(currentSede.nombre);
 
   // Load conversations on mount
   useEffect(() => {
-    if (isSanAntonio) {
+    if (isAllowedSede) {
       loadConversations();
     }
-  }, [isSanAntonio]);
+  }, [isAllowedSede]);
 
   // Load messages when conversation changes
   useEffect(() => {
@@ -154,7 +162,8 @@ export default function IAPage() {
     const userMsg: any = { 
       conversation_id: convId,
       role: 'user', 
-      content: userText 
+      content: userText,
+      user_name: user?.nombre || user?.username || 'Usuario'
     };
     
     setMessages(prev => [...prev, { ...userMsg, id: 'temp-' + Date.now(), created_at: new Date().toISOString() }]);
@@ -171,7 +180,21 @@ export default function IAPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: [...messages, { role: 'user', content: userText }].map(m => ({ role: m.role, content: m.content })),
+          sede_id: currentSede?.id,
+          sede_nombre: currentSede?.nombre,
+          user: {
+            nombre: user?.nombre || user?.username || 'Usuario',
+            rol: user?.rol || 'empleado'
+          }
         }),
+      });
+
+      // 3. Log Activity
+      logActivity({
+        usuario: user?.nombre || user?.username || 'Usuario',
+        modulo: 'IA Asistente',
+        accion: 'Consulta al Asistente IA',
+        detalles: `El usuario realizó una consulta a la IA en la sede ${currentSede?.nombre || 'desconocida'}: "${userText.substring(0, 50)}..."`
       });
 
       if (!response.ok) throw new Error('API error');
@@ -228,7 +251,7 @@ export default function IAPage() {
 
   return (
     <div className="space-y-5 relative">
-      {!isSanAntonio && (
+      {!isAllowedSede && (
         <div className="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-md bg-background/50 rounded-2xl">
           <div className="bg-card border border-border shadow-2xl rounded-2xl p-8 max-w-md text-center flex flex-col items-center gap-4">
             <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
@@ -236,12 +259,12 @@ export default function IAPage() {
             </div>
             <div>
               <h2 className="text-xl font-bold mb-2">Módulo No Disponible</h2>
-              <p className="text-muted-foreground text-sm">El asistente de Inteligencia Artificial (Chatbot) está configurado exclusivamente para la sede de <strong>San Antonio de los Altos</strong> en este momento.</p>
+              <p className="text-muted-foreground text-sm">El asistente de Inteligencia Artificial (Chatbot) está configurado exclusivamente para las sedes de <strong>San Antonio</strong> y <strong>El Cementerio</strong> en este momento.</p>
             </div>
           </div>
         </div>
       )}
-      <div className={cn("space-y-5 transition-opacity duration-300", !isSanAntonio && "opacity-30 pointer-events-none")}>
+      <div className={cn("space-y-5 transition-opacity duration-300", !isAllowedSede && "opacity-30 pointer-events-none")}>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2" style={{ fontFamily: 'Syne, sans-serif' }}>
@@ -361,12 +384,32 @@ export default function IAPage() {
                   </div>
                 )}
                 <div className={cn(
-                  'max-w-[85%] group relative',
+                  'max-w-[92%] sm:max-w-[85%] group relative',
                   msg.role === 'user'
                     ? 'bg-primary/15 border border-primary/20 rounded-2xl rounded-br-sm px-4 py-2.5'
                     : 'bg-card border border-border/50 rounded-2xl rounded-bl-sm px-4 py-2.5 shadow-sm'
                 )}>
-                  <p className="text-sm leading-relaxed whitespace-pre-line">{msg.content}</p>
+                  <div className="text-sm leading-relaxed markdown-content">
+                    {msg.role === 'user' && (
+                      <p className="text-[10px] font-bold text-primary mb-1 uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-1 h-1 rounded-full bg-primary" />
+                        {msg.user_name || (msg.id.startsWith('temp-') ? (user?.nombre || user?.username) : 'Usuario')}
+                      </p>
+                    )}
+                    {msg.role === 'assistant' && (
+                      <p className="text-[10px] font-bold text-violet-400 mb-1 uppercase tracking-wider flex items-center gap-1.5">
+                        <Bot className="w-2.5 h-2.5" />
+                        Asistente IA
+                      </p>
+                    )}
+                    {msg.role === 'assistant' ? (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {msg.content}
+                      </ReactMarkdown>
+                    ) : (
+                      <p className="whitespace-pre-line">{msg.content}</p>
+                    )}
+                  </div>
                   <div className="flex items-center justify-between mt-1.5 gap-4">
                     <span className="text-[10px] text-muted-foreground/50">
                       {new Date(msg.created_at).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' })}

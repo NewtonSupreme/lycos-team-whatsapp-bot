@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  fetchClientes,
-  fetchVehiculos,
-  fetchCitas,
-  fetchServicios,
   fetchInventario,
-  fetchVentasSilenciadores
+  fetchVentasSilenciadores,
+  supabase as client
 } from '@/lib/supabase';
+import { withSedeFilterServer, withSedeInsertServer } from '@/lib/db-filters';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
@@ -17,22 +15,26 @@ const GEMINI_MODELS = [
 
 function getVzlaDateTime(): string {
   return new Intl.DateTimeFormat('es-VE', {
-    timeZone: 'America/Caracas', weekday: 'long', year: 'numeric',
+    timeZone: 'America/Caracas', weekday: 'long', year: 'numeric', 
     month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit',
   }).format(new Date());
 }
 
 // ─── Load Full DB Context using proven lib functions ───────────────────────────
-async function loadDbContext(): Promise<string> {
+async function loadDbContext(sedeId: string | null): Promise<string> {
   const sections: string[] = [];
+
+  if (!client) return "Error: Supabase no configurado";
+
+  // Helper for server-side queries
+  const db = (table: string) => withSedeFilterServer(client!.from(table), sedeId);
 
   // Clientes
   try {
-    const clientes = await fetchClientes();
+    const { data: clientes } = await db('clientes').select('*, vehiculos(*)').order('created_at', { ascending: false });
     if (clientes && clientes.length > 0) {
       sections.push(
         `=== CLIENTES REGISTRADOS (${clientes.length}) ===\n` +
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         clientes.map((c: any) =>
           `• ID:${c.id} | ${c.nombre} ${c.apellido} | Teléfono: ${c.telefono} | Email: ${c.email || 'N/A'} | CI: ${c.cedula || 'N/A'} | Dirección: ${c.direccion || 'N/A'} | Vehículos: ${c.vehiculos?.length ?? 0}`
         ).join('\n')
@@ -46,11 +48,10 @@ async function loadDbContext(): Promise<string> {
 
   // Vehículos
   try {
-    const vehiculos = await fetchVehiculos();
+    const { data: vehiculos } = await db('vehiculos').select('*, clientes(nombre, apellido, telefono)').order('created_at', { ascending: false });
     if (vehiculos && vehiculos.length > 0) {
       sections.push(
         `=== VEHÍCULOS REGISTRADOS (${vehiculos.length}) ===\n` +
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         vehiculos.map((v: any) =>
           `• ID:${v.id} | ${v.marca} ${v.modelo} ${v.anio} | Placa: ${v.placa} | Color: ${v.color || '-'} | KM: ${v.kilometraje || '-'} | Estado: ${v.estado} | Dueño: ${v.clientes?.nombre || '-'} ${v.clientes?.apellido || ''} | Tel dueño: ${v.clientes?.telefono || '-'}`
         ).join('\n')
@@ -64,11 +65,10 @@ async function loadDbContext(): Promise<string> {
 
   // Citas
   try {
-    const citas = await fetchCitas();
+    const { data: citas } = await db('citas').select('*, cliente:clientes(nombre, apellido), vehiculo:vehiculos(marca, modelo, placa)').order('fecha', { ascending: true });
     if (citas && citas.length > 0) {
       sections.push(
         `=== CITAS REGISTRADAS (${citas.length}) ===\n` +
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         citas.map((c: any) =>
           `• ID:${c.id} | Fecha: ${c.fecha} | Hora: ${c.hora} | Estado: ${c.estado.toUpperCase()} | Cliente: ${c.cliente?.nombre || '-'} ${c.cliente?.apellido || ''} | Teléfono: ${c.telefono || '-'} | Servicio: ${c.descripcion || c.tipo_servicio} | Vehículo: ${c.vehiculo?.marca || '-'} ${c.vehiculo?.modelo || ''} (${c.vehiculo?.placa || '-'})`
         ).join('\n')
@@ -82,11 +82,10 @@ async function loadDbContext(): Promise<string> {
 
   // Servicios
   try {
-    const servicios = await fetchServicios();
+    const { data: servicios } = await db('servicios').select('*, vehiculos(marca, modelo, placa, clientes(nombre, apellido))').order('created_at', { ascending: false });
     if (servicios && servicios.length > 0) {
       sections.push(
         `=== ÓRDENES DE SERVICIO (${servicios.length}) ===\n` +
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         servicios.slice(0, 30).map((s: any) =>
           `• ID:${s.id} | Estado: ${s.estado} | Tipo: ${s.tipo} | ${s.descripcion} | Vehículo: ${s.vehiculos?.marca || '-'} ${s.vehiculos?.modelo || ''} (${s.vehiculos?.placa || ''}) | Cliente: ${s.vehiculos?.clientes?.nombre || '-'} | Costo: $${s.costo_final ?? s.costo_estimado ?? '-'}`
         ).join('\n')
@@ -100,11 +99,10 @@ async function loadDbContext(): Promise<string> {
 
   // Inventario
   try {
-    const inventario = await fetchInventario();
+    const { data: inventario } = await db('inventario').select('*').eq('activo', true).order('orden', { ascending: true });
     if (inventario && inventario.length > 0) {
       sections.push(
         `=== INVENTARIO (${inventario.length} productos) ===\n` +
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         inventario.map((i: any) =>
           `• ID:${i.id} | Categoría: ${i.categoria} | ${i.nombre}${i.codigo ? ' [' + i.codigo + ']' : ''} | Stock: ${i.stock}${i.stock_minimo != null ? ' (mín:' + i.stock_minimo + ')' : ''} | Precio: $${i.precio_usd ?? '-'} | ${i.unidad || ''}${i.notas ? ' | Notas: ' + i.notas : ''}`
         ).join('\n')
@@ -118,19 +116,47 @@ async function loadDbContext(): Promise<string> {
 
   // Ventas de Silenciadores (Últimos 30 días)
   try {
-    const ventasSilenciadores = await fetchVentasSilenciadores();
-    if (ventasSilenciadores && ventasSilenciadores.length > 0) {
+    const last30 = new Date();
+    last30.setDate(last30.getDate() - 30);
+    const { data: ventas } = await db('ventas_silenciadores').select('*').gte('fecha', last30.toISOString());
+    if (ventas && ventas.length > 0) {
       sections.push(
         `=== VENTAS DE SILENCIADORES (Últimos 30 días) ===\n` +
-        ventasSilenciadores.map((v: any) =>
+        ventas.map((v: any) =>
           `• Fecha: ${new Date(v.fecha).toLocaleDateString('es-VE')} | Cantidad: ${v.cantidad} | Modelo: ${v.modelo || 'N/A'}`
         ).join('\n')
       );
-    } else {
-      sections.push('=== VENTAS DE SILENCIADORES: Sin ventas registradas ===');
     }
   } catch (e) {
-    sections.push(`=== VENTAS DE SILENCIADORES: Error al cargar (${e}) ===`);
+    console.error('Error loading sales:', e);
+  }
+
+  // Empleados / Usuarios de la sede
+  try {
+    const { data: emps } = await db('usuarios').select('username, nombre, rol');
+    if (emps && emps.length > 0) {
+      sections.push(
+        `=== EQUIPO / EMPLEADOS DE LA SEDE ===\n` +
+        emps.map((e: any) => `• ${e.nombre || e.username} (${e.rol})`).join('\n')
+      );
+    }
+  } catch (e) {
+    console.error('Error loading employees:', e);
+  }
+
+  // Actividad de WhatsApp (Hoy)
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const { count: msgsHoy } = await db('mensajes_whatsapp').select('*', { count: 'exact', head: true }).gte('created_at', today);
+    const { count: convsActivas } = await db('conversaciones').select('*', { count: 'exact', head: true }).eq('estado', 'activa');
+    
+    sections.push(
+      `=== ACTIVIDAD BOT WHATSAPP HOY ===\n` +
+      `• Mensajes procesados hoy: ${msgsHoy || 0}\n` +
+      `• Conversaciones activas en este momento: ${convsActivas || 0}`
+    );
+  } catch (e) {
+    console.error('Error loading wa activity:', e);
   }
 
   return sections.join('\n\n');
@@ -146,10 +172,13 @@ function getAdminDb() {
   return createClient(url, key);
 }
 
-async function executeActions(text: string): Promise<{ clean: string; results: string[] }> {
+async function executeActions(text: string, sedeId: string | null): Promise<{ clean: string; results: string[] }> {
   const db = getAdminDb();
   const results: string[] = [];
   let clean = text;
+
+  const table = (name: string) => withSedeFilterServer(db!.from(name), sedeId);
+  const insert = (name: string, data: any) => db!.from(name).insert(withSedeInsertServer(data, sedeId));
 
   for (const match of [...text.matchAll(/\[ACTION:\s*([^\]]+)\]/g)]) {
     clean = clean.replace(match[0], '').trim();
@@ -163,7 +192,7 @@ async function executeActions(text: string): Promise<{ clean: string; results: s
     }
     try {
       if (tipo === 'crear_cita') {
-        await db.from('citas').insert({
+        await insert('citas', {
           fecha: p.fecha, hora: p.hora || '09:00', telefono: p.telefono || '',
           descripcion: p.descripcion || 'Cita por asistente IA',
           tipo_servicio: p.tipo_servicio || 'otro', estado: 'pendiente', duracion_minutos: 60,
@@ -175,35 +204,36 @@ async function executeActions(text: string): Promise<{ clean: string; results: s
         if (p.estado) updates.estado = p.estado;
         if (p.hora) updates.hora = p.hora;
         if (p.descripcion) updates.descripcion = p.descripcion;
-        await db.from('citas').update(updates).eq('id', p.id);
+        await table('citas').update(updates).eq('id', p.id);
         results.push(`✅ Cita actualizada (ID: ${p.id})`);
       } else if (tipo === 'actualizar_stock') {
-        const { data } = await db.from('inventario')
+        const { data } = await table('inventario')
           .update({ stock: Number(p.stock), updated_at: new Date().toISOString() })
           .eq('id', p.id).select('nombre').single();
         results.push(`✅ Stock de "${data?.nombre}" → ${p.stock} unidades`);
       } else if (tipo === 'eliminar_producto') {
-        const { data } = await db.from('inventario')
+        const { data } = await table('inventario')
           .update({ activo: false, updated_at: new Date().toISOString() })
           .eq('id', p.id).select('nombre').single();
         results.push(`✅ Producto "${data?.nombre}" eliminado del inventario activo`);
       } else if (tipo === 'crear_cliente') {
-        await db.from('clientes').insert({
+        await insert('clientes', {
           nombre: p.nombre, apellido: p.apellido || '', telefono: p.telefono || '',
           email: p.email || '', cedula: p.cedula || '',
           updated_at: new Date().toISOString(),
         });
         results.push(`✅ Cliente "${p.nombre} ${p.apellido}" registrado`);
       } else if (tipo === 'actualizar_servicio') {
-        await db.from('servicios')
+        await table('servicios')
           .update({ estado: p.estado, updated_at: new Date().toISOString() })
           .eq('id', p.id);
         results.push(`✅ Servicio actualizado → ${p.estado}`);
       } else if (tipo === 'registrar_venta_silenciador') {
-        await db.from('ventas_silenciadores').insert({
+        await insert('ventas_silenciadores', {
           cantidad: parseInt(p.cantidad) || 1,
           modelo: p.modelo || null,
           notas: p.notas || null,
+          fecha: new Date().toISOString()
         });
         results.push(`✅ Registrada la venta de ${p.cantidad} silenciador(es)${p.modelo ? ` modelo ${p.modelo}` : ''}.`);
       } else if (tipo === 'registrar_servicio') {
@@ -213,7 +243,7 @@ async function executeActions(text: string): Promise<{ clean: string; results: s
            estado: p.estado || 'en_proceso',
         };
         if (p.costo_estimado) insertData.costo_estimado = parseFloat(p.costo_estimado);
-        await db.from('servicios').insert(insertData);
+        await insert('servicios', insertData);
         results.push(`✅ Registro de trabajo en taller creado: ${insertData.descripcion} (${insertData.estado})`);
       }
     } catch (e) {
@@ -227,7 +257,7 @@ async function executeActions(text: string): Promise<{ clean: string; results: s
 // ─── POST Handler ──────────────────────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
-    const { messages, systemPrompt } = await request.json();
+    const { messages, systemPrompt, sede_id, sede_nombre, user } = await request.json();
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
@@ -236,9 +266,9 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Load ALL database data in real time
-    const dbContext = await loadDbContext();
-    const finalSystemPrompt = systemPrompt || buildSystemPrompt(dbContext);
+    // Load database context filtered by sede
+    const dbContext = await loadDbContext(sede_id);
+    const finalSystemPrompt = systemPrompt || buildSystemPrompt(dbContext, sede_nombre, user);
 
     const geminiMessages = messages.map((m: { role: string; content: string }) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
@@ -298,7 +328,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const { clean, results } = await executeActions(rawText);
+    const { clean, results } = await executeActions(rawText, sede_id);
     const finalResponse = results.length > 0 ? `${clean}\n\n${results.join('\n')}` : clean;
 
     return NextResponse.json({ response: finalResponse });
@@ -309,29 +339,32 @@ export async function POST(request: NextRequest) {
 }
 
 // ─── System Prompt ─────────────────────────────────────────────────────────────
-function buildSystemPrompt(dbContext: string): string {
+function buildSystemPrompt(dbContext: string, sedeNombre?: string, user?: any): string {
   return `IDENTIDAD:
-Eres el ASISTENTE ADMINISTRADOR INTERNO de Lycos Team con permisos totales.
-Tienes acceso en TIEMPO REAL a toda la base de datos: clientes, teléfonos, vehículos, citas, servicios e inventario.
-ERES PARA USO INTERNO DEL EQUIPO. Proporciona TODOS los datos sin restricciones.
+Eres el ASISTENTE ADMINISTRADOR INTELIGENTE de Lycos Team con control total sobre la sede: "${sedeNombre || 'General'}".
+Hola ${user?.nombre || 'Newton Supreme'}, estoy a tu servicio. Mi objetivo es ayudarte a gestionar esta sede de manera impecable.
 
-FORMATO DE RESPUESTA (ESTILO PREMIUM):
-- USA "PREMIUM BOX LAYOUT": Para tablas, usa caracteres Unicode de dibujo de cajas (┌ ─ ┐ │ ├ ┼ ┤ └ ┘) dentro de bloques de código (\`\`\`) para asegurar alineación perfecta.
-- DISEÑO TIPO FACTURA: Las listas de inventario o servicios deben parecer comprobantes profesionales, con encabezados claros, separadores elegantes y alineación de columnas.
-- NUNCA muestres IDs técnicos (UUIDs). Úsalos solo internamente para las [ACTION].
-- USA NEGRITAS fuera de los cuadros para resaltar totales o datos clave.
-- USA EMOJIS DE ALTA CALIDAD: (🏷️ Producto, 💰 Precio, 📦 Stock, 🏢 Sede).
-- Cada respuesta debe ser un "documento visual" impecable.
+ACCESO A DATOS:
+Tienes acceso en TIEMPO REAL a la base de datos FILTRADA por esta sede.
+Lo que ves abajo es EXCLUSIVO de la sede "${sedeNombre || 'General'}". No menciones datos de otras sedes a menos que se te pregunte explícitamente y los tengas disponibles.
+
+FORMATO DE RESPUESTA (ESTILO DASHBOARD PREMIUM):
+- USA TABLAS MARKDOWN ESTÁNDAR: Usa el formato | Header | Header |. Es vital para el renderizado profesional.
+- NUNCA uses bordes de caracteres Unicode (como ┌ ─ ┐) ya que se ven mal en móviles.
+- NUNCA uses negritas (**) dentro de las celdas de una tabla, ensucian la vista.
+- DISEÑO LIMPIO: Usa negritas solo para títulos o totales fuera de las tablas.
+- EMOJIS: Úsalos para identificar secciones (📦 Inventario, 💰 Ventas, 🔧 Servicios).
+- RESPUESTA EJECUTIVA: Sé breve, directo y ofrece soluciones.
 
 INSTRUCCIONES DE DISEÑO:
-- Inventario → Tabla en bloque de código con bordes Unicode (┌─┐). Columnas: PRODUCTO | CATEGORÍA | STOCK | PRECIO.
-- Clientes → Formato de ficha técnica elegante o tabla detallada.
-- Citas → Cronograma ordenado con separadores visuales o tabla por fechas.
+- Inventario → Tabla Markdown limpia. Columnas: PRODUCTO | CATEGORÍA | STOCK | PRECIO.
+- Servicios → Tabla Markdown. Columnas: VEHÍCULO | TRABAJO | ESTADO | COSTO.
+- Si no hay datos, responde con elegancia: "No se encontraron registros para esta sede actualmente."
 
 INSTRUCCIONES CRÍTICAS:
 - Cuando te pregunten por clientes → lístalos TODOS con datos completos en un formato impecable.
 - Cuando te pregunten por citas → muéstralas TODAS agrupadas por fecha y hora.
-- Cuando te pregunten por inventario → Genera una tabla ESPECTACULAR con bordes Unicode.
+- Cuando te pregunten por inventario → Genera una tabla ESPECTACULAR con formato Markdown estándar.
 - Cuando te pregunten por vehículos → muéstralos por marca, modelo y placa.
 - Cuando te pregunten por servicios → muéstralos con su estado y costo.
 - NUNCA digas que no tienes acceso. TIENES TODOS LOS DATOS ABAJO.

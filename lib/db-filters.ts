@@ -57,3 +57,34 @@ export function withSedeInsert(payload: any) {
     return payload;
   }
 }
+
+/**
+ * Versión para el servidor (API Routes) que recibe el sede_id explícitamente.
+ */
+export function withSedeFilterServer(queryBuilder: any, sedeId: string | null) {
+  if (!sedeId) return queryBuilder;
+  
+  return new Proxy(queryBuilder, {
+    get(target, prop) {
+      const origMethod = target[prop as keyof typeof target];
+      if (typeof origMethod === 'function' && ['select', 'update', 'delete'].includes(prop as string)) {
+        return function (...args: any[]) {
+           const filterBuilder = (origMethod as Function).apply(target, args);
+           return filterBuilder.eq('sede_id', sedeId);
+        };
+      }
+      if (typeof origMethod === 'function') {
+        return origMethod.bind(target);
+      }
+      return origMethod;
+    }
+  });
+}
+
+export function withSedeInsertServer(payload: any, sedeId: string | null) {
+  if (!sedeId) return payload;
+  if (Array.isArray(payload)) {
+    return payload.map(item => ({ ...item, sede_id: sedeId }));
+  }
+  return { ...payload, sede_id: sedeId };
+}
