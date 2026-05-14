@@ -418,7 +418,7 @@ Cuando presentes listas de inventario, stock o reportes, es OBLIGATORIO usar est
 
 REGLA DE TAGS (Imprimir SIEMPRE al final de tu respuesta):
    - [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca | sede_id]
-   - [STOCK_DELETE: id_o_codigo]
+   - [STOCK_DELETE: id_o_codigo | sede_id]
    - [VEHICULO_UPSERT: id_opcional | cliente_id | placa | marca | modelo | anio | sede_id]
    - [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion | sede_id]
    - [CITA_DELETE: id]
@@ -974,7 +974,7 @@ async function loadConversationContext(
         { count: msgsMonth }
       ] = await Promise.all([
         db.from('citas').select('*, sede:sedes(nombre)').gte('fecha', today).order('fecha').limit(30),
-        db.from('inventario').select('*, sede:sedes(nombre)').order('nombre'),
+        db.from('inventario').select('*, sede:sedes(nombre)').eq('activo', true).order('nombre'),
         db.from('servicios').select('*, sede:sedes(nombre)').gte('created_at', todayDateStr).order('created_at', { ascending: false }).limit(30),
         db.from('logs_actividad').select('*, sede:sedes(nombre)').gte('created_at', todayDateStr).order('created_at', { ascending: false }).limit(20),
         db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', todayDateStr),
@@ -2291,66 +2291,80 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 sede_id: sedeId
               };
 
-              console.log(`📦 ADMIN (${from}): Intento de UPSERT para "${nombre}" (Stock: ${stock}, Cod: ${codigo})`);
+              console.log(`📦 ADMIN (${from}): Intento de UPSERT para "${nombre}" en sede ${sedeId} (Stock: ${stock}, Cod: ${codigo})`);
 
-              // Intentar encontrar por CÓDIGO primero (es más preciso)
+              // Intentar encontrar por CÓDIGO Y SEDE primero (es lo más preciso)
               let existingId = null;
               if (codigo) {
-                const { data: byCod } = await db.from('inventario').select('id').eq('codigo', codigo).limit(1).maybeSingle();
+                const { data: byCod } = await db.from('inventario')
+                  .select('id')
+                  .eq('codigo', codigo)
+                  .eq('sede_id', sedeId)
+                  .limit(1).maybeSingle();
                 if (byCod) existingId = byCod.id;
               }
               
-              // Si no hay por código, buscar por NOMBRE exacto
+              // Si no hay por código, buscar por NOMBRE Y SEDE exacto
               if (!existingId) {
-                const { data: byNom } = await db.from('inventario').select('id').eq('nombre', nombre).limit(1).maybeSingle();
+                const { data: byNom } = await db.from('inventario')
+                  .select('id')
+                  .eq('nombre', nombre)
+                  .eq('sede_id', sedeId)
+                  .limit(1).maybeSingle();
                 if (byNom) existingId = byNom.id;
               }
               
               if (existingId) {
-                const { error: updErr } = await db.from('inventario').update(updateObj).eq('id', existingId).eq('sede_id', DEFAULT_SEDE_ID);
+                // UPDATE existente en ESA sede
+                const { error: updErr } = await db.from('inventario').update(updateObj).eq('id', existingId);
                 if (updErr) {
-                  // Fallback si la columna 'marca' no existe en la DB real
-                  if (updErr.message.includes('marca') || updErr.code === 'PGRST204') {
-                    console.warn(`⚠️ Omitiendo columna 'marca' inexistente para ${nombre}`);
+                  if (updErr.message.includes('marca')) {
                     delete updateObj.marca;
-                    await db.from('inventario').update(updateObj).eq('id', existingId).eq('sede_id', DEFAULT_SEDE_ID);
-                  } else {
-                    console.error(`❌ Error actualizando stock de ${nombre}:`, updErr);
-                    throw updErr;
-                  }
+                    await db.from('inventario').update(updateObj).eq('id', existingId);
+                  } else throw updErr;
                 }
-                console.log(`✅ ADMIN: Stock ACTUALIZADO en DB: ${nombre}`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Actualizó producto', `Actualizó ${nombre} (Stock: ${stock}) vía ChatBot`);
+                console.log(`✅ ADMIN: Stock ACTUALIZADO en sede ${sedeId}: ${nombre}`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Actualizó producto', `Actualizó ${nombre} en sede ${sedeId} vía ChatBot`, sedeId);
               } else {
-                const { error: insErr } = await db.from('inventario').insert({ ...updateObj, sede_id: DEFAULT_SEDE_ID });
+                // INSERT nuevo en ESA sede
+                const { error: insErr } = await db.from('inventario').insert(updateObj);
                 if (insErr) {
-                  // Fallback si la columna 'marca' no existe en la DB real
-                  if (insErr.message.includes('marca') || insErr.code === 'PGRST204') {
-                    console.warn(`⚠️ Omitiendo columna 'marca' inexistente para ${nombre}`);
+                  if (insErr.message.includes('marca')) {
                     delete updateObj.marca;
-                    await db.from('inventario').insert({ ...updateObj, sede_id: DEFAULT_SEDE_ID });
-                  } else {
-                    console.error(`❌ Error insertando nuevo producto ${nombre}:`, insErr);
-                    throw insErr;
-                  }
+                    await db.from('inventario').insert(updateObj);
+                  } else throw insErr;
                 }
-                console.log(`✅ ADMIN: Nuevo producto INSERTADO en DB: ${nombre}`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Creó producto', `Agregó ${nombre} (Stock: ${stock}) vía ChatBot`);
+                console.log(`✅ ADMIN: Nuevo producto INSERTADO en sede ${sedeId}: ${nombre}`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Creó producto', `Agregó ${nombre} en sede ${sedeId} vía ChatBot`, sedeId);
               }
             } catch (e) { 
               console.error('❌ Error en STOCK_UPSERT:', e);
             }
           }
 
-          // 2. [STOCK_DELETE: id_o_codigo]
-          const stockDeleteMatch = cleanedAi.match(/\[STOCK_DELETE:\s*([^\]]+?)\s*\]/i);
-          if (stockDeleteMatch) {
+          // 2. [STOCK_DELETE: id_o_codigo | sede_id]
+          const stockDeleteMatches = Array.from(cleanedAi.matchAll(/\[STOCK_DELETE:\s*([^\]]+)\]/gi));
+          for (const match of stockDeleteMatches) {
             try {
-              const target = stockDeleteMatch[1].trim();
-              await db.from('inventario').update({ activo: false }).or(`id.eq.${target},codigo.eq.${target}`);
-              console.log(`📦 ADMIN: Item de inventario desactivado: ${target}`);
-              await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Eliminó producto', `Desactivó producto ${target} vía ChatBot`);
-            } catch (e) { console.error('Error in STOCK_DELETE:', e); }
+              const parts = match[1].split('|').map(s => s.trim());
+              const target = parts[0];
+              const sId = parts[1] || DEFAULT_SEDE_ID;
+              
+              console.log(`🗑️ ADMIN (${from}): Intento de DELETE para "${target}" en sede ${sId}`);
+              
+              // Soft delete filtering by sede
+              const { error: delErr } = await db.from('inventario')
+                .update({ activo: false })
+                .eq('sede_id', sId)
+                .or(`id.eq.${target},codigo.eq.${target}`);
+              
+              if (delErr) throw delErr;
+              
+              console.log(`✅ ADMIN: Producto ${target} marcado como inactivo en sede ${sId}`);
+              await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Eliminó producto', `Eliminó ${target} en sede ${sId} vía ChatBot`, sId);
+            } catch (e) {
+              console.error('❌ Error en STOCK_DELETE:', e);
+            }
           }
 
           // 3. [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion]

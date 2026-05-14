@@ -235,7 +235,7 @@ export async function fetchInventario(categoria?: string) {
 
 export async function updateInventarioStock(id: string, stock: number) {
   if (!supabase) return null;
-  const { data, error } = await withSedeFilter(supabase.from('inventario'))
+  const { data, error } = await supabase.from('inventario')
     .update({ stock, updated_at: new Date().toISOString() })
     .eq('id', id)
     .select()
@@ -267,7 +267,7 @@ export async function createInventarioItem(item: Partial<InventarioItem>) {
 
 export async function updateInventarioItem(id: string, updates: Partial<InventarioItem>) {
   if (!supabase) return null;
-  const { data, error } = await withSedeFilter(supabase.from('inventario'))
+  const { data, error } = await supabase.from('inventario')
     .update({ ...updates, updated_at: new Date().toISOString() })
     .eq('id', id)
     .select()
@@ -279,7 +279,7 @@ export async function updateInventarioItem(id: string, updates: Partial<Inventar
 export async function deleteInventarioItem(id: string) {
   if (!supabase) return null;
   // Soft delete by setting activo to false
-  const { error } = await withSedeFilter(supabase.from('inventario'))
+  const { error } = await supabase.from('inventario')
     .update({ activo: false, updated_at: new Date().toISOString() })
     .eq('id', id);
   if (error) throw error;
