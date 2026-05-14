@@ -7,7 +7,7 @@ import {
   AlertTriangle, CheckCircle2, 
   FilterX, RefreshCw, TrendingUp,
   DollarSign, ArrowUpRight, ArrowDownRight,
-  GripVertical
+  GripVertical, MapPin, Sparkles
 } from 'lucide-react';
 import { supabase, fetchInventario, createInventarioItem, updateInventarioItem, deleteInventarioItem, updateInventarioStock, updateInventarioOrder } from '@/lib/supabase';
 import { InventarioItem, InventarioCategoria } from '@/types';
@@ -34,7 +34,22 @@ const CATEGORIES: { value: InventarioCategoria; label: string }[] = [
   { value: 'frenos', label: 'Frenos' },
   { value: 'electrico', label: 'Eléctrico' },
   { value: 'general', label: 'General' },
+  { value: 'oficina', label: 'Oficina' },
   { value: 'otro', label: 'Otro' },
+];
+
+const LOCATIONS = [
+  { value: 'almacen', label: 'Almacén' },
+  { value: 'taller', label: 'Taller' },
+  { value: 'oficina', label: 'Oficina' },
+];
+
+const CLASSIFICATIONS = [
+  { value: 'repuesto', label: 'Repuesto' },
+  { value: 'accesorio', label: 'Accesorio' },
+  { value: 'herramienta', label: 'Herramienta' },
+  { value: 'oficina', label: 'Suministros Oficina' },
+  { value: 'consumible', label: 'Consumible' },
 ];
 
 export default function InventarioPage() {
@@ -43,6 +58,8 @@ export default function InventarioPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [locationFilter, setLocationFilter] = useState<string>('all');
+  const [classificationFilter, setClassificationFilter] = useState<string>('all');
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState<InventarioItem | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -61,7 +78,9 @@ export default function InventarioPage() {
     stock: 0,
     stock_minimo: 1,
     unidad: 'unidad',
-    notas: ''
+    notas: '',
+    ubicacion: 'almacen',
+    clasificacion: 'repuesto'
   });
 
   const fetchRates = async () => {
@@ -152,10 +171,12 @@ export default function InventarioPage() {
         (item.marca?.toLowerCase() || '').includes(search.toLowerCase());
       
       const matchesCategory = categoryFilter === 'all' || item.categoria === categoryFilter;
+      const matchesLocation = locationFilter === 'all' || item.ubicacion === locationFilter;
+      const matchesClassification = classificationFilter === 'all' || item.clasificacion === classificationFilter;
       
-      return matchesSearch && matchesCategory;
+      return matchesSearch && matchesCategory && matchesLocation && matchesClassification;
     });
-  }, [items, search, categoryFilter]);
+  }, [items, search, categoryFilter, locationFilter, classificationFilter]);
 
   const handleOpenAdd = () => {
     setEditingItem(null);
@@ -169,7 +190,9 @@ export default function InventarioPage() {
       stock: 0,
       stock_minimo: 1,
       unidad: 'unidad',
-      notas: ''
+      notas: '',
+      ubicacion: 'almacen',
+      clasificacion: 'repuesto'
     });
     setShowModal(true);
   };
@@ -186,7 +209,9 @@ export default function InventarioPage() {
       stock: item.stock,
       stock_minimo: item.stock_minimo,
       unidad: item.unidad || 'unidad',
-      notas: item.notas || ''
+      notas: item.notas || '',
+      ubicacion: item.ubicacion || 'almacen',
+      clasificacion: item.clasificacion || 'repuesto'
     });
     setShowModal(true);
   };
@@ -419,35 +444,83 @@ export default function InventarioPage() {
       </div>
 
       {/* Filters & Search */}
-      <Card className="glass-panel border-border/50 bg-card/40 overflow-hidden">
-        <CardContent className="p-4 flex flex-col md:flex-row items-center gap-4">
-          <div className="relative flex-1 w-full group">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
-            <Input 
-              placeholder="Buscar por nombre, código o marca..." 
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 bg-background/50 border-border/50 focus:border-primary/50 transition-all"
-            />
-          </div>
-          <div className="flex items-center gap-2 w-full md:w-auto">
-            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-              <SelectTrigger className="w-full md:w-[180px] bg-background/50">
-                <div className="flex items-center gap-2">
-                  <Filter className="w-3.5 h-3.5 opacity-70" />
-                  <SelectValue placeholder="Categoría" />
-                </div>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todas las categorías</SelectItem>
-                {CATEGORIES.map(cat => (
-                  <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button variant="ghost" size="icon" onClick={() => { setSearch(''); setCategoryFilter('all'); }} title="Limpiar Filtros">
-              <FilterX className="w-4 h-4" />
-            </Button>
+      <Card className="glass-panel border-border/50 bg-card/40 overflow-hidden shadow-sm">
+        <CardContent className="p-4 space-y-4">
+          <div className="flex flex-col lg:flex-row gap-4">
+            {/* Search Bar */}
+            <div className="relative flex-1 group">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
+              <Input 
+                placeholder="Buscar por nombre, código o marca..." 
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9 bg-background/50 border-border/50 focus:border-primary/50 transition-all h-10"
+              />
+            </div>
+
+            {/* Selects Container */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex-1 min-w-[140px]">
+                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                  <SelectTrigger className="w-full bg-background/50 h-10">
+                    <div className="flex items-center gap-2">
+                      <Filter className="w-3.5 h-3.5 opacity-70" />
+                      <SelectValue placeholder="Categoría" />
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas las categorías</SelectItem>
+                    {CATEGORIES.map(cat => (
+                      <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex-1 min-w-[140px]">
+                <Select value={locationFilter} onValueChange={setLocationFilter}>
+                  <SelectTrigger className="w-full bg-background/50 h-10">
+                    <div className="flex items-center gap-2">
+                      <MapPin className="w-3.5 h-3.5 opacity-70" />
+                      <SelectValue placeholder="Ubicación" />
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas las ubicaciones</SelectItem>
+                    {LOCATIONS.map(loc => (
+                      <SelectItem key={loc.value} value={loc.value}>{loc.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex-1 min-w-[140px]">
+                <Select value={classificationFilter} onValueChange={setClassificationFilter}>
+                  <SelectTrigger className="w-full bg-background/50 h-10">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-3.5 h-3.5 opacity-70" />
+                      <SelectValue placeholder="Clasificación" />
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas las clases</SelectItem>
+                    {CLASSIFICATIONS.map(cls => (
+                      <SelectItem key={cls.value} value={cls.value}>{cls.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={() => { setSearch(''); setCategoryFilter('all'); setLocationFilter('all'); setClassificationFilter('all'); }} 
+                title="Limpiar Filtros"
+                className="h-10 w-10 shrink-0 hover:bg-red-500/10 hover:text-red-500 transition-colors"
+              >
+                <FilterX className="w-4 h-4" />
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -532,6 +605,18 @@ export default function InventarioPage() {
                             )}
                           </div>
                           {item.marca && <span className="text-[10px] text-primary uppercase font-bold mt-1 tracking-tighter">Marca: {item.marca}</span>}
+                          <div className="flex items-center gap-2 mt-1">
+                            {item.ubicacion && (
+                              <span className="text-[9px] text-blue-500 font-bold bg-blue-500/10 px-1.5 py-0.5 rounded flex items-center gap-1 uppercase">
+                                <MapPin className="w-2.5 h-2.5" /> {item.ubicacion}
+                              </span>
+                            )}
+                            {item.clasificacion && (
+                              <span className="text-[9px] text-purple-500 font-bold bg-purple-500/10 px-1.5 py-0.5 rounded flex items-center gap-1 uppercase">
+                                <Sparkles className="w-2.5 h-2.5" /> {item.clasificacion}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </td>
                       <td className="px-6 py-4 text-center">
@@ -594,7 +679,7 @@ export default function InventarioPage() {
                           </div>
                         )}
                       </td>
-                      <td className="px-6 py-4 text-right">
+                      <td className="px-4 py-4 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <Button 
                             variant="ghost" 
@@ -763,6 +848,40 @@ export default function InventarioPage() {
                   placeholder="Ej. Ubicación en estante A-1..."
                   className="bg-background/50 border-primary/20"
                 />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="ubicacion" className="text-xs font-bold uppercase text-muted-foreground">Ubicación Física</Label>
+                <Select 
+                  value={form.ubicacion} 
+                  onValueChange={val => setForm({...form, ubicacion: val})}
+                >
+                  <SelectTrigger id="ubicacion" className="bg-background/50 border-primary/20">
+                    <SelectValue placeholder="Seleccionar" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LOCATIONS.map(loc => (
+                      <SelectItem key={loc.value} value={loc.value}>{loc.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="clasificacion" className="text-xs font-bold uppercase text-muted-foreground">Clasificación</Label>
+                <Select 
+                  value={form.clasificacion} 
+                  onValueChange={val => setForm({...form, clasificacion: val})}
+                >
+                  <SelectTrigger id="clasificacion" className="bg-background/50 border-primary/20">
+                    <SelectValue placeholder="Seleccionar" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CLASSIFICATIONS.map(cls => (
+                      <SelectItem key={cls.value} value={cls.value}>{cls.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           </form>

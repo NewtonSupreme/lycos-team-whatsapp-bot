@@ -150,7 +150,7 @@ export interface ActivityLog {
 export type InventarioCategoria = 
   | 'silenciador' | 'resonador' | 'cola_cromada' | 'flexible' 
   | 'filtro_aceite' | 'filtro_gasolina' | 'liquido' | 'frenos' 
-  | 'electrico' | 'otro' | 'general';
+  | 'electrico' | 'oficina' | 'otro' | 'general';
 
 export interface InventarioItem {
   id: string;
@@ -165,6 +165,8 @@ export interface InventarioItem {
   stock_minimo: number;
   unidad: string;
   notas: string | null;
+  ubicacion?: string;
+  clasificacion?: string;
   activo: boolean;
   orden?: number;
   created_at: string;

@@ -417,7 +417,7 @@ Cuando presentes listas de inventario, stock o reportes, es OBLIGATORIO usar est
 (REGLA CRÍTICA: Cada producto debe estar separado por una línea totalmente vacía del siguiente. NUNCA los amontones).
 
 REGLA DE TAGS (Imprimir SIEMPRE al final de tu respuesta):
-   - [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca | sede_id]
+   - [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca | sede_id | ubicacion | clasificacion]
    - [STOCK_DELETE: id_o_codigo | sede_id]
    - [VEHICULO_UPSERT: id_opcional | cliente_id | placa | marca | modelo | anio | sede_id]
    - [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion | sede_id]
@@ -956,77 +956,103 @@ async function loadConversationContext(
     if (isAdmin || from === ASESOR_PHONE) {
       const todayDateStr = today + 'T00:00:00Z';
       const d = getVzlaDate();
-      const monthStr = d.toISOString().slice(0, 7) + '-01T00:00:00Z';
-      const dayOfWeek = d.getDay(); 
-      const diff = d.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
-      const monday = new Date(d);
-      monday.setDate(diff);
-      monday.setHours(0,0,0,0);
-      const weekStr = monday.toISOString();
+      
+      // Calculate dates for history
+      const monthDate = new Date(d); monthDate.setDate(monthDate.getDate() - 30);
+      const monthStr = monthDate.toISOString().split('T')[0];
+      const monthStartStr = monthDate.toISOString().slice(0, 7) + '-01T00:00:00Z';
+
+      const weekDate = new Date(d); weekDate.setDate(weekDate.getDate() - 7);
+      const weekStr = weekDate.toISOString().split('T')[0];
+      
+      const yesterdayDate = new Date(d); yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+      const yesterdayStr = yesterdayDate.toISOString().split('T')[0];
 
       const [
         { data: allCitas }, 
         { data: allInv }, 
         { data: allServs }, 
         { data: allLogs },
+        { data: sedes },
         { count: msgsToday },
         { count: msgsWeek },
         { count: msgsMonth }
       ] = await Promise.all([
-        db.from('citas').select('*, sede:sedes(nombre)').gte('fecha', today).order('fecha').limit(30),
+        db.from('citas').select('*, sede:sedes(nombre)').gte('fecha', monthStr).order('fecha').limit(100),
         db.from('inventario').select('*, sede:sedes(nombre)').eq('activo', true).order('nombre'),
-        db.from('servicios').select('*, sede:sedes(nombre)').gte('created_at', todayDateStr).order('created_at', { ascending: false }).limit(30),
-        db.from('logs_actividad').select('*, sede:sedes(nombre)').gte('created_at', todayDateStr).order('created_at', { ascending: false }).limit(20),
+        db.from('servicios').select('*, sede:sedes(nombre)').gte('created_at', monthStr).order('created_at', { ascending: false }).limit(100),
+        db.from('logs_actividad').select('*, sede:sedes(nombre)').gte('created_at', monthStr).order('created_at', { ascending: false }).limit(50),
+        db.from('sedes').select('id, nombre'),
         db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', todayDateStr),
-        db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', weekStr),
-        db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', monthStr)
+        db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', weekDate.toISOString()),
+        db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', monthStartStr)
       ]);
       
-      const revenueToday = allServs?.reduce((sum, s) => sum + (Number(s.costo_final || s.costo_estimado || 0)), 0) || 0;
+      const revenueToday = allServs?.filter(s => s.created_at.startsWith(today)).reduce((sum, s) => sum + (Number(s.costo_final || s.costo_estimado || 0)), 0) || 0;
+      const revenueYesterday = allServs?.filter(s => s.created_at.startsWith(yesterdayStr)).reduce((sum, s) => sum + (Number(s.costo_final || s.costo_estimado || 0)), 0) || 0;
       
       const revenueBySede: Record<string, number> = {};
+      const statusCounts: Record<string, Record<string, number>> = {}; // Sede -> Status -> Count
+      const invAddedBySede: Record<string, number> = {};
+
       allServs?.forEach(s => {
         const sName = s.sede?.nombre || 'General';
-        revenueBySede[sName] = (revenueBySede[sName] || 0) + Number(s.costo_final || s.costo_estimado || 0);
+        if (s.created_at.startsWith(today)) {
+          revenueBySede[sName] = (revenueBySede[sName] || 0) + Number(s.costo_final || s.costo_estimado || 0);
+        }
+        if (!statusCounts[sName]) statusCounts[sName] = {};
+        statusCounts[sName][s.estado] = (statusCounts[sName][s.estado] || 0) + 1;
+      });
+
+      allLogs?.forEach(l => {
+        if (l.accion === 'Creó producto' || l.accion === 'STOCK_UPSERT') {
+          const sName = l.sede?.nombre || 'General';
+          invAddedBySede[sName] = (invAddedBySede[sName] || 0) + 1;
+        }
       });
 
       const citasBySede: Record<string, number> = {};
       allCitas?.forEach(c => {
-        const sName = c.sede?.nombre || 'General';
-        citasBySede[sName] = (citasBySede[sName] || 0) + 1;
+        if (c.fecha === today) {
+          const sName = c.sede?.nombre || 'General';
+          citasBySede[sName] = (citasBySede[sName] || 0) + 1;
+        }
       });
 
       citasInfo = `\n--- [MODO DIOS] INFO DEL SISTEMA EN TIEMPO REAL ---\n`;
       citasInfo += `Hola Admin ${adminName}.\n`;
       citasInfo += `\n[KPIs GENERALES]\n`;
       citasInfo += `- Mensajes IA enviados: Hoy (${msgsToday || 0}), Semana (${msgsWeek || 0}), Mes (${msgsMonth || 0})\n`;
-      citasInfo += `- Ingresos Totales Hoy: $${revenueToday}\n`;
+      citasInfo += `- Ingresos: Hoy ($${revenueToday}), Ayer ($${revenueYesterday})\n`;
       
-      citasInfo += `\n[ESTADÍSTICAS POR SEDE (HOY)]\n`;
-      const allSedeNames = [...new Set([...Object.keys(revenueBySede), ...Object.keys(citasBySede)])];
-      if (allSedeNames.length > 0) {
-        allSedeNames.forEach(sName => {
-          citasInfo += `- ${sName}: $${revenueBySede[sName] || 0} en ingresos | ${citasBySede[sName] || 0} citas agendadas.\n`;
-        });
-      } else {
-        citasInfo += `No hay actividad registrada en las sedes hoy aún.\n`;
-      }
+      citasInfo += `\n[ESTADÍSTICAS POR SEDE (HOY Y RESUMEN)]\n`;
+      const allSedeNames = [...new Set([...sedes?.map(s => s.nombre) || [], 'General'])];
+      allSedeNames.forEach(sName => {
+        const rev = revenueBySede[sName] || 0;
+        const cit = citasBySede[sName] || 0;
+        const added = invAddedBySede[sName] || 0;
+        const stats = statusCounts[sName] || {};
+        const statsStr = Object.entries(stats).map(([k, v]) => `${k}: ${v}`).join(', ') || 'Sin servicios registrados';
+        
+        citasInfo += `- ${sName}: $${rev} hoy | ${cit} citas hoy | ${added} productos nuevos este mes.\n`;
+        citasInfo += `  * Estados de servicios: ${statsStr}\n`;
+      });
       
       if (allCitas && allCitas.length > 0) {
-        citasInfo += `\n[CITAS PARA HOY Y PROXIMAS]\n` + allCitas.map(c => 
+        citasInfo += `\n[HISTORIAL DE CITAS (ULTIMOS 30 DIAS)]\n` + allCitas.map(c => 
           `ID: ${c.id} | Sede: ${c.sede?.nombre || 'General'} | ${c.fecha} ${c.hora} | Cliente: ${c.nombre_cliente} | Estado: ${c.estado}`
         ).join('\n');
       }
       
       if (allServs && allServs.length > 0) {
-        citasInfo += `\n\n[SERVICIOS DE HOY]\n` + allServs.map(s => 
-          `ID: ${s.id} | Sede: ${s.sede?.nombre || 'General'} | Tipo: ${s.tipo_servicio} | Estado: ${s.estado} | Costo: $${s.costo_estimado || s.costo_final || 0}`
+        citasInfo += `\n\n[SERVICIOS RECIENTES (ULTIMOS 30 DIAS)]\n` + allServs.map(s => 
+          `ID: ${s.id} | Sede: ${s.sede?.nombre || 'General'} | Fecha: ${s.created_at.split('T')[0]} | Tipo: ${s.tipo_servicio} | Estado: ${s.estado} | Costo: $${s.costo_estimado || s.costo_final || 0}`
         ).join('\n');
       }
 
       if (allLogs && allLogs.length > 0) {
-        citasInfo += `\n\n[ACTIVIDAD RECIENTE DEL SISTEMA (Cierres/Ventas/Inventario)]\n` + allLogs.map(l => 
-          `Sede: ${l.sede?.nombre || 'General'} | ${l.usuario} - ${l.accion}: ${l.detalles || 'N/A'}`
+        citasInfo += `\n\n[ACTIVIDAD RECIENTE DEL SISTEMA]\n` + allLogs.map(l => 
+          `Sede: ${l.sede?.nombre || 'General'} | Fecha: ${l.created_at.split('T')[0]} | ${l.usuario} - ${l.accion}: ${l.detalles || 'N/A'}`
         ).join('\n');
       }
       
@@ -2279,6 +2305,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               const codigo = parts[4] || null;
               const marca = parts[5] || null;
               const sedeId = parts[6] || DEFAULT_SEDE_ID;
+              const ubicacion = parts[7] || 'almacen';
+              const clasificacion = parts[8] || 'repuesto';
 
               const updateObj: any = {
                 nombre, 
@@ -2287,6 +2315,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 stock: isNaN(stock) ? 0 : stock,
                 codigo,
                 marca,
+                ubicacion,
+                clasificacion,
                 activo: true,
                 sede_id: sedeId
               };
