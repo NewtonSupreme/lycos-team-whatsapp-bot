@@ -403,7 +403,8 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
    - Motivos: 'inventario', 'registro', 'servicio', 'cita'.
 
 FORMATO DE REPORTES (OBLIGATORIO):
-Cuando presentes listas de inventario, stock o reportes, usa este formato profesional ESPACIADO (OBLIGATORIO una línea en blanco entre cada producto):
+Cuando presentes listas de inventario, stock o reportes, es OBLIGATORIO usar este formato ESPACIADO con UNA LÍNEA EN BLANCO REAL entre cada producto. Si no lo haces, el reporte es ilegible.
+
 📦 *TITULO DEL REPORTE* 📍
 ------------------------------------
 
@@ -413,7 +414,7 @@ Cuando presentes listas de inventario, stock o reportes, usa este formato profes
 🔹 *[Nombre del Producto]*
 • Stock: \`[Cantidad]\` | Precio: *$[Precio]*
 
-(Usa divisores claros, negritas para nombres y precios, y monospace para cantidades. No amontones el texto).
+(REGLA CRÍTICA: Cada producto debe estar separado por una línea totalmente vacía del siguiente. NUNCA los amontones).
 
 REGLA DE TAGS (Imprimir SIEMPRE al final de tu respuesta):
    - [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca | sede_id]
@@ -1156,6 +1157,13 @@ async function getAIResponse(
 
   const ratesCtx = buildRatesContext(rates);
 
+    const rules = isAdmin
+    ? `- EXTENSIÓN: Puedes usar las líneas necesarias para reportes de inventario o KPIs.
+- FORMATO: Usa negritas (*texto*) y monospace (\`texto\`) para resaltar nombres y cantidades en los reportes.
+- ESPACIADO: Deja siempre una línea en blanco entre productos en tus listas.`
+    : `- BREVEDAD: Tus respuestas NO DEBEN EXCEDER las 3 líneas. Sé extremadamente directo.
+- NUNCA uses asteriscos (*) en tus respuestas. Texto plano siempre. Listas con - o numeradas.`;
+
   const systemPrompt = `${knowledge}
 
 FECHA/HORA VENEZUELA: ${vzlaDateTime}
@@ -1173,10 +1181,10 @@ ${ctx.agendaOcupada}
 La fecha de HOY es ${vzlaDateStr} (${dayName}). Esta es la UNICA referencia válida para calcular fechas.
 PROHIBIDO: Usar cualquier fecha mencionada en el historial de conversación anterior para calcular "mañana", "pasado mañana", "la próxima semana", etc.
 SIEMPRE: Calcula "mañana" sumando 1 día a ${vzlaDateStr}. Si hoy es Sábado, mañana es Domingo (CERRADO), ofrece el Lunes.
-REGLAS CRITICAS:
-- BREVEDAD: Tus respuestas NO DEBEN EXCEDER las 3 líneas. Sé extremadamente directo.
 
-- NUNCA uses asteriscos (*) en tus respuestas. Texto plano siempre. Listas con - o numeradas.
+REGLAS CRITICAS:
+${rules}
+
 - Pon al menos 1 emoji relevante en la respuesta.
 - Usa la fecha (${vzlaDateStr}) para calcular fechas relativas. Nunca agendes domingo.
 - Un cliente puede tener varios vehiculos.
