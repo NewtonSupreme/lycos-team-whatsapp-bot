@@ -90,15 +90,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         const assignedSede = user.sede_id ? sedesData.find(s => s.id.toLowerCase() === user.sede_id?.toLowerCase()) : null;
 
         if (assignedSede) {
-          // We use a specific key to only force this ONCE per session/refresh
-          const sessionKey = `sede_synced_v5_${user.id}_${user.sede_id}`;
-          const isSynced = sessionStorage.getItem(sessionKey);
-          
-          if (!isSynced) {
-            console.log(`📍 Sede inicial sincronizada: ${assignedSede.nombre}`);
-            setCurrentSede(assignedSede);
-            sessionStorage.setItem(sessionKey, 'true');
-          }
+          // Force assigned sede on every load/refresh to ensure data isolation
+          console.log(`📍 Sede inicial sincronizada: ${assignedSede.nombre}`);
+          setCurrentSede(assignedSede);
         } else if (!currentSede) {
           // Fallback only if no selection exists and no assignment found
           const fallback = sedesData.find(s => s.es_principal) || sedesData[0];

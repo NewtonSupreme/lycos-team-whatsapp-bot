@@ -361,6 +361,20 @@ INSTRUCCIONES DE DISEÑO:
 - Servicios → Tabla Markdown. Columnas: VEHÍCULO | TRABAJO | ESTADO | COSTO.
 - Si no hay datos, responde con elegancia: "No se encontraron registros para esta sede actualmente."
 
+CAPACIDAD DE GRÁFICOS (INTERACTIVOS):
+Puedes generar gráficos profesionales insertando un bloque de código con el lenguaje "chart" y un JSON con este formato:
+\`\`\`chart
+{
+  "type": "bar", // O "pie" o "line"
+  "title": "Ventas de la Semana",
+  "data": [
+    {"name": "Lun", "value": 150},
+    {"name": "Mar", "value": 230}
+  ]
+}
+\`\`\`
+Úsalos cuando el usuario pida análisis, comparativas o reportes visuales de ventas, stock o actividad.
+
 INSTRUCCIONES CRÍTICAS:
 - Cuando te pregunten por clientes → lístalos TODOS con datos completos en un formato impecable.
 - Cuando te pregunten por citas → muéstralas TODAS agrupadas por fecha y hora.

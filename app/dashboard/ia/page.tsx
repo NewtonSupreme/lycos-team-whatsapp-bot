@@ -16,6 +16,10 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAppStore } from '@/lib/store';
 import { logActivity } from '@/lib/activity';
+import { 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
+  ResponsiveContainer, Cell, PieChart, Pie, LineChart, Line
+} from 'recharts';
 
 interface Message { 
   id: string; 
@@ -403,7 +407,66 @@ export default function IAPage() {
                       </p>
                     )}
                     {msg.role === 'assistant' ? (
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      <ReactMarkdown 
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          code({ node, inline, className, children, ...props }: any) {
+                            const match = /language-(\w+)/.exec(className || '');
+                            if (!inline && match && match[1] === 'chart') {
+                              try {
+                                const chartData = JSON.parse(String(children).replace(/\n/g, ""));
+                                return (
+                                  <div className="my-4 w-full h-[250px] bg-card/50 p-4 rounded-xl border border-border/50">
+                                    <p className="text-[10px] font-bold uppercase mb-2 text-primary">{chartData.title || 'Análisis de Datos'}</p>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                      {chartData.type === 'bar' ? (
+                                        <BarChart data={chartData.data}>
+                                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                                          <XAxis dataKey="name" fontSize={10} stroke="rgba(255,255,255,0.4)" />
+                                          <YAxis fontSize={10} stroke="rgba(255,255,255,0.4)" />
+                                          <Tooltip 
+                                            contentStyle={{ backgroundColor: '#1e1b4b', border: 'none', borderRadius: '8px', fontSize: '10px' }}
+                                            itemStyle={{ color: '#f97316' }}
+                                          />
+                                          <Bar dataKey="value" fill="#f97316" radius={[4, 4, 0, 0]} />
+                                        </BarChart>
+                                      ) : chartData.type === 'pie' ? (
+                                        <PieChart>
+                                          <Pie
+                                            data={chartData.data}
+                                            dataKey="value"
+                                            nameKey="name"
+                                            cx="50%"
+                                            cy="50%"
+                                            outerRadius={60}
+                                            label={{ fontSize: 10, fill: 'rgba(255,255,255,0.6)' }}
+                                          >
+                                            {chartData.data.map((entry: any, index: number) => (
+                                              <Cell key={`cell-${index}`} fill={['#f97316', '#fb923c', '#fdba74', '#fed7aa'][index % 4]} />
+                                            ))}
+                                          </Pie>
+                                          <Tooltip contentStyle={{ backgroundColor: '#1e1b4b', border: 'none', borderRadius: '8px', fontSize: '10px' }} />
+                                        </PieChart>
+                                      ) : (
+                                        <LineChart data={chartData.data}>
+                                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                                          <XAxis dataKey="name" fontSize={10} stroke="rgba(255,255,255,0.4)" />
+                                          <YAxis fontSize={10} stroke="rgba(255,255,255,0.4)" />
+                                          <Tooltip contentStyle={{ backgroundColor: '#1e1b4b', border: 'none', borderRadius: '8px', fontSize: '10px' }} />
+                                          <Line type="monotone" dataKey="value" stroke="#f97316" strokeWidth={2} dot={{ r: 4, fill: '#f97316' }} />
+                                        </LineChart>
+                                      )}
+                                    </ResponsiveContainer>
+                                  </div>
+                                );
+                              } catch (e) {
+                                return <pre {...props} className={className}>{children}</pre>;
+                              }
+                            }
+                            return <code {...props} className={className}>{children}</code>;
+                          }
+                        }}
+                      >
                         {msg.content}
                       </ReactMarkdown>
                     ) : (
