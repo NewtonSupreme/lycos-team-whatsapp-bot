@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Users, Car, Wrench, Calendar, MessageSquare,
   Bot, FileText, Settings, ChevronLeft, ChevronRight,
-  Activity, LogOut, TrendingUp, UserCircle, Package, Calculator
+  Activity, LogOut, TrendingUp, UserCircle, Package, Calculator, ShoppingCart
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -23,7 +23,7 @@ const navItemsConfig = [
   { href: '/dashboard/whatsapp', icon: MessageSquare, label: 'WhatsApp', badge: null },
   { href: '/dashboard/leads', icon: TrendingUp, label: 'Leads', badge: null },
   { href: '/dashboard/inventario', icon: Package, label: 'Inventario', badge: null },
-  { href: '/dashboard/silenciadores', icon: Package, label: 'Silenciadores', badge: null },
+  { href: '/dashboard/silenciadores', icon: ShoppingCart, label: 'Ventas', badge: null },
   { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente', badge: null },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', badge: null },
   { href: '/dashboard/actividad', icon: Activity, label: 'Actividad', badge: null },

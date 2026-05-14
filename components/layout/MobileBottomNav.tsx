@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, MessageSquare, Calendar, Wrench,
-  MoreHorizontal, Users, Car, Bot, FileText, Activity, Settings, X, TrendingUp, LogOut, Package, Calculator
+  MoreHorizontal, Users, Car, Bot, FileText, Activity, Settings, X, TrendingUp, LogOut, Package, Calculator, ShoppingCart
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -23,7 +23,7 @@ const MORE_NAV = [
   { href: '/dashboard/vehiculos', icon: Car, label: 'Vehículos' },
   { href: '/dashboard/leads', icon: TrendingUp, label: 'Leads' },
   { href: '/dashboard/taller', icon: Wrench, label: 'Taller' },
-  { href: '/dashboard/silenciadores', icon: Package, label: 'Silenciadores' },
+  { href: '/dashboard/silenciadores', icon: ShoppingCart, label: 'Ventas' },
   { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente' },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes' },
   { href: '/dashboard/actividad', icon: Activity, label: 'Actividad' },
