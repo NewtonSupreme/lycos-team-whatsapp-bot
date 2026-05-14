@@ -25,8 +25,9 @@ export const useAppStore = create<AppStore>((set) => ({
     rol: 'admin',
     created_at: new Date().toISOString(),
   },
-  // En móvil (< 1024px) iniciamos cerrado; en desktop abierto
-  sidebarOpen: typeof window !== 'undefined' ? window.innerWidth >= 1024 : true,
+  // Iniciamos en true para coincidir con el renderizado del servidor (SSR)
+  // El ajuste por resolución (móvil/desktop) se hace en un useEffect (ver DashboardLayout)
+  sidebarOpen: true,
   notifications: [],
   unreadCount: 0,
   pushRegistered: false,

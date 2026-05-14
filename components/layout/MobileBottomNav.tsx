@@ -35,6 +35,8 @@ export default function MobileBottomNav() {
   const pathname = usePathname();
   const { unreadCount } = useAppStore();
   const [showMore, setShowMore] = useState(false);
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => { setMounted(true); }, []);
 
   const isActive = (href: string) => {
     if (href === '/dashboard') return pathname === '/dashboard';
@@ -147,7 +149,7 @@ export default function MobileBottomNav() {
                       active ? 'scale-110' : 'scale-100'
                     )} />
                     {/* WhatsApp unread badge */}
-                    {isWa && unreadCount > 0 && (
+                    {isWa && mounted && unreadCount > 0 && (
                       <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 rounded-full bg-primary text-[9px] text-white flex items-center justify-center font-bold px-1">
                         {unreadCount > 99 ? '99+' : unreadCount}
                       </span>

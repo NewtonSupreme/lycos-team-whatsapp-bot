@@ -103,12 +103,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     loadSedes();
   }, [user?.id, user?.sede_id, setAvailableSedes, setUserRole, setCurrentSede]);
 
+  const [mounted, setMounted] = React.useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
   return (
     <div suppressHydrationWarning className="min-h-screen bg-background dot-pattern overflow-x-hidden">
       <Sidebar />
       <div className={cn(
         'flex flex-col min-h-screen transition-all duration-300 overflow-x-hidden',
-        sidebarOpen ? 'lg:ml-60' : 'lg:ml-16'
+        (mounted && sidebarOpen) ? 'lg:ml-60' : 'lg:ml-16'
       )}>
         <Header />
         {/* pb-20 en móvil para que el bottom nav no tape el contenido */}

@@ -85,7 +85,7 @@ export default function Sidebar() {
   return (
     <>
       {/* Mobile overlay */}
-      {sidebarOpen && (
+      {mounted && sidebarOpen && (
         <div
           className="fixed inset-0 z-20 bg-black/50 backdrop-blur-sm lg:hidden"
           onClick={toggleSidebar}
@@ -96,15 +96,15 @@ export default function Sidebar() {
       <aside
         className={cn(
           'fixed top-0 left-0 z-30 h-full flex flex-col border-r border-border/50 bg-card/80 backdrop-blur-xl transition-all duration-300 ease-in-out',
-          sidebarOpen ? 'w-60' : 'w-16',
+          (mounted && sidebarOpen) ? 'w-60' : 'w-16',
           'lg:translate-x-0',
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+          (mounted && sidebarOpen) ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         )}
       >
-        <div className={cn('flex items-center gap-3 p-4 border-b border-border/30', !sidebarOpen && 'justify-center px-2')}>
+        <div className={cn('flex items-center gap-3 p-4 border-b border-border/30', (mounted && !sidebarOpen) && 'justify-center px-2')}>
           <div className={cn(
             "flex-shrink-0 w-10 h-10 rounded-lg bg-secondary flex items-center justify-center overflow-hidden",
-            !sidebarOpen && "w-9 h-9"
+            (mounted && !sidebarOpen) && "w-9 h-9"
           )}>
             <img 
               src="/logo-icon-white.png" 

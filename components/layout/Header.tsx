@@ -81,6 +81,8 @@ export default function Header() {
   const { currentSede, availableSedes, canViewAll, setCurrentSede, userRole } = useSedeStore();
   const [showNotifs, setShowNotifs] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
 
   // ── Registrar Service Worker + Push ──────────────────────────
   const registerPush = useCallback(async () => {
@@ -248,7 +250,7 @@ export default function Header() {
     <header suppressHydrationWarning className="h-14 flex items-center gap-3 px-4 border-b border-border/30 bg-card/40 backdrop-blur-xl sticky top-0 z-20">
       {/* Mobile menu */}
       <Button variant="ghost" size="icon-sm" className="lg:hidden" onClick={toggleSidebar}>
-        {sidebarOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+        {mounted && sidebarOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
       </Button>
 
       {/* Search */}
@@ -306,8 +308,8 @@ export default function Header() {
             className="relative"
             onClick={() => { setShowNotifs(!showNotifs); if (!showNotifs) markAllRead(); }}
           >
-            <Bell className={cn('w-4 h-4', unreadCount > 0 && 'animate-[bell_0.5s_ease-in-out]')} />
-            {unreadCount > 0 && (
+            <Bell className={cn('w-4 h-4', mounted && unreadCount > 0 && 'animate-[bell_0.5s_ease-in-out]')} />
+            {mounted && unreadCount > 0 && (
               <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 flex items-center justify-center px-1 rounded-full bg-primary text-[9px] text-primary-foreground font-bold">
                 {unreadCount > 99 ? '99+' : unreadCount}
               </span>

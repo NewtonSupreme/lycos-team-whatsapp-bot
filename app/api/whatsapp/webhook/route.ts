@@ -486,9 +486,38 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ status: 'ignored' });
     }
     const value = body.entry?.[0]?.changes?.[0]?.value;
+
+    // ─── Handle Status Updates (Sent, Delivered, Read) ────────────────────────
+    if (value?.statuses?.length) {
+      const db = getDb();
+      for (const status of value.statuses) {
+        const wa_message_id = status.id;
+        const newStatus = status.status; // 'sent', 'delivered', 'read', 'failed', 'deleted'
+        
+        console.log(`📊 [Status Update] ${wa_message_id}: ${newStatus}`);
+
+        if (db) {
+          let internalStatus = 'enviado';
+          if (newStatus === 'delivered') internalStatus = 'entregado';
+          if (newStatus === 'read') internalStatus = 'leido';
+          if (newStatus === 'failed') internalStatus = 'error';
+          
+          try {
+            await db.from('mensajes_whatsapp')
+              .update({ estado: internalStatus })
+              .eq('wa_message_id', wa_message_id);
+          } catch (e) {
+            console.error('❌ Error updating status:', e);
+          }
+        }
+      }
+    }
+
     const waProfileName = value?.contacts?.[0]?.profile?.name || '';
 
-    if (!value?.messages?.length) return NextResponse.json({ status: 'no_messages' });
+    if (!value?.messages?.length) {
+      return NextResponse.json({ status: value?.statuses?.length ? 'ok' : 'no_messages' });
+    }
 
     for (const message of value.messages) {
       const from: string = message.from;

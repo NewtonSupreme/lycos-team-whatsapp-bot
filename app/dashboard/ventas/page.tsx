@@ -266,6 +266,21 @@ export default function VentasPage() {
         </div>
       </div>
 
+      {/* Botón flotante de carrito para móviles */}
+      {cart.length > 0 && (
+        <div className="lg:hidden fixed bottom-6 right-6 z-50">
+          <Button 
+            onClick={() => document.getElementById('checkout-section')?.scrollIntoView({ behavior: 'smooth' })}
+            className="rounded-full h-16 w-16 shadow-2xl bg-primary hover:bg-primary/90 text-white p-0 relative group animate-pulse"
+          >
+            <ShoppingCart className="w-6 h-6" />
+            <Badge className="absolute -top-1 -right-1 bg-destructive text-white border-2 border-white w-6 h-6 flex items-center justify-center p-0 text-[10px]">
+              {cart.length}
+            </Badge>
+          </Button>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Catálogo de Productos */}
         <div className="lg:col-span-7 space-y-4">
@@ -357,7 +372,7 @@ export default function VentasPage() {
         </div>
 
         {/* Carrito de Compras */}
-        <div className="lg:col-span-5 space-y-4">
+        <div id="checkout-section" className="lg:col-span-5 space-y-4">
           <Card className="glass-panel border-primary/20 bg-card/60 shadow-2xl relative overflow-hidden flex flex-col h-full min-h-[70vh]">
             <div className="absolute top-0 right-0 p-8 opacity-5 pointer-events-none rotate-12">
               <ShoppingCart className="w-64 h-64" />

@@ -445,8 +445,8 @@ export default function InventarioPage() {
 
       {/* Filters & Search */}
       <Card className="glass-panel border-border/50 bg-card/40 overflow-hidden shadow-sm">
-        <CardContent className="p-4 space-y-4">
-          <div className="flex flex-col lg:flex-row gap-4">
+        <CardContent className="p-3 sm:p-4 space-y-3">
+          <div className="flex flex-col lg:flex-row gap-3">
             {/* Search Bar */}
             <div className="relative flex-1 group">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
@@ -454,15 +454,15 @@ export default function InventarioPage() {
                 placeholder="Buscar por nombre, código o marca..." 
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-9 bg-background/50 border-border/50 focus:border-primary/50 transition-all h-10"
+                className="pl-9 bg-background/50 border-border/50 focus:border-primary/50 transition-all h-11 sm:h-10 text-sm"
               />
             </div>
 
             {/* Selects Container */}
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex-1 min-w-[140px]">
+            <div className="grid grid-cols-1 sm:grid-cols-3 lg:flex items-center gap-2">
+              <div className="flex-1 min-w-[120px]">
                 <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                  <SelectTrigger className="w-full bg-background/50 h-10">
+                  <SelectTrigger className="w-full bg-background/50 h-11 sm:h-10 text-xs">
                     <div className="flex items-center gap-2">
                       <Filter className="w-3.5 h-3.5 opacity-70" />
                       <SelectValue placeholder="Categoría" />
@@ -477,9 +477,9 @@ export default function InventarioPage() {
                 </Select>
               </div>
 
-              <div className="flex-1 min-w-[140px]">
+              <div className="flex-1 min-w-[120px]">
                 <Select value={locationFilter} onValueChange={setLocationFilter}>
-                  <SelectTrigger className="w-full bg-background/50 h-10">
+                  <SelectTrigger className="w-full bg-background/50 h-11 sm:h-10 text-xs">
                     <div className="flex items-center gap-2">
                       <MapPin className="w-3.5 h-3.5 opacity-70" />
                       <SelectValue placeholder="Ubicación" />
@@ -494,9 +494,9 @@ export default function InventarioPage() {
                 </Select>
               </div>
 
-              <div className="flex-1 min-w-[140px]">
+              <div className="flex-1 min-w-[120px]">
                 <Select value={classificationFilter} onValueChange={setClassificationFilter}>
-                  <SelectTrigger className="w-full bg-background/50 h-10">
+                  <SelectTrigger className="w-full bg-background/50 h-11 sm:h-10 text-xs">
                     <div className="flex items-center gap-2">
                       <Sparkles className="w-3.5 h-3.5 opacity-70" />
                       <SelectValue placeholder="Clasificación" />
@@ -516,9 +516,10 @@ export default function InventarioPage() {
                 size="icon" 
                 onClick={() => { setSearch(''); setCategoryFilter('all'); setLocationFilter('all'); setClassificationFilter('all'); }} 
                 title="Limpiar Filtros"
-                className="h-10 w-10 shrink-0 hover:bg-red-500/10 hover:text-red-500 transition-colors"
+                className="h-11 w-full lg:w-10 lg:h-10 shrink-0 hover:bg-red-500/10 hover:text-red-500 transition-colors border border-border/30 lg:border-transparent"
               >
-                <FilterX className="w-4 h-4" />
+                <FilterX className="w-4 h-4 mr-2 lg:mr-0" />
+                <span className="lg:hidden text-xs font-bold uppercase">Limpiar Filtros</span>
               </Button>
             </div>
           </div>

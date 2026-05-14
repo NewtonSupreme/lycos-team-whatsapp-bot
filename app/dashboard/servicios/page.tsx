@@ -1573,20 +1573,20 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
         "bg-white rounded-2xl sm:rounded-[32px] w-full shadow-[0_30px_70px_rgba(0,0,0,0.5)] overflow-hidden flex flex-col max-h-[98vh] border border-white/10 transition-all duration-500",
         secondCita ? "max-w-6xl" : "max-w-2xl"
       )}>
-        <div className="flex items-center justify-between p-4 sm:p-6 border-b border-gray-100 bg-white">
-          <h2 className="text-xs sm:text-sm font-black flex items-center gap-2 text-slate-900 uppercase tracking-tighter">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 sm:p-6 border-b border-gray-100 bg-white gap-4">
+          <h2 className="text-sm sm:text-base font-black flex items-center gap-2 text-slate-900 uppercase tracking-tighter">
             <FileText className="w-5 h-5 text-orange-500" /> {secondCita ? 'Facturación Dual' : 'Gestión de Entrega'}
           </h2>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button 
               onClick={() => setShowSelector(!showSelector)}
               className={cn(
-                "flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border",
+                "flex items-center gap-2 px-3 sm:px-4 py-2 rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest transition-all border",
                 secondCita ? "bg-primary/20 border-primary/30 text-primary" : "bg-gray-50 border-gray-100 text-slate-500 hover:bg-gray-100"
               )}
             >
               <MoveHorizontal className="w-4 h-4" /> 
-              {secondCita ? 'Cambiar Segunda' : 'Impresión Dual'}
+              {secondCita ? 'Cambiar' : 'Dual'}
             </button>
             <div className="flex items-center bg-gray-100 rounded-xl p-1 gap-1 border border-gray-200">
               <button 
@@ -1751,21 +1751,21 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
           </div>
         </div>
 
-        <div className="p-4 sm:p-8 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
+        <div className="p-4 sm:p-8 bg-gray-50 border-t border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-4">
            <div className="hidden sm:flex items-center gap-4 text-slate-400">
              <Info className="w-5 h-5 text-orange-500" />
              <p className="text-[10px] font-bold uppercase tracking-widest leading-none">
                {secondCita ? 'Estás editando dos facturas simultáneamente.' : 'Puedes añadir una segunda factura arriba.'}
              </p>
            </div>
-           <div className="flex gap-4 w-full sm:w-auto">
-              <button onClick={onClose} className="flex-1 sm:flex-none px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] text-gray-400 hover:text-slate-900 transition-all">
+           <div className="flex flex-col-reverse sm:flex-row gap-3 w-full sm:w-auto">
+              <button onClick={onClose} className="w-full sm:w-auto px-8 py-3.5 sm:py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] text-gray-400 hover:text-slate-900 transition-all border border-transparent hover:border-gray-200">
                 Cerrar
               </button>
               <button 
                 onClick={handleFinalizeSale} 
                 disabled={isSaving} 
-                className="flex-[2] sm:flex-none rounded-2xl bg-black hover:bg-neutral-800 text-white font-black px-12 py-4 shadow-[0_20px_50px_rgba(0,0,0,0.3)] text-[11px] uppercase tracking-[0.2em] gap-3 flex items-center justify-center transition-all"
+                className="w-full sm:w-auto rounded-2xl bg-black hover:bg-neutral-800 text-white font-black px-8 sm:px-12 py-4 shadow-[0_20px_50px_rgba(0,0,0,0.3)] text-[10px] sm:text-[11px] uppercase tracking-[0.2em] gap-3 flex items-center justify-center transition-all"
               >
                 {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <BadgeCheck className="w-5 h-5 text-orange-500" />}
                 Finalizar {secondCita ? 'Entregas' : 'Entrega'}

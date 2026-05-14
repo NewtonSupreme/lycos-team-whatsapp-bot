@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ShoppingCart, Plus, Trash2, Receipt, Package, 
   Search, MapPin, CheckCircle, AlertCircle, Loader2,
@@ -316,20 +317,49 @@ export default function VentasPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
-        {/* LADO IZQUIERDO: CATÁLOGO */}
-        <div className="xl:col-span-7 space-y-6">
-          {/* Buscador */}
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input 
-                placeholder="Busca por nombre o categoría..." 
-                className="pl-11 h-12 bg-card/40 border-border/50 rounded-2xl text-sm font-medium"
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-              />
-            </div>
+      {/* Botón flotante de carrito para móviles rediseñado */}
+      <AnimatePresence mode="wait">
+        {cart.length > 0 && (
+          <motion.div 
+            initial={{ x: 100, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: 100, opacity: 0 }}
+            className="xl:hidden fixed bottom-24 right-4 z-50 pointer-events-auto"
+          >
+            <button 
+              onClick={() => document.getElementById('checkout-section')?.scrollIntoView({ behavior: 'smooth' })}
+              className="flex items-center gap-3 bg-primary text-white pl-4 pr-2 py-2.5 rounded-full shadow-2xl border border-white/20 active:scale-95 transition-transform group"
+            >
+              <div className="flex flex-col items-start">
+                <span className="text-[10px] font-black uppercase tracking-widest opacity-80 leading-none">Mi Carrito</span>
+                <span className="text-sm font-black italic tracking-tight">${total.toFixed(2)}</span>
+              </div>
+              <div className="bg-white/20 p-2 rounded-full relative">
+                <ShoppingCart className="w-5 h-5" />
+                <span className="absolute -top-1.5 -right-1.5 bg-destructive text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center border border-white">
+                  {cart.length}
+                </span>
+              </div>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 h-[calc(100vh-12rem)] mt-6">
+        {/* LADO IZQUIERDO: PRODUCTOS */}
+        <div className="xl:col-span-7 h-full flex flex-col">
+          <Card className="flex-1 flex flex-col glass-panel border-border/50 bg-card/40 overflow-hidden shadow-xl rounded-[40px]">
+            <CardHeader className="pb-4 pt-8 px-8 border-b border-border/10 bg-white/5">
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="relative flex-1">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input 
+                    placeholder="Busca por nombre o categoría..." 
+                    className="pl-11 h-12 bg-card/40 border-border/50 rounded-2xl text-sm font-medium"
+                    value={searchTerm}
+                    onChange={e => setSearchTerm(e.target.value)}
+                  />
+                </div>
             <Select value={categoryFilter} onValueChange={setCategoryFilter}>
               <SelectTrigger className="w-full sm:w-[180px] h-12 bg-card/40 border-border/50 rounded-2xl text-[10px] font-black uppercase">
                 <SelectValue placeholder="Categoría" />
@@ -342,6 +372,8 @@ export default function VentasPage() {
               </SelectContent>
             </Select>
           </div>
+        </CardHeader>
+        <CardContent className="flex-1 overflow-y-auto p-8 custom-scrollbar">
 
           {/* Grid de Productos - PRECIOS REALES DEL INVENTARIO */}
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar p-1">
@@ -392,6 +424,8 @@ export default function VentasPage() {
                 </button>
             ))}
           </div>
+        </CardContent>
+      </Card>
 
           {/* Historial Dinámico Interactivo por Sede */}
           <Card className="glass-panel border-border/50 bg-card/20 rounded-3xl overflow-hidden shadow-sm mt-8 border-t-4 border-t-primary/20">
@@ -464,7 +498,7 @@ export default function VentasPage() {
         </div>
 
         {/* LADO DERECHO: CARRITO / INVOICE */}
-        <div className="xl:col-span-5">
+        <div id="checkout-section" className="xl:col-span-5">
           <div className="sticky top-24 space-y-6">
             <Card className="glass-panel border-primary/20 bg-card/60 shadow-2xl rounded-[2.5rem] relative overflow-hidden flex flex-col min-h-[850px]">
               <CardHeader className="border-b border-border/30 bg-primary/5 p-7">
