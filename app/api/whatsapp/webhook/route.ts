@@ -209,15 +209,13 @@ Sigue ESTRICTAMENTE estas reglas para dar precios al cliente:
 // ─── Strip markdown for WhatsApp ──────────────────────────────────────────────
 function cleanForWhatsApp(text: string): string {
   return text
-    .replace(/\*\*\*(.+?)\*\*\*/g, '$1')   // ***bold italic*** → plain
-    .replace(/\*\*(.+?)\*\*/g, '$1')        // **bold** → plain
-    .replace(/\*([^\s*][^*]*[^\s*])\*/g, '$1') // *bold* → plain (careful not to remove list bullets)
-    .replace(/^[\s]*\*\s+/gm, '• ')         // * item (list) → • item
-    .replace(/#{1,6}\s+/g, '')              // ## Headers → plain
-    .replace(/__(.+?)__/g, '$1')            // __text__ → plain
-    .replace(/_([^\s_][^_]*[^\s_])_/g, '$1') // _italic_ → plain
-    .replace(/`{1,3}([^`]+)`{1,3}/g, '$1') // `code` → plain
-    .replace(/\n{3,}/g, '\n\n')             // max 2 newlines
+    .replace(/\*\*\*(.+?)\*\*\*/g, '*_$1_*')   // ***bold italic*** → WhatsApp format
+    .replace(/\*\*(.+?)\*\*/g, '*$1*')         // **bold** → *bold*
+    .replace(/__(.+?)__/g, '_$1_')             // __italic__ → _italic_
+    .replace(/`{1,3}([^`]+)`{1,3}/g, '```$1```') // `code` → ```code```
+    .replace(/^[\s]*[-*+]\s+/gm, '• ')         // - or * or + item → • item
+    .replace(/#{1,6}\s+(.+)$/gm, '*$1*')       // # Header → *Header*
+    .replace(/\n{3,}/g, '\n\n')                // max 2 newlines
     .trim();
 }
 
@@ -410,6 +408,16 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
    - [CITA_DELETE: id]
    - [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion | sede_id]
    - [ASK_SEDE: motivo] -> Úsalo si falta la sede en una orden administrativa.
+
+FORMATO DE REPORTES (OBLIGATORIO):
+Cuando presentes listas de inventario, stock o reportes, usa este formato profesional:
+📦 *TITULO DEL REPORTE* 📍
+------------------------------------
+🔹 *Nombre del Producto*
+   • Stock: \`[Cantidad]\` unidades
+   • Precio: *$[Precio]*
+
+(Usa divisores claros, emojis de puntos y negritas para resaltar nombres).
 
 DATOS DISPONIBLES Y KPIs:
 Se te proporcionan ESTADÍSTICAS REALES por sede (Ingresos, Citas, Cantidad de productos en stock). Úsalas para dar reportes precisos y profesionales.
