@@ -387,28 +387,36 @@ FILTROS E INVENTARIO: Refrigerantes y líquidos Dr Care | Filtros aceite/gasolin
 const ADMIN_KNOWLEDGE = `
 ERES EL ADMINISTRADOR DEL SISTEMA (MODO DIOS).
 Tu interlocutor es LYCOS CORPORATIVO (el dueño/administrador del taller).
-Tienes acceso total para gestionar el inventario, citas y clientes mediante comandos ocultos (tags).
+Tienes acceso total para gestionar el inventario, citas, vehículos y clientes mediante comandos ocultos (tags).
 
 REGLAS DE OPERACIÓN ADMINISTRATIVA:
 1. TONO: Profesional, eficiente y servicial. No necesitas ser tan amigable como con los clientes, pero sí educado.
-2. CAPACIDADES: Puedes crear, actualizar y eliminar registros.
-3. ELIMINACIÓN (CRÍTICO): Si se te pide ELIMINAR algo, NUNCA lo hagas de inmediato. Debes preguntar: "¿Está seguro de que desea eliminar [elemento]? Responda SÍ para confirmar."
+2. CAPACIDADES: Puedes crear, actualizar y eliminar registros en tiempo real.
+3. SEDES (IMPORTANTE): Contamos con 3 sedes. Siempre debes saber en qué sede se realiza la acción.
+   - San Antonio de los Altos
+   - Carrizal (Principal)
+   - Caracas (El Cementerio) -> SIEMPRE RECONOCE "CEMENTERIO" COMO ESTA SEDE.
+4. ELIMINACIÓN (CRÍTICO): Si se te pide ELIMINAR algo, NUNCA lo hagas de inmediato. Debes preguntar: "¿Está seguro de que desea eliminar [elemento]? Responda SÍ para confirmar."
    - Solo si el historial muestra que el usuario respondió "SÍ", "CONFIRMADO" o similar a tu pregunta de confirmación, puedes imprimir el tag de DELETE.
-4. ACTUALIZACIÓN DE STOCK: Puedes recibir descripciones de imágenes o audios para actualizar el stock. Analiza la cantidad y el producto.
-5. TAGS DE GESTIÓN (Imprimir SIEMPRE al final de tu respuesta si hay una acción solicitada):
-   - [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca]
-     (Usa este tag exactamente con el guion bajo. Si el producto ya existe por nombre o código, se actualizará).
+5. ACTUALIZACIÓN DE STOCK Y VEHÍCULOS: Puedes recibir descripciones de imágenes para actualizar el stock o registrar vehículos. 
+   - Si recibes una foto de un carro, busca la placa y el modelo en la descripción y regístralo usando VEHICULO_UPSERT.
+6. ELECCIÓN DE SEDE (PROACTIVO): Si el administrador pide ver inventario, registrar una venta, o cualquier acción de gestión pero NO especifica la sede, DEBES imprimir el tag [ASK_SEDE: motivo] para que el sistema le muestre los botones de selección.
+   - Motivos: 'inventario', 'registro', 'servicio', 'cita'.
+7. TAGS DE GESTIÓN (Imprimir SIEMPRE al final de tu respuesta):
+   - [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca | sede_id]
    - [STOCK_DELETE: id_o_codigo]
-   - [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion]
+   - [VEHICULO_UPSERT: id_opcional | cliente_id | placa | marca | modelo | anio | sede_id]
+   - [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion | sede_id]
    - [CITA_DELETE: id]
-   - [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion]
+   - [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion | sede_id]
+   - [ASK_SEDE: motivo] -> Úsalo si falta la sede en una orden administrativa.
 
 DATOS DISPONIBLES Y KPIs:
-Se te proporciona el inventario completo, citas, clientes y las métricas (mensajes enviados, ventas de hoy) divididas por sedes. 
-Si el administrador no especifica una sede, dale la información global de las 3 sedes o agrupada. Si pide una sede específica, filtra los datos usando el campo "Sede: " que aparece en la información inyectada.
+Se te proporciona el inventario completo, citas, clientes y las métricas divididas por sedes. 
+Si pide una sede específica, filtra los datos usando el campo "Sede: " que aparece en la información inyectada.
 
 IMÁGENES:
-Si el administrador te envía una imagen, recibirás en tu historial un texto con la descripción de la imagen analizada por otro modelo de visión. Evalúa la pieza/producto y pregúntale de forma proactiva al administrador si desea registrarla en el inventario. Si confirma, genera el tag \`[STOCK_UPSERT: ...]\` con los datos deducidos (o pregunta el precio y stock si faltan).
+Analiza la descripción de la imagen. Si es un vehículo, extrae Placa, Marca y Modelo y ofrece registrarlo. Si es un producto, extrae nombre y ofrece actualizar stock.
 `;
 
 export const dynamic = 'force-dynamic';
@@ -559,7 +567,7 @@ export async function POST(request: NextRequest) {
                   const base64Data = Buffer.from(arrayBuffer).toString('base64');
                   const mimeType = mediaData.mime_type || 'image/jpeg';
 
-                  const description = await describeImage(base64Data, mimeType, from === ASESOR_PHONE);
+                  const description = await describeImage(base64Data, mimeType, ADMIN_PHONES.includes(from));
                   if (description) {
                     messageBody = `[Imagen enviada por el cliente. Descripción automática (analízala y respondele en base a esto): ${description}]${captionStr}`;
                     console.log(`🖼️ Imagen descrita de [${from}]: ${description.substring(0, 50)}...`);
@@ -800,6 +808,8 @@ interface Memoria {
   vehiculos?: { marca: string; modelo: string; anio?: string }[];
   notas?: string;
   awaiting_location_choice?: boolean;
+  awaiting_admin_sede?: string;
+  placa?: string;
 }
 interface ConversationContext {
   historia: { role: string; parts: { text: string }[] }[];
@@ -851,7 +861,8 @@ async function loadConversationContext(
 
   try {
     // History (Memory clipping for admins to prevent context bloat)
-    const historyLimit = isAdmin ? 6 : 50; 
+    // History (Memory clipping for admins to prevent context bloat, but enough for flow)
+    const historyLimit = isAdmin ? 20 : 50; 
     const { data: msgs } = await db
       .from('mensajes_whatsapp')
       .select('body, tipo, created_at')
@@ -1252,7 +1263,7 @@ async function describeImage(base64Data: string, mimeType: string, isAdmin: bool
   if (!GEMINI_API_KEY) return null;
   const visionModel = GEMINI_MODELS[0];
   const systemPrompt = isAdmin
-    ? "Eres un analista de inventario experto. Describe detalladamente qué productos se ven en la imagen, sus marcas, modelos y CANTIDADES aproximadas. El administrador usará esta información para actualizar el stock."
+    ? "Eres un analista de inventario y taller experto. Describe detalladamente qué productos o VEHÍCULOS se ven en la imagen. Si es un producto: marca, modelo, cantidades. Si es un VEHÍCULO: MARCA, MODELO y PLACA (CRÍTICO). El administrador usará esta información para actualizar stock o registrar vehículos."
     : "Eres un analista de imágenes de un taller automotriz. Detalla brevemente y de forma muy precisa qué se ve en la imagen para que el chatbot lo entienda y pueda ayudar al cliente. Si hay texto relevante en la imagen, menciónalo. Responde siempre en español.";
 
   try {
@@ -1302,7 +1313,7 @@ async function processIntents(
   waProfileName?: string
 ): Promise<{ clientId?: string; vehicleId?: string }> {
   if (!db) return {};
-  const newMemoria: Memoria & { placa?: string } = { ...ctx.memoria };
+  const newMemoria: Memoria = { ...ctx.memoria };
   let memChanged = false;
 
   // Extract name — with blacklist and more flexible patterns
@@ -1890,6 +1901,18 @@ function isContactRequest(lower: string): boolean {
     'numero de contacto', 'whatsapp del taller', 'hablar con un humano', 'asesor humano',
     'quiero hablar con', 'necesito hablar con'].some(k => lower.includes(k));
 }
+async function findSedeIdByName(db: any, name: string): Promise<string | null> {
+  if (!db) return null;
+  const clean = name.toLowerCase().trim();
+  let query = '';
+  if (clean.includes('san antonio')) query = 'San Antonio';
+  else if (clean.includes('carrizal') || clean.includes('principal')) query = 'Carrizal';
+  else if (clean.includes('caracas') || clean.includes('cementerio')) query = 'Caracas';
+  
+  if (!query) return null;
+  const { data } = await db.from('sedes').select('id').ilike('nombre', `%${query}%`).limit(1).maybeSingle();
+  return data?.id || null;
+}
 function delay(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
 
 
@@ -2042,6 +2065,30 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         }
       }
 
+      // ─── ADMIN SEDE CHOICE ──────────────────────────────────────────
+      if (ctx.memoria?.awaiting_admin_sede && db) {
+        const motivo = ctx.memoria.awaiting_admin_sede;
+        const selectedSedeId = await findSedeIdByName(db, bodyClean);
+        
+        if (selectedSedeId) {
+          const { data: sData } = await db.from('sedes').select('nombre').eq('id', selectedSedeId).single();
+          const sedeName = sData?.nombre || 'la sede seleccionada';
+          
+          delete ctx.memoria.awaiting_admin_sede;
+          await db.from('conversaciones').update({ memoria: ctx.memoria }).eq('telefono', from);
+          
+          await sendMsg(from, `✅ Entendido. Procedo con la gestión de *${motivo}* para la sede *${sedeName}*.`);
+          
+          // Inject a hidden message so the AI can continue with the correct sede
+          const followUpMsg = `[SISTEMA: El administrador seleccionó la sede ${sedeName} (ID: ${selectedSedeId}) para ${motivo}. Por favor, procede con la información o el tag correspondiente usando este ID].`;
+          const aiResp = await getAIResponse(followUpMsg, ctx, rates, from);
+          if (aiResp) {
+            await sendMsg(from, cleanForWhatsApp(aiResp), true, wa_message_id);
+          }
+          return;
+        }
+      }
+
       // Medical certificate intent (Handled by AI, but we prevent location trigger)
       if (isCertRequest(lowerBody)) {
         // Just let it pass to AI, which has the prices and information.
@@ -2157,6 +2204,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               const stock = parseInt(parts[3]);
               const codigo = parts[4] || null;
               const marca = parts[5] || null;
+              const sedeId = parts[6] || DEFAULT_SEDE_ID;
 
               const updateObj: any = {
                 nombre, 
@@ -2165,7 +2213,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 stock: isNaN(stock) ? 0 : stock,
                 codigo,
                 marca,
-                activo: true
+                activo: true,
+                sede_id: sedeId
               };
 
               console.log(`📦 ADMIN (${from}): Intento de UPSERT para "${nombre}" (Stock: ${stock}, Cod: ${codigo})`);
@@ -2234,12 +2283,13 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           const citaUpsertMatches = cleanedAi.matchAll(/\[CITA_UPSERT:\s*([^|]*)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^\]]+)\s*\]/gi);
           for (const m of citaUpsertMatches) {
             try {
-              const [, id, fecha, hora, clientId, vehId, estado, desc] = Array.from(m).map(s => s?.trim());
+              const [, id, fecha, hora, clientId, vehId, estado, desc, sedeId] = Array.from(m).map(s => s?.trim());
               const citaObj = {
-                fecha, hora, cliente_id: clientId, vehiculo_id: vehId, estado, descripcion: desc, telefono: from
+                fecha, hora, cliente_id: clientId, vehiculo_id: vehId, estado, descripcion: desc, telefono: from,
+                sede_id: sedeId || DEFAULT_SEDE_ID
               };
               if (id && id !== 'id_opcional' && id.length > 5 && db) {
-                await db.from('citas').update(citaObj).eq('id', id).eq('sede_id', DEFAULT_SEDE_ID);
+                await db.from('citas').update(citaObj).eq('id', id);
                 console.log(`📅 ADMIN: Cita actualizada: ${id}`);
                 await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Actualizó cita', `Cita ${id} actualizada vía ChatBot`);
               } else if (db) {
@@ -2264,10 +2314,14 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           const clientUpsertMatches = cleanedAi.matchAll(/\[CLIENTE_UPSERT:\s*([^|]*)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)?\|\s*([^\]]+)?\s*\]/gi);
           for (const m of clientUpsertMatches) {
             try {
-              const [, id, name, last, tel, ced, dir] = Array.from(m).map(s => s?.trim());
-              const clientObj = { nombre: name, apellido: last, telefono: tel, cedula: ced || null, direccion: dir || null };
+              const [, id, name, last, tel, ced, dir, sedeId] = Array.from(m).map(s => s?.trim());
+              const clientObj = { 
+                nombre: name, apellido: last, telefono: tel, 
+                cedula: ced || null, direccion: dir || null,
+                sede_id: sedeId || DEFAULT_SEDE_ID
+              };
               if (id && id !== 'id_opcional' && id.length > 5 && db) {
-                await db.from('clientes').update(clientObj).eq('id', id).eq('sede_id', DEFAULT_SEDE_ID);
+                await db.from('clientes').update(clientObj).eq('id', id);
                 console.log(`👤 ADMIN: Cliente actualizado: ${id}`);
                 await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Actualizó cliente', `Cliente actualizado vía ChatBot`);
               } else if (db) {
@@ -2278,13 +2332,73 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             } catch (e) { console.error('Error in CLIENTE_UPSERT:', e); }
           }
 
+          // 6. [VEHICULO_UPSERT: id_opcional | cliente_id | placa | marca | modelo | anio | sede_id]
+          const vehUpsertMatches = cleanedAi.matchAll(/\[VEHICULO_UPSERT:\s*([^|]*)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)?\|\s*([^\]]+)?\s*\]/gi);
+          for (const m of vehUpsertMatches) {
+            try {
+              const [, id, clientId, placa, marca, modelo, anio, sedeId] = Array.from(m).map(s => s?.trim());
+              
+              // Resolve clientId if null but we have a context or can find it by phone?
+              // In Admin mode, the admin might be talking ABOUT another client.
+              // If clientId is 'null', we try to use the current conversation's client or just leave it null for now.
+              let targetClientId = clientId === 'null' ? null : clientId;
+              
+              const vehObj: any = { 
+                placa: placa.toUpperCase(), 
+                marca, modelo, 
+                anio: anio ? parseInt(anio) : null,
+                sede_id: sedeId || DEFAULT_SEDE_ID
+              };
+              if (targetClientId) vehObj.cliente_id = targetClientId;
+
+              if (id && id !== 'id_opcional' && id.length > 5) {
+                await db.from('vehiculos').update(vehObj).eq('id', id);
+                console.log(`🚗 ADMIN: Vehículo actualizado: ${id}`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Actualizó vehículo', `Vehículo ${placa} actualizado vía ChatBot`);
+              } else {
+                // If new and no clientId, try to find a client with the same phone as sender (unlikely for admin, but safe fallback)
+                // Or leave it for the admin to link later.
+                const { data: newVeh, error: insErr } = await db.from('vehiculos').insert(vehObj).select('id').single();
+                if (insErr) throw insErr;
+                console.log(`🚗 ADMIN: Nuevo vehículo registrado: ${placa} (ID: ${newVeh?.id})`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Registró vehículo', `Vehículo ${placa} (${marca} ${modelo}) registrado vía ChatBot`);
+              }
+            } catch (e) { console.error('Error in VEHICULO_UPSERT:', e); }
+          }
+
+          // 7. [ASK_SEDE: motivo]
+          const askSedeMatch = cleanedAi.match(/\[ASK_SEDE:\s*([^\]]+?)\s*\]/i);
+          if (askSedeMatch) {
+            const motivo = askSedeMatch[1].trim();
+            console.log(`📍 [${from}] AI solicitó preguntar sede por motivo: ${motivo}`);
+            
+            const buttons = [
+              { id: `admin_sede_1_${motivo}`, title: 'San Antonio' },
+              { id: `admin_sede_2_${motivo}`, title: 'Carrizal' },
+              { id: `admin_sede_3_${motivo}`, title: 'Caracas' }
+            ];
+
+            await sendButtonMsg(
+              from, 
+              `¿Para qué sede deseas realizar la gestión de ${motivo}? 📍`,
+              buttons,
+              'Selecciona la sede'
+            );
+            
+            // Persistir motivo en memoria para saber qué hacer cuando responda
+            ctx.memoria.awaiting_admin_sede = motivo;
+            await db.from('conversaciones').update({ memoria: ctx.memoria }).eq('telefono', from);
+          }
+
           // Remove management tags from final message
           cleanedAi = cleanedAi
             .replace(/\[STOCK_UPSERT:[^\]]+\]/gi, '')
             .replace(/\[STOCK_DELETE:[^\]]+\]/gi, '')
+            .replace(/\[VEHICULO_UPSERT:[^\]]+\]/gi, '')
             .replace(/\[CITA_UPSERT:[^\]]+\]/gi, '')
             .replace(/\[CITA_DELETE:[^\]]+\]/gi, '')
             .replace(/\[CLIENTE_UPSERT:[^\]]+\]/gi, '')
+            .replace(/\[ASK_SEDE:[^\]]+\]/gi, '')
             .trim();
         }
 
@@ -2305,7 +2419,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               const vehiculoFromTag = vehiculo || '';
               // Plate: from current message > memoria
               const placaMatch = messageBody.match(/\b([A-Z]{2,3}[-\s]?\d{2,3}[-\s]?[A-Z0-9]{0,3})\b/i);
-              const placa = placaMatch ? placaMatch[1].toUpperCase().replace(/[-\s]/g, '') : (ctx.memoria as { placa?: string })?.placa || '';
+              const placa = placaMatch ? placaMatch[1].toUpperCase().replace(/[-\s]/g, '') : ctx.memoria.placa || '';
               // Year from message or memoria
               const anioMatch = messageBody.match(/\b(19[8-9]\d|20[0-2]\d)\b/);
               const anio = anioMatch?.[1] || ctx.memoria?.vehiculos?.[0]?.anio || '';
