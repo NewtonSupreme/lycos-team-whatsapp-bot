@@ -982,9 +982,17 @@ async function loadConversationContext(
       }
       
       if (allInv && allInv.length > 0) {
-        inventarioInfo = `\n[INVENTARIO COMPLETO (POR SEDE)]\n` + allInv.map(i =>
+        // Limit inventory info for admins to avoid context bloat/timeout
+        const importantItems = allInv.filter(i => i.stock <= 5 || i.precio_usd > 100).slice(0, 40);
+        const otherCount = allInv.length - importantItems.length;
+        
+        inventarioInfo = `\n[RESUMEN DE INVENTARIO (POR SEDE)]\n` + importantItems.map(i =>
           `ID: ${i.id} | Sede: ${i.sede?.nombre || 'General'} | ${i.nombre} [${i.codigo || 'S/C'}] | Stock: ${i.stock} | Precio: $${i.precio_usd}`
         ).join('\n');
+        
+        if (otherCount > 0) {
+          inventarioInfo += `\n... y otros ${otherCount} productos en stock. (Pídeme detalles específicos de un producto si no lo ves aquí).`;
+        }
       }
 
       historialTecnico = `\n--- FIN DE DATOS DEL SISTEMA ---\nInstrucción estricta: Eres el asistente administrativo (Modo Dios). Debes dar la información precisa de lo que se te pide usando la data anterior. Puedes ejecutar comandos para modificar la base de datos si el admin te lo pide. No inventes nada.`;
@@ -2134,7 +2142,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         }
 
         // ── ADMIN: Process management tags ────────────────────────────────
-        const isAdmin = ADMIN_PHONES.includes(from || '') || ctx.memoria?.nombre?.toLowerCase().includes('leandro');
+        const isAdmin = !!ctx.isAdmin || ADMIN_PHONES.includes(from || '');
         
         if (isAdmin && db) {
           // 1. [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca]

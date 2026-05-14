@@ -27,6 +27,10 @@ export default function EmpleadosPage() {
     telefono: ""
   });
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [editFormData, setEditFormData] = useState<any>(null);
+
   const { canViewAll, currentSede } = useSedeStore();
 
   useEffect(() => {
@@ -91,7 +95,7 @@ export default function EmpleadosPage() {
   }
 
   async function handleDelete(id: string, nombre: string) {
-    if (!confirm(`¿Estás seguro de eliminar a ${nombre}?`)) return;
+    if (!confirm(`¿Estás seguro de eliminar permanentemente a ${nombre} de la base de datos? Esta acción es irreversible.`)) return;
     
     try {
       const res = await fetch('/api/admin/delete-user', {
@@ -103,11 +107,49 @@ export default function EmpleadosPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      fetchEmpleados();
+      setEmpleados(prev => prev.filter(e => e.id !== id));
+      alert("Usuario eliminado correctamente.");
     } catch (error: any) {
       alert("Error eliminando empleado: " + error.message);
     }
   }
+
+  const handleEditClick = (emp: any) => {
+    setEditingId(emp.id);
+    setEditFormData({
+      id: emp.id,
+      nombre: emp.nombre,
+      username: emp.username,
+      email: emp.email,
+      rol: emp.rol,
+      sede_id: emp.sede?.id || "",
+      telefono: emp.telefono || ""
+    });
+    setShowEditDialog(true);
+  };
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/update-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editFormData)
+      });
+      
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      alert("Usuario actualizado correctamente.");
+      setShowEditDialog(false);
+      fetchEmpleados();
+    } catch (error: any) {
+      alert("Error actualizando: " + error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const renderTable = (list: any[], showCredentials: boolean) => {
     if (loading) return <div className="flex justify-center p-8"><Loader2 className="w-8 h-8 animate-spin text-slate-400" /></div>;
@@ -169,14 +211,24 @@ export default function EmpleadosPage() {
                   ) : '-'}
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    className="text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
-                    onClick={() => handleDelete(emp.id, emp.nombre)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <div className="flex items-center justify-end gap-2">
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors"
+                      onClick={() => handleEditClick(emp)}
+                    >
+                      <User className="h-4 w-4" />
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                      onClick={() => handleDelete(emp.id, emp.nombre)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -239,6 +291,7 @@ export default function EmpleadosPage() {
                 <div className="space-y-2">
                   <Label>Teléfono WhatsApp (Para IA Admins)</Label>
                   <Input placeholder="Ej: 584123343519" value={formData.telefono} onChange={e => setFormData({ ...formData, telefono: e.target.value })} />
+                  <p className="text-[9px] text-emerald-600 font-bold uppercase leading-none">⚠️ Formato internacional obligatorio para "Modo Dios"</p>
                 </div>
               </div>
               <div className="space-y-2">
@@ -354,6 +407,72 @@ export default function EmpleadosPage() {
           </Card>
         </div>
       </div>
+
+      {/* MODAL DE EDICIÓN */}
+      {showEditDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <Card className="w-full max-w-md border-slate-200 dark:border-slate-800 shadow-2xl animate-in zoom-in-95 duration-200">
+            <CardHeader className="bg-slate-50/50 dark:bg-slate-900/50 border-b">
+              <CardTitle className="text-xl flex items-center gap-2">
+                <User className="w-5 h-5 text-blue-500" />
+                Editar Usuario
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-6">
+              <form onSubmit={handleUpdate} className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Nombre Completo</Label>
+                  <Input required value={editFormData.nombre} onChange={e => setEditFormData({ ...editFormData, nombre: e.target.value })} />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Usuario</Label>
+                    <Input required value={editFormData.username} onChange={e => setEditFormData({ ...editFormData, username: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Email</Label>
+                    <Input required type="email" value={editFormData.email} onChange={e => setEditFormData({ ...editFormData, email: e.target.value })} />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Teléfono WhatsApp (Modo Dios)</Label>
+                  <Input value={editFormData.telefono} onChange={e => setEditFormData({ ...editFormData, telefono: e.target.value })} />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Rol</Label>
+                    <Select value={editFormData.rol} onValueChange={v => setEditFormData({ ...editFormData, rol: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="admin">Admin</SelectItem>
+                        <SelectItem value="gerente">Gerente</SelectItem>
+                        <SelectItem value="empleado">Empleado</SelectItem>
+                        <SelectItem value="mecanico">Mecánico</SelectItem>
+                        <SelectItem value="jefe_taller">Jefe Taller</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Sede</Label>
+                    <Select value={editFormData.sede_id} onValueChange={v => setEditFormData({ ...editFormData, sede_id: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {sedes.map(s => <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="flex gap-3 pt-4">
+                  <Button type="button" variant="outline" className="flex-1" onClick={() => setShowEditDialog(false)}>Cancelar</Button>
+                  <Button type="submit" className="flex-1 bg-blue-600 text-white" disabled={saving}>
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Guardar Cambios"}
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

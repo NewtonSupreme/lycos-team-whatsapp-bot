@@ -52,6 +52,8 @@ export async function POST(req: Request) {
     const finalEmail = email || `${username}@lycosteam.internal`;
 
     // Insert into custom usuarios table
+    console.log(`👤 [CreateUser] Registering ${nombre} with role ${rol} and phone ${telefono || 'N/A'}`);
+
     const { data: newUser, error } = await supabaseAdmin.from('usuarios').insert({
       username: username,
       nombre: apellido ? `${nombre} ${apellido}`.trim() : nombre,
@@ -64,10 +66,11 @@ export async function POST(req: Request) {
     }).select().single();
 
     if (error) {
-      console.error('Error creando usuario:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      console.error('❌ [CreateUser] DB Error:', error.message);
+      return NextResponse.json({ error: `Error en base de datos: ${error.message}` }, { status: 500 });
     }
 
+    console.log(`✅ [CreateUser] User created successfully: ${newUser.id}`);
     return NextResponse.json({ message: 'Usuario creado exitosamente', user: newUser });
   } catch (error: any) {
     console.error('Error in create-user:', error);
