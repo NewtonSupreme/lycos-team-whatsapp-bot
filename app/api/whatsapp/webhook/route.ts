@@ -285,7 +285,7 @@ SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gr
 - **LISTA DE PRECIOS POR MOTOR** (instalación incluida):
   - CL27 / CL30: Motores hasta 1.3L → $40
   - CL40: Motores hasta 1.5L → $50
-  - CLH40: Motores 1.6L hasta 2.0L (Casos típicos: Aveo 1.6, Volkswagen Gol, Toyota Corolla 1.6, Neon, etc.) → $60. **NOTA**: Vehículos como EcoSport, Caliber o SUVs compactos NO entran aquí, son de fabricación especial.
+  - CLH40: Motores 1.6L hasta 2.0L (Casos típicos: Aveo 1.6, Volkswagen Gol, Toyota Corolla 1.6, Neon, Chevy Comfort 1.6, etc.) → $60. **NOTA**: Vehículos como EcoSport, Caliber o SUVs compactos NO entran aquí, son de fabricación especial.
   - CL60 (Motores Grandes / Camiones / Plataneros): Motores desde 3.8L en adelante o vehículos de carga pesada → $90.
   - CLK60 (Fabricación Especial): $100 — Aplicable OBLIGATORIAMENTE a vehículos con sistemas complejos, poco espacio o fabricación a medida.
     LISTA OBLIGATORIA CLK60: Dodge Caliber, Ford EcoSport, Toyota Previa, Kia Sportage, Hyundai Tucson, Chevrolet Malibú, Jeep Compass, Jeep Cherokee, Mitsubishi Outlander, y SUVs compactas similares.
@@ -1499,7 +1499,7 @@ async function processIntents(
 
   // Extract vehicle - much more robust list
   const brandKeywords = [
-    'toyota', 'ford', 'chevrolet', 'hyundai', 'kia', 'honda', 'nissan', 'mazda', 'volkswagen',
+    'toyota', 'ford', 'chevrolet', 'chevy', 'hyundai', 'kia', 'honda', 'nissan', 'mazda', 'volkswagen',
     'mitsubishi', 'suzuki', 'isuzu', 'peugeot', 'renault', 'fiat', 'jeep', 'dodge', 'chrysler',
     'mercedes', 'bmw', 'audi', 'volvo', 'chery', 'dongfeng', 'saic', 'mg', 'jac', 'great wall',
     'geely', 'byd', 'hafei', 'zotye', 'lifan', 'faw', 'venirauto', 'turpial', 'centauro', 'arauca', 'orinoco',
@@ -2129,8 +2129,27 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           await delay(500);
           await sendContactCard(from, selectedSedePhone, selectedSedeName);
           await delay(800);
-          await sendMsg(from, '¿Deseas agendar una cita en esta sede o tienes alguna otra duda? 😊');
-          return;
+
+          // Determinar si el mensaje es SOLO la elección de sede o si hay una pregunta adicional
+          const isSimpleSedeChoice = bodyClean === 'caracas' || 
+                                     bodyClean === 'el cementerio' || 
+                                     bodyClean === 'san antonio' || 
+                                     bodyClean === 'carrizal' || 
+                                     bodyClean === '1' || bodyClean === '2' || bodyClean === '3' ||
+                                     bodyClean.length < 15;
+
+          if (isSimpleSedeChoice) {
+            await sendMsg(from, '¿Deseas agendar una cita en esta sede o tienes alguna otra duda? 😊');
+            return;
+          }
+          
+          console.log(`📍 [${from}] Sede detectada pero el mensaje es complejo. Continuando procesamiento con IA.`);
+          // Inyectamos un mensaje en la historia para que la IA sepa que ya enviamos la ubicación
+          ctx.historia.push({ 
+            role: 'model', 
+            parts: [{ text: `[SISTEMA: Ya le envié al cliente la ubicación detallada de ${selectedSedeName} con el mapa y el contacto. Responde ahora a sus otras dudas sobre precios o productos de forma directa.]` }] 
+          });
+          // Continuamos el flujo para que la IA responda el resto de la pregunta
         }
       }
 
