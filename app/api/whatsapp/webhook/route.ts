@@ -403,13 +403,17 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
    - Motivos: 'inventario', 'registro', 'servicio', 'cita'.
 
 FORMATO DE REPORTES (OBLIGATORIO):
-Cuando presentes listas de inventario, stock o reportes, usa este formato profesional COMPACTO (un producto por línea):
+Cuando presentes listas de inventario, stock o reportes, usa este formato profesional ESPACIADO (OBLIGATORIO una línea en blanco entre cada producto):
 📦 *TITULO DEL REPORTE* 📍
 ------------------------------------
-🔹 *[Nombre]*: Stock `[Cantidad]` | Precio: *$[Precio]*
-🔹 *[Nombre]*: Stock `[Cantidad]` | Precio: *$[Precio]*
 
-(Usa divisores claros, negritas para nombres y precios, y monospace para cantidades).
+🔹 *[Nombre del Producto]*
+• Stock: \`[Cantidad]\` | Precio: *$[Precio]*
+
+🔹 *[Nombre del Producto]*
+• Stock: \`[Cantidad]\` | Precio: *$[Precio]*
+
+(Usa divisores claros, negritas para nombres y precios, y monospace para cantidades. No amontones el texto).
 
 REGLA DE TAGS (Imprimir SIEMPRE al final de tu respuesta):
    - [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca | sede_id]
