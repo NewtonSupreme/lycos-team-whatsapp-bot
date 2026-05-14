@@ -412,8 +412,10 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
    - [ASK_SEDE: motivo] -> Úsalo si falta la sede en una orden administrativa.
 
 DATOS DISPONIBLES Y KPIs:
-Se te proporciona el inventario completo, citas, clientes y las métricas divididas por sedes. 
-Si pide una sede específica, filtra los datos usando el campo "Sede: " que aparece en la información inyectada.
+Se te proporcionan ESTADÍSTICAS REALES por sede (Ingresos, Citas, Cantidad de productos en stock). Úsalas para dar reportes precisos y profesionales.
+- Si el administrador pide un reporte o resumen, usa la sección [ESTADÍSTICAS POR SEDE] y [ESTADÍSTICAS DE INVENTARIO].
+- Si pide detalles de un producto que no ves en la muestra, aclara que es una muestra y que puedes buscar el código o nombre específico si te lo da.
+- NUNCA inventes que una sede está vacía si ves que tiene "productos totales" en las estadísticas.
 
 IMÁGENES:
 Analiza la descripción de la imagen. Si es un vehículo, extrae Placa, Marca y Modelo y ofrece registrarlo. Si es un producto, extrae nombre y ofrece actualizar stock.
@@ -967,12 +969,34 @@ async function loadConversationContext(
       ]);
       
       const revenueToday = allServs?.reduce((sum, s) => sum + (Number(s.costo_final || s.costo_estimado || 0)), 0) || 0;
+      
+      const revenueBySede: Record<string, number> = {};
+      allServs?.forEach(s => {
+        const sName = s.sede?.nombre || 'General';
+        revenueBySede[sName] = (revenueBySede[sName] || 0) + Number(s.costo_final || s.costo_estimado || 0);
+      });
+
+      const citasBySede: Record<string, number> = {};
+      allCitas?.forEach(c => {
+        const sName = c.sede?.nombre || 'General';
+        citasBySede[sName] = (citasBySede[sName] || 0) + 1;
+      });
 
       citasInfo = `\n--- [MODO DIOS] INFO DEL SISTEMA EN TIEMPO REAL ---\n`;
       citasInfo += `Hola Admin ${adminName}.\n`;
-      citasInfo += `\n[KPIs DE HOY]\n`;
+      citasInfo += `\n[KPIs GENERALES]\n`;
       citasInfo += `- Mensajes IA enviados: Hoy (${msgsToday || 0}), Semana (${msgsWeek || 0}), Mes (${msgsMonth || 0})\n`;
-      citasInfo += `- Ingresos Registrados Hoy (Servicios): $${revenueToday}\n`;
+      citasInfo += `- Ingresos Totales Hoy: $${revenueToday}\n`;
+      
+      citasInfo += `\n[ESTADÍSTICAS POR SEDE (HOY)]\n`;
+      const allSedeNames = [...new Set([...Object.keys(revenueBySede), ...Object.keys(citasBySede)])];
+      if (allSedeNames.length > 0) {
+        allSedeNames.forEach(sName => {
+          citasInfo += `- ${sName}: $${revenueBySede[sName] || 0} en ingresos | ${citasBySede[sName] || 0} citas agendadas.\n`;
+        });
+      } else {
+        citasInfo += `No hay actividad registrada en las sedes hoy aún.\n`;
+      }
       
       if (allCitas && allCitas.length > 0) {
         citasInfo += `\n[CITAS PARA HOY Y PROXIMAS]\n` + allCitas.map(c => 
@@ -993,16 +1017,45 @@ async function loadConversationContext(
       }
       
       if (allInv && allInv.length > 0) {
-        // Limit inventory info for admins to avoid context bloat/timeout
-        const importantItems = allInv.filter(i => i.stock <= 5 || i.precio_usd > 100).slice(0, 40);
-        const otherCount = allInv.length - importantItems.length;
+        // 1. Group by sede for summary
+        const sedeSummary: Record<string, { count: number, lowStock: number }> = {};
+        allInv.forEach(i => {
+          const sName = i.sede?.nombre || 'General';
+          if (!sedeSummary[sName]) sedeSummary[sName] = { count: 0, lowStock: 0 };
+          sedeSummary[sName].count++;
+          if (i.stock <= 5) sedeSummary[sName].lowStock++;
+        });
+
+        inventarioInfo = `\n[ESTADÍSTICAS DE INVENTARIO POR SEDE]\n`;
+        Object.entries(sedeSummary).forEach(([s, data]) => {
+          inventarioInfo += `- ${s}: ${data.count} productos totales (${data.lowStock} con stock bajo).\n`;
+        });
+
+        // 2. Select representative items from EACH sede
+        const sedes = [...new Set(allInv.map(i => i.sede?.nombre || 'General'))];
+        const selectedItems: any[] = [];
         
-        inventarioInfo = `\n[RESUMEN DE INVENTARIO (POR SEDE)]\n` + importantItems.map(i =>
+        sedes.forEach(sName => {
+          const sedeItems = allInv.filter(i => (i.sede?.nombre || 'General') === sName);
+          // Prioritize low stock or expensive items within each sede
+          const prioritized = sedeItems.sort((a, b) => {
+            if (a.stock <= 5 && b.stock > 5) return -1;
+            if (b.stock <= 5 && a.stock > 5) return 1;
+            return b.precio_usd - a.precio_usd;
+          }).slice(0, 15); // Top 15 per sede
+          selectedItems.push(...prioritized);
+        });
+
+        // Final limit to prevent context bloat (max 50 items total)
+        const finalItems = selectedItems.slice(0, 50);
+        
+        inventarioInfo += `\n[DETALLE DE PRODUCTOS (MUESTRA RELEVANTE)]\n` + finalItems.map(i =>
           `ID: ${i.id} | Sede: ${i.sede?.nombre || 'General'} | ${i.nombre} [${i.codigo || 'S/C'}] | Stock: ${i.stock} | Precio: $${i.precio_usd}`
         ).join('\n');
         
-        if (otherCount > 0) {
-          inventarioInfo += `\n... y otros ${otherCount} productos en stock. (Pídeme detalles específicos de un producto si no lo ves aquí).`;
+        const remaining = allInv.length - finalItems.length;
+        if (remaining > 0) {
+          inventarioInfo += `\n... y otros ${remaining} productos. (Pídeme detalles de un código o nombre específico si no lo ves aquí).`;
         }
       }
 
