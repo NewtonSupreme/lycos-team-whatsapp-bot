@@ -69,11 +69,18 @@ export default function VentasPage() {
     otro: 0
   });
 
+  const [printMode, setPrintMode] = useState<'single' | 'dual' | 'diferente'>('dual');
+  const [printSide, setPrintSide] = useState<'left' | 'right'>('left');
+
   const { currentSede } = useSedeStore();
   const [rates, setRates] = useState({ bcv: 36.5 });
 
   // Stats
   const [ventasRecientes, setVentasRecientes] = useState<any[]>([]);
+
+  const [searchTermVenta, setSearchTermVenta] = useState('');
+  const [showSelector, setShowSelector] = useState(false);
+  const [secondVenta, setSecondVenta] = useState<any | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -191,7 +198,7 @@ export default function VentasPage() {
         await updateInventarioStock(item.id, newStock);
       }
 
-      generateInvoicePDF([{
+      const data1 = {
         id: ventaDia.id,
         fecha: new Date().toLocaleDateString(),
         cliente: clienteNombre || 'Consumidor Final',
@@ -205,7 +212,24 @@ export default function VentasPage() {
         total: total,
         tasa_bcv: rates.bcv,
         iva_aplicado: conIva
-      }]);
+      };
+
+      const dataList: any[] = [data1];
+      if (printMode === 'dual') {
+        dataList.push(data1);
+      } else if (printMode === 'diferente' && secondVenta) {
+        dataList.push({
+          id: secondVenta.id,
+          fecha: new Date(secondVenta.created_at).toLocaleDateString(),
+          cliente: secondVenta.cliente || undefined,
+          items: secondVenta.desglose || [],
+          total: secondVenta.total_ingresos,
+          tasa_bcv: secondVenta.tasa_cambio || rates.bcv,
+          iva_aplicado: secondVenta.con_iva
+        });
+      }
+
+      generateInvoicePDF(dataList, { mode: printMode, side: printSide });
 
       setCart([]);
       setClienteNombre('');
@@ -666,11 +690,59 @@ export default function VentasPage() {
                <span className="text-3xl font-black text-primary italic tracking-tighter">${total.toFixed(2)}</span>
             </div>
           </div>
-          <DialogFooter className="p-8 bg-muted/20 flex gap-4">
-             <Button variant="outline" className="flex-1 h-12 rounded-xl font-bold" onClick={() => setShowPreview(false)}>VOLVER</Button>
-             <Button className="flex-1 h-12 rounded-xl bg-primary text-white font-black uppercase tracking-widest gap-2" onClick={handleFinalize}>
-               <Printer className="w-4 h-4" /> CONFIRMAR Y REGISTRAR
-             </Button>
+          <DialogFooter className="p-8 bg-muted/20 flex flex-col gap-4">
+             <div className="flex items-center justify-between w-full">
+                <div className="flex items-center gap-2">
+                    <div className="flex items-center bg-slate-100 rounded-xl p-1 gap-1 border border-slate-200">
+                      <button 
+                        onClick={() => setPrintMode('single')}
+                        className={cn("px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all", printMode === 'single' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
+                      >
+                        Única
+                      </button>
+                      <button 
+                        onClick={() => setPrintMode('dual')}
+                        className={cn("px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all", printMode === 'dual' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
+                        title="Dos copias de la misma factura"
+                      >
+                        Dual
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setPrintMode('diferente');
+                          if (!secondVenta) setShowSelector(true);
+                        }}
+                        className={cn("px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all", printMode === 'diferente' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
+                        title="Dos facturas diferentes"
+                      >
+                        Diferente
+                      </button>
+                    </div>
+
+                  {printMode === 'single' && (
+                    <div className="flex items-center bg-background rounded-lg p-0.5 border border-border">
+                      <button 
+                        onClick={() => setPrintSide('left')}
+                        className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all", printSide === 'left' ? "bg-primary text-white" : "text-slate-500")}
+                      >
+                        Izq
+                      </button>
+                      <button 
+                        onClick={() => setPrintSide('right')}
+                        className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all", printSide === 'right' ? "bg-primary text-white" : "text-slate-500")}
+                      >
+                        Der
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" className="h-10 rounded-xl font-bold px-6" onClick={() => setShowPreview(false)}>VOLVER</Button>
+                  <Button className="h-10 rounded-xl bg-primary text-white font-black uppercase tracking-widest gap-2 px-6" onClick={handleFinalize}>
+                    <Printer className="w-4 h-4" /> CONFIRMAR Y REGISTRAR
+                  </Button>
+                </div>
+             </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -709,26 +781,104 @@ export default function VentasPage() {
                    </table>
                 </div>
               </div>
-              <DialogFooter className="p-8 bg-muted/20 flex gap-4">
-                 <Button variant="outline" className="flex-1 h-12 rounded-xl font-bold" onClick={() => setShowSaleDetail(false)}>CERRAR</Button>
-                 <Button className="flex-1 h-12 rounded-xl bg-primary text-white font-black uppercase tracking-widest gap-2" 
-                   onClick={() => generateInvoicePDF([{
-                     id: selectedSale.id,
-                     fecha: new Date(selectedSale.created_at).toLocaleDateString(),
-                     cliente: selectedSale.cliente,
-                     items: selectedSale.desglose || [],
-                     total: selectedSale.total_ingresos,
-                     notas: selectedSale.notas,
-                     tasa_bcv: selectedSale.tasa_cambio,
-                     iva_aplicado: selectedSale.con_iva
-                   }])}>
-                   <Download className="w-4 h-4" /> RE-DESCARGAR
-                 </Button>
+              <DialogFooter className="p-8 bg-muted/20 flex flex-col gap-4">
+                 <div className="flex items-center justify-between w-full">
+                   <div className="flex items-center gap-2">
+                     <div className="flex items-center bg-background rounded-lg p-0.5 border border-border">
+                       <button 
+                         onClick={() => setPrintMode('single')}
+                         className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all", printMode === 'single' ? "bg-primary text-white" : "text-slate-500")}
+                       >
+                         Única
+                       </button>
+                       <button 
+                         onClick={() => setPrintMode('dual')}
+                         className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all", printMode === 'dual' ? "bg-primary text-white" : "text-slate-500")}
+                       >
+                         Dual
+                       </button>
+                     </div>
+                     {printMode === 'single' && (
+                       <div className="flex items-center bg-background rounded-lg p-0.5 border border-border">
+                         <button 
+                           onClick={() => setPrintSide('left')}
+                           className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all", printSide === 'left' ? "bg-primary text-white" : "text-slate-500")}
+                         >
+                           Izq
+                         </button>
+                         <button 
+                           onClick={() => setPrintSide('right')}
+                           className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all", printSide === 'right' ? "bg-primary text-white" : "text-slate-500")}
+                         >
+                           Der
+                         </button>
+                       </div>
+                     )}
+                   </div>
+                   <div className="flex gap-2">
+                     <Button variant="outline" className="h-10 rounded-xl font-bold px-6" onClick={() => setShowSaleDetail(false)}>CERRAR</Button>
+                     <Button className="h-10 rounded-xl bg-primary text-white font-black uppercase tracking-widest gap-2 px-6" 
+                       onClick={() => generateInvoicePDF([{
+                         id: selectedSale.id,
+                         fecha: new Date(selectedSale.created_at).toLocaleDateString(),
+                         cliente: selectedSale.cliente,
+                         items: selectedSale.desglose || [],
+                         total: selectedSale.total_ingresos,
+                         notas: selectedSale.notas,
+                         tasa_bcv: selectedSale.tasa_cambio,
+                         iva_aplicado: selectedSale.con_iva
+                       }], { mode: printMode, side: printSide })}>
+                       <Download className="w-4 h-4" /> DESCARGAR
+                     </Button>
+                   </div>
+                 </div>
               </DialogFooter>
             </>
           )}
         </DialogContent>
       </Dialog>
-    </div>
-  );
+        {/* Selector de Segunda Factura */}
+        {showSelector && (
+          <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl flex flex-col max-h-[80%] overflow-hidden border border-slate-200">
+              <div className="flex items-center justify-between p-6 border-b border-slate-100 bg-slate-50/50">
+                <h3 className="text-sm font-black flex items-center gap-2 italic uppercase tracking-widest text-slate-900">
+                  <Receipt className="w-4 h-4 text-orange-500" /> Seleccionar Otra Factura
+                </h3>
+                <button onClick={() => setShowSelector(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+                  <X className="w-4 h-4 text-slate-400" />
+                </button>
+              </div>
+              <div className="p-6 flex flex-col gap-4 overflow-hidden">
+                <div className="relative">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input 
+                    autoFocus
+                    className="w-full bg-slate-100 border-none rounded-2xl pl-10 pr-4 py-3 text-xs font-bold focus:ring-2 focus:ring-orange-500/20 outline-none"
+                    placeholder="Buscar cliente..."
+                    value={searchTermVenta}
+                    onChange={e => setSearchTermVenta(e.target.value)}
+                  />
+                </div>
+                <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                  {ventasRecientes.filter(v => searchTermVenta === '' || (v.cliente || '').toLowerCase().includes(searchTermVenta.toLowerCase())).map(v => (
+                    <button 
+                      key={v.id} 
+                      onClick={() => { setSecondVenta(v); setShowSelector(false); }}
+                      className="w-full text-left p-4 rounded-2xl border border-transparent hover:border-slate-100 hover:bg-slate-50 transition-all flex justify-between items-center"
+                    >
+                      <div>
+                        <p className="text-xs font-black text-slate-900 uppercase italic">{v.cliente || 'Consumidor Final'}</p>
+                        <p className="text-[10px] text-slate-400 font-bold">{v.fecha}</p>
+                      </div>
+                      <p className="text-xs font-black text-orange-500 italic">${v.total_ingresos.toFixed(2)}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
 }

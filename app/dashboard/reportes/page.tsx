@@ -1031,10 +1031,16 @@ function ScanModal({ onClose, onConfirm, modo }: {
   );
 }
 
-function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void }) {
+function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; onClose: () => void }) {
+  const [printMode, setPrintMode] = useState<'single' | 'dual' | 'diferente'>('dual');
+  const [printSide, setPrintSide] = useState<'left' | 'right'>('left');
+  const [secondVenta, setSecondVenta] = useState<any | null>(null);
+  const [showSelector, setShowSelector] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+
   const handleDownload = () => {
     try {
-      generateInvoicePDF([{
+      const dataList = [{
         id: venta.id,
         fecha: venta.fecha,
         cliente: venta.cliente || undefined,
@@ -1043,9 +1049,28 @@ function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void
         notas: venta.notas || undefined,
         pago_usd: venta.pago_usd,
         pago_ves: venta.pago_ves,
-        tasa_bcv: venta.tasa_cambio,
+        tasa_cambio: venta.tasa_cambio,
         iva_aplicado: venta.con_iva
-      }]);
+      }];
+
+      if (printMode === 'dual') {
+        dataList.push(dataList[0]);
+      } else if (printMode === 'diferente' && secondVenta) {
+        dataList.push({
+          id: secondVenta.id,
+          fecha: secondVenta.fecha,
+          cliente: secondVenta.cliente || undefined,
+          items: secondVenta.desglose || [],
+          total: secondVenta.total_ingresos,
+          notas: secondVenta.notas || undefined,
+          pago_usd: secondVenta.pago_usd,
+          pago_ves: secondVenta.pago_ves,
+          tasa_cambio: secondVenta.tasa_cambio,
+          iva_aplicado: secondVenta.con_iva
+        });
+      }
+
+      generateInvoicePDF(dataList, { mode: printMode, side: printSide });
     } catch (err) {
       alert('Error al generar PDF');
     }
@@ -1101,7 +1126,7 @@ function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {(venta.desglose || []).map((item, i) => (
+                {(venta.desglose || []).map((item: any, i: number) => (
                   <tr key={i}>
                     <td className="py-3 text-slate-700">{item.descripcion}</td>
                     <td className="py-3 text-center text-slate-600">{item.cantidad}</td>
@@ -1119,7 +1144,7 @@ function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void
                   <span>${venta.total_ingresos.toFixed(2)}</span>
                 </div>
                 
-                {(venta.con_iva || (venta.metodos_pago && Object.values(venta.metodos_pago).some(v => (v ?? 0) > 0))) && (
+                {(venta.con_iva || (venta.metodos_pago && Object.values(venta.metodos_pago).some((v: any) => (v ?? 0) > 0))) && (
                   <div className="pt-2 mt-2 border-t border-slate-100 space-y-1">
                     <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Métodos de Pago:</p>
                     {venta.metodos_pago?.pago_movil ? (
@@ -1197,12 +1222,112 @@ function InvoiceModal({ venta, onClose }: { venta: VentaDia; onClose: () => void
           </div>
         </div>
 
-        <div className="p-4 border-t border-border/30 bg-muted/20 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm hover:bg-white/5 transition-colors">Cerrar</button>
-          <Button onClick={handleDownload} className="gap-2">
-            <Download className="w-4 h-4" /> Descargar PDF Profesional
-          </Button>
+        <div className="p-4 border-t border-border/30 bg-muted/20 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center bg-white/5 rounded-xl p-1 gap-1 border border-border/30">
+            <button 
+              onClick={() => setPrintMode('single')}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
+                printMode === 'single' ? "bg-primary text-white shadow-sm" : "text-muted-foreground hover:text-white"
+              )}
+            >
+              Única
+            </button>
+            <button 
+              onClick={() => setPrintMode('dual')}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
+                printMode === 'dual' ? "bg-primary text-white shadow-sm" : "text-muted-foreground hover:text-white"
+              )}
+              title="Dos copias de la misma factura"
+            >
+              Dual
+            </button>
+            <button 
+              onClick={() => {
+                setPrintMode('diferente');
+                if (!secondVenta) setShowSelector(true);
+              }}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
+                printMode === 'diferente' ? "bg-primary text-white shadow-sm" : "text-muted-foreground hover:text-white"
+              )}
+              title="Dos facturas diferentes"
+            >
+              Diferente
+            </button>
+          </div>
+
+          {printMode === 'single' && (
+            <div className="flex items-center bg-white/5 rounded-xl p-1 gap-1 border border-border/30">
+              <button 
+                onClick={() => setPrintSide('left')}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
+                  printSide === 'left' ? "bg-primary text-white shadow-sm" : "text-muted-foreground hover:text-white"
+                )}
+              >
+                Izq
+              </button>
+              <button 
+                onClick={() => setPrintSide('right')}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
+                  printSide === 'right' ? "bg-primary text-white shadow-sm" : "text-muted-foreground hover:text-white"
+                )}
+              >
+                Der
+              </button>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 ml-auto">
+            <Button onClick={handleDownload} className="gap-2 bg-primary hover:bg-primary/90 text-white font-bold">
+              <Download className="w-4 h-4" /> Descargar PDF
+            </Button>
+            <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm hover:bg-white/5 transition-colors">Cerrar</button>
+          </div>
         </div>
+
+        {/* Selector de Segunda Factura */}
+        {showSelector && (
+          <div className="absolute inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-card border border-border rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[80%]">
+              <div className="flex items-center justify-between p-4 border-b border-border/30">
+                <h3 className="text-sm font-bold flex items-center gap-2 italic uppercase tracking-tighter">
+                  <Receipt className="w-4 h-4 text-primary" /> Seleccionar Otra Factura
+                </h3>
+                <button onClick={() => setShowSelector(false)} className="p-2 hover:bg-white/5 rounded-lg">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="p-4 flex flex-col gap-4 overflow-hidden">
+                <input 
+                  autoFocus
+                  className="w-full bg-white/5 border border-border/50 rounded-xl px-4 py-2 text-xs focus:ring-1 focus:ring-primary outline-none"
+                  placeholder="Buscar por cliente..."
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                />
+                <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                  {ventas.filter(v => v.id !== venta.id && (searchTerm === '' || (v.cliente || '').toLowerCase().includes(searchTerm.toLowerCase()))).map(v => (
+                    <button 
+                      key={v.id} 
+                      onClick={() => { setSecondVenta(v); setShowSelector(false); }}
+                      className="w-full text-left p-3 rounded-xl border border-border/30 hover:bg-white/5 transition-all flex justify-between items-center"
+                    >
+                      <div>
+                        <p className="text-xs font-bold text-foreground">{v.cliente || 'Consumidor Final'}</p>
+                        <p className="text-[10px] text-muted-foreground italic">{v.fecha}</p>
+                      </div>
+                      <p className="text-xs font-bold text-primary">${v.total_ingresos.toFixed(2)}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2126,6 +2251,7 @@ export default function ReportesPage() {
       {mounted && selectedVenta && createPortal(
         <InvoiceModal
           venta={selectedVenta}
+          ventas={ventas}
           onClose={() => setSelectedVenta(null)}
         />,
         document.body

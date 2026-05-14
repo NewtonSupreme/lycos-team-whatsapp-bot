@@ -1483,6 +1483,9 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
     setPayments({ ...payments, [method]: amount });
   };
 
+  const [printMode, setPrintMode] = useState<'single' | 'dual' | 'diferente'>('dual');
+  const [printSide, setPrintSide] = useState<'left' | 'right'>('left');
+
   const handleDownload = () => {
     const data1 = { 
       id: cita.id, 
@@ -1499,7 +1502,10 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
 
     const dataList = [data1];
 
-    if (secondCita) {
+    if (printMode === 'dual') {
+      // Duplicado de la misma factura
+      dataList.push(data1);
+    } else if (printMode === 'diferente' && secondCita) {
       const secondSubtotal = secondItems.reduce((sum, item) => sum + (item.total || 0), 0);
       const secondIva = secondWithIva ? secondSubtotal * 0.16 : 0;
       const secondTotal = secondSubtotal + secondIva;
@@ -1518,7 +1524,7 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
       });
     }
 
-    generateInvoicePDF(dataList);
+    generateInvoicePDF(dataList, { mode: printMode, side: printSide });
   };
 
   const handleFinalizeSale = async () => {
@@ -1582,9 +1588,67 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
               <MoveHorizontal className="w-4 h-4" /> 
               {secondCita ? 'Cambiar Segunda' : 'Impresión Dual'}
             </button>
+            <div className="flex items-center bg-gray-100 rounded-xl p-1 gap-1 border border-gray-200">
+              <button 
+                onClick={() => setPrintMode('single')}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
+                  printMode === 'single' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                )}
+              >
+                Única
+              </button>
+              <button 
+                onClick={() => setPrintMode('dual')}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
+                  printMode === 'dual' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                )}
+                title="Dos copias de la misma factura"
+              >
+                Dual
+              </button>
+              <button 
+                onClick={() => {
+                  setPrintMode('diferente');
+                  if (!secondCita) setShowSelector(true);
+                }}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
+                  printMode === 'diferente' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                )}
+                title="Dos facturas diferentes"
+              >
+                Diferente
+              </button>
+            </div>
+
+            {printMode === 'single' && (
+              <div className="flex items-center bg-gray-100 rounded-xl p-1 gap-1 border border-gray-200">
+                <button 
+                  onClick={() => setPrintSide('left')}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
+                    printSide === 'left' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                  )}
+                >
+                  Izq
+                </button>
+                <button 
+                  onClick={() => setPrintSide('right')}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
+                    printSide === 'right' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                  )}
+                >
+                  Der
+                </button>
+              </div>
+            )}
+
             <button 
               onClick={handleDownload}
-              className="p-2 sm:p-3 rounded-xl bg-gray-50 text-slate-600 hover:bg-gray-100 transition-all border border-gray-100"
+              className="p-2 sm:p-3 rounded-xl bg-orange-500 text-white hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20 border border-orange-400/20"
               title="Descargar Nota"
             >
               <Download className="w-5 h-5" />

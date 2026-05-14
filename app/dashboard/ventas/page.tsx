@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { 
   ShoppingCart, Plus, Trash2, Receipt, Package, 
   Search, MapPin, CheckCircle, AlertCircle, Loader2,
-  TrendingUp, Calendar, ArrowRight, Printer, UserPlus
+  TrendingUp, Calendar, ArrowRight, Printer, UserPlus, X
 } from 'lucide-react';
 import { supabase, updateInventarioStock } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
@@ -50,6 +50,13 @@ export default function VentasPage() {
     otro: 0
   });
 
+  const [printMode, setPrintMode] = useState<'single' | 'dual' | 'diferente'>('dual');
+  const [printSide, setPrintSide] = useState<'left' | 'right'>('left');
+  const [ventasRecientes, setVentasRecientes] = useState<any[]>([]);
+  const [showSelector, setShowSelector] = useState(false);
+  const [secondVenta, setSecondVenta] = useState<any | null>(null);
+  const [searchTermVenta, setSearchTermVenta] = useState('');
+
   const { currentSede } = useSedeStore();
   const [rates, setRates] = useState({ bcv: 0 });
 
@@ -75,8 +82,13 @@ export default function VentasPage() {
         .eq('activo', true)
         .order('nombre');
       setProductos(invData || []);
+      const { data: vData } = await withSedeFilter(supabase.from('ventas_dia'))
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(20);
+      setVentasRecientes(vData || []);
     } catch (err) {
-      console.error('Error fetching inventory:', err);
+      console.error('Error fetching data:', err);
     } finally {
       setLoading(false);
     }
@@ -173,7 +185,7 @@ export default function VentasPage() {
       }
 
       // 4. Print PDF (Optional but recommended)
-      generateInvoicePDF([{
+      const data1 = {
         id: ventaDia.id,
         fecha: new Date().toLocaleDateString(),
         cliente: clienteNombre || 'Consumidor Final',
@@ -189,7 +201,24 @@ export default function VentasPage() {
         pago_ves: metodosPago.pago_movil + metodosPago.efectivo_ves,
         tasa_bcv: rates.bcv,
         iva_aplicado: conIva
-      }]);
+      };
+
+      const dataList: any[] = [data1];
+      if (printMode === 'dual') {
+        dataList.push(data1);
+      } else if (printMode === 'diferente' && secondVenta) {
+        dataList.push({
+          id: secondVenta.id,
+          fecha: new Date(secondVenta.created_at).toLocaleDateString(),
+          cliente: secondVenta.cliente || undefined,
+          items: secondVenta.desglose || [],
+          total: secondVenta.total_ingresos,
+          tasa_bcv: secondVenta.tasa_cambio || rates.bcv,
+          iva_aplicado: secondVenta.con_iva
+        });
+      }
+
+      generateInvoicePDF(dataList, { mode: printMode, side: printSide });
 
       // 5. Success and Reset
       alert('¡Venta realizada con éxito! Stock actualizado y comprobante generado.');
@@ -403,16 +432,64 @@ export default function VentasPage() {
                     <span className="text-xs font-bold text-muted-foreground">USD</span>
                   </div>
                 </div>
+              </div>
+              <div className="flex items-center justify-between gap-4 py-3 px-4 bg-primary/5 rounded-2xl border border-primary/10">
+                <div className="flex flex-col gap-1">
+                  <p className="text-[10px] text-primary font-black uppercase tracking-widest">Configuración Impresión</p>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center bg-white/50 rounded-lg p-0.5 border border-primary/10">
+                      <button 
+                        onClick={() => setPrintMode('single')}
+                        className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all", printMode === 'single' ? "bg-primary text-white shadow-sm" : "text-slate-500")}
+                      >
+                        Única
+                      </button>
+                      <button 
+                        onClick={() => setPrintMode('dual')}
+                        className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all", printMode === 'dual' ? "bg-primary text-white shadow-sm" : "text-slate-500")}
+                        title="Dos copias de la misma factura"
+                      >
+                        Dual
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setPrintMode('diferente');
+                          if (!secondVenta) setShowSelector(true);
+                        }}
+                        className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all", printMode === 'diferente' ? "bg-primary text-white shadow-sm" : "text-slate-500")}
+                        title="Dos facturas diferentes"
+                      >
+                        Diferente
+                      </button>
+                    </div>
+                    {printMode === 'single' && (
+                      <div className="flex items-center bg-white/50 rounded-lg p-0.5 border border-primary/10">
+                        <button 
+                          onClick={() => setPrintSide('left')}
+                          className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all", printSide === 'left' ? "bg-primary text-white shadow-sm" : "text-slate-500")}
+                        >
+                          Izq
+                        </button>
+                        <button 
+                          onClick={() => setPrintSide('right')}
+                          className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all", printSide === 'right' ? "bg-primary text-white shadow-sm" : "text-slate-500")}
+                        >
+                          Der
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
                 <div className="text-right">
                   <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest">En Bolívares</p>
                   <p className="text-xl font-black text-foreground">{(total * rates.bcv).toLocaleString('es-VE')} Bs.</p>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 pt-2">
+              <div className="flex gap-2 pt-2">
                 <Button 
                   variant="outline" 
-                  className="h-12 rounded-xl border-primary/30 text-primary font-bold gap-2"
+                  className="flex-1 h-12 rounded-xl border-primary/30 text-primary font-bold gap-2"
                   onClick={() => {
                     if (cart.length === 0) return;
                     generateInvoicePDF([{
@@ -423,20 +500,31 @@ export default function VentasPage() {
                       total: total,
                       tasa_bcv: rates.bcv,
                       iva_aplicado: conIva
-                    }]);
+                    }], { mode: printMode, side: printSide });
                   }}
                 >
                   <Printer className="w-4 h-4" /> Borrador
                 </Button>
+                
+                <Button 
+                  variant="ghost"
+                  size="icon"
+                  className="h-12 w-12 rounded-xl border border-primary/20 text-primary hover:bg-primary/5"
+                  onClick={() => setShowSelector(true)}
+                  title="Seleccionar factura para modo Diferente"
+                >
+                  <Search className="w-4 h-4" />
+                </Button>
+
                 <Button 
                   disabled={processing || cart.length === 0}
-                  className="h-12 rounded-xl bg-primary hover:bg-primary/90 text-white font-black uppercase tracking-widest text-xs gap-2 shadow-lg shadow-primary/30"
+                  className="flex-1 h-12 rounded-xl bg-primary hover:bg-primary/90 text-white font-black uppercase tracking-widest text-xs gap-2 shadow-lg shadow-primary/30"
                   onClick={handleFinalize}
                 >
                   {processing ? (
                     <><Loader2 className="w-4 h-4 animate-spin" /> Procesando</>
                   ) : (
-                    <><CheckCircle className="w-4 h-4" /> Finalizar Venta</>
+                    <><CheckCircle className="w-4 h-4" /> Finalizar</>
                   )}
                 </Button>
               </div>
@@ -444,6 +532,49 @@ export default function VentasPage() {
           </Card>
         </div>
       </div>
+
+      {/* Selector de Segunda Factura */}
+      {showSelector && (
+        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl flex flex-col max-h-[80%] overflow-hidden border border-slate-200">
+            <div className="flex items-center justify-between p-6 border-b border-slate-100 bg-slate-50/50">
+              <h3 className="text-sm font-black flex items-center gap-2 italic uppercase tracking-widest text-slate-900">
+                <Receipt className="w-4 h-4 text-primary" /> Seleccionar Otra Factura
+              </h3>
+              <button onClick={() => setShowSelector(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+                <X className="w-4 h-4 text-slate-400" />
+              </button>
+            </div>
+            <div className="p-6 flex flex-col gap-4 overflow-hidden">
+              <div className="relative">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input 
+                  autoFocus
+                  className="w-full bg-slate-100 border-none rounded-2xl pl-10 pr-4 py-3 text-xs font-bold focus:ring-2 focus:ring-primary/20 outline-none"
+                  placeholder="Buscar cliente..."
+                  value={searchTermVenta}
+                  onChange={e => setSearchTermVenta(e.target.value)}
+                />
+              </div>
+              <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                {ventasRecientes.filter(v => searchTermVenta === '' || (v.cliente || '').toLowerCase().includes(searchTermVenta.toLowerCase())).map(v => (
+                  <button 
+                    key={v.id} 
+                    onClick={() => { setSecondVenta(v); setShowSelector(false); }}
+                    className="w-full text-left p-4 rounded-2xl border border-transparent hover:border-slate-100 hover:bg-slate-50 transition-all flex justify-between items-center"
+                  >
+                    <div>
+                      <p className="text-xs font-black text-slate-900 uppercase italic">{v.cliente || 'Consumidor Final'}</p>
+                      <p className="text-[10px] text-slate-400 font-bold">{new Date(v.created_at).toLocaleDateString()}</p>
+                    </div>
+                    <p className="text-xs font-black text-primary italic">${v.total_ingresos.toFixed(2)}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

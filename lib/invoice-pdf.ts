@@ -16,10 +16,21 @@ interface InvoiceData {
   notas?: string;
   pago_usd?: number;
   pago_ves?: number;
+  tasa_bcv?: number;
   tasa_cambio?: number;
+  total_ves?: number;
+  iva_aplicado?: boolean;
 }
 
-export const generateInvoicePDF = (dataList: (InvoiceData & { iva_aplicado?: boolean; tasa_bcv?: number; total_ves?: number })[]) => {
+export interface PrintOptions {
+  mode: 'single' | 'dual' | 'diferente';
+  side?: 'left' | 'right';
+}
+
+export const generateInvoicePDF = (
+  dataList: (InvoiceData & { iva_aplicado?: boolean; tasa_bcv?: number; total_ves?: number })[],
+  options: PrintOptions = { mode: 'dual' }
+) => {
   // Orientation: Landscape (l), Unit: mm, Format: a4 (297x210)
   const doc = new jsPDF('l', 'mm', 'a4') as any;
 
@@ -118,7 +129,7 @@ export const generateInvoicePDF = (dataList: (InvoiceData & { iva_aplicado?: boo
         1: { cellWidth: 15, halign: 'center' },
         2: { cellWidth: 25, halign: 'right', fontStyle: 'bold', textColor: black }
       },
-      margin: { left: margin, right: (startX === 0 ? 160.5 : 12) }
+      margin: { left: margin, right: (doc.internal.pageSize.width - rightAlign) }
     });
 
     // ── Totals Section ──────────────────────────────────────────
@@ -171,17 +182,17 @@ export const generateInvoicePDF = (dataList: (InvoiceData & { iva_aplicado?: boo
     doc.setTextColor(...white);
     doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
-    const vesTotal = data.total_ves || (data.total * (data.tasa_bcv || 36.5));
+    const vesTotal = data.total_ves || (data.total * (data.tasa_bcv || data.tasa_cambio || 36.5));
     doc.text(`${vesTotal.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`, rightAlign - 4, boxY + 20, { align: 'right' });
 
     // ── Bottom Info ─────────────────────────────────────────────
     let infoY = boxY + boxHeight + 10;
     
-    if (data.tasa_bcv) {
+    if (data.tasa_bcv || data.tasa_cambio) {
       doc.setTextColor(...grayLight);
       doc.setFontSize(7);
       doc.setFont('helvetica', 'bold');
-      doc.text(`TASA DE CAMBIO BCV: ${data.tasa_bcv} Bs/$`, margin, infoY);
+      doc.text(`TASA DE CAMBIO BCV: ${data.tasa_bcv || data.tasa_cambio} Bs/$`, margin, infoY);
       infoY += 5;
     }
 
@@ -201,20 +212,34 @@ export const generateInvoicePDF = (dataList: (InvoiceData & { iva_aplicado?: boo
     doc.text('San Antonio de los Altos, Edo. Miranda - Lycos Team CRM 2026', startX + 74.25, 202, { align: 'center' });
   };
 
-  // If we have only one invoice, draw it twice
-  const data1 = dataList[0];
-  const data2 = dataList.length > 1 ? dataList[1] : dataList[0];
+  if (options.mode === 'dual') {
+    // If we have only one invoice, draw it twice
+    const data1 = dataList[0];
+    const data2 = dataList.length > 1 ? dataList[1] : dataList[0];
 
-  drawInvoice(data1, 0);
+    drawInvoice(data1, 0);
 
-  // Draw Vertical Cutting Line
-  doc.setDrawColor(200, 200, 200);
-  doc.setLineWidth(0.1);
-  doc.setLineDashPattern([3, 3], 0);
-  doc.line(148.5, 10, 148.5, 200);
-  doc.setLineDashPattern([], 0);
+    // Draw Vertical Cutting Line
+    doc.setDrawColor(200, 200, 200);
+    doc.setLineWidth(0.1);
+    doc.setLineDashPattern([3, 3], 0);
+    doc.line(148.5, 10, 148.5, 200);
+    doc.setLineDashPattern([], 0);
 
-  drawInvoice(data2, 148.5);
+    drawInvoice(data2, 148.5);
+  } else {
+    // Single mode
+    const startX = options.side === 'right' ? 148.5 : 0;
+    
+    // Draw Vertical Cutting Line (as reference)
+    doc.setDrawColor(200, 200, 200);
+    doc.setLineWidth(0.05);
+    doc.setLineDashPattern([2, 2], 0);
+    doc.line(148.5, 10, 148.5, 200);
+    doc.setLineDashPattern([], 0);
+
+    drawInvoice(dataList[0], startX);
+  }
 
   // Save
   const fileName = dataList.length > 1 
