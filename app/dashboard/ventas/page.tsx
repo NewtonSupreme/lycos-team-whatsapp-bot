@@ -17,6 +17,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
+import { Calendar as CalendarUI } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
 
 interface CartItem {
   id: string;
@@ -37,6 +41,7 @@ export default function VentasPage() {
   const [vehiculoInfo, setVehiculoInfo] = useState('');
   const [notas, setNotas] = useState('');
   const [conIva, setConIva] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   
   // Payment methods
   const [metodosPago, setMetodosPago] = useState({
@@ -142,7 +147,7 @@ export default function VentasPage() {
       // 1. Register in ventas_dia (Accounting)
       const { data: ventaDia, error: ventaError } = await withSedeFilter(supabase.from('ventas_dia'))
         .insert(withSedeInsert({
-          fecha: new Date().toISOString().split('T')[0],
+          fecha: format(selectedDate, 'yyyy-MM-dd'),
           cliente: clienteNombre || 'Consumidor Final',
           total_ingresos: subtotal, // Store subtotal here, report logic handles IVA
           desglose: cart.map(item => ({
@@ -172,7 +177,7 @@ export default function VentasPage() {
         await supabase.from('ventas_silenciadores').insert({
           cantidad: item.cantidad,
           modelo: item.nombre,
-          fecha: new Date().toISOString(),
+          fecha: selectedDate.toISOString(),
           sede_id: currentSede?.id,
           notas: `Venta POS #${ventaDia.id?.slice(0,8)}`
         });
@@ -187,7 +192,7 @@ export default function VentasPage() {
       // 4. Print PDF (Optional but recommended)
       const data1 = {
         id: ventaDia.id,
-        fecha: new Date().toLocaleDateString(),
+        fecha: format(selectedDate, 'dd/MM/yyyy'),
         cliente: clienteNombre || 'Consumidor Final',
         vehiculo: vehiculoInfo,
         items: cart.map(item => ({
@@ -251,17 +256,44 @@ export default function VentasPage() {
           <p className="text-sm text-muted-foreground mt-1">Venta multi-artículo con sincronización total.</p>
         </div>
         
-        <div className="flex items-center gap-4 bg-card/40 backdrop-blur-xl p-2 rounded-2xl border border-border/50">
-          <div className="flex flex-col items-end pr-4 border-r border-border/30">
-            <span className="text-[10px] text-muted-foreground font-black uppercase tracking-widest">Tasa BCV</span>
-            <span className="text-sm font-black text-primary">{rates.bcv} Bs/$</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-[10px] text-muted-foreground font-black uppercase tracking-widest">Sede Activa</span>
-            <span className="text-xs font-bold text-foreground flex items-center gap-1">
-              <MapPin className="w-3 h-3 text-primary" />
-              {currentSede?.nombre || 'General'}
-            </span>
+        <div className="flex items-center gap-4">
+          <Popover>
+            <PopoverTrigger asChild>
+              <button className="glass-card px-5 py-2.5 rounded-2xl border-2 border-primary/30 bg-primary/5 shadow-lg hover:bg-primary/10 transition-all text-left group relative overflow-hidden animate-pulse-glow min-w-[180px]">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-[10px] font-black text-primary uppercase tracking-widest flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 animate-bounce" /> Fecha de Venta
+                  </p>
+                  <Badge className="bg-primary text-white text-[7px] font-black h-4 px-1.5 border-none">
+                    MODIFICAR
+                  </Badge>
+                </div>
+                <p className="text-base font-black text-foreground truncate tracking-tight">{format(selectedDate, "PPP", { locale: es })}</p>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0 rounded-2xl border-border/50 shadow-2xl" align="start">
+              <CalendarUI
+                mode="single"
+                selected={selectedDate}
+                onSelect={(date) => date && setSelectedDate(date)}
+                initialFocus
+                locale={es}
+                className="rounded-2xl"
+              />
+            </PopoverContent>
+          </Popover>
+          <div className="flex items-center gap-4 bg-card/40 backdrop-blur-xl p-2 rounded-2xl border border-border/50 h-full">
+            <div className="flex flex-col items-end pr-4 border-r border-border/30">
+              <span className="text-[10px] text-muted-foreground font-black uppercase tracking-widest">Tasa BCV</span>
+              <span className="text-sm font-black text-primary">{rates.bcv} Bs/$</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] text-muted-foreground font-black uppercase tracking-widest">Sede</span>
+              <span className="text-xs font-bold text-foreground flex items-center gap-1">
+                <MapPin className="w-3 h-3 text-primary" />
+                {currentSede?.nombre || 'General'}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -387,6 +419,30 @@ export default function VentasPage() {
                 <button onClick={() => setCart([])} className="text-[10px] font-bold text-muted-foreground hover:text-destructive transition-colors flex items-center gap-1">
                   <Trash2 className="w-3 h-3" /> Limpiar
                 </button>
+              </div>
+
+              {/* Selector de Fecha */}
+              <div className="mt-4 flex items-center justify-between bg-background/60 p-3 rounded-xl border border-border/40">
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-primary" />
+                  <span className="text-[11px] font-bold text-foreground">{format(selectedDate, "PPP", { locale: es })}</span>
+                </div>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-7 rounded-lg border-primary/20 text-primary font-black text-[9px] uppercase px-2">
+                      Cambiar
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="end">
+                    <CalendarUI
+                      mode="single"
+                      selected={selectedDate}
+                      onSelect={(date) => date && setSelectedDate(date)}
+                      initialFocus
+                      locale={es}
+                    />
+                  </PopoverContent>
+                </Popover>
               </div>
             </CardHeader>
 

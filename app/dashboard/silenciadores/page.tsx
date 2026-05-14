@@ -30,6 +30,10 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { Calendar as CalendarUI } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
 
 interface CartItem {
   id: string;
@@ -52,6 +56,7 @@ export default function VentasPage() {
   const [notas, setNotas] = useState('');
   const [conIva, setConIva] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   
   // Modals
   const [showPreview, setShowPreview] = useState(false);
@@ -174,7 +179,7 @@ export default function VentasPage() {
     try {
       const { data: ventaDia, error: ventaError } = await withSedeFilter(supabase.from('ventas_dia'))
         .insert(withSedeInsert({
-          fecha: new Date().toISOString().split('T')[0],
+          fecha: format(selectedDate, 'yyyy-MM-dd'),
           cliente: clienteNombre || 'Consumidor Final',
           total_ingresos: subtotal,
           desglose: cart.map(item => ({
@@ -201,7 +206,7 @@ export default function VentasPage() {
 
       const data1 = {
         id: ventaDia.id,
-        fecha: new Date().toLocaleDateString(),
+        fecha: format(selectedDate, 'dd/MM/yyyy'),
         cliente: clienteNombre || 'Consumidor Final',
         vehiculo: vehiculoInfo,
         items: cart.map(item => ({
@@ -299,7 +304,32 @@ export default function VentasPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <Popover>
+            <PopoverTrigger asChild>
+              <button className="glass-card px-5 py-2.5 rounded-2xl border-2 border-primary/30 bg-primary/5 shadow-lg hover:bg-primary/10 transition-all text-left group relative overflow-hidden animate-pulse-glow">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-[10px] font-black text-primary uppercase tracking-widest flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 animate-bounce" /> Fecha de Venta
+                  </p>
+                  <Badge className="bg-primary text-white text-[7px] font-black h-4 px-1.5 border-none">
+                    MODIFICAR
+                  </Badge>
+                </div>
+                <p className="text-base font-black text-foreground truncate tracking-tight">{format(selectedDate, "PPP", { locale: es })}</p>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0 rounded-2xl border-border/50 shadow-2xl" align="start">
+              <CalendarUI
+                mode="single"
+                selected={selectedDate}
+                onSelect={(date) => date && setSelectedDate(date)}
+                initialFocus
+                locale={es}
+                className="rounded-2xl"
+              />
+            </PopoverContent>
+          </Popover>
           <div className="glass-card px-4 py-2 rounded-2xl border border-border/50 bg-background/40 shadow-sm">
             <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">En Carrito</p>
             <p className="text-xl font-black text-primary">{cart.length}</p>
@@ -511,6 +541,37 @@ export default function VentasPage() {
                     <Trash2 className="w-5 h-5" />
                   </button>
                 </div>
+                
+                {/* Selector de Fecha Dinámico */}
+                <div className="mt-4 flex items-center justify-between bg-background/40 p-3 rounded-2xl border border-border/50">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                      <Calendar className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest leading-none">Fecha de Venta</p>
+                      <p className="text-xs font-black text-foreground mt-1">{format(selectedDate, "PPP", { locale: es })}</p>
+                    </div>
+                  </div>
+                  
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" size="sm" className="h-9 rounded-xl border-primary/20 text-primary font-black text-[10px] uppercase px-3 hover:bg-primary hover:text-white transition-all">
+                        CAMBIAR
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0 rounded-2xl border-border/50 shadow-2xl" align="end">
+                      <CalendarUI
+                        mode="single"
+                        selected={selectedDate}
+                        onSelect={(date) => date && setSelectedDate(date)}
+                        initialFocus
+                        locale={es}
+                        className="rounded-2xl"
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
               </CardHeader>
 
               <CardContent className="flex-1 overflow-y-auto p-0 custom-scrollbar">
@@ -698,7 +759,7 @@ export default function VentasPage() {
               </div>
               <div className="text-right space-y-1">
                 <Badge className="bg-primary/20 text-primary border-none font-black text-[9px] mb-2">{currentSede?.nombre}</Badge>
-                <p className="text-sm font-black text-foreground uppercase">{new Date().toLocaleDateString()}</p>
+                <p className="text-sm font-black text-foreground uppercase">{format(selectedDate, 'dd/MM/yyyy')}</p>
               </div>
             </div>
 

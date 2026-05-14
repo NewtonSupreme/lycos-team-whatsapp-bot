@@ -2088,65 +2088,20 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       }
 
       // 📍 Location Flow (Multi-sede)
-      let isLocationChoice = ctx.memoria?.awaiting_location_choice === true;
       const bodyClean = lowerBody.trim();
+      let isLocationChoicePending = ctx.memoria?.awaiting_location_choice === true;
 
-      if (isLocationRequest(lowerBody)) {
-        // Si el mensaje ya especifica la sede, saltamos directamente a enviarla
-        const bodyClean = lowerBody.trim();
-        let directChoice = false;
-        
-        if (bodyClean.includes('san antonio') || (isLocationChoice && bodyClean === '1')) {
-          // Ya tenemos la lógica abajo en isLocationChoice, pero para manejar "y la de San Antonio?" 
-          // cuando NO estamos en modo choice, activamos el modo choice y forzamos la entrada
-          ctx.memoria.awaiting_location_choice = true;
-          directChoice = true;
-        } else if (bodyClean.includes('carrizal') || (isLocationChoice && bodyClean === '2')) {
-          ctx.memoria.awaiting_location_choice = true;
-          directChoice = true;
-        } else if (bodyClean.includes('caracas') || bodyClean.includes('cementerio') || (isLocationChoice && bodyClean === '3')) {
-          ctx.memoria.awaiting_location_choice = true;
-          directChoice = true;
-        }
+      // Detection of specific sedes in the message
+      const mentionsSanAntonio = bodyClean.includes('san antonio') || (isLocationChoicePending && bodyClean === '1');
+      const mentionsCarrizal = bodyClean.includes('carrizal') || (isLocationChoicePending && bodyClean === '2');
+      const mentionsCaracas = bodyClean.includes('caracas') || bodyClean.includes('cementerio') || (isLocationChoicePending && bodyClean === '3');
 
-        if (!isLocationChoice && !directChoice) {
-          console.log(`📍 [${from}] Preguntando por sede para ubicación con botones...`);
-          
-          const buttons = [
-            { id: 'sede_1', title: 'San Antonio' },
-            { id: 'sede_2', title: 'Carrizal' },
-            { id: 'sede_3', title: 'Caracas' }
-          ];
-
-          await sendButtonMsg(
-            from, 
-            '¡Con gusto! 📍 Contamos con 3 sedes disponibles. ¿Cuál te queda más cerca?',
-            buttons,
-            'Selecciona una opción abajo'
-          );
-          
-          await delay(800);
-          await sendMsg(from, '💡 *Dato importante:* Si vienes a nuestra sede de San Antonio, cuentas con más beneficios exclusivos y otros servicios adicionales. 🚗🔧');
-          
-          ctx.memoria.awaiting_location_choice = true;
-          if (db) {
-            await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
-          }
-          return; 
-        }
-        
-        // Si es directChoice y no estábamos en modo choice, continuamos al bloque isLocationChoice
-        if (directChoice) {
-          isLocationChoice = true; // Forzamos localmente para este ciclo
-        }
-      }
-
-      if (isLocationChoice) {
+      if (mentionsSanAntonio || mentionsCarrizal || mentionsCaracas) {
         let locationSent = false;
         let selectedSedeName = '';
-        const selectedSedePhone = '584123343519'; // Asumiendo que es el mismo para todos por ahora
+        const selectedSedePhone = '584123343519';
 
-        if (bodyClean.includes('san antonio') || bodyClean === '1') {
+        if (mentionsSanAntonio) {
           await sendMsg(from, '📍 *Sede San Antonio de los Altos:*\n\nEn San Antonio de los Altos, distribuidor de las minas al frente del Frescos Market nos encontramos. 😊\n\n*Mapa:* https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
           await delay(800);
           await sendMsg(from, '🎥 *Video de cómo llegar:* https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
@@ -2154,11 +2109,11 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           await sendMsg(from, '🎁 *¡Beneficios Exclusivos en San Antonio!* 🎁\n\nSi vienes a nuestra sede de San Antonio, cuentas con beneficios como:\n✅ *Revisión totalmente gratuita.*\n✅ *Instalación de la app del taller GRATIS en Lycos Team.*\n✅ *Servicios y tecnología automotriz profesional.*\n\n¡Te esperamos! 🚗🔧', true);
           selectedSedeName = 'Sede San Antonio';
           locationSent = true;
-        } else if (bodyClean.includes('carrizal') || bodyClean === '2') {
+        } else if (mentionsCarrizal) {
           await sendMsg(from, '📍 *Sede Carrizal (Principal):*\n\nServicios Jadar Calle Raul Leoni, Municipio Carrizal cerca de eso. 😊\n\n*Mapa:* https://maps.app.goo.gl/cxLGkqWtsf5qogMB6', true);
           selectedSedeName = 'Sede Carrizal';
           locationSent = true;
-        } else if (bodyClean.includes('caracas') || bodyClean.includes('cementerio') || bodyClean === '3') {
+        } else if (mentionsCaracas) {
           await sendMsg(from, '📍 *Sede Caracas (El Cementerio):*\n\nE/S PDV Nuevo Prado Av. Roosevelt, Caracas cerca de esa bomba. 😊\n\n*Mapa:* https://maps.app.goo.gl/aeHGdzUumhpBep719', true);
           selectedSedeName = 'Sede Caracas';
           locationSent = true;
@@ -2172,25 +2127,47 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           await delay(800);
           await sendMsg(from, `También te comparto el contacto de la ${selectedSedeName} por si necesitas llamar:`);
           await delay(500);
-          
-          // Enviar solo la tarjeta de la sede seleccionada
           await sendContactCard(from, selectedSedePhone, selectedSedeName);
-          
           await delay(800);
           await sendMsg(from, '¿Deseas agendar una cita en esta sede o tienes alguna otra duda? 😊');
           return;
-        } else {
-          // El cliente respondió algo que no coincide con ninguna sede.
-          // Reseteamos el flag para no quedar atrapados y re-preguntamos.
-          console.log(`📍 [${from}] Respuesta de sede no reconocida: "${bodyClean}". Reseteando flag y re-preguntando.`);
-          // Mantenemos el flag para que el cliente pueda intentar de nuevo sin perder el contexto
-          // delete ctx.memoria.awaiting_location_choice;
-          if (db) {
-            await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
-          }
-          await sendMsg(from, 'Disculpa, no entendí la sede. Por favor responde con el nombre o número:\n\n1️⃣ San Antonio de los Altos\n2️⃣ Carrizal (Principal)\n3️⃣ Caracas (El Cementerio) 😊');
-          return;
         }
+      }
+
+      // If it's a generic location request and we haven't sent a specific one yet
+      if (isLocationRequest(lowerBody)) {
+        console.log(`📍 [${from}] Preguntando por sede para ubicación con botones...`);
+        const buttons = [
+          { id: 'sede_1', title: 'San Antonio' },
+          { id: 'sede_2', title: 'Carrizal' },
+          { id: 'sede_3', title: 'Caracas' }
+        ];
+
+        await sendButtonMsg(
+          from, 
+          '¡Con gusto! 📍 Contamos con 3 sedes disponibles. ¿Cuál te queda más cerca?',
+          buttons,
+          'Selecciona una opción abajo'
+        );
+        
+        await delay(800);
+        await sendMsg(from, '💡 *Dato importante:* Si vienes a nuestra sede de San Antonio, cuentas con más beneficios exclusivos y otros servicios adicionales. 🚗🔧');
+        
+        ctx.memoria.awaiting_location_choice = true;
+        if (db) {
+          await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+        }
+        return; 
+      }
+
+      // If we were waiting for a choice but the message didn't match any sede, clear the flag and let AI handle it
+      if (isLocationChoicePending) {
+        console.log(`📍 [${from}] Respuesta no reconocida en flujo de sede: "${bodyClean}". Liberando para que la IA responda.`);
+        delete ctx.memoria.awaiting_location_choice;
+        if (db) {
+          await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+        }
+        // No return, let the flow continue to AI
       }
 
       // ─── ADMIN SEDE CHOICE ──────────────────────────────────────────

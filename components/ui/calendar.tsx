@@ -26,11 +26,11 @@ function Calendar({
         nav: 'space-x-1 flex items-center',
         button_previous: cn(
           buttonVariants({ variant: 'ghost' }),
-          'h-8 w-8 bg-transparent p-0 hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors absolute left-1'
+          'h-8 w-8 bg-transparent p-0 hover:bg-accent text-muted-foreground hover:text-foreground transition-colors absolute left-1'
         ),
         button_next: cn(
           buttonVariants({ variant: 'ghost' }),
-          'h-8 w-8 bg-transparent p-0 hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors absolute right-1'
+          'h-8 w-8 bg-transparent p-0 hover:bg-accent text-muted-foreground hover:text-foreground transition-colors absolute right-1'
         ),
         month_grid: 'w-full border-collapse space-y-1',
         weekdays: 'flex justify-between',
@@ -38,20 +38,20 @@ function Calendar({
           'text-muted-foreground rounded-md w-9 font-medium text-[0.75rem] uppercase tracking-wider text-center flex-1',
         week: 'flex w-full mt-2 justify-between',
         day: cn(
-          'relative p-0 text-center text-sm focus-within:relative focus-within:z-20 [&:has([aria-selected])]:bg-accent/50 first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md flex-1',
+          'relative p-0 text-center text-sm focus-within:relative focus-within:z-20 flex-1',
           props.mode === 'range'
             ? '[&:has(>.day-range-end)]:rounded-r-md [&:has(>.day-range-start)]:rounded-l-md'
             : '[&:has([aria-selected])]:rounded-md'
         ),
         day_button: cn(
           buttonVariants({ variant: 'ghost' }),
-          'h-9 w-9 p-0 font-normal aria-selected:opacity-100 hover:bg-white/10 rounded-md transition-all duration-200'
+          'h-9 w-9 p-0 font-normal transition-all duration-200',
+          'aria-selected:bg-primary aria-selected:text-white dark:aria-selected:text-primary-foreground aria-selected:opacity-100 aria-selected:hover:bg-primary/90 aria-selected:hover:text-white dark:aria-selected:hover:text-primary-foreground aria-selected:font-bold aria-selected:scale-110'
         ),
         range_start: 'day-range-start',
         range_end: 'day-range-end',
-        selected:
-          'bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground shadow-[0_0_15px_rgba(249,115,22,0.3)] font-bold',
-        today: 'bg-white/5 text-primary font-bold border border-primary/20',
+        selected: 'bg-transparent',
+        today: 'text-primary font-black border-2 border-primary/30 ring-2 ring-primary/10 bg-primary/5 rounded-md',
         outside:
           'day-outside text-muted-foreground/30 aria-selected:bg-accent/50 aria-selected:text-muted-foreground/30 aria-selected:opacity-30',
         disabled: 'text-muted-foreground opacity-50',
