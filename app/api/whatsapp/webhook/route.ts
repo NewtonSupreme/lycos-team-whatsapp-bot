@@ -163,6 +163,78 @@ function calculateBcvPrice(usdPromo: number, rates: ExchangeRates): number {
   return (usdPromo * rates.paralelo) / rates.bcv;
 }
 
+// ─── System Configuration ─────────────────────────────────────────────────────────
+interface BotConfig {
+  activo: boolean;
+  respuesta_automatica: boolean;
+  escalar_humano: boolean;
+  aprendizaje: boolean;
+  respuestas_nocturnas: boolean;
+  max_intentos: number;
+  ubicacion_sin_ia: boolean;
+}
+
+let botConfigCache: BotConfig | null = null;
+let botConfigCacheTime = 0;
+const CONFIG_TTL = 60 * 1000; // 1 minute cache
+
+async function getBotConfig(db: ReturnType<typeof getDb>): Promise<BotConfig> {
+  // Return cached config if still valid
+  if (botConfigCache && Date.now() - botConfigCacheTime < CONFIG_TTL) {
+    return botConfigCache;
+  }
+  
+  const defaultConfig: BotConfig = {
+    activo: true,
+    respuesta_automatica: true,
+    escalar_humano: true,
+    aprendizaje: false,
+    respuestas_nocturnas: true,
+    max_intentos: 3,
+    ubicacion_sin_ia: false
+  };
+  
+  if (!db) return defaultConfig;
+  
+  try {
+    const { data } = await db.from('configuracion_sistema')
+      .select('valor')
+      .eq('clave', 'ia_bot')
+      .single();
+    
+    if (data?.valor) {
+      // Merge with defaults to ensure all fields exist
+      botConfigCache = { ...defaultConfig, ...data.valor };
+    } else {
+      botConfigCache = defaultConfig;
+    }
+  } catch (e) {
+    console.error('Error fetching bot config:', e);
+    botConfigCache = defaultConfig;
+  }
+  
+  botConfigCacheTime = Date.now();
+  return botConfigCache || defaultConfig;
+}
+
+function isWithinWorkingHours(): boolean {
+  const vzlaDate = getVzlaDate();
+  const dayOfWeek = vzlaDate.getDay();
+  const hour = vzlaDate.getHours();
+  
+  // Sunday = 0, closed
+  if (dayOfWeek === 0) return false;
+  
+  // Monday-Saturday
+  const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 6;
+  if (!isWeekday) return false;
+  
+  // Weekday hours: 8 AM (8) to 5 PM (17)
+  const isWorkingHour = hour >= 8 && hour < 17;
+  
+  return isWorkingHour;
+}
+
 function buildRatesContext(rates: ExchangeRates | null): string {
   if (!rates) return '\nTASAS DE CAMBIO: No disponibles en este momento.';
   const multiplier = rates.paralelo / rates.bcv;
@@ -2055,13 +2127,17 @@ function delay(ms: number): Promise<void> { return new Promise(r => setTimeout(r
 
 export async function processCoreLogic(db: ReturnType<typeof getDb>, from: string, messageBody: string, wa_message_id: string | null, waProfileName?: string) {
   try {
-    // Load context + exchange rates in parallel
-    const [ctx, rates] = await Promise.all([
+    // Load context + exchange rates + bot config in parallel
+    const [ctx, rates, botConfig] = await Promise.all([
       loadConversationContext(db, from, messageBody),
       fetchExchangeRates(),
+      getBotConfig(db),
     ]);
 
+    console.log(`🤖 [Config] Bot activo: ${botConfig.activo}, Auto: ${botConfig.respuesta_automatica}, Nocturnas: ${botConfig.respuestas_nocturnas}, Ubicación sin IA: ${botConfig.ubicacion_sin_ia}`);
+
       const lowerBody = messageBody.toLowerCase();
+      const bodyClean = lowerBody.trim();
 
       // ─── EARLY PERSISTENCE (Vercel Timeout Safe) ─────────────────────
       // Guardar el mensaje de inmediato para que si Vercel corta por tiempo (10s), 
@@ -2096,8 +2172,32 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         return;
       }
 
+      // 🛑 Verificar configuración del Bot IA
+      const isWorkingHour = isWithinWorkingHours();
+      
+      // Si el bot está desactivado completamente
+      if (!botConfig.activo) {
+        console.log(`⚠️ [${from}] Bot IA desactivado. No se responde automáticamente.`);
+        await updateConversation(db, from, messageBody, ctx.memoria);
+        return;
+      }
+      
+      // Si respuesta automática está desactivada
+      if (!botConfig.respuesta_automatica) {
+        console.log(`⚠️ [${from}] Respuesta automática desactivada. No se responde con IA.`);
+        await updateConversation(db, from, messageBody, ctx.memoria);
+        return;
+      }
+      
+      // Si estamos fuera de horario y las respuestas nocturnas están desactivadas
+      if (!isWorkingHour && !botConfig.respuestas_nocturnas) {
+        console.log(`🌙 [${from}] Fuera de horario y respuestas nocturnas desactivadas.`);
+        await sendMsg(from, '¡Buenas! 🔧 Nuestro horario de atención es de Lunes a Sábado de 8:00 AM a 5:00 PM. ¿En qué podemos ayudarte? 😊');
+        await updateConversation(db, from, messageBody, ctx.memoria);
+        return;
+      }
+
       // 📍 Location Flow (Multi-sede)
-      const bodyClean = lowerBody.trim();
       let isLocationChoicePending = ctx.memoria?.awaiting_location_choice === true;
       let isCaracasChoicePending = ctx.memoria?.awaiting_caracas_choice === true;
 
