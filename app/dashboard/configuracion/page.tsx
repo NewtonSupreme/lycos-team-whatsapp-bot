@@ -83,7 +83,8 @@ export default function ConfiguracionPage() {
   const [ia, setIa] = useState({
     activo: true, respuesta_automatica: true,
     escalar_humano: true, aprendizaje: false,
-    respuestas_nocturnas: true, max_intentos: 3
+    respuestas_nocturnas: true, max_intentos: 3,
+    ubicacion_sin_ia: false
   });
 
   // Password change
@@ -327,6 +328,7 @@ export default function ConfiguracionPage() {
                   <Toggle checked={ia.respuesta_automatica} onChange={v => setIa(p => ({ ...p, respuesta_automatica: v }))} label="Respuesta automática" description="Responder mensajes sin intervención humana" />
                   <Toggle checked={ia.escalar_humano} onChange={v => setIa(p => ({ ...p, escalar_humano: v }))} label="Escalar a humano" description="Transferir cuando el bot no puede resolver" />
                   <Toggle checked={ia.respuestas_nocturnas} onChange={v => setIa(p => ({ ...p, respuestas_nocturnas: v }))} label="Respuestas nocturnas" description="Responder automáticamente fuera de horario" />
+                  <Toggle checked={ia.ubicacion_sin_ia} onChange={v => setIa(p => ({ ...p, ubicacion_sin_ia: v }))} label="Ubicación sin IA" description="Enviar ubicación sin usar el bot de IA" />
                   <Toggle checked={ia.aprendizaje} onChange={v => setIa(p => ({ ...p, aprendizaje: v }))} label="Aprendizaje continuo (Beta)" description="Mejorar respuestas según interacciones" />
                 </CardContent>
               </Card>

@@ -584,7 +584,12 @@ export async function POST(request: NextRequest) {
         const interactive = message.interactive;
         if (interactive.type === 'button_reply') {
           messageBody = interactive.button_reply.title;
-          console.log(`🔘 [${from}] Botón presionado: ${messageBody} (${interactive.button_reply.id})`);
+          // Guardar el ID del botón en la memoria para procesarlo después
+          const buttonId = interactive.button_reply.id;
+          console.log(`🔘 [${from}] Botón presionado: ${messageBody} (${buttonId})`);
+          
+          // Guardar button_id en memoria temporal para procesarlo en processCoreLogic
+          (global as any).__last_button_id = buttonId;
         } else if (interactive.type === 'list_reply') {
           messageBody = interactive.list_reply.title;
           console.log(`📜 [${from}] Lista seleccionada: ${messageBody} (${interactive.list_reply.id})`);
@@ -2100,19 +2105,35 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       const bodyClean = lowerBody.trim();
       let isLocationChoicePending = ctx.memoria?.awaiting_location_choice === true;
       let isCaracasChoicePending = ctx.memoria?.awaiting_caracas_choice === true;
+      
+      // Verificar si se presionó un botón de sede
+      const lastButtonId = (global as any).__last_button_id;
+      (global as any).__last_button_id = undefined; // Limpiar después de usar
+      
+      // Mapear button_ids a sedes
+      let selectedSedeFromButton: string | null = null;
+      if (lastButtonId) {
+        if (lastButtonId === 'sede_1' || lastButtonId === 'admin_sede_1') selectedSedeFromButton = 'san antonio';
+        else if (lastButtonId === 'sede_2' || lastButtonId === 'admin_sede_2') selectedSedeFromButton = 'carrizal';
+        else if (lastButtonId === 'sede_3' || lastButtonId === 'admin_sede_3') selectedSedeFromButton = 'caracas';
+        else if (lastButtonId === 'sede_4' || lastButtonId === 'admin_sede_4') selectedSedeFromButton = 'paraiso';
+        else if (lastButtonId === 'ccs_choice_1') { selectedSedeFromButton = 'caracas'; isCaracasChoicePending = false; isLocationChoicePending = false; }
+        else if (lastButtonId === 'ccs_choice_2') { selectedSedeFromButton = 'paraiso'; isCaracasChoicePending = false; isLocationChoicePending = false; }
+        console.log(`🔘 [${from}] Sede seleccionada por botón: ${selectedSedeFromButton} (button: ${lastButtonId})`);
+      }
 
       // Detection of specific sedes in the message
-      const mentionsSanAntonio = bodyClean.includes('san antonio') || (isLocationChoicePending && bodyClean === '1');
-      const mentionsCarrizal = bodyClean.includes('carrizal') || (isLocationChoicePending && bodyClean === '2');
-      const mentionsCaracas = (bodyClean.includes('cementerio')) || (isLocationChoicePending && bodyClean === '3') || (isCaracasChoicePending && bodyClean === '1');
-      const mentionsParaiso = (bodyClean.includes('paraiso') || bodyClean.includes('paraíso')) || (isLocationChoicePending && bodyClean === '4') || (isCaracasChoicePending && bodyClean === '2');
+      const mentionsSanAntonio = selectedSedeFromButton === 'san antonio' || bodyClean.includes('san antonio') || (isLocationChoicePending && (bodyClean === '1' || bodyClean === 'san antonio'));
+      const mentionsCarrizal = selectedSedeFromButton === 'carrizal' || bodyClean.includes('carrizal') || (isLocationChoicePending && (bodyClean === '2' || bodyClean === 'carrizal'));
+      const mentionsCaracas = selectedSedeFromButton === 'caracas' || bodyClean.includes('cementerio') || (isLocationChoicePending && (bodyClean === '3' || bodyClean === 'cementerio')) || (isCaracasChoicePending && (bodyClean === '1' || bodyClean === 'cementerio'));
+      const mentionsParaiso = selectedSedeFromButton === 'paraiso' || bodyClean.includes('paraiso') || bodyClean.includes('paraíso') || (isLocationChoicePending && (bodyClean === '4' || bodyClean.includes('paraiso'))) || (isCaracasChoicePending && (bodyClean === '2' || bodyClean.includes('paraiso')));
       const mentionsCaracasGeneral = bodyClean.includes('caracas') && !bodyClean.includes('cementerio') && !bodyClean.includes('paraiso') && !bodyClean.includes('paraíso');
 
       if (mentionsCaracasGeneral) {
         console.log(`📍 [${from}] Preguntando por sede de Caracas específica con 2 botones...`);
         const buttons = [
-          { id: 'ccs_choice_1', title: 'Caracas (El Cementerio)' },
-          { id: 'ccs_choice_2', title: 'Caracas (El Paraiso)' }
+          { id: 'ccs_choice_1', title: 'El Cementerio' },
+          { id: 'ccs_choice_2', title: 'El Paraiso' }
         ];
         await sendButtonMsg(from, '📍 Contamos con 2 sedes en Caracas. ¿Cuál te queda más cerca? 😊', buttons, 'Selecciona una opción');
         ctx.memoria.awaiting_caracas_choice = true;
@@ -2190,8 +2211,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         const buttons = [
           { id: 'sede_1', title: 'San Antonio' },
           { id: 'sede_2', title: 'Carrizal' },
-          { id: 'sede_3', title: 'Caracas (El Cementerio)' },
-          { id: 'sede_4', title: 'Caracas (El Paraiso)' }
+          { id: 'sede_3', title: 'Cementerio' },
+          { id: 'sede_4', title: 'El Paraiso' }
         ];
 
         await sendButtonMsg(
@@ -2549,8 +2570,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             const buttons = [
               { id: `admin_sede_1_${motivo}`, title: 'San Antonio' },
               { id: `admin_sede_2_${motivo}`, title: 'Carrizal' },
-              { id: `admin_sede_3_${motivo}`, title: 'Caracas (El Cementerio)' },
-              { id: `admin_sede_4_${motivo}`, title: 'Caracas (El Paraiso)' }
+              { id: `admin_sede_3_${motivo}`, title: 'Cementerio' },
+              { id: `admin_sede_4_${motivo}`, title: 'El Paraiso' }
             ];
 
             await sendButtonMsg(
