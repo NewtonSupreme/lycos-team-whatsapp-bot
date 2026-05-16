@@ -24,7 +24,8 @@ const QUICK_REPLIES = [
 const SEDE_LOCATIONS = [
   { id: 'sa', name: 'San Antonio', emoji: '📍', mapUrl: 'https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', lat: 10.3744153, lng: -66.9721822, address: 'San Antonio de los Altos, Miranda' },
   { id: 'cz', name: 'Carrizal (Principal)', emoji: '🏠', mapUrl: 'https://maps.app.goo.gl/cxLGkqWtsf5qogMB6', lat: 10.3534289, lng: -66.993931, address: 'Carrizal, Miranda' },
-  { id: 'ccs', name: 'Caracas', emoji: '🏙️', mapUrl: 'https://maps.app.goo.gl/aeHGdzUumhpBep719', lat: 10.4784978, lng: -66.9125422, address: 'E/S PDV Nuevo Prado, Caracas' },
+  { id: 'ccs', name: 'Caracas (El Cementerio)', emoji: '🏙️', mapUrl: 'https://maps.app.goo.gl/aeHGdzUumhpBep719', lat: 10.4784978, lng: -66.9125422, address: 'E/S PDV Nuevo Prado, Caracas' },
+  { id: 'ccs_paraiso', name: 'Caracas El Paraíso', emoji: '🏙️', mapUrl: 'https://maps.app.goo.gl/c3TnUnHYGEJUWodX7', lat: 10.4917489, lng: -66.925809, address: 'Avenida Los Liberales, Caracas 1020, Distrito Capital, Venezuela, Al frente de Puerkos Restaurant' },
 ];
 
 interface RawMsg {

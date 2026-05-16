@@ -272,6 +272,7 @@ UBICACION:
 - San Antonio de los Altos: San Antonio de los Altos, Altos Mirandinos, Miranda. (En San Antonio de los Altos, distribuidor de las minas al frente del Frescos Market nos encontramos). 💡 BENEFICIOS EXCLUSIVOS: Si vienes a esta sede tienes revisión totalmente gratuita, instalación de la app del taller gratis y tecnología automotriz profesional.
 - Carrizal (Principal): Servicios Jadar Calle Raul Leoni, Municipio Carrizal cerca de eso.
 - Caracas (El Cementerio): E/S PDV Nuevo Prado Av. Roosevelt, Caracas cerca de esa bomba.
+- Caracas (El Paraíso): Avenida Los Liberales, Caracas 1020, Distrito Capital, Venezuela, Al frente de Puerkos Restaurant.
 
 SERVICIOS Y PRECIOS:
 
@@ -389,10 +390,11 @@ Tienes acceso total para gestionar el inventario, citas, vehículos y clientes m
 REGLAS DE OPERACIÓN ADMINISTRATIVA:
 1. TONO: Profesional, eficiente y servicial. No necesitas ser tan amigable como con los clientes, pero sí educado.
 2. CAPACIDADES: Puedes crear, actualizar y eliminar registros en tiempo real.
-3. SEDES (IMPORTANTE): Contamos con 3 sedes. Siempre debes saber en qué sede se realiza la acción.
+3. SEDES (IMPORTANTE): Contamos con 4 sedes. Siempre debes saber en qué sede se realiza la acción.
    - San Antonio de los Altos
    - Carrizal (Principal)
    - Caracas (El Cementerio) -> SIEMPRE RECONOCE "CEMENTERIO" COMO ESTA SEDE.
+   - Caracas (El Paraíso) -> Reconoce "PARAÍSO" como esta sede.
 4. ELIMINACIÓN (CRÍTICO): Si se te pide ELIMINAR algo, NUNCA lo hagas de inmediato. Debes preguntar: "¿Está seguro de que desea eliminar [elemento]? Responda SÍ para confirmar."
    - Solo si el historial muestra que el usuario respondió "SÍ", "CONFIRMADO" o similar a tu pregunta de confirmación, puedes imprimir el tag de DELETE.
 5. ACTUALIZACIÓN DE STOCK Y VEHÍCULOS: Puedes recibir descripciones de imágenes para actualizar el stock o registrar vehículos. 
@@ -852,6 +854,7 @@ interface Memoria {
   vehiculos?: { marca: string; modelo: string; anio?: string }[];
   notas?: string;
   awaiting_location_choice?: boolean;
+  awaiting_caracas_choice?: boolean;
   awaiting_admin_sede?: string;
   placa?: string;
 }
@@ -2041,6 +2044,7 @@ async function findSedeIdByName(db: any, name: string): Promise<string | null> {
   if (clean.includes('san antonio')) query = 'San Antonio';
   else if (clean.includes('carrizal') || clean.includes('principal')) query = 'Carrizal';
   else if (clean.includes('caracas') || clean.includes('cementerio')) query = 'Caracas';
+  else if (clean.includes('paraiso') || clean.includes('paraíso')) query = 'Paraíso';
   
   if (!query) return null;
   const { data } = await db.from('sedes').select('id').ilike('nombre', `%${query}%`).limit(1).maybeSingle();
@@ -2095,13 +2099,28 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       // 📍 Location Flow (Multi-sede)
       const bodyClean = lowerBody.trim();
       let isLocationChoicePending = ctx.memoria?.awaiting_location_choice === true;
+      let isCaracasChoicePending = ctx.memoria?.awaiting_caracas_choice === true;
 
       // Detection of specific sedes in the message
       const mentionsSanAntonio = bodyClean.includes('san antonio') || (isLocationChoicePending && bodyClean === '1');
       const mentionsCarrizal = bodyClean.includes('carrizal') || (isLocationChoicePending && bodyClean === '2');
-      const mentionsCaracas = bodyClean.includes('caracas') || bodyClean.includes('cementerio') || (isLocationChoicePending && bodyClean === '3');
+      const mentionsCaracas = (bodyClean.includes('cementerio')) || (isLocationChoicePending && bodyClean === '3') || (isCaracasChoicePending && bodyClean === '1');
+      const mentionsParaiso = (bodyClean.includes('paraiso') || bodyClean.includes('paraíso')) || (isLocationChoicePending && bodyClean === '4') || (isCaracasChoicePending && bodyClean === '2');
+      const mentionsCaracasGeneral = bodyClean.includes('caracas') && !bodyClean.includes('cementerio') && !bodyClean.includes('paraiso') && !bodyClean.includes('paraíso');
 
-      if (mentionsSanAntonio || mentionsCarrizal || mentionsCaracas) {
+      if (mentionsCaracasGeneral) {
+        console.log(`📍 [${from}] Preguntando por sede de Caracas específica con 2 botones...`);
+        const buttons = [
+          { id: 'ccs_choice_1', title: 'Caracas (El Cementerio)' },
+          { id: 'ccs_choice_2', title: 'Caracas (El Paraiso)' }
+        ];
+        await sendButtonMsg(from, '📍 Contamos con 2 sedes en Caracas. ¿Cuál te queda más cerca? 😊', buttons, 'Selecciona una opción');
+        ctx.memoria.awaiting_caracas_choice = true;
+        if (db) await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+        return;
+      }
+
+      if (mentionsSanAntonio || mentionsCarrizal || mentionsCaracas || mentionsParaiso) {
         let locationSent = false;
         let selectedSedeName = '';
         const selectedSedePhone = '584123343519';
@@ -2122,10 +2141,15 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           await sendMsg(from, '📍 *Sede Caracas (El Cementerio):*\n\nE/S PDV Nuevo Prado Av. Roosevelt, Caracas cerca de esa bomba. 😊\n\n*Mapa:* https://maps.app.goo.gl/aeHGdzUumhpBep719', true);
           selectedSedeName = 'Sede Caracas';
           locationSent = true;
+        } else if (mentionsParaiso) {
+          await sendMsg(from, '📍 *Sede Caracas (El Paraíso):*\n\nAvenida Los Liberales, Caracas 1020, Distrito Capital, Venezuela, Al frente de Puerkos Restaurant. 😊\n\n*Mapa:* https://maps.app.goo.gl/c3TnUnHYGEJUWodX7', true);
+          selectedSedeName = 'Sede Caracas (El Paraíso)';
+          locationSent = true;
         }
 
         if (locationSent) {
           delete ctx.memoria.awaiting_location_choice;
+          delete ctx.memoria.awaiting_caracas_choice;
           if (db) {
             await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
           }
@@ -2138,9 +2162,11 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           // Determinar si el mensaje es SOLO la elección de sede o si hay una pregunta adicional
           const isSimpleSedeChoice = bodyClean === 'caracas' || 
                                      bodyClean === 'el cementerio' || 
+                                     bodyClean === 'el paraiso' || 
+                                     bodyClean === 'el paraíso' || 
                                      bodyClean === 'san antonio' || 
                                      bodyClean === 'carrizal' || 
-                                     bodyClean === '1' || bodyClean === '2' || bodyClean === '3' ||
+                                     bodyClean === '1' || bodyClean === '2' || bodyClean === '3' || bodyClean === '4' ||
                                      bodyClean.length < 15;
 
           if (isSimpleSedeChoice) {
@@ -2164,12 +2190,13 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         const buttons = [
           { id: 'sede_1', title: 'San Antonio' },
           { id: 'sede_2', title: 'Carrizal' },
-          { id: 'sede_3', title: 'Caracas' }
+          { id: 'sede_3', title: 'Caracas (El Cementerio)' },
+          { id: 'sede_4', title: 'Caracas (El Paraiso)' }
         ];
 
         await sendButtonMsg(
           from, 
-          '¡Con gusto! 📍 Contamos con 3 sedes disponibles. ¿Cuál te queda más cerca?',
+          '¡Con gusto! 📍 Contamos con 4 sedes disponibles. ¿Cuál te queda más cerca?',
           buttons,
           'Selecciona una opción abajo'
         );
@@ -2522,7 +2549,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             const buttons = [
               { id: `admin_sede_1_${motivo}`, title: 'San Antonio' },
               { id: `admin_sede_2_${motivo}`, title: 'Carrizal' },
-              { id: `admin_sede_3_${motivo}`, title: 'Caracas' }
+              { id: `admin_sede_3_${motivo}`, title: 'Caracas (El Cementerio)' },
+              { id: `admin_sede_4_${motivo}`, title: 'Caracas (El Paraiso)' }
             ];
 
             await sendButtonMsg(
