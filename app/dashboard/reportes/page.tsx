@@ -2358,10 +2358,10 @@ export default function ReportesPage() {
       {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
         {[
-          { label: 'Ingresos', value: `${totalIngresos.toFixed(2)}`, sub: 'Recibido', icon: DollarSign, color: 'text-green-400 bg-green-500/10' },
-          { label: 'Egresos', value: `${totalEgresos.toFixed(2)}`, sub: 'Gastos', icon: ArrowDownCircle, color: 'text-rose-400 bg-rose-500/10' },
-          { label: 'Balance', value: `${balanceNeto.toFixed(2)}`, sub: 'Neto', icon: TrendingUp, color: balanceNeto >= 0 ? 'text-blue-400 bg-blue-500/10' : 'text-rose-400 bg-rose-500/10' },
-          { label: 'Promedio', value: `${ticketPromedio.toFixed(2)}`, sub: 'Ticket', icon: Receipt, color: 'text-purple-400 bg-purple-500/10' },
+          { label: 'Ingresos', value: `${(totalIngresos || 0).toFixed(2)}`, sub: 'Recibido', icon: DollarSign, color: 'text-green-400 bg-green-500/10' },
+          { label: 'Egresos', value: `${(totalEgresos || 0).toFixed(2)}`, sub: 'Gastos', icon: ArrowDownCircle, color: 'text-rose-400 bg-rose-500/10' },
+          { label: 'Balance', value: `${(balanceNeto || 0).toFixed(2)}`, sub: 'Neto', icon: TrendingUp, color: balanceNeto >= 0 ? 'text-blue-400 bg-blue-500/10' : 'text-rose-400 bg-rose-500/10' },
+          { label: 'Promedio', value: `${(ticketPromedio || 0).toFixed(2)}`, sub: 'Ticket', icon: Receipt, color: 'text-purple-400 bg-purple-500/10' },
         ].map(({ label, value, sub, icon: Icon, color }) => (
           <div key={label} className="rounded-xl border border-border/50 bg-card/50 p-3 sm:p-4">
             <div className="flex items-start justify-between">
@@ -2906,7 +2906,7 @@ export default function ReportesPage() {
                       <tr className="border-t border-border/30 bg-muted/10">
                         <td className="px-4 py-3 text-xs font-medium text-muted-foreground">Total período</td>
                         <td className="px-4 py-3 text-right text-sm font-bold text-rose-400">
-                          -${totalEgresos.toFixed(2)}
+                          -${(totalEgresos || 0).toFixed(2)}
                         </td>
                         <td colSpan={4} />
                       </tr>

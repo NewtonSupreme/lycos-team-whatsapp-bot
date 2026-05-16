@@ -19,7 +19,9 @@ export function middleware(request: NextRequest) {
     pathname.endsWith(".jpg") ||
     pathname.endsWith(".jpeg") ||
     pathname.endsWith(".ico") ||
-    pathname.startsWith("/Silenciadores")
+    pathname.startsWith("/Silenciadores") ||
+    pathname === "/manifest.json" ||
+    pathname === "/sw.js"
   ) {
     return NextResponse.next();
   }
@@ -49,6 +51,6 @@ export const config = {
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
      */
-    "/((?!api|_next/static|_next/image|Silenciadores|favicon.ico).*)",
+    "/((?!api|_next/static|_next/image|Silenciadores|favicon.ico|manifest.json|sw.js).*)",
   ],
 };

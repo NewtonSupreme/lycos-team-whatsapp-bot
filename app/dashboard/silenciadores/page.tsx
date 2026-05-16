@@ -315,7 +315,7 @@ export default function VentasPage() {
 
   const handleFinalize = async () => {
     if (cart.length === 0) return alert("El carrito está vacío");
-    if (Math.abs(balance) > 0.05 && balance > 0) return alert(`Aún falta pagar $${balance.toFixed(2)}`);
+    if (Math.abs(balance) > 0.05 && balance > 0) return alert(`Aún falta pagar $${(balance || 0).toFixed(2)}`);
     if (!supabase) return;
 
     setProcessing(true);
@@ -870,7 +870,7 @@ export default function VentasPage() {
                    <div className="text-right">
                       <p className="text-[9px] font-black text-muted-foreground uppercase">Por Cobrar</p>
                       <p className={cn("text-lg font-black italic", balance > 0.05 ? "text-destructive" : "text-green-500")}>
-                        ${balance.toFixed(2)}
+                        ${(balance || 0).toFixed(2)}
                       </p>
                    </div>
                 </div>
@@ -910,17 +910,17 @@ export default function VentasPage() {
                              <span>IVA 16%</span><span>+${(total - subtotal).toFixed(2)}</span>
                            </div>
                            <div className="col-span-4 flex justify-between text-[10px] font-black text-blue-800 border-t border-blue-600/10 pt-1.5 mt-0.5">
-                             <span>TOTAL CASHEA</span><span>${total.toFixed(2)}</span>
+                             <span>TOTAL CASHEA</span><span>${(total || 0).toFixed(2)}</span>
                            </div>
                            <div className="col-span-4 grid grid-cols-4 gap-1.5 mt-1">
                              <div className="col-span-2 bg-blue-600 text-white p-2 rounded-xl text-center">
                                <p className="text-[8px] font-bold opacity-80">INICIAL ({casheaPct}%)</p>
-                               <p className="text-sm font-black">${casheaInicial.toFixed(2)}</p>
+                               <p className="text-sm font-black">${(casheaInicial || 0).toFixed(2)}</p>
                              </div>
                              <div className="col-span-2 bg-blue-600/10 text-blue-700 p-2 rounded-xl">
                                <p className="text-[8px] font-bold">RESTO (3 cuotas)</p>
-                               <p className="text-xs font-black">${casheaResto.toFixed(2)}</p>
-                               <p className="text-[8px] opacity-70">${casheaCuota.toFixed(2)}/cuota</p>
+                               <p className="text-xs font-black">${(casheaResto || 0).toFixed(2)}</p>
+                               <p className="text-[8px] opacity-70">${(casheaCuota || 0).toFixed(2)}/cuota</p>
                              </div>
                            </div>
                          </div>
@@ -1059,7 +1059,7 @@ export default function VentasPage() {
                 <div className="flex items-end justify-between">
                   <div className="pl-4 border-l-4 border-primary">
                     <p className="text-[11px] text-primary font-black uppercase tracking-[0.3em] mb-2">TOTAL A PAGAR USD</p>
-                    <span className="text-5xl font-black text-primary tracking-tighter italic">${total.toFixed(2)}</span>
+                    <span className="text-5xl font-black text-primary tracking-tighter italic">${(total || 0).toFixed(2)}</span>
                   </div>
                   <div className="flex flex-col items-end pt-2 border-t border-border/10">
                     <p className="text-[10px] text-muted-foreground font-black uppercase tracking-[0.15em] opacity-60">Total en Bolívares</p>
