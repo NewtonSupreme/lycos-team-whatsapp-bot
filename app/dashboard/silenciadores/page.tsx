@@ -95,10 +95,12 @@ export default function VentasPage() {
   const [showSelector, setShowSelector] = useState(false);
   const [secondVenta, setSecondVenta] = useState<any | null>(null);
   const [modoCashea, setModoCashea] = useState(false);
+  const [mounted, setMounted] = useState(false);
   // Local state for Bs. inputs to avoid rounding issues while typing
   const [bsInputs, setBsInputs] = useState<Record<string, string>>({});
 
   useEffect(() => {
+    setMounted(true);
     fetchData();
     fetchRates();
   }, [currentSede]);
@@ -443,6 +445,8 @@ export default function VentasPage() {
     setMetodosPago(prev => ({ ...prev, [method]: Number(balance.toFixed(2)) }));
   };
 
+  if (!mounted) return null;
+
   return (
     <div className="space-y-6 max-w-[1600px] mx-auto pb-40 animate-in fade-in duration-500">
       {/* Header Premium */}
@@ -499,12 +503,12 @@ export default function VentasPage() {
           <div className="glass-card px-4 py-2 rounded-2xl border border-border/50 bg-background/40 shadow-sm">
             <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Restante</p>
             <p className={cn("text-xl font-black transition-colors", balance > 0.01 ? "text-destructive" : "text-green-500")}>
-              ${balance.toFixed(2)}
+              ${(balance || 0).toFixed(2)}
             </p>
           </div>
           <div className="hidden sm:block glass-card px-4 py-2 rounded-2xl border border-border/50 bg-background/40 shadow-sm">
             <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Total</p>
-            <p className="text-xl font-black text-foreground">${total.toFixed(2)}</p>
+            <p className="text-xl font-black text-foreground">${(total || 0).toFixed(2)}</p>
           </div>
         </div>
       </div>
@@ -524,7 +528,7 @@ export default function VentasPage() {
             >
               <div className="flex flex-col items-start">
                 <span className="text-[10px] font-black uppercase tracking-widest opacity-80 leading-none">Mi Carrito</span>
-                <span className="text-sm font-black italic tracking-tight">${total.toFixed(2)}</span>
+                <span className="text-sm font-black italic tracking-tight">${(total || 0).toFixed(2)}</span>
               </div>
               <div className="bg-white/20 p-2 rounded-full relative">
                 <ShoppingCart className="w-5 h-5" />
@@ -610,7 +614,7 @@ export default function VentasPage() {
                         <div className="flex flex-col">
                            <span className="text-[9px] font-black text-muted-foreground uppercase tracking-tight">Dólar BCV</span>
                            <span className="text-base font-black text-foreground/70 italic tracking-tighter">
-                             ${(prod.precio_bs || prod.precio_usd).toFixed(2)}
+                             ${((prod.precio_bs || prod.precio_usd) || 0).toFixed(2)}
                            </span>
                            <span className="text-[8px] font-bold text-muted-foreground/50 leading-none">
                              {((prod.precio_bs || prod.precio_usd) * rates.bcv).toLocaleString('es-VE', {
@@ -904,10 +908,10 @@ export default function VentasPage() {
                        {isCasheaActive && total > 0 && (
                          <div className="grid grid-cols-4 gap-2 p-3 rounded-xl bg-white/60 border border-blue-600/10">
                            <div className="col-span-4 flex justify-between text-[9px] font-black text-blue-700 border-b border-blue-600/10 pb-1.5 mb-1">
-                             <span>BASE BCV (sin IVA)</span><span>${subtotal.toFixed(2)}</span>
+                             <span>BASE BCV (sin IVA)</span><span>${(subtotal || 0).toFixed(2)}</span>
                            </div>
                            <div className="col-span-4 flex justify-between text-[9px] font-black text-orange-500">
-                             <span>IVA 16%</span><span>+${(total - subtotal).toFixed(2)}</span>
+                             <span>IVA 16%</span><span>+${((total - subtotal) || 0).toFixed(2)}</span>
                            </div>
                            <div className="col-span-4 flex justify-between text-[10px] font-black text-blue-800 border-t border-blue-600/10 pt-1.5 mt-0.5">
                              <span>TOTAL CASHEA</span><span>${(total || 0).toFixed(2)}</span>
@@ -990,7 +994,7 @@ export default function VentasPage() {
                           <Input 
                             placeholder="Bs."
                             className="h-9 bg-background/50 text-xs font-black border-none"
-                            value={metodosPago.pago_movil ? (metodosPago.pago_movil * rates.bcv).toFixed(2) : ''}
+                            value={metodosPago.pago_movil ? ((metodosPago.pago_movil * rates.bcv) || 0).toFixed(2) : ''}
                             onChange={e => handlePaymentChange('pago_movil', (parseFloat(e.target.value) / rates.bcv).toString())}
                           />
                         </div>
@@ -1018,7 +1022,7 @@ export default function VentasPage() {
                           <Input 
                             placeholder="Bs."
                             className="h-9 bg-background/50 text-xs font-black border-none"
-                            value={bsInputs['efectivo_ves'] ?? (metodosPago.efectivo_ves ? (metodosPago.efectivo_ves * rates.bcv).toFixed(2) : '')}
+                            value={bsInputs['efectivo_ves'] ?? (metodosPago.efectivo_ves ? ((metodosPago.efectivo_ves * rates.bcv) || 0).toFixed(2) : '')}
                             onChange={e => {
                               const val = e.target.value;
                               setBsInputs(prev => ({ ...prev, ['efectivo_ves']: val }));
@@ -1042,7 +1046,7 @@ export default function VentasPage() {
                               handlePaymentChange('efectivo_ves', val);
                               const num = parseFloat(val);
                               if (!isNaN(num)) {
-                                setBsInputs(prev => ({ ...prev, ['efectivo_ves']: (num * rates.bcv).toFixed(2) }));
+                                setBsInputs(prev => ({ ...prev, ['efectivo_ves']: ((num * rates.bcv) || 0).toFixed(2) }));
                               } else {
                                 setBsInputs(prev => ({ ...prev, ['efectivo_ves']: '' }));
                               }

@@ -658,10 +658,10 @@ export default function InventarioPage() {
                           {rates && item.precio_usd && (
                             <div className="flex flex-col items-center gap-0.5 mt-1">
                               <div className="flex items-center gap-1 text-[10px] text-blue-400 font-bold bg-blue-500/5 px-1.5 rounded border border-blue-500/10" title="Precio calculado a tasa BCV">
-                                <span>BCV: Bs. {((item.precio_bs || 0) * rates.bcv).toFixed(2)}</span>
+                                <span>BCV: Bs. {(((item.precio_bs || 0) * (rates.bcv || 0)) || 0).toFixed(2)}</span>
                               </div>
                               <div className="flex items-center gap-1 text-[10px] text-orange-400 font-bold bg-orange-500/5 px-1.5 rounded border border-orange-500/10" title="Precio a tasa Binance">
-                                <span>P2P: Bs. {((item.precio_usd || 0) * rates.binance).toFixed(2)}</span>
+                                <span>P2P: Bs. {(((item.precio_usd || 0) * (rates.binance || 0)) || 0).toFixed(2)}</span>
                               </div>
                             </div>
                           )}

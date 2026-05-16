@@ -878,25 +878,25 @@ function ManualModal({ onClose, onSave, initial }: {
                 </div>
                 <div className="flex flex-col">
                   <span className="text-[10px] text-muted-foreground font-black uppercase tracking-widest">Subtotal</span>
-                  <span className="text-sm font-black text-slate-900">${form.total_ingresos.toFixed(2)}</span>
+                  <span className="text-sm font-black text-slate-900">${(form.total_ingresos || 0).toFixed(2)}</span>
                 </div>
                 {form.con_iva && (
                   <div className="flex flex-col">
                     <span className="text-[10px] text-orange-500 font-black uppercase tracking-widest">IVA (16%)</span>
-                    <span className="text-sm font-black text-orange-500">+${(form.total_ingresos * 0.16).toFixed(2)}</span>
+                    <span className="text-sm font-black text-orange-500">+${((form.total_ingresos * 0.16) || 0).toFixed(2)}</span>
                   </div>
                 )}
               </div>
               <div className="flex flex-col items-end">
                 <span className="text-[10px] text-primary font-black uppercase tracking-[0.2em]">Total Final</span>
-                <span className="text-2xl font-black text-primary tracking-tighter italic">${totalFinal.toFixed(2)}</span>
+                <span className="text-2xl font-black text-primary tracking-tighter italic">${(totalFinal || 0).toFixed(2)}</span>
                 {Math.abs(restante) > 0.01 && (
                   <div className="flex flex-col items-end mt-1">
                     <span className={cn("text-[9px] font-black uppercase tracking-widest", restante > 0 ? "text-orange-500" : "text-green-500")}>
                       {restante > 0 ? 'Restante por pagar' : 'Cambio / Excedente'}
                     </span>
                     <span className={cn("text-sm font-black", restante > 0 ? "text-orange-500" : "text-green-500")}>
-                      ${Math.abs(restante).toFixed(2)}
+                      ${(Math.abs(restante) || 0).toFixed(2)}
                     </span>
                   </div>
                 )}
@@ -960,7 +960,7 @@ function ManualModal({ onClose, onSave, initial }: {
             {items.some(i => i.descripcion) && (
               <div className="mt-2 pt-2 border-t border-border/20 flex justify-between text-xs">
                 <span className="text-muted-foreground">Total calculado</span>
-                <span className="font-bold text-primary">${totalFromItems.toFixed(2)}</span>
+                <span className="font-bold text-primary">${(totalFromItems || 0).toFixed(2)}</span>
               </div>
             )}
           </div>
@@ -2229,6 +2229,8 @@ export default function ReportesPage() {
     const to = `${currentYear}-${String(currentMonth + 1).padStart(2,'0')}-${String(getDaysInMonth(currentYear, currentMonth)).padStart(2,'0')}`;
     window.location.href = `/api/reportes/export?tipo=${type}&from=${from}&to=${to}`;
   };
+
+  if (!mounted) return null;
 
   return (
     <div className="space-y-5">
