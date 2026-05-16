@@ -231,7 +231,7 @@ export default function ServiciosPage() {
             <Wrench className="w-6 h-6 text-primary" />
           </div>
           <div>
-            <h1 className="text-2xl font-black text-white tracking-tight" style={{ fontFamily: 'Syne, sans-serif' }}>
+            <h1 className="text-2xl font-black text-foreground tracking-tight" style={{ fontFamily: 'Syne, sans-serif' }}>
               Servicios
             </h1>
             <p className="text-xs text-muted-foreground font-medium flex items-center gap-2">
@@ -245,7 +245,7 @@ export default function ServiciosPage() {
           <div className="relative flex-1 lg:w-80">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input 
-              className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-white/5 border border-white/10 text-sm text-white placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+              className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-muted/50 border border-border/50 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
               placeholder="Buscar cliente, placa, falla..."
               value={search}
               onChange={e => setSearch(e.target.value)}
@@ -264,7 +264,7 @@ export default function ServiciosPage() {
                 onClick={() => setDateFilter(f.id as any)}
                 className={cn(
                   "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
-                  dateFilter === f.id ? "bg-white/10 text-white shadow-inner" : "text-muted-foreground hover:text-white"
+                  dateFilter === f.id ? "bg-primary/20 text-primary shadow-inner" : "text-muted-foreground hover:text-foreground"
                 )}
               >
                 {f.label}
@@ -275,13 +275,13 @@ export default function ServiciosPage() {
           <div className="flex items-center bg-white/5 border border-white/10 rounded-2xl p-1">
             <button 
               onClick={() => setViewMode('kanban')}
-              className={cn("p-2 rounded-xl transition-all", viewMode === 'kanban' ? "bg-primary text-primary-foreground shadow-lg" : "text-muted-foreground hover:text-white")}
+              className={cn("p-2 rounded-xl transition-all", viewMode === 'kanban' ? "bg-primary text-primary-foreground shadow-lg" : "text-muted-foreground hover:text-foreground")}
             >
               <LayoutGrid className="w-4 h-4" />
             </button>
             <button 
               onClick={() => setViewMode('list')}
-              className={cn("p-2 rounded-xl transition-all", viewMode === 'list' ? "bg-primary text-primary-foreground shadow-lg" : "text-muted-foreground hover:text-white")}
+              className={cn("p-2 rounded-xl transition-all", viewMode === 'list' ? "bg-primary text-primary-foreground shadow-lg" : "text-muted-foreground hover:text-foreground")}
             >
               <List className="w-4 h-4" />
             </button>
@@ -296,7 +296,7 @@ export default function ServiciosPage() {
 
           <button 
             onClick={loadCitas}
-            className="w-11 h-11 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center hover:bg-white/10 transition-all text-muted-foreground hover:text-white"
+            className="w-11 h-11 rounded-2xl bg-muted/50 border border-border/50 flex items-center justify-center hover:bg-muted/80 transition-all text-muted-foreground hover:text-foreground"
           >
             <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />
           </button>
@@ -511,7 +511,7 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onMove, is
         cursor: 'grabbing',
         boxShadow: "0 30px 60px rgba(0,0,0,0.6)"
       }}
-      className="group relative bg-white/[0.03] border border-white/10 rounded-3xl p-5 hover:border-[#f59e0b]/40 hover:bg-white/[0.05] transition-all shadow-xl cursor-grab active:cursor-grabbing select-none"
+      className="group relative bg-card/50 border border-border/50 rounded-3xl p-5 hover:border-primary/40 hover:bg-card/80 transition-all shadow-xl cursor-grab active:cursor-grabbing select-none"
     >
       {/* Botones de traslado rápido (Izquierda/Derecha) */}
       <AnimatePresence>
@@ -552,7 +552,7 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onMove, is
 
       <div className="flex justify-between items-start mb-4 pl-8">
         <div>
-          <h4 className="text-sm font-bold text-white group-hover:text-[#f59e0b] transition-colors uppercase tracking-tight">
+          <h4 className="text-sm font-bold text-foreground group-hover:text-primary transition-colors uppercase tracking-tight">
             {cita.clientes ? `${cita.clientes.nombre} ${cita.clientes.apellido}` : cita.nombre_cliente}
           </h4>
           <p className="text-[10px] text-muted-foreground font-medium mt-0.5 flex items-center gap-1 uppercase tracking-widest">
@@ -597,7 +597,7 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onMove, is
               <div className="w-1.5 h-1.5 rounded-full bg-[#f59e0b] animate-pulse" />
               <span className="text-[9px] font-black text-[#f59e0b] uppercase tracking-widest">Último Reporte</span>
             </div>
-            <p className="text-[10px] text-white/70 font-medium truncate italic">
+            <p className="text-[10px] text-foreground/70 font-medium truncate italic">
               {lastUpdate.accion}
             </p>
           </div>
@@ -652,7 +652,7 @@ function ListView({ items, onEdit, onDelete, onTracking, onInvoice }: any) {
                       <Wrench className={cn("w-3.5 h-3.5", cfg.color)} />
                     </div>
                     <div>
-                      <p className="text-sm font-bold text-white">
+                      <p className="text-sm font-bold text-foreground">
                         {cita.clientes ? `${cita.clientes.nombre} ${cita.clientes.apellido}` : cita.nombre_cliente}
                       </p>
                       <p className="text-[10px] text-muted-foreground">{SERVICIO_LABELS[cita.tipo_servicio] || cita.tipo_servicio}</p>
@@ -660,7 +660,7 @@ function ListView({ items, onEdit, onDelete, onTracking, onInvoice }: any) {
                   </div>
                 </td>
                 <td className="px-6 py-4">
-                  <p className="text-xs text-slate-300 font-medium">
+                  <p className="text-xs text-foreground/80 font-medium">
                     {cita.vehiculos ? `${cita.vehiculos.marca} ${cita.vehiculos.modelo}` : cita.vehiculo_info}
                   </p>
                   <p className="text-[10px] font-mono text-muted-foreground">{cita.vehiculos?.placa || cita.placa}</p>
@@ -1549,7 +1549,7 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
       const { error: citaError } = await withSedeFilter(supabase.from('citas')).update({ estado: 'completada' }).eq('id', cita.id);
       if (citaError) throw citaError;
 
-      logActivity({ usuario: 'Admin', modulo: 'Servicios', accion: 'Venta Finalizada', detalles: `Venta para ${clientName} por $${total.toFixed(2)}` });
+      logActivity({ usuario: useAppStore.getState().user?.nombre || 'Admin', modulo: 'Servicios', accion: 'Venta Finalizada', detalles: `Venta para ${clientName} por $${total.toFixed(2)}` });
       handleDownload();
       alert('¡Entrega procesada con éxito!');
       onClose();

@@ -5,12 +5,13 @@ import {
   Download, TrendingUp, DollarSign, Wrench, Users, Plus, Pencil,
   Trash2, CheckCircle, AlertCircle, Loader2, X, Camera, Eye,
   Calendar, FileText, BarChart2, RefreshCw, Package, ChevronDown, Clock,
-  ArrowDownCircle, TrendingDown, Receipt
+  ArrowDownCircle, TrendingDown, Receipt, ShoppingCart, Bot, ChevronRight
 } from 'lucide-react';
 import {
   Card, CardContent, CardHeader, CardTitle, CardDescription
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
@@ -23,9 +24,13 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from 'recharts';
 import { supabase } from '@/lib/supabase';
+import { logActivity } from '@/lib/activity';
 import { cn } from '@/lib/utils';
 import { generateInvoicePDF, generateEgresoPDF } from '@/lib/invoice-pdf';
+import { generateCierrePDF, type CierreData } from '@/lib/cierre-pdf';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
+import { useSedeStore } from '@/lib/store/useSedeStore';
+import { useAppStore } from '@/lib/store';
 
 // ── Types ──────────────────────────────────────────────────────
 interface VentaDia {
@@ -40,6 +45,9 @@ interface VentaDia {
   imagen_url: string | null;
   creado_por: string;
   created_at: string;
+  source?: string;
+  isCashea?: boolean;
+  isBinance?: boolean;
   pago_usd?: number;
   pago_ves?: number;
   tasa_cambio?: number;
@@ -78,6 +86,27 @@ interface Egreso {
   notas: string | null;
   imagen_url: string | null;
   creado_por: string;
+  created_at: string;
+}
+
+interface CierreOficial {
+  id: string;
+  fecha: string;
+  periodo: string;
+  fecha_inicio: string | null;
+  fecha_fin: string | null;
+  total_ingresos_usd: number;
+  total_bs: number;
+  tasa_bcv: number;
+  total_clientes: number;
+  total_ventas: number;
+  desglose_pagos: any;
+  notas: string | null;
+  generado_por: string;
+  sede_nombre?: string;
+  ventas_snapshot?: any[];
+  servicios_snapshot?: any[];
+  inventario_snapshot?: any[];
   created_at: string;
 }
 
@@ -132,6 +161,401 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
   }
   return null;
 };
+
+
+// ── CierreWizard Component ─────────────────────────────────────
+function CierreWizard({ ventas, onClose, onSaved }: {
+  ventas: VentaDia[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { currentSede } = useSedeStore();
+  const [step, setStep] = React.useState(1);
+  const [periodo, setPeriodo] = React.useState<'dia' | 'mes'>('dia');
+  const [fechaDia, setFechaDia] = React.useState(new Date().toISOString().split('T')[0]);
+  const [fechaInicio, setFechaInicio] = React.useState(() => {
+    const d = new Date(); d.setDate(1); return d.toISOString().split('T')[0];
+  });
+  const [fechaFin, setFechaFin] = React.useState(new Date().toISOString().split('T')[0]);
+  const [notasCierre, setNotasCierre] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+  const [tasaBCV, setTasaBCV] = React.useState(0);
+  const [inventario, setInventario] = React.useState<any[]>([]);
+  const [servicios, setServicios] = React.useState<any[]>([]);
+  const [userName, setUserName] = React.useState(useAppStore.getState().user?.nombre || 'Admin');
+
+  React.useEffect(() => {
+    fetch('/api/rates').then(r => r.json()).then(d => setTasaBCV(d.bcv || 0)).catch(() => {});
+    if (supabase) {
+      withSedeFilter(supabase.from('inventario')).select('*').eq('activo', true)
+        .then((res: any) => setInventario(res.data || []));
+      
+      withSedeFilter(supabase.from('servicios')).select('*')
+        .then((res: any) => setServicios(res.data || []));
+    }
+  }, []);
+
+  const ventasFiltradas = React.useMemo(() => {
+    if (periodo === 'dia') return ventas.filter(v => v.fecha === fechaDia);
+    return ventas.filter(v => v.fecha >= fechaInicio && v.fecha <= fechaFin);
+  }, [ventas, periodo, fechaDia, fechaInicio, fechaFin]);
+
+  const serviciosFiltrados = React.useMemo(() => {
+    const start = periodo === 'dia' ? `${fechaDia}T00:00:00` : `${fechaInicio}T00:00:00`;
+    const end = periodo === 'dia' ? `${fechaDia}T23:59:59` : `${fechaFin}T23:59:59`;
+    return servicios.filter(s => s.created_at >= start && s.created_at <= end);
+  }, [servicios, periodo, fechaDia, fechaInicio, fechaFin]);
+
+  const totalUSD = ventasFiltradas.reduce((s, v) => s + Number(v.total_ingresos), 0);
+  const totalBS = totalUSD * (tasaBCV || 1);
+  const totalClientes = ventasFiltradas.reduce((s, v) => s + Number(v.total_clientes || 0), 0);
+
+  const desglosePagos = React.useMemo(() => {
+    const agg: Record<string, number> = {};
+    ventasFiltradas.forEach(v => {
+      const mp = (v as any).metodos_pago || {};
+      Object.entries(mp).forEach(([k, val]) => {
+        if (typeof val === 'number' && val > 0) agg[k] = (agg[k] || 0) + val;
+      });
+    });
+    return {
+      efectivo_usd: agg.efectivo_usd,
+      zelle: agg.zelle,
+      pago_movil_bs: agg.pago_movil,
+      efectivo_bs: agg.efectivo_ves,
+      transferencia_bs: agg.transferencia,
+      cashea_usd: agg.cashea_usd || agg.cashea,
+      cashea_bs: agg.cashea_ves,
+      binance_usdt: agg.binance,
+      punto_venta_usd: agg.punto_de_venta_usd,
+      punto_venta_bs: agg.punto_de_venta_ves || agg.punto_de_venta,
+      otro: agg.otro,
+    };
+  }, [ventasFiltradas]);
+
+  const handleGenerate = async () => {
+    if (!supabase) return;
+    setSaving(true);
+    try {
+      const cierreData: CierreData = {
+        sede_nombre: currentSede?.nombre || 'Lycos Team',
+        periodo,
+        fecha: periodo === 'dia'
+          ? new Date(fechaDia + 'T12:00:00').toLocaleDateString('es-VE')
+          : new Date(fechaInicio + 'T12:00:00').toLocaleDateString('es-VE'),
+        fecha_inicio: periodo === 'mes' ? fechaInicio.split('-').reverse().join('/') : undefined,
+        fecha_fin: periodo === 'mes' ? fechaFin.split('-').reverse().join('/') : undefined,
+        total_ingresos_usd: totalUSD,
+        total_bs: totalBS,
+        tasa_bcv: tasaBCV,
+        total_clientes: totalClientes,
+        total_ventas: ventasFiltradas.length,
+        desglose_pagos: desglosePagos,
+        ventas: ventasFiltradas.map(v => ({
+          fecha: new Date(v.fecha + 'T12:00:00').toLocaleDateString('es-VE'),
+          cliente: v.cliente || 'Cons. Final',
+          descripcion: (v.desglose || []).map((d: any) => d.descripcion).join(', ') || (v.notas || '').slice(0, 40) || 'Servicio',
+          metodo_pago: (v as any).metodo_pago || 'Varios',
+          total_usd: Number(v.total_ingresos),
+          total_bs: Number(v.total_ingresos) * (tasaBCV || 1),
+          fuente: (v.creado_por || '').toLowerCase().includes('ia') ? 'ia' as const : 'pos' as const,
+        })),
+        inventario: inventario.map(p => ({
+          nombre: p.nombre,
+          stock: p.stock,
+          precio_usd: p.precio_usd || p.precio_promo || 0,
+          precio_bs: p.precio_bs || 0,
+        })),
+        notas: notasCierre,
+        generado_por: userName,
+        generado_en: new Date().toLocaleString('es-VE'),
+        servicios_detalle: serviciosFiltrados.map(s => ({
+          id: s.id,
+          vehiculo: s.vehiculo_info || s.cliente_nombre || '---',
+          descripcion: s.descripcion,
+          estado: s.estado,
+          created_at: s.created_at
+        }))
+      };
+
+        // Create a hidden JSON snapshot in the 'notas' field since columns are missing
+        const hiddenSnapshot = JSON.stringify({
+          v: ventasFiltradas.map(v => ({ id: v.id, f: v.fecha, c: v.cliente, t: v.total_ingresos, ts: v.total_servicios, d: v.desglose, n: v.notas, cp: v.creado_por, ca: v.created_at, tc: v.tasa_cambio })),
+          s: serviciosFiltrados.map(s => ({ id: s.id, vi: s.vehiculo_info, cn: s.cliente_nombre, d: s.descripcion, e: s.estado, ca: s.created_at })),
+          i: inventario.map(p => ({ n: p.nombre, s: p.stock, pu: p.precio_usd, pb: p.precio_bs }))
+        });
+
+        const { error } = await supabase.from('cierres_caja').insert(withSedeInsert({
+          fecha: fechaDia || fechaInicio,
+          periodo,
+          fecha_inicio: periodo === 'mes' ? fechaInicio : null,
+          fecha_fin: periodo === 'mes' ? fechaFin : null,
+          total_ingresos_usd: totalUSD,
+          total_bs: totalBS,
+          tasa_bcv: tasaBCV,
+          total_clientes: totalClientes,
+          total_ventas: ventasFiltradas.length,
+          desglose_pagos: desglosePagos,
+          notas: (notasCierre ? notasCierre + "\n" : "") + `[SNAPSHOT_DATA]${hiddenSnapshot}[/SNAPSHOT_DATA]`,
+          generado_por: userName,
+        }));
+        if (error) throw error;
+
+        // Log Activity
+        await logActivity({
+          usuario: userName,
+          modulo: 'Reportes',
+          accion: `Generó cierre de caja ${periodo === 'dia' ? 'diario' : 'mensual'}`,
+          detalles: `Fecha: ${fechaDia || fechaInicio}, Total: $${totalUSD.toFixed(2)}`,
+          referencia_tabla: 'cierres_caja'
+        });
+
+      generateCierrePDF(cierreData);
+      onSaved();
+    } catch (e: any) {
+      console.error(e);
+      alert('Error al generar cierre: ' + (e.message || 'Error desconocido'));
+    }
+    setSaving(false);
+  };
+
+  const stepLabels = ['Período', 'Ventas', 'Métricas', 'Opciones', 'Exportar'];
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-2 sm:p-4">
+      <div className="bg-card border border-border rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-border/30 bg-gradient-to-r from-orange-600/10 to-transparent">
+          <div>
+            <h2 className="text-sm font-black text-orange-500 uppercase tracking-widest flex items-center gap-2">
+              <FileText className="w-4 h-4" /> Cierre de Caja — Lycos Team
+            </h2>
+            <div className="flex items-center gap-1 mt-2 flex-wrap">
+              {stepLabels.map((s, i) => (
+                <React.Fragment key={i}>
+                  <button
+                    onClick={() => i < step - 1 && setStep(i + 1)}
+                    className={cn(
+                      "flex items-center gap-1 text-[8px] font-black uppercase px-2 py-0.5 rounded-full transition-all",
+                      step === i + 1 ? "bg-orange-600 text-white" :
+                      step > i + 1 ? "bg-green-500/20 text-green-400 cursor-pointer hover:bg-green-500/30" :
+                      "bg-muted/30 text-muted-foreground"
+                    )}
+                  >
+                    {step > i + 1 ? '✓' : (i + 1) + '.'} {s}
+                  </button>
+                  {i < 4 && <span className="text-muted-foreground/40 text-[8px]">›</span>}
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-white/5 flex items-center justify-center flex-shrink-0">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+          {/* Step 1: Período */}
+          {step === 1 && (
+            <div className="space-y-4">
+              <p className="text-xs text-muted-foreground">Selecciona el tipo de cierre y el período a reportar.</p>
+              <div className="flex gap-3">
+                {(['dia', 'mes'] as const).map(p => (
+                  <button key={p} onClick={() => setPeriodo(p)}
+                    className={cn("flex-1 p-4 rounded-2xl border-2 text-sm font-black uppercase transition-all",
+                      periodo === p ? "border-orange-500 bg-orange-600/10 text-orange-500" :
+                      "border-border text-muted-foreground hover:border-orange-500/40")}>
+                    {p === 'dia' ? '📅 Por Día' : '📆 Por Mes'}
+                  </button>
+                ))}
+              </div>
+
+              {periodo === 'dia' ? (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Fecha del cierre</label>
+                  <input type="date" value={fechaDia} onChange={e => setFechaDia(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border border-border/50 bg-background/50 text-sm font-bold focus:outline-none focus:ring-1 focus:ring-orange-500" />
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Fecha inicio</label>
+                    <input type="date" value={fechaInicio} onChange={e => setFechaInicio(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-border/50 bg-background/50 text-sm font-bold focus:outline-none focus:ring-1 focus:ring-orange-500" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Fecha fin</label>
+                    <input type="date" value={fechaFin} onChange={e => setFechaFin(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-border/50 bg-background/50 text-sm font-bold focus:outline-none focus:ring-1 focus:ring-orange-500" />
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Elaborado por</label>
+                <input type="text" value={userName} onChange={e => setUserName(e.target.value)}
+                  placeholder="Nombre del responsable"
+                  className="w-full px-4 py-2.5 rounded-xl border border-border/50 bg-background/50 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500" />
+              </div>
+            </div>
+          )}
+
+          {/* Step 2: Ventas incluidas */}
+          {step === 2 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between p-3 rounded-xl bg-orange-600/5 border border-orange-600/20">
+                <p className="text-xs text-muted-foreground">
+                  Ventas en el período: <strong className="text-foreground">{ventasFiltradas.length}</strong>
+                </p>
+                <span className="text-xs font-black text-orange-500">${totalUSD.toFixed(2)} USD</span>
+              </div>
+
+              {ventasFiltradas.length === 0 ? (
+                <div className="text-center py-12 rounded-2xl border border-dashed border-border/40">
+                  <p className="text-sm text-muted-foreground">No hay ventas para el período seleccionado</p>
+                  <button onClick={() => setStep(1)} className="text-xs text-orange-500 mt-2 underline">← Cambiar período</button>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-[320px] overflow-y-auto custom-scrollbar pr-1">
+                  {ventasFiltradas.map((v, i) => (
+                    <div key={v.id} className="flex items-center justify-between p-3 rounded-xl bg-background/50 border border-border/20 hover:border-border/40 transition-all">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-full bg-orange-600/10 text-orange-500 text-[9px] font-black flex items-center justify-center flex-shrink-0">{i + 1}</div>
+                        <div>
+                          <p className="text-xs font-bold text-foreground">{v.cliente || 'Cons. Final'}</p>
+                          <p className="text-[9px] text-muted-foreground">{v.fecha} · {v.total_servicios || 1} serv. · {v.total_clientes || 1} cliente(s)</p>
+                        </div>
+                      </div>
+                      <span className="text-xs font-black text-green-400">${Number(v.total_ingresos).toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Step 3: Métricas */}
+          {step === 3 && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label: 'Total USD', value: '$' + Number(totalUSD).toFixed(2), color: 'text-green-400', bg: 'bg-green-500/10' },
+                  { label: 'Total Bs.', value: Number(totalBS).toLocaleString('es-VE', {maximumFractionDigits: 0}) + ' Bs', color: 'text-blue-400', bg: 'bg-blue-500/10' },
+                  { label: 'Clientes', value: String(totalClientes), color: 'text-purple-400', bg: 'bg-purple-500/10' },
+                  { label: 'Ventas', value: String(ventasFiltradas.length), color: 'text-orange-400', bg: 'bg-orange-500/10' },
+                ].map(k => (
+                  <div key={k.label} className={cn('p-4 rounded-2xl border border-border/30', k.bg)}>
+                    <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{k.label}</p>
+                    <p className={cn('text-xl font-black mt-1', k.color)}>{k.value}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-4 rounded-2xl bg-background/50 border border-border/30 space-y-2">
+                <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-2">Métodos de pago detectados</p>
+                {Object.entries(desglosePagos).filter(([, v]) => v && Number(v) > 0).map(([k, v]) => (
+                  <div key={k} className="flex justify-between text-xs">
+                    <span className="text-muted-foreground capitalize">{k.replace(/_/g, ' ')}</span>
+                    <span className="font-black">
+                      {(k.includes('bs') || k === 'pago_movil_bs')
+                        ? Number(v).toLocaleString('es-VE', {maximumFractionDigits: 0}) + ' Bs'
+                        : '$' + Number(v).toFixed(2)}
+                    </span>
+                  </div>
+                ))}
+                {Object.values(desglosePagos).every(v => !v || Number(v) === 0) && (
+                  <p className="text-xs text-muted-foreground italic">Sin desglose de pagos en los cierres del período</p>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-xl bg-orange-600/10 border border-orange-600/20">
+                <span className="text-xs font-black text-orange-500 uppercase tracking-widest">Tasa BCV</span>
+                <span className="text-sm font-black text-orange-500">{Number(tasaBCV).toFixed(2)} Bs/$</span>
+              </div>
+            </div>
+          )}
+
+          {/* Step 4: Opciones */}
+          {step === 4 && (
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Notas / Observaciones del cierre</label>
+                <textarea value={notasCierre} onChange={e => setNotasCierre(e.target.value)} rows={4}
+                  placeholder="Ej: Caja cuadrada. Efectivo verificado. Sin pendientes..."
+                  className="w-full px-4 py-3 rounded-xl border border-border/50 bg-background/50 text-xs resize-none focus:outline-none focus:ring-1 focus:ring-orange-500 placeholder:text-muted-foreground" />
+              </div>
+
+              <div className="p-4 rounded-2xl bg-green-500/5 border border-green-500/20 space-y-1.5">
+                <p className="text-[9px] font-black text-green-400 uppercase tracking-widest mb-1">El cierre PDF incluirá:</p>
+                {[
+                  '📊 KPIs: Ingresos USD y Bs., Clientes, Ventas',
+                  '💳 Desglose detallado por método de pago',
+                  '🧾 Tabla completa de ventas del período',
+                  '📦 Snapshot actual del inventario de silenciadores',
+                  '✍️ Líneas de firma: Elaborado / Autorizado',
+                ].map((item, i) => (
+                  <p key={i} className="text-[9px] text-muted-foreground">{item}</p>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Step 5: Exportar */}
+          {step === 5 && (
+            <div className="space-y-4 text-center py-4">
+              <div className="w-20 h-20 rounded-3xl bg-orange-600/10 border-2 border-orange-600/30 flex items-center justify-center mx-auto">
+                <FileText className="w-10 h-10 text-orange-500" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black">¡Todo listo!</h3>
+                <p className="text-xs text-muted-foreground mt-1 max-w-xs mx-auto">
+                  Se generará el PDF y se guardará en el historial de cierres de la base de datos.
+                </p>
+              </div>
+              <div className="text-left p-4 rounded-2xl bg-background/60 border border-border/30 space-y-2">
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">Tipo</span><span className="font-bold capitalize">{periodo === 'dia' ? 'Cierre Diario' : 'Cierre Mensual'}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">Período</span><span className="font-bold">{periodo === 'dia' ? fechaDia : fechaInicio + ' → ' + fechaFin}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">Ventas incluidas</span><span className="font-bold">{ventasFiltradas.length}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">Total USD</span><span className="font-black text-orange-500">${Number(totalUSD).toFixed(2)}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">Total Bs.</span><span className="font-black text-blue-400">{Number(totalBS).toLocaleString('es-VE', {maximumFractionDigits: 0})} Bs</span></div>
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">Elaborado por</span><span className="font-bold">{userName}</span></div>
+              </div>
+              <Button onClick={handleGenerate} disabled={saving}
+                className="w-full gap-2 bg-orange-600 hover:bg-orange-700 text-white font-black h-12 text-sm">
+                {saving
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Generando PDF...</>
+                  : <><Download className="w-4 h-4" /> Generar y Descargar PDF</>}
+              </Button>
+              <p className="text-[9px] text-muted-foreground">El cierre queda registrado en la BD para tu historial.</p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer nav */}
+        <div className="flex items-center justify-between p-4 border-t border-border/30 bg-muted/10">
+          <button onClick={() => step > 1 ? setStep(step - 1) : onClose()}
+            className="px-4 py-2 rounded-xl text-xs font-bold hover:bg-white/5 transition-all border border-border/30">
+            {step === 1 ? 'Cancelar' : '← Atrás'}
+          </button>
+          <div className="text-[9px] text-muted-foreground font-bold">Paso {step} de 5</div>
+          {step < 5 && (
+            <Button onClick={() => setStep(step + 1)}
+              className="gap-2 bg-orange-600 hover:bg-orange-700 text-white font-black px-6">
+              Siguiente →
+            </Button>
+          )}
+          {step === 5 && (
+            <button onClick={onClose} className="px-4 py-2 rounded-xl text-xs font-bold hover:bg-white/5 transition-all border border-border/30">
+              Cerrar
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── Modal: Formulario Manual ────────────────────────────────────
 function ManualModal({ onClose, onSave, initial }: {
@@ -288,8 +712,8 @@ function ManualModal({ onClose, onSave, initial }: {
       <div className="bg-card border border-border rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl">
         <div className="flex items-center justify-between p-5 border-b border-border/30">
           <div>
-            <h2 className="text-base font-bold">{initial ? 'Editar cierre' : 'Nuevo cierre de caja'}</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">Ingresa los datos del día manualmente</p>
+            <h2 className="text-base font-bold text-primary">{initial ? 'Editar Venta' : 'Nueva Venta Manual'}</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Registra una venta individual en el sistema</p>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-white/5 flex items-center justify-center">
             <X className="w-4 h-4" />
@@ -491,12 +915,12 @@ function ManualModal({ onClose, onSave, initial }: {
               </button>
             </div>
             <div className="space-y-2">
-              <div className="grid grid-cols-12 gap-2 mb-1 px-1">
-                <div className="col-span-1 text-[9px] font-black text-slate-300 uppercase text-center">#</div>
-                <div className="col-span-4 text-[9px] font-black text-slate-300 uppercase">Descripción del Servicio</div>
-                <div className="col-span-2 text-[9px] font-black text-slate-300 uppercase text-center">Cant.</div>
-                <div className="col-span-2 text-[9px] font-black text-slate-300 uppercase text-right">P. Unit.</div>
-                <div className="col-span-2 text-[9px] font-black text-slate-300 uppercase text-right pr-2">Total</div>
+              <div className="grid grid-cols-12 gap-2 mb-1 px-1 text-muted-foreground/70">
+                <div className="col-span-1 text-[9px] font-black uppercase text-center">#</div>
+                <div className="col-span-4 text-[9px] font-black uppercase">Descripción del Servicio</div>
+                <div className="col-span-2 text-[9px] font-black uppercase text-center">Cant.</div>
+                <div className="col-span-2 text-[9px] font-black uppercase text-right">P. Unit.</div>
+                <div className="col-span-2 text-[9px] font-black uppercase text-right pr-2">Total</div>
               </div>
               {items.map((item, i) => (
                 <div key={i} className="grid grid-cols-12 gap-2 items-center group bg-slate-50/30 p-1.5 rounded-xl border border-transparent hover:border-slate-100 transition-all">
@@ -564,7 +988,7 @@ function ManualModal({ onClose, onSave, initial }: {
             Cancelar
           </button>
           <Button onClick={handleSave} disabled={saving} className="gap-2">
-            {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Guardando...</> : <><CheckCircle className="w-4 h-4" /> Guardar cierre</>}
+            {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Guardando...</> : <><CheckCircle className="w-4 h-4" /> Guardar Venta Manual</>}
           </Button>
         </div>
       </div>
@@ -1039,6 +1463,7 @@ function ScanModal({ onClose, onConfirm, modo }: {
 }
 
 function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; onClose: () => void }) {
+  const { currentSede } = useSedeStore();
   const [printMode, setPrintMode] = useState<'single' | 'dual' | 'diferente'>('dual');
   const [printSide, setPrintSide] = useState<'left' | 'right'>('left');
   const [secondVenta, setSecondVenta] = useState<any | null>(null);
@@ -1099,9 +1524,9 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
           <div className="border border-slate-200 p-8 rounded-lg shadow-sm">
             <div className="flex justify-between items-start mb-8">
               <div>
-                <h1 className="text-2xl font-black text-slate-900 tracking-tight">LYCOS TEAM</h1>
-                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">Taller Automotriz Profesional</p>
-                <p className="text-[9px] text-slate-400 mt-2">San Antonio de los Altos, Miranda</p>
+                <h1 className="text-2xl font-black text-slate-900 tracking-tight italic">LYCOS TEAM</h1>
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">Servicios Automotrices de Alto Nivel</p>
+                <p className="text-[9px] text-slate-400 mt-2">Sede Activa: {currentSede?.nombre || 'General'}</p>
               </div>
               <div className="text-right">
                 <p className="text-xs font-bold text-slate-400 uppercase">Factura</p>
@@ -1148,84 +1573,66 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
               <div className="w-48 space-y-2">
                 <div className="flex justify-between text-[10px] text-slate-500">
                   <span>SUBTOTAL</span>
-                  <span>${venta.total_ingresos.toFixed(2)}</span>
+                  <span>${Number(venta.total_ingresos).toFixed(2)}</span>
                 </div>
                 
                 {(venta.con_iva || (venta.metodos_pago && Object.values(venta.metodos_pago).some((v: any) => (v ?? 0) > 0))) && (
                   <div className="pt-2 mt-2 border-t border-slate-100 space-y-1">
                     <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Métodos de Pago:</p>
                     {venta.metodos_pago?.pago_movil ? (
-                      <div className="flex justify-between text-[9px] text-slate-500">
+                      <div className="flex justify-between text-[9px] text-slate-500 bg-slate-50 p-1 rounded">
                         <span>PAGO MÓVIL</span>
-                        <span>Bs. {venta.metodos_pago.pago_movil.toLocaleString('es-VE')}</span>
+                        <span className="font-bold text-slate-900">Bs. {Number(venta.metodos_pago.pago_movil).toLocaleString('es-VE')}</span>
                       </div>
                     ) : null}
                     {venta.metodos_pago?.zelle ? (
-                      <div className="flex justify-between text-[9px] text-slate-500">
+                      <div className="flex justify-between text-[9px] text-slate-500 bg-slate-50 p-1 rounded">
                         <span>ZELLE</span>
-                        <span>${venta.metodos_pago.zelle.toFixed(2)}</span>
+                        <span className="font-bold text-slate-900">${Number(venta.metodos_pago.zelle).toFixed(2)}</span>
                       </div>
                     ) : null}
                     {venta.metodos_pago?.efectivo_usd ? (
-                      <div className="flex justify-between text-[9px] text-slate-500">
+                      <div className="flex justify-between text-[9px] text-slate-500 bg-slate-50 p-1 rounded">
                         <span>EFECTIVO USD</span>
-                        <span>${venta.metodos_pago.efectivo_usd.toFixed(2)}</span>
+                        <span className="font-bold text-slate-900">${Number(venta.metodos_pago.efectivo_usd).toFixed(2)}</span>
                       </div>
                     ) : null}
-                    {venta.metodos_pago?.efectivo_ves ? (
-                      <div className="flex justify-between text-[9px] text-slate-500">
-                        <span>EFECTIVO VES</span>
-                        <span>Bs. {venta.metodos_pago.efectivo_ves.toLocaleString('es-VE')}</span>
-                      </div>
-                    ) : null}
-                    {venta.metodos_pago?.cashea || venta.metodos_pago?.cashea_usd || venta.metodos_pago?.cashea_ves ? (
-                      <div className="flex flex-col gap-0.5 text-[9px]">
-                        <div className="flex justify-between text-violet-500 font-bold">
-                          <span>CASHEA</span>
-                          <span>
-                            {venta.metodos_pago?.cashea_usd ? `$${venta.metodos_pago.cashea_usd.toFixed(2)} ` : ''}
-                            {venta.metodos_pago?.cashea_ves ? `Bs. ${venta.metodos_pago.cashea_ves.toLocaleString('es-VE')} ` : ''}
-                            {(!venta.metodos_pago?.cashea_usd && !venta.metodos_pago?.cashea_ves && venta.metodos_pago?.cashea) ? `$${venta.metodos_pago.cashea.toFixed(2)}` : ''}
-                          </span>
-                        </div>
-                      </div>
-                    ) : null}
-                    {venta.metodos_pago?.punto_de_venta || venta.metodos_pago?.punto_de_venta_usd || venta.metodos_pago?.punto_de_venta_ves ? (
-                      <div className="flex flex-col gap-0.5 text-[9px]">
-                        <div className="flex justify-between text-orange-500 font-bold">
-                          <span>PUNTO DE VENTA</span>
-                          <span>
-                            {venta.metodos_pago?.punto_de_venta_usd ? `$${venta.metodos_pago.punto_de_venta_usd.toFixed(2)} ` : ''}
-                            {venta.metodos_pago?.punto_de_venta_ves ? `Bs. ${venta.metodos_pago.punto_de_venta_ves.toLocaleString('es-VE')} ` : ''}
-                            {(!venta.metodos_pago?.punto_de_venta_usd && !venta.metodos_pago?.punto_de_venta_ves && venta.metodos_pago?.punto_de_venta) ? `$${venta.metodos_pago.punto_de_venta.toFixed(2)}` : ''}
-                          </span>
-                        </div>
-                      </div>
-                    ) : null}
-                    {venta.metodos_pago?.transferencia ? (
-                      <div className="flex justify-between text-[9px] text-slate-500">
-                        <span>TRANSFERENCIA</span>
-                        <span>Bs. {venta.metodos_pago.transferencia.toLocaleString('es-VE')}</span>
+                    {venta.metodos_pago?.cashea_usd ? (
+                      <div className="flex justify-between text-[9px] text-slate-500 bg-slate-50 p-1 rounded">
+                        <span>CASHEA</span>
+                        <span className="font-bold text-slate-900">${Number(venta.metodos_pago.cashea_usd).toFixed(2)}</span>
                       </div>
                     ) : null}
                   </div>
                 )}
-
-                <div className="flex justify-between text-xs font-black text-slate-900 pt-2 border-t border-slate-200">
-                  <span>TOTAL {venta.con_iva ? '(CON IVA)' : ''}</span>
-                  <span className="text-primary">${(venta.total_ingresos * (venta.con_iva ? 1.16 : 1)).toFixed(2)}</span>
+                
+                <div className="flex justify-between text-sm font-black text-slate-900 border-t-2 border-slate-900 pt-2 mt-2">
+                  <span>TOTAL</span>
+                  <span>${Number(venta.total_ingresos).toFixed(2)}</span>
                 </div>
+                {venta.tasa_cambio && (
+                  <div className="text-right mt-1">
+                    <p className="text-[10px] font-bold text-green-600">
+                      Total Bs. {(Number(venta.total_ingresos) * venta.tasa_cambio).toLocaleString('es-VE')}
+                    </p>
+                    <p className="text-[8px] text-slate-400">Tasa: {venta.tasa_cambio} Bs/$</p>
+                  </div>
+                )}
               </div>
             </div>
 
             {venta.notas && (
-              <div className="mt-12 pt-4 border-t border-slate-100">
+              <div className="mt-8 pt-4 border-t border-slate-100">
                 <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Notas:</p>
                 <p className="text-[10px] text-slate-500 leading-relaxed italic">
                   {venta.notas.replace(/\[FACTURA_IA_START\][\s\S]*?\[FACTURA_IA_END\]/g, '').trim()}
                 </p>
               </div>
             )}
+
+            <div className="mt-12 pt-8 border-t border-slate-100 text-center">
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest italic tracking-[0.2em]">¡Gracias por confiar en Lycos Team!</p>
+            </div>
           </div>
         </div>
 
@@ -1458,11 +1865,15 @@ function EgresoPreviewModal({ egreso, onClose }: { egreso: Egreso; onClose: () =
 export default function ReportesPage() {
   const [ventas, setVentas] = useState<VentaDia[]>([]);
   const [egresos, setEgresos] = useState<Egreso[]>([]);
+  const [cierresOficiales, setCierresOficiales] = useState<CierreOficial[]>([]);
+  const [serviciosHistory, setServiciosHistory] = useState<any[]>([]);
+  const [inventarioHistory, setInventarioHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'graficos' | 'cierres' | 'egresos' | 'historial'>('graficos');
+  const [tab, setTab] = useState<'graficos' | 'ventas' | 'cierres' | 'egresos' | 'historial'>('graficos');
   const [period, setPeriod] = useState('30d');
   const [showManual, setShowManual] = useState(false);
   const [showManualEgreso, setShowManualEgreso] = useState(false);
+  const [showCierreWizard, setShowCierreWizard] = useState(false);
   const [scanMode, setScanMode] = useState<'cierre' | 'ticket' | 'egreso' | null>(null);
   const [editando, setEditando] = useState<VentaDia | null>(null);
   const [editandoEgreso, setEditandoEgreso] = useState<Egreso | null>(null);
@@ -1471,9 +1882,12 @@ export default function ReportesPage() {
   const [selectedVenta, setSelectedVenta] = useState<VentaDia | null>(null);
   const [selectedEgreso, setSelectedEgreso] = useState<Egreso | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [currentTasa, setCurrentTasa] = useState(518.0);
+  const { currentSede } = useSedeStore();
 
   useEffect(() => {
     setMounted(true);
+    fetch('/api/rates').then(r => r.json()).then(d => setCurrentTasa(d.bcv || 0)).catch(() => {});
   }, []);
 
   // Calendar State
@@ -1495,15 +1909,157 @@ export default function ReportesPage() {
     const days = period === '7d' ? 7 : period === '30d' ? 30 : period === '3m' ? 90 : 365;
     const from = new Date(Date.now() - days * 86400000).toISOString().split('T')[0];
     
-    const [vRes, eRes] = await Promise.all([
+    const [vRes, sRes, eRes, cRes, invRes, serRes] = await Promise.all([
       withSedeFilter(supabase.from('ventas_dia')).select('*').gte('fecha', from).order('fecha', { ascending: false }),
-      withSedeFilter(supabase.from('egresos')).select('*').gte('fecha', from).order('fecha', { ascending: false })
+      withSedeFilter(supabase.from('ventas_silenciadores')).select('*').gte('fecha', from).order('created_at', { ascending: false }),
+      withSedeFilter(supabase.from('egresos')).select('*').gte('fecha', from).order('fecha', { ascending: false }),
+      withSedeFilter(supabase.from('cierres_caja')).select('*').gte('fecha', from).order('fecha', { ascending: false }),
+      withSedeFilter(supabase.from('inventario')).select('*'),
+      withSedeFilter(supabase.from('servicios')).select('*').gte('created_at', from)
     ]);
-    
-    setVentas((vRes.data as VentaDia[]) || []);
+
+    const invData = invRes.data || [];
+    setInventarioHistory(invData);
+    setServiciosHistory(serRes.data || []);
+
+    // Normalize ventas_silenciadores (IA or direct POS logs)
+    const normalizedSil = (sRes.data || []).map((v: any, idx: number) => {
+      const notes = v.notas || '';
+      
+      // Robust multi-format price extraction (EXACTLY from silenciadores/page.tsx)
+      const totalMatch =
+        notes.match(/[Tt]otal(?:\s+a\s+pagar)?\s*(?:[Cc]ashea|USD|BCV)?\s*[:=]?\s*(?:USD\s*)?\$?\s*([\d]+(?:[.,][\d]+)?)/i) ||
+        notes.match(/\[[Tt]otal\s+[^\]]+\]\s*[:=]?\s*\$?\s*([\d]+(?:[.,][\d]+)?)/i) ||
+        notes.match(/\| [Tt]otal:\s*\$([\d]+(?:[.,][\d]+)?)/i) ||
+        notes.match(/USD\s+([\d]+(?:[.,][\d]+)?)/i) ||
+        notes.match(/\[Total:\s*\$([\d]+(?:[.,][\d]+)?)/i);
+
+      const rawPrice = totalMatch ? totalMatch[1].replace(',', '.') : null;
+      const extractedPrice = rawPrice ? parseFloat(rawPrice) : null;
+      
+      const isCashea = /cashea/i.test(notes);
+      const isBinance = /binance|usdt/i.test(notes);
+      
+      let unitPrice = v.precio_registrado || extractedPrice;
+      let usedExtracted = !!(v.precio_registrado || extractedPrice);
+      
+      if (!unitPrice) {
+        const modelLower = (v.modelo || '').toLowerCase().trim();
+        const matchedProduct = invData.find((p: any) => {
+          const nameLower = (p.nombre || '').toLowerCase();
+          return nameLower === modelLower || nameLower.includes(modelLower) || (modelLower.length > 2 && modelLower.includes(nameLower));
+        });
+        if (matchedProduct) {
+          unitPrice = isCashea
+            ? (matchedProduct.precio_bs || matchedProduct.precio_usd || 0)
+            : (matchedProduct.precio_promo || matchedProduct.precio_usd || matchedProduct.precio || 0);
+          usedExtracted = false; // Came from inventory, so it's a unit price
+        } else {
+          unitPrice = 0;
+        }
+      }
+
+      // If we got the price from "Total" lines, it's already the total.
+      // If we got it from inventory, we multiply by quantity.
+      const finalTotal = usedExtracted ? Number(unitPrice) : Number(unitPrice) * (v.cantidad || 1);
+      
+      const clienteMatch = notes.match(/[Cc]liente[:\s]+([^|\n,]+)/i) || notes.match(/\| [Cc]liente:\s*([^|]+)/i);
+      const cliente = clienteMatch ? clienteMatch[1].trim() : 'Consumidor Final (IA)';
+
+      const metodos_pago: any = {};
+      if (isCashea) metodos_pago.cashea_usd = finalTotal;
+      else if (isBinance) metodos_pago.binance = finalTotal;
+      else if (/zelle/i.test(notes)) metodos_pago.zelle = finalTotal;
+      else if (/efectivo/i.test(notes)) metodos_pago.efectivo_usd = finalTotal;
+      else if (/pago movil|bs/i.test(notes)) metodos_pago.pago_movil = finalTotal * (v.tasa_cambio || currentTasa || 518.0);
+      else metodos_pago.otro = finalTotal;
+
+      let parsedItems: any[] = [];
+      const itemsMatch = notes.match(/Items?:\s*([^|\n]+)/i);
+      if (itemsMatch) {
+        itemsMatch[1].split(',').forEach((item: string) => {
+          const raw = item.trim();
+          // Improved regex to catch "Product: Price", "Product = Price", "Product $Price" or "Product USD Price"
+          const priceMatch = raw.match(/[:=$]\s*([\d]+(?:[.,][\d]+)?)/) || 
+                             raw.match(/USD\s*([\d]+(?:[.,][\d]+)?)/i) ||
+                             raw.match(/\$([\d]+(?:[.,][\d]+)?)/);
+          
+          const p = priceMatch ? parseFloat(priceMatch[1].replace(',', '.')) : 0;
+          
+          let desc = raw;
+          if (priceMatch) {
+            desc = raw.replace(priceMatch[0], '').trim().replace(/[:=]\s*$/, '').trim();
+          }
+          if (desc) {
+            parsedItems.push({
+              cantidad: 1, 
+              descripcion: desc,
+              precio_unitario: p,
+              total: p
+            });
+          }
+        });
+      }
+
+      if (parsedItems.length === 0) {
+        const invoiceBlock = notes.match(/\[FACTURA_IA_START\]\n([\s\S]*?)\n\[FACTURA_IA_END\]/);
+        if (invoiceBlock) {
+          const lines = invoiceBlock[1].split('\n').filter((l: string) => l.includes('|') && !l.includes('CANT |'));
+          parsedItems = lines.map((line: string) => {
+            const parts = line.split('|').map((p: string) => p.trim());
+            if (parts.length >= 4) {
+              return {
+                cantidad: parseFloat(parts[0]) || 1,
+                descripcion: parts[1],
+                precio_unitario: parseFloat(parts[2].replace(',', '.')) || 0,
+                total: parseFloat(parts[3].replace(',', '.')) || 0
+              };
+            }
+            return null;
+          }).filter(Boolean);
+        }
+      }
+      return {
+        id: v.id || `sil-${idx}-${Date.now()}`,
+        fecha: (v.fecha || v.created_at || new Date().toISOString()).split('T')[0],
+        cliente: cliente,
+        total_ingresos: finalTotal,
+        total_servicios: v.cantidad || 1,
+        total_clientes: 1,
+        desglose: parsedItems.length > 0 ? parsedItems : [{
+          descripcion: v.modelo || 'Venta Silenciador',
+          cantidad: v.cantidad || 1,
+          precio_unitario: finalTotal / (v.cantidad || 1),
+          total: finalTotal
+        }],
+        notas: v.notas,
+        imagen_url: null,
+        creado_por: 'Asistente IA',
+        created_at: v.created_at,
+        tasa_cambio: v.tasa_cambio || currentTasa || 518.0,
+        metodos_pago,
+        source: 'ia',
+        isCashea,
+        isBinance
+      } as unknown as VentaDia;
+    });
+    const normalizedManual = (vRes.data || []).map((v: any, idx: number) => ({
+      ...v,
+      id: v.id || `pos-${idx}-${Date.now()}`,
+      source: 'pos',
+      isCashea: (v.notas || '').toLowerCase().includes('cashea') || (v.metodos_pago && JSON.stringify(v.metodos_pago).toLowerCase().includes('cashea')),
+      isBinance: (v.notas || '').toLowerCase().includes('binance') || (v.metodos_pago && JSON.stringify(v.metodos_pago).toLowerCase().includes('binance'))
+    }));
+
+    const allVentas = [...normalizedManual, ...normalizedSil].sort((a, b) => 
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+
+    setVentas(allVentas);
     setEgresos((eRes.data as Egreso[]) || []);
+    setCierresOficiales((cRes.data as CierreOficial[])?.map((c, i) => ({ ...c, id: c.id || `c-${i}-${Date.now()}` })) || []);
     setLoading(false);
-  }, [period]);
+  }, [period, currentSede]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -1513,6 +2069,7 @@ export default function ReportesPage() {
     const ch = supabase.channel('financial-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ventas_dia' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'egresos' }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cierres_caja' }, () => loadData())
       .subscribe();
     return () => { supabase?.removeChannel(ch); };
   }, [loadData]);
@@ -1548,6 +2105,15 @@ export default function ReportesPage() {
       await withSedeFilter(supabase.from('ventas_dia')).update(payload).eq('id', editando.id);
     } else {
       await withSedeFilter(supabase.from('ventas_dia')).insert(withSedeInsert({ ...payload, creado_por: 'Admin' }));
+      
+      // Log Activity
+      await logActivity({
+        usuario: useAppStore.getState().user?.nombre || 'Admin',
+        modulo: 'Reportes',
+        accion: 'Registró venta manual',
+        detalles: `Cliente: ${data.cliente}, Total: $${Number(data.total_ingresos).toFixed(2)}`,
+        referencia_tabla: 'ventas_dia'
+      });
     }
     setEditando(null);
     loadData();
@@ -1560,6 +2126,15 @@ export default function ReportesPage() {
       await withSedeFilter(supabase.from('egresos')).update(payload).eq('id', editandoEgreso.id);
     } else {
       await withSedeFilter(supabase.from('egresos')).insert(withSedeInsert({ ...payload, creado_por: 'Admin' }));
+
+      // Log Activity
+      await logActivity({
+        usuario: useAppStore.getState().user?.nombre || 'Admin',
+        modulo: 'Reportes',
+        accion: 'Registró egreso manual',
+        detalles: `Categoría: ${data.categoria}, Total: $${Number(data.total_egresos).toFixed(2)}`,
+        referencia_tabla: 'egresos'
+      });
     }
     setEditandoEgreso(null);
     loadData();
@@ -1667,6 +2242,9 @@ export default function ReportesPage() {
             <Button onClick={() => setShowManual(true)} variant="outline" className="gap-2 flex-1 sm:flex-none border-border">
               <Plus className="w-4 h-4" /> Manual
             </Button>
+            <Button onClick={() => setShowCierreWizard(true)} className="gap-2 flex-1 sm:flex-none bg-orange-600 hover:bg-orange-700 text-white font-bold">
+              <FileText className="w-4 h-4" /> Cierre PDF
+            </Button>
             <div className="relative group">
               <Button className="gap-2 bg-violet-600 hover:bg-violet-700 text-white flex-1 sm:flex-none">
                 <Camera className="w-4 h-4" /> Escanear... <ChevronDown className="w-3 h-3 ml-1" />
@@ -1697,7 +2275,7 @@ export default function ReportesPage() {
             {/* Export Dropdown */}
             <div className="flex items-center gap-2">
               <Select value={period} onValueChange={setPeriod}>
-                <SelectTrigger className="w-[100px] sm:w-[120px] h-9 text-[10px] sm:text-xs font-bold border-border bg-card/40">
+                <SelectTrigger className="w-[100px] sm:w-[120px] h-9 text-[10px] sm:text-xs font-bold border-border bg-card shadow-sm text-foreground">
                   <Clock className="w-3.5 h-3.5 mr-1 text-primary" />
                   <SelectValue placeholder="Periodo" />
                 </SelectTrigger>
@@ -1739,12 +2317,20 @@ export default function ReportesPage() {
           <BarChart2 className="w-4 h-4" /> Gráficos
         </button>
         <button
-          onClick={() => setTab('cierres')}
+          onClick={() => setTab('ventas')}
           className={cn('flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex-shrink-0',
-            tab === 'cierres' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'
+            tab === 'ventas' ? 'bg-card shadow-sm text-green-400 font-bold' : 'text-muted-foreground hover:text-foreground'
           )}
         >
-          <Package className="w-4 h-4" /> Cierres
+          <ShoppingCart className="w-4 h-4 text-green-400" /> Ventas
+        </button>
+        <button
+          onClick={() => setTab('cierres')}
+          className={cn('flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex-shrink-0',
+            tab === 'cierres' ? 'bg-card shadow-sm text-orange-400 font-bold' : 'text-muted-foreground hover:text-foreground'
+          )}
+        >
+          <Package className="w-4 h-4 text-orange-400" /> Cierres
         </button>
         <button
           onClick={() => setTab('egresos')}
@@ -1864,47 +2450,45 @@ export default function ReportesPage() {
         </div>
       )}
 
-      {/* ── Tab: Cierres de Caja ──────────────────────────────── */}
-      {tab === 'cierres' && (
-        <div className="space-y-3">
-          {/* List */}
+        {/* ── Tab: Ventas (Historical logs) ───────────────────────── */}
+      {tab === 'ventas' && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-widest">Registros de Ventas</h3>
+            <Button onClick={() => { setEditando(null); setShowManual(true); }} className="gap-2 bg-green-600 hover:bg-green-700 h-9 text-xs shadow-lg shadow-green-500/20">
+              <Plus className="w-4 h-4" /> Nueva Venta Manual
+            </Button>
+          </div>
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="w-5 h-5 animate-spin text-muted-foreground mr-2" />
-              <span className="text-sm text-muted-foreground">Cargando cierres...</span>
+              <span className="text-sm text-muted-foreground">Cargando ventas...</span>
             </div>
           ) : ventas.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-16">
-                <Package className="w-10 h-10 text-muted-foreground/20 mb-3" />
-                <p className="text-sm font-medium">Sin cierres de caja registrados</p>
-                <p className="text-xs text-muted-foreground mt-1 mb-4">
-                  Registra el cierre del día manualmente o escaneando una imagen
+                <ShoppingCart className="w-10 h-10 text-muted-foreground/20 mb-3" />
+                <p className="text-sm font-medium">Sin ventas registradas</p>
+                <p className="text-xs text-muted-foreground mt-1 mb-4 text-center max-w-xs">
+                  Las ventas del POS Silenciadores y las capturadas por la IA aparecerán aquí automáticamente.
                 </p>
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={() => setShowManual(true)} className="gap-2">
-                    <Plus className="w-4 h-4" /> Manual
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => setScanMode('cierre')} className="gap-2 border-violet-500/30 text-violet-400">
-                    <Camera className="w-4 h-4" /> Escanear IA
-                  </Button>
-                </div>
               </CardContent>
             </Card>
           ) : (
-            <Card>
+            <Card className="border-border/40 shadow-xl overflow-hidden bg-card/30 backdrop-blur-sm">
               <CardContent className="p-0">
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-border/20">
+                      <tr className="border-b border-border/20 bg-muted/5">
                         <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3">Fecha</th>
                         <th className="text-right text-xs text-muted-foreground font-medium px-4 py-3">Ingresos</th>
                         <th className="text-center text-xs text-muted-foreground font-medium px-4 py-3">Servicios</th>
                         <th className="text-center text-xs text-muted-foreground font-medium px-4 py-3">Clientes</th>
                         <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3 hidden md:table-cell">Notas</th>
-                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3 hidden md:table-cell">Fuente</th>
-                        <th className="px-4 py-3"></th>
+                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3 hidden md:table-cell">Método</th>
+                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3 hidden md:table-cell">Origen</th>
+                        <th className="text-right text-xs text-muted-foreground font-medium px-4 py-3">Acciones</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1926,7 +2510,12 @@ export default function ReportesPage() {
                             </div>
                           </td>
                           <td className="px-4 py-3 text-right">
-                            <span className="font-bold text-green-400">${Number(v.total_ingresos).toFixed(2)}</span>
+                            <div className="flex flex-col items-end">
+                              <span className="font-bold text-green-400">${Number(v.total_ingresos).toFixed(2)}</span>
+                              <span className="text-[9px] text-muted-foreground whitespace-nowrap">
+                                {(Number(v.total_ingresos) * (v.tasa_cambio || currentTasa || 518.0)).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 3 })} Bs.
+                              </span>
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-center">
                             <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
@@ -1940,31 +2529,68 @@ export default function ReportesPage() {
                             {v.notas ? v.notas.replace(/\[FACTURA_IA_START\][\s\S]*?\[FACTURA_IA_END\]/g, '').trim() || '—' : '—'}
                           </td>
                           <td className="px-4 py-3 hidden md:table-cell">
-                            {v.imagen_url ? (
-                              <span className="flex items-center gap-1 text-[10px] text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded-full inline-flex w-fit">
-                                <Camera className="w-3 h-3" /> IA
-                              </span>
-                            ) : v.notas && v.notas.includes('[FACTURA_IA_START]') ? (
-                               <button 
-                                onClick={() => {
-                                  const text = v.notas?.match(/\[FACTURA_IA_START\]\n([\s\S]*?)\n\[FACTURA_IA_END\]/)?.[1];
-                                  if (text) setPreviewInvoice(text);
-                                }}
-                                className="flex items-center gap-1 text-[10px] text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded-full hover:bg-violet-500/20 transition-colors w-fit"
-                               >
-                                 <FileText className="w-3 h-3" /> Ver Factura
-                               </button>
-                            ) : (
-                               <span className="flex items-center gap-1 text-[10px] text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-full inline-flex w-fit">
-                                 <Eye className="w-3 h-3" /> Manual
-                               </span>
-                            )}
+                            <div className="flex flex-wrap gap-1">
+                              {v.source === 'ia' ? (
+                                <span className="flex items-center gap-1 text-[8px] font-black text-violet-400 bg-violet-500/10 px-1.5 py-0.5 rounded-full border border-violet-500/20 uppercase tracking-tighter">
+                                  <Bot className="w-2.5 h-2.5" /> IA
+                                </span>
+                              ) : (
+                                <span className="flex items-center gap-1 text-[8px] font-black text-primary bg-primary/10 px-1.5 py-0.5 rounded-full border border-primary/20 uppercase tracking-tighter">
+                                  <Receipt className="w-2.5 h-2.5" /> POS
+                                </span>
+                              )}
+                              
+                              {(v.isCashea || (v.notas && /cashea/i.test(v.notas))) && (
+                                <span className="text-[8px] font-black text-white bg-[#3366FF] px-1.5 py-0.5 rounded-full uppercase tracking-tighter">
+                                  CASHEA
+                                </span>
+                              )}
+                              
+                              {(v.isBinance || (v.notas && /binance|usdt/i.test(v.notas))) && (
+                                <span className="text-[8px] font-black text-black bg-yellow-500 px-1.5 py-0.5 rounded-full uppercase tracking-tighter">
+                                  BINANCE
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 hidden md:table-cell">
+                            <div className="flex flex-col">
+                              {v.imagen_url ? (
+                                <span className="flex items-center gap-1 text-[10px] text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded-full inline-flex w-fit">
+                                  <Camera className="w-3 h-3" /> IA
+                                </span>
+                              ) : v.notas && v.notas.includes('[FACTURA_IA_START]') ? (
+                                 <button 
+                                  onClick={() => {
+                                    const text = v.notas?.match(/\[FACTURA_IA_START\]\n([\s\S]*?)\n\[FACTURA_IA_END\]/)?.[1];
+                                    if (text) setPreviewInvoice(text);
+                                  }}
+                                  className="flex items-center gap-1 text-[10px] text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded-full hover:bg-violet-500/20 transition-colors w-fit"
+                                 >
+                                   <Bot className="w-3 h-3" /> Factura IA
+                                 </button>
+                              ) : (
+                                <span className="text-[10px] text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-full inline-flex w-fit">
+                                  <Eye className="w-3 h-3" /> Manual
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1 justify-end">
                               <button
                                 onClick={() => {
                                   window.location.href = `/api/reportes/diario?fecha=${v.fecha}`;
+                                  
+                                  // Log Activity
+                                  logActivity({
+                                    usuario: useAppStore.getState().user?.nombre || 'Admin',
+                                    modulo: 'Reportes',
+                                    accion: 'Descargó reporte diario',
+                                    detalles: `Fecha: ${v.fecha}`,
+                                    referencia_id: v.id,
+                                    referencia_tabla: 'ventas_dia'
+                                  });
                                 }}
                                 className="w-7 h-7 rounded-lg hover:bg-green-500/10 text-muted-foreground hover:text-green-500 flex items-center justify-center transition-colors"
                                 title="Descargar Reporte Diario"
@@ -2001,19 +2627,184 @@ export default function ReportesPage() {
                         </tr>
                       ))}
                     </tbody>
-                    <tfoot>
-                      <tr className="border-t border-border/30 bg-muted/10">
-                        <td className="px-4 py-3 text-xs font-medium text-muted-foreground">Total período</td>
-                        <td className="px-4 py-3 text-right text-sm font-bold text-green-400">
-                          ${totalIngresos.toFixed(2)}
-                        </td>
-                        <td className="px-4 py-3 text-center text-sm font-bold">{totalServicios}</td>
-                        <td className="px-4 py-3 text-center text-sm font-bold">{totalClientes}</td>
-                        <td className="hidden md:table-cell" />
-                        <td className="hidden md:table-cell" />
-                        <td />
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {/* ── Tab: Cierres (Official Generated Reports) ─────────────── */}
+      {tab === 'cierres' && (
+        <div className="space-y-4">
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground mr-2" />
+              <span className="text-sm text-muted-foreground">Cargando cierres...</span>
+            </div>
+          ) : cierresOficiales.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-16">
+                <Package className="w-10 h-10 text-muted-foreground/20 mb-3" />
+                <p className="text-sm font-medium">Sin cierres de caja oficiales</p>
+                <p className="text-xs text-muted-foreground mt-1 mb-4 text-center max-w-xs">
+                  Genera un reporte de cierre formal en PDF usando el botón "Cierre PDF".
+                </p>
+                <Button onClick={() => setShowCierreWizard(true)} className="gap-2 bg-orange-600">
+                  <Plus className="w-4 h-4" /> Generar Cierre Ahora
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card className="border-border/40 shadow-xl overflow-hidden bg-card/30 backdrop-blur-sm">
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border/20 bg-muted/5">
+                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3">Fecha Reporte</th>
+                        <th className="text-center text-xs text-muted-foreground font-medium px-4 py-3">Periodo</th>
+                        <th className="text-right text-xs text-muted-foreground font-medium px-4 py-3">Ingresos (USD)</th>
+                        <th className="text-right text-xs text-muted-foreground font-medium px-4 py-3">Ingresos (Bs)</th>
+                        <th className="text-center text-xs text-muted-foreground font-medium px-4 py-3">Ventas</th>
+                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3 hidden md:table-cell">Generado por</th>
+                        <th className="px-4 py-3"></th>
                       </tr>
-                    </tfoot>
+                    </thead>
+                    <tbody>
+                      {cierresOficiales.map(c => (
+                        <tr key={c.id} className="border-b border-border/10 hover:bg-white/2 transition-colors">
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <div className="w-7 h-7 rounded-lg bg-orange-500/10 flex items-center justify-center flex-shrink-0">
+                                <FileText className="w-3.5 h-3.5 text-orange-500" />
+                              </div>
+                              <div>
+                                <p className="text-sm font-medium">
+                                  {new Date(c.fecha + 'T12:00:00').toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                </p>
+                                <p className="text-[9px] text-muted-foreground">
+                                  ID: {c.id.slice(0, 8)}...
+                                </p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <Badge variant="outline" className={cn("text-[10px] uppercase font-black", 
+                              c.periodo === 'dia' ? "bg-blue-500/10 text-blue-400 border-blue-500/20" : "bg-purple-500/10 text-purple-400 border-purple-500/20"
+                            )}>
+                              {c.periodo === 'dia' ? 'Diario' : 'Mensual'}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-3 text-right font-bold text-green-400">
+                            ${Number(c.total_ingresos_usd).toFixed(2)}
+                          </td>
+                          <td className="px-4 py-3 text-right text-muted-foreground text-xs">
+                            {Number(c.total_bs).toLocaleString('es-VE')} Bs.
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className="px-2 py-0.5 rounded-full bg-muted/50 text-xs text-foreground font-medium">
+                              {c.total_ventas}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 hidden md:table-cell text-xs text-muted-foreground">
+                            {c.generado_por || 'Sistema'}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-8 w-8 p-0 hover:bg-orange-500/10 text-orange-500"
+                                title="Descargar PDF Oficial"
+                                onClick={() => {
+                                  // Try to recover from hidden snapshot in 'notas'
+                                  let recoveredData: any = null;
+                                  if (c.notas && c.notas.includes('[SNAPSHOT_DATA]')) {
+                                    try {
+                                      const match = c.notas.match(/\[SNAPSHOT_DATA\]([\s\S]*?)\[\/SNAPSHOT_DATA\]/);
+                                      if (match) {
+                                        const parsed = JSON.parse(match[1]);
+                                        recoveredData = {
+                                          ventas: parsed.v.map((v: any) => ({ ...v, total_ingresos: v.t, total_servicios: v.ts, creado_por: v.cp, created_at: v.ca, tasa_cambio: v.tc, cliente: v.c, fecha: v.f, desglose: v.d, notas: v.n })),
+                                          servicios: parsed.s.map((s: any) => ({ ...s, vehiculo_info: s.vi, cliente_nombre: s.cn, created_at: s.ca, descripcion: s.d, estado: s.e })),
+                                          inventario: parsed.i.map((i: any) => ({ nombre: i.n, stock: i.s, precio_usd: i.pu, precio_bs: i.pb }))
+                                        };
+                                      }
+                                    } catch (err) { console.error("Error recovering snapshot", err); }
+                                  }
+
+                                  const downloadVentas = recoveredData ? recoveredData.ventas : ventas.filter(v => {
+                                    if (c.periodo === 'dia') return v.fecha === c.fecha;
+                                    return v.fecha >= (c.fecha_inicio || '') && v.fecha <= (c.fecha_fin || '');
+                                  });
+
+                                  const downloadServicios = recoveredData ? recoveredData.servicios : serviciosHistory.filter(s => {
+                                    const sDate = s.created_at?.split('T')[0];
+                                    if (c.periodo === 'dia') return sDate === c.fecha;
+                                    return sDate >= (c.fecha_inicio || '') && sDate <= (c.fecha_fin || '');
+                                  });
+
+                                  const downloadInventario = recoveredData ? recoveredData.inventario : inventarioHistory;
+
+                                  const data: CierreData = {
+                                    sede_nombre: c.sede_nombre || currentSede?.nombre || 'Lycos Team',
+                                    periodo: c.periodo as any,
+                                    fecha: c.fecha,
+                                    fecha_inicio: c.fecha_inicio || undefined,
+                                    fecha_fin: c.fecha_fin || undefined,
+                                    total_ingresos_usd: c.total_ingresos_usd,
+                                    total_bs: c.total_bs,
+                                    tasa_bcv: c.tasa_bcv,
+                                    total_clientes: c.total_clientes,
+                                    total_ventas: c.total_ventas,
+                                    desglose_pagos: c.desglose_pagos,
+                                    ventas: downloadVentas.map((v: any) => ({
+                                      fecha: v.fecha,
+                                      cliente: v.cliente || 'Cons. Final',
+                                      descripcion: (v.desglose || []).map((d: any) => d.descripcion).join(', ') || 'Servicio',
+                                      total_usd: Number(v.total_ingresos),
+                                      total_bs: Number(v.total_ingresos) * (c.tasa_bcv || 1),
+                                      fuente: (v.creado_por || '').toLowerCase().includes('ia') ? 'ia' : 'pos'
+                                    })) || [],
+                                    inventario: downloadInventario.map((p: any) => ({
+                                      nombre: p.nombre,
+                                      stock: p.stock,
+                                      precio_usd: p.precio_usd || 0,
+                                      precio_bs: p.precio_bs || 0,
+                                    })),
+                                    notas: c.notas ? c.notas.replace(/\[SNAPSHOT_DATA\][\s\S]*?\[\/SNAPSHOT_DATA\]/, '').trim() : undefined,
+                                    generado_por: c.generado_por,
+                                    generado_en: new Date().toLocaleString('es-VE'),
+                                    servicios_detalle: downloadServicios.map((s: any) => ({
+                                      id: s.id,
+                                      vehiculo: s.vehiculo_info || s.cliente_nombre || '---',
+                                      descripcion: s.descripcion,
+                                      estado: s.estado,
+                                      created_at: s.created_at
+                                    }))
+                                  };
+                                  generateCierrePDF(data);
+
+                                  // Log Activity
+                                  logActivity({
+                                    usuario: useAppStore.getState().user?.nombre || 'Admin',
+                                    modulo: 'Reportes',
+                                    accion: 'Descargó cierre oficial',
+                                    detalles: `Fecha: ${c.fecha}, Período: ${c.periodo}`,
+                                    referencia_id: c.id,
+                                    referencia_tabla: 'cierres_caja'
+                                  });
+                                }}
+                              >
+                                <Download className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
                   </table>
                 </div>
               </CardContent>
@@ -2079,7 +2870,7 @@ export default function ReportesPage() {
                               {e.categoria}
                             </span>
                           </td>
-                          <td className="px-4 py-3 font-medium text-slate-200">{e.cliente || 'Otros'}</td>
+                          <td className="px-4 py-3 font-medium text-foreground">{e.cliente || 'Otros'}</td>
                           <td className="px-4 py-3 text-xs text-muted-foreground hidden md:table-cell max-w-[200px] truncate">
                             {e.notas || '—'}
                           </td>
@@ -2153,7 +2944,7 @@ export default function ReportesPage() {
             <CardContent className="pt-4">
               <div className="flex items-center justify-between mb-4">
                 <Button variant="ghost" size="sm" onClick={prevMonth} className="px-2">← Anterior</Button>
-                <Button variant="ghost" size="sm" onClick={() => { const now = new Date(); setCurrentMonth(now.getMonth()); setCurrentYear(now.getFullYear()); setSelectedDate(now.toISOString().split('T')[0]); }} className="font-bold">Hoy</Button>
+                <Button variant="ghost" size="sm" onClick={() => { const now = new Date(); setCurrentMonth(now.getMonth()); setCurrentYear(now.getFullYear()); setSelectedDate(now.toISOString().split('T')[0]); }} className="font-bold text-foreground">Hoy</Button>
                 <Button variant="ghost" size="sm" onClick={nextMonth} className="px-2">Siguiente →</Button>
               </div>
               
@@ -2228,13 +3019,16 @@ export default function ReportesPage() {
                   ) : (
                     <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
                       {getVentasForDate(selectedDate).map(v => (
-                         <div key={v.id} className="p-3 bg-card border border-border/50 rounded-xl space-y-1.5">
-                           <div className="flex justify-between items-center">
-                             <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-                               <Clock className="w-3 h-3" /> {new Date(v.created_at).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' })}
-                             </p>
-                             <span className="text-xs font-bold text-green-400">${Number(v.total_ingresos).toFixed(2)}</span>
-                           </div>
+                          <div key={v.id} className="p-3 bg-card border border-border/50 rounded-xl space-y-1.5">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <p className="text-xs font-bold text-foreground">{v.cliente || 'Cons. Final'}</p>
+                                <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                                  <Clock className="w-3 h-3" /> {new Date(v.created_at).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' })}
+                                </p>
+                              </div>
+                              <span className="text-xs font-bold text-green-400">${Number(v.total_ingresos).toFixed(2)}</span>
+                            </div>
                            <div className="flex gap-2">
                               <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium">{v.total_servicios} serv.</span>
                               <span className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-[10px] font-medium">{v.total_clientes} clientes</span>
@@ -2272,6 +3066,14 @@ export default function ReportesPage() {
           initial={editandoEgreso}
         />,
         document.body
+      )}
+
+      {showCierreWizard && (
+        <CierreWizard
+          ventas={ventas}
+          onClose={() => setShowCierreWizard(false)}
+          onSaved={() => { setShowCierreWizard(false); setTimeout(loadData, 800); }}
+        />
       )}
 
       {mounted && scanMode && createPortal(

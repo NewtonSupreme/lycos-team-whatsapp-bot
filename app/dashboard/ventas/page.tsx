@@ -140,7 +140,7 @@ export default function VentasPage() {
     if (cart.length === 0) return alert("El carrito está vacío");
     if (!supabase) return;
 
-    if (!confirm(`¿Finalizar venta por $${total.toFixed(2)}?`)) return;
+    if (!confirm(`¿Finalizar venta por $${Number(total).toFixed(2)}?`)) return;
 
     setProcessing(true);
     try {
@@ -467,7 +467,7 @@ export default function VentasPage() {
                           <span className="w-8 text-center text-xs font-black">{item.cantidad}</span>
                           <button onClick={() => updateQuantity(item.id, 1)} className="px-2 py-1 text-muted-foreground hover:text-primary transition-colors">+</button>
                         </div>
-                        <p className="w-20 text-right text-sm font-black italic">${item.total.toFixed(2)}</p>
+                        <p className="w-20 text-right text-sm font-black italic">${Number(item.total).toFixed(2)}</p>
                         <button onClick={() => removeFromCart(item.id)} className="p-1.5 text-muted-foreground hover:text-destructive transition-colors">
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -490,8 +490,7 @@ export default function VentasPage() {
                   <span className="text-xs font-black text-muted-foreground group-hover:text-primary transition-colors uppercase">Aplicar IVA (16%)</span>
                 </label>
                 <div className="text-right">
-                  <p className="text-[10px] text-muted-foreground font-black uppercase">Subtotal</p>
-                  <p className="text-base font-bold">${subtotal.toFixed(2)}</p>
+                  <p className="text-base font-bold">${Number(subtotal).toFixed(2)}</p>
                 </div>
               </div>
 
@@ -499,7 +498,7 @@ export default function VentasPage() {
                 <div>
                   <p className="text-[10px] text-primary font-black uppercase tracking-widest mb-1">Total a Pagar</p>
                   <div className="flex items-baseline gap-2">
-                    <span className="text-4xl font-black text-primary tracking-tighter italic">${total.toFixed(2)}</span>
+                    <span className="text-4xl font-black text-primary tracking-tighter italic">${Number(total).toFixed(2)}</span>
                     <span className="text-xs font-bold text-muted-foreground">USD</span>
                   </div>
                 </div>
@@ -638,7 +637,7 @@ export default function VentasPage() {
                       <p className="text-xs font-black text-slate-900 uppercase italic">{v.cliente || 'Consumidor Final'}</p>
                       <p className="text-[10px] text-slate-400 font-bold">{new Date(v.created_at).toLocaleDateString()}</p>
                     </div>
-                    <p className="text-xs font-black text-primary italic">${v.total_ingresos.toFixed(2)}</p>
+                    <p className="text-xs font-black text-primary italic">${Number(v.total_ingresos).toFixed(2)}</p>
                   </button>
                 ))}
               </div>

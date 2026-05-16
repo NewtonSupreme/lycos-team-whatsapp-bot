@@ -865,6 +865,7 @@ interface ConversationContext {
   historialTecnico: string;
   estado?: string; // Mode: 'ia' or 'humano'
   isAdmin?: boolean;
+  sede_id?: string;
 }
 
 async function loadConversationContext(
@@ -881,7 +882,9 @@ async function loadConversationContext(
   let isNewSession = true;
   let estado = 'ia';
   
-  if (!db) return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado };
+  let sede_id = DEFAULT_SEDE_ID;
+  
+  if (!db) return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado, sede_id };
   
   const phone = from.replace(/[^0-9]/g, '');
 
@@ -938,9 +941,10 @@ async function loadConversationContext(
 
   // Memoria & Estado
   try {
-    const { data: convRows } = await db.from('conversaciones').select('memoria, cliente_id, estado').eq('telefono', phone).limit(1);
+    const { data: convRows } = await db.from('conversaciones').select('memoria, cliente_id, estado, sede_id').eq('telefono', phone).limit(1);
     if (convRows?.[0]?.memoria) memoria = convRows[0].memoria as Memoria;
     if (convRows?.[0]?.estado) estado = convRows[0].estado;
+    if (convRows?.[0]?.sede_id) sede_id = convRows[0].sede_id;
     
     // Technical History (Services & Revisions)
     const clientId = convRows?.[0]?.cliente_id;
@@ -1168,7 +1172,7 @@ async function loadConversationContext(
     }
   } catch (e) { console.error('Error loading context for admin/client:', e); }
 
-  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado, isAdmin };
+  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado, isAdmin, sede_id };
 }
 
 // ─── AI Response ───────────────────────────────────────────────────────────────
@@ -1548,7 +1552,7 @@ async function processIntents(
 
   // Get or Create record IDs
   const { clientId, vehicleId } = await getOrCreateClientAndVehicle(
-    db, from, newMemoria.nombre || '', detectedVeh, detectedPlaca || newMemoria.placa || '', undefined, waProfileName
+    db, from, newMemoria.nombre || '', detectedVeh, detectedPlaca || newMemoria.placa || '', undefined, waProfileName, ctx.sede_id
   );
 
   return { clientId, vehicleId };
@@ -1561,7 +1565,8 @@ async function getOrCreateClientAndVehicle(
   vehicleInfo: string,
   placa: string,
   anio?: string,
-  waProfileName?: string
+  waProfileName?: string,
+  sedeId?: string
 ): Promise<{ clientId?: string; vehicleId?: string; isNew?: boolean }> {
   if (!db) return {};
   let clientId: string | undefined;
@@ -1599,7 +1604,7 @@ async function getOrCreateClientAndVehicle(
         nombre: parts[0],
         apellido: parts.slice(1).join(' ') || '(WhatsApp)',
         telefono: phone,
-        sede_id: DEFAULT_SEDE_ID
+        sede_id: sedeId || DEFAULT_SEDE_ID
       }).select('id').single();
       if (clientErr) { console.error('Error creando cliente:', clientErr.message); }
       clientId = newClient?.id;
@@ -1690,7 +1695,7 @@ async function getOrCreateClientAndVehicle(
           nombre: fullName || name,
           wa_name: waProfileName || undefined
         }
-      }).eq('telefono', phone).eq('sede_id', DEFAULT_SEDE_ID);
+      }).eq('telefono', phone).eq('sede_id', sedeId || DEFAULT_SEDE_ID);
     }
 
   } catch (e) { console.error('Error in getOrCreateClientAndVehicle:', e); }
@@ -2306,7 +2311,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               tipo_servicio: 'otro',
               descripcion: `PROSPECTO: ${servicio}${notas ? ' (' + notas + ')' : ''}`,
               estado: 'pendiente', // Usamos pendiente pero con descripción de prospecto
-              sede_id: DEFAULT_SEDE_ID
+              sede_id: ctx.sede_id || DEFAULT_SEDE_ID
             });
             console.log(`💡 INTERES DETECTADO: ${servicio} para ${from}`);
           } catch (e) { console.error('Error guardando interes:', e); }
@@ -2435,7 +2440,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 console.log(`📅 ADMIN: Cita actualizada: ${id}`);
                 await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Actualizó cita', `Cita ${id} actualizada vía ChatBot`);
               } else if (db) {
-                await db.from('citas').insert({ ...citaObj, sede_id: DEFAULT_SEDE_ID });
+                await db.from('citas').insert({ ...citaObj, sede_id: citaObj.sede_id || DEFAULT_SEDE_ID });
                 console.log(`📅 ADMIN: Nueva cita creada por administrador`);
                 await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Agendó cita', `Cita para ${fecha} creada vía ChatBot`);
               }
@@ -2467,7 +2472,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 console.log(`👤 ADMIN: Cliente actualizado: ${id}`);
                 await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Actualizó cliente', `Cliente actualizado vía ChatBot`);
               } else if (db) {
-                await db.from('clientes').insert({ ...clientObj, sede_id: DEFAULT_SEDE_ID });
+                await db.from('clientes').insert({ ...clientObj, sede_id: clientObj.sede_id || DEFAULT_SEDE_ID });
                 console.log(`👤 ADMIN: Nuevo cliente agregado por administrador`);
                 await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Creó cliente', `Cliente creado vía ChatBot`);
               }
@@ -2572,7 +2577,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
               // ── Get or Create Client & Vehicle ─────────────────────────────
               const { clientId, vehicleId, isNew } = await getOrCreateClientAndVehicle(
-                db, from, userName, vehiculoInfo, placa, anio?.toString(), waProfileName
+                db, from, userName, vehiculoInfo, placa, anio?.toString(), waProfileName, ctx.sede_id
               );
 
               // ── Composed description with client name + (WhatsApp) ──────────
@@ -2605,7 +2610,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                   nombre_cliente: userName || from,
                   vehiculo_info: vehiculoInfo || null,
                   placa: placa || null,
-                  sede_id: DEFAULT_SEDE_ID
+                  sede_id: ctx.sede_id || DEFAULT_SEDE_ID
                 });
                 console.log(`📅 AUTO-CITA IA: ${fecha} ${hora} | ${descripcionFinal} | client_id: ${clientId} | veh_id: ${vehicleId} | isNew: ${isNew}`);
               }

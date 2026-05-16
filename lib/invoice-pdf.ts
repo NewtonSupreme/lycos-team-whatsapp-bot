@@ -102,7 +102,7 @@ export const generateInvoicePDF = (
     const tableRows = data.items.map((item: any) => [
       item.descripcion.toUpperCase(),
       item.cantidad,
-      `$${item.total.toFixed(2)}`
+      `$${Number(item.total).toFixed(2)}`
     ]);
 
     autoTable(doc, {
@@ -147,13 +147,13 @@ export const generateInvoicePDF = (
     doc.setFont('helvetica', 'bold');
     doc.text('SUBTOTAL GENERAL', boxX, finalY + 5);
     doc.setTextColor(...grayDark);
-    doc.text(`$${(data.total / (data.iva_aplicado ? 1.16 : 1)).toFixed(2)}`, rightAlign, finalY + 5, { align: 'right' });
+    doc.text(`$${Number(data.total / (data.iva_aplicado ? 1.16 : 1)).toFixed(2)}`, rightAlign, finalY + 5, { align: 'right' });
 
     if (data.iva_aplicado) {
       doc.setTextColor(...grayLight);
       doc.text('IVA (16%)', boxX, finalY + 10);
       doc.setTextColor(...orange);
-      doc.text(`+$${(data.total - (data.total / 1.16)).toFixed(2)}`, rightAlign, finalY + 10, { align: 'right' });
+      doc.text(`+$${Number(data.total - (data.total / 1.16)).toFixed(2)}`, rightAlign, finalY + 10, { align: 'right' });
     }
 
     // BLACK BOX
@@ -168,7 +168,7 @@ export const generateInvoicePDF = (
     doc.setTextColor(...orange);
     doc.setFontSize(14);
     doc.setFont('helvetica', 'bolditalic');
-    doc.text(`$${data.total.toFixed(2)}`, rightAlign - 4, boxY + 9, { align: 'right' });
+    doc.text(`$${Number(data.total).toFixed(2)}`, rightAlign - 4, boxY + 9, { align: 'right' });
 
     // Total VES
     doc.setDrawColor(255, 255, 255, 0.15);
@@ -182,7 +182,8 @@ export const generateInvoicePDF = (
     doc.setTextColor(...white);
     doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
-    const vesTotal = data.total_ves || (data.total * (data.tasa_bcv || data.tasa_cambio || 36.5));
+    const bcvRateUsed = data.tasa_bcv || data.tasa_cambio || 518.0;
+    const vesTotal = data.total_ves || (data.total * bcvRateUsed);
     doc.text(`${vesTotal.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`, rightAlign - 4, boxY + 20, { align: 'right' });
 
     // ── Bottom Info ─────────────────────────────────────────────
@@ -207,8 +208,14 @@ export const generateInvoicePDF = (
       doc.text(splitNotes, margin + 12, infoY);
     }
 
+    doc.setTextColor(...grayDark);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bolditalic');
+    doc.text('¡GRACIAS POR CONFIAR EN LYCOS TEAM!', startX + 74.25, 194, { align: 'center' });
+
     doc.setTextColor(...grayLight);
     doc.setFontSize(6);
+    doc.setFont('helvetica', 'normal');
     doc.text('San Antonio de los Altos, Edo. Miranda - Lycos Team CRM 2026', startX + 74.25, 202, { align: 'center' });
   };
 
@@ -280,8 +287,8 @@ export const generateEgresoPDF = (data: InvoiceData & { categoria?: string }) =>
     i + 1,
     item.descripcion,
     item.cantidad,
-    `$${item.precio_unitario.toFixed(2)}`,
-    `$${item.total.toFixed(2)}`
+    `$${Number(item.precio_unitario).toFixed(2)}`,
+    `$${Number(item.total).toFixed(2)}`
   ]);
 
   autoTable(doc, {
@@ -309,7 +316,7 @@ export const generateEgresoPDF = (data: InvoiceData & { categoria?: string }) =>
   doc.text('TOTAL PAGADO', 140, finalY + 15);
   
   doc.setTextColor(...accentRed);
-  doc.text(`$${data.total.toFixed(2)}`, 190, finalY + 15, { align: 'right' });
+  doc.text(`$${Number(data.total).toFixed(2)}`, 190, finalY + 15, { align: 'right' });
 
   // Save
   doc.save(`Egreso_Lycos_${data.fecha}_${data.id?.slice(0, 4) || 'E'}.pdf`);

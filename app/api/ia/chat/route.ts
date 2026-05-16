@@ -101,10 +101,18 @@ async function loadDbContext(sedeId: string | null): Promise<string> {
   try {
     const { data: inventario } = await db('inventario').select('*').eq('activo', true).order('orden', { ascending: true });
     if (inventario && inventario.length > 0) {
+      // Fetch live BCV rate for display
+      let bcvRate = 0;
+      try {
+        const ratesRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/rates`);
+        const ratesJson = await ratesRes.json();
+        bcvRate = ratesJson.bcv || 0;
+      } catch { /* ignore */ }
+
       sections.push(
-        `=== INVENTARIO (${inventario.length} productos) ===\n` +
+        `=== INVENTARIO (${inventario.length} productos) — Tasa BCV actual: ${bcvRate > 0 ? `Bs.${bcvRate.toFixed(2)}/$` : 'N/D'} ===\n` +
         inventario.map((i: any) =>
-          `• ID:${i.id} | Categoría: ${i.categoria} | ${i.nombre}${i.codigo ? ' [' + i.codigo + ']' : ''} | Stock: ${i.stock}${i.stock_minimo != null ? ' (mín:' + i.stock_minimo + ')' : ''} | Precio: $${i.precio_usd ?? '-'} | ${i.unidad || ''}${i.notas ? ' | Notas: ' + i.notas : ''}`
+          `• INV_ID:${i.id} | ${i.nombre} | Stock: ${i.stock} | Precio Divisas: $${i.precio_usd ?? '-'} | Precio BCV: Bs.${i.precio_bs ?? '-'}${bcvRate > 0 && i.precio_bs ? ` (~$${(i.precio_bs / bcvRate).toFixed(2)})` : ''} | ${i.unidad || 'unidad'}${i.notas ? ' | ' + i.notas : ''}`
         ).join('\n')
       );
     } else {
@@ -114,21 +122,42 @@ async function loadDbContext(sedeId: string | null): Promise<string> {
     sections.push(`=== INVENTARIO: Error al cargar (${e}) ===`);
   }
 
-  // Ventas de Silenciadores (Últimos 30 días)
+  // Ventas de Silenciadores (Últimos 30 días) — DETALLE COMPLETO
   try {
     const last30 = new Date();
     last30.setDate(last30.getDate() - 30);
-    const { data: ventas } = await db('ventas_silenciadores').select('*').gte('fecha', last30.toISOString());
+    const { data: ventas } = await db('ventas_silenciadores').select('*').gte('fecha', last30.toISOString()).order('fecha', { ascending: false });
     if (ventas && ventas.length > 0) {
       sections.push(
-        `=== VENTAS DE SILENCIADORES (Últimos 30 días) ===\n` +
-        ventas.map((v: any) =>
-          `• Fecha: ${new Date(v.fecha).toLocaleDateString('es-VE')} | Cantidad: ${v.cantidad} | Modelo: ${v.modelo || 'N/A'}`
-        ).join('\n')
+        `=== VENTAS REGISTRADAS (Últimos 30 días, ${ventas.length} total) ===\n` +
+        ventas.map((v: any) => {
+          const notas = v.notas || '';
+          return `• ${new Date(v.fecha).toLocaleDateString('es-VE')} | ${v.modelo || 'Sin modelo'} x${v.cantidad} | ${notas || 'Sin notas'}`;
+        }).join('\n')
       );
     }
   } catch (e) {
     console.error('Error loading sales:', e);
+  }
+
+  // Tracking de Vehículos en Taller (servicios activos)
+  try {
+    const { data: enTaller } = await db('servicios')
+      .select('*, vehiculos(marca, modelo, placa, clientes(nombre, apellido, telefono))')
+      .in('estado', ['en_proceso', 'pendiente', 'en_revision'])
+      .order('created_at', { ascending: false });
+    if (enTaller && enTaller.length > 0) {
+      sections.push(
+        `=== VEHÍCULOS ACTUALMENTE EN TALLER (${enTaller.length}) ===\n` +
+        enTaller.map((s: any) =>
+          `• ${s.vehiculos?.marca || 'S/M'} ${s.vehiculos?.modelo || ''} (${s.vehiculos?.placa || 'S/P'}) — Cliente: ${s.vehiculos?.clientes?.nombre || 'Consumidor Final'} ${s.vehiculos?.clientes?.apellido || ''} | Servicio: ${s.descripcion} | Estado: ${s.estado} | Costo: $${s.costo_final ?? s.costo_estimado ?? '-'}`
+        ).join('\n')
+      );
+    } else {
+      sections.push('=== VEHÍCULOS EN TALLER: Ninguno actualmente ===');
+    }
+  } catch (e) {
+    console.error('Error loading taller tracking:', e);
   }
 
   // Empleados / Usuarios de la sede
@@ -177,13 +206,16 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
   const results: string[] = [];
   let clean = text;
 
+  // Track newly created IDs so subsequent actions can reference them
+  const createdIds: Record<string, string> = {};
+
   const table = (name: string) => withSedeFilterServer(db!.from(name), sedeId);
-  const insert = (name: string, data: any) => db!.from(name).insert(withSedeInsertServer(data, sedeId));
+  const insert = async (name: string, data: any) => db!.from(name).insert(withSedeInsertServer(data, sedeId)).select();
 
   for (const match of [...text.matchAll(/\[ACTION:\s*([^\]]+)\]/g)]) {
     clean = clean.replace(match[0], '').trim();
     if (!db) continue;
-    const parts = match[1].split('|').map(s => s.trim());
+    const parts = match[1].split('|').map((s: string) => s.trim());
     const tipo = parts[0];
     const p: Record<string, string> = {};
     for (let i = 1; i < parts.length; i++) {
@@ -191,6 +223,7 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
       if (idx > 0) p[parts[i].slice(0, idx).trim()] = parts[i].slice(idx + 1).trim();
     }
     try {
+      // ── Appointments ────────────────────────────────────────────────────────
       if (tipo === 'crear_cita') {
         await insert('citas', {
           fecha: p.fecha, hora: p.hora || '09:00', telefono: p.telefono || '',
@@ -198,44 +231,103 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
           tipo_servicio: p.tipo_servicio || 'otro', estado: 'pendiente', duracion_minutos: 60,
         });
         results.push(`✅ Cita creada: ${p.fecha} a las ${p.hora || '09:00'}`);
+
       } else if (tipo === 'actualizar_cita') {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const updates: Record<string, any> = {};
         if (p.estado) updates.estado = p.estado;
         if (p.hora) updates.hora = p.hora;
         if (p.descripcion) updates.descripcion = p.descripcion;
         await table('citas').update(updates).eq('id', p.id);
         results.push(`✅ Cita actualizada (ID: ${p.id})`);
+
+      // ── Inventory ───────────────────────────────────────────────────────────
       } else if (tipo === 'actualizar_stock') {
-        const { data } = await table('inventario')
+        const { data: inv } = await table('inventario')
           .update({ stock: Number(p.stock), updated_at: new Date().toISOString() })
           .eq('id', p.id).select('nombre').single();
-        results.push(`✅ Stock de "${data?.nombre}" → ${p.stock} unidades`);
+        results.push(`✅ Stock de "${inv?.nombre}" → ${p.stock} unidades`);
+
+      } else if (tipo === 'descontar_stock') {
+        // Safely decrement stock by cantidad, never below 0
+        const { data: invItem } = await table('inventario').select('stock, nombre').eq('id', p.id).single();
+        if (invItem) {
+          const qty = parseInt(p.cantidad) || 1;
+          const newStock = Math.max(0, (invItem.stock || 0) - qty);
+          await table('inventario').update({ stock: newStock, updated_at: new Date().toISOString() }).eq('id', p.id);
+          results.push(`✅ Stock de "${invItem.nombre}" descontado: ${invItem.stock} → ${newStock}`);
+        } else {
+          results.push(`⚠️ Producto ID ${p.id} no encontrado para descontar stock`);
+        }
+
       } else if (tipo === 'eliminar_producto') {
-        const { data } = await table('inventario')
+        const { data: inv } = await table('inventario')
           .update({ activo: false, updated_at: new Date().toISOString() })
           .eq('id', p.id).select('nombre').single();
-        results.push(`✅ Producto "${data?.nombre}" eliminado del inventario activo`);
+        results.push(`✅ Producto "${inv?.nombre}" eliminado del inventario activo`);
+
+      // ── Clients ─────────────────────────────────────────────────────────────
       } else if (tipo === 'crear_cliente') {
-        await insert('clientes', {
-          nombre: p.nombre, apellido: p.apellido || '', telefono: p.telefono || '',
-          email: p.email || '', cedula: p.cedula || '',
-          updated_at: new Date().toISOString(),
-        });
-        results.push(`✅ Cliente "${p.nombre} ${p.apellido}" registrado`);
+        // Check if client already exists to avoid duplicates
+        const { data: existing } = await table('clientes')
+          .select('id, nombre, apellido')
+          .ilike('nombre', p.nombre || '')
+          .ilike('apellido', p.apellido || '')
+          .maybeSingle();
+        
+        if (existing) {
+          createdIds['last_cliente_id'] = existing.id;
+          results.push(`ℹ️ Cliente "${existing.nombre} ${existing.apellido}" ya existía (ID: ${existing.id})`);
+        } else {
+          const { data: newCliente } = await insert('clientes', {
+            nombre: p.nombre, apellido: p.apellido || '', telefono: p.telefono || '',
+            email: p.email || '', cedula: p.cedula || '',
+            updated_at: new Date().toISOString(),
+          });
+          if (newCliente?.[0]) {
+            createdIds['last_cliente_id'] = newCliente[0].id;
+            results.push(`✅ Cliente "${p.nombre} ${p.apellido || ''}" registrado (ID: ${newCliente[0].id})`);
+          }
+        }
+
+      // ── Vehicles ────────────────────────────────────────────────────────────
+      } else if (tipo === 'crear_vehiculo') {
+        const clienteId = p.cliente_id || createdIds['last_cliente_id'] || null;
+        if (!clienteId) {
+          results.push(`⚠️ crear_vehiculo: cliente_id requerido. Usa crear_cliente primero.`);
+        } else {
+          // Check if vehicle already exists by placa
+          let existingVeh = null;
+          if (p.placa) {
+            const { data: ev } = await table('vehiculos').select('id').ilike('placa', p.placa).maybeSingle();
+            existingVeh = ev;
+          }
+          if (existingVeh) {
+            createdIds['last_vehiculo_id'] = existingVeh.id;
+            results.push(`ℹ️ Vehículo placa ${p.placa} ya existe (ID: ${existingVeh.id})`);
+          } else {
+            const { data: newVeh } = await insert('vehiculos', {
+              cliente_id: clienteId,
+              marca: p.marca || 'No especificado',
+              modelo: p.modelo_vehiculo || p.modelo || 'No especificado',
+              placa: p.placa || null,
+              anio: parseInt(p.anio) || 2000,
+              color: p.color || null,
+              estado: 'activo',
+            });
+            if (newVeh?.[0]) {
+              createdIds['last_vehiculo_id'] = newVeh[0].id;
+              results.push(`✅ Vehículo ${p.marca || ''} placa ${p.placa || 'S/P'} registrado para el cliente`);
+            }
+          }
+        }
+
+      // ── Services ────────────────────────────────────────────────────────────
       } else if (tipo === 'actualizar_servicio') {
         await table('servicios')
           .update({ estado: p.estado, updated_at: new Date().toISOString() })
           .eq('id', p.id);
         results.push(`✅ Servicio actualizado → ${p.estado}`);
-      } else if (tipo === 'registrar_venta_silenciador') {
-        await insert('ventas_silenciadores', {
-          cantidad: parseInt(p.cantidad) || 1,
-          modelo: p.modelo || null,
-          notas: p.notas || null,
-          fecha: new Date().toISOString()
-        });
-        results.push(`✅ Registrada la venta de ${p.cantidad} silenciador(es)${p.modelo ? ` modelo ${p.modelo}` : ''}.`);
+
       } else if (tipo === 'registrar_servicio') {
         const insertData: any = {
            descripcion: p.descripcion || 'Servicio registrado por IA',
@@ -244,7 +336,99 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
         };
         if (p.costo_estimado) insertData.costo_estimado = parseFloat(p.costo_estimado);
         await insert('servicios', insertData);
-        results.push(`✅ Registro de trabajo en taller creado: ${insertData.descripcion} (${insertData.estado})`);
+        results.push(`✅ Trabajo en taller creado: ${insertData.descripcion}`);
+
+      // ── Sales ───────────────────────────────────────────────────────────────
+      } else if (tipo === 'registrar_venta_item') {
+        // Register one item. Also decrements stock automatically if inv_id is provided.
+        const metodo = p.metodo_pago || p.context || '';
+        const contextStr = metodo ? ` (${metodo})` : '';
+        const clienteNombre = p.cliente || null;
+        const vehiculoInfo = p.vehiculo ? ` | Vehículo: ${p.vehiculo}` : '';
+        const clienteStr = clienteNombre ? ` | Cliente: ${clienteNombre}` : '';
+        const notasFinales = (
+          `${p.notas || ''} [Total: $${p.precio || '0'}${contextStr}]${clienteStr}${vehiculoInfo}`.trim()
+        );
+
+        const precioNum = parseFloat(p.precio || '0');
+
+        await insert('ventas_silenciadores', {
+          cantidad: parseInt(p.cantidad) || 1,
+          modelo: p.producto || p.modelo || null,
+          notas: notasFinales,
+          fecha: new Date().toISOString(),
+          precio_registrado: precioNum,
+        });
+
+        // Auto-decrement stock if inventory ID provided
+        if (p.inv_id) {
+          const { data: invItem } = await table('inventario').select('stock, nombre').eq('id', p.inv_id).single();
+          if (invItem) {
+            const qty = parseInt(p.cantidad) || 1;
+            const newStock = Math.max(0, (invItem.stock || 0) - qty);
+            await table('inventario').update({ stock: newStock, updated_at: new Date().toISOString() }).eq('id', p.inv_id);
+            results.push(`✅ Venta: ${qty}x ${p.producto || p.modelo} → $${p.precio || '0'}${contextStr}${clienteStr}. Stock "${invItem.nombre}": ${invItem.stock} → ${newStock}`);
+          } else {
+            results.push(`✅ Venta: ${p.producto || p.modelo} → $${p.precio || '0'}${contextStr}${clienteStr} (stock no actualizado — ID no encontrado)`);
+          }
+        } else {
+          results.push(`✅ Venta registrada: ${p.cantidad || 1}x ${p.producto || p.modelo} → $${p.precio || '0'}${contextStr}${clienteStr}`);
+        }
+
+      } else if (tipo === 'registrar_venta_completa') {
+        // NEW: Register ALL items of a sale in ONE consolidated record
+        // items format: "Producto1:precio1,Producto2:precio2"
+        const metodo = p.metodo_pago || '';
+        const contextStr = metodo ? ` (${metodo})` : '';
+        const clienteStr = p.cliente ? ` | Cliente: ${p.cliente}` : '';
+        const vehiculoStr = p.vehiculo ? ` | Vehículo: ${p.vehiculo}` : '';
+        const pagoMixtoStr = p.pago_mixto ? ` | Pagos: ${p.pago_mixto}` : '';
+
+        // Build items string from p.items ("CL40:50,Tubería:20")
+        let itemsDisplay = p.items || p.producto || 'Varios';
+        const totalStr = p.total ? ` | Total: $${p.total}${contextStr}` : '';
+        const ivaStr = p.iva ? ` | IVA 16%: $${p.iva}` : '';
+        const inicialStr = p.inicial ? ` | Inicial Cashea: $${p.inicial}` : '';
+
+        const notasFinales = `Items: ${itemsDisplay}${totalStr}${ivaStr}${inicialStr}${clienteStr}${vehiculoStr}${pagoMixtoStr}`.trim();
+
+        const totalNum = parseFloat(p.total || '0');
+
+        await insert('ventas_silenciadores', {
+          cantidad: parseInt(p.cantidad) || 1,
+          modelo: p.titulo || itemsDisplay.split(',')[0]?.split(':')[0] || 'Venta múltiple',
+          notas: notasFinales,
+          fecha: new Date().toISOString(),
+          precio_registrado: totalNum,
+        });
+
+        // Auto-decrement stock for each item if inv_ids provided (comma-separated)
+        if (p.inv_ids) {
+          const idList = p.inv_ids.split(',').map((x: string) => x.trim());
+          for (const invId of idList) {
+            const { data: invItem } = await table('inventario').select('stock, nombre').eq('id', invId).single();
+            if (invItem && invItem.stock > 0) {
+              await table('inventario').update({ stock: invItem.stock - 1, updated_at: new Date().toISOString() }).eq('id', invId);
+            }
+          }
+        }
+
+        results.push(`✅ Venta registrada: ${itemsDisplay}${totalStr}${clienteStr}`);
+
+      } else if (tipo === 'registrar_venta_silenciador') {
+        // LEGACY: keep for backwards compat
+        const metodo = p.metodo_pago || p.context || '';
+        const contextStr = metodo ? ` (${metodo})` : '';
+        const clienteStr = p.cliente ? ` | Cliente: ${p.cliente}` : '';
+        const notasFinales = p.precio ? `${p.notas || ''} [Total: $${p.precio}${contextStr}]${clienteStr}`.trim() : `${p.notas || ''}${clienteStr}`.trim();
+        
+        await insert('ventas_silenciadores', {
+          cantidad: parseInt(p.cantidad) || 1,
+          modelo: p.modelo || null,
+          notas: notasFinales,
+          fecha: new Date().toISOString()
+        });
+        results.push(`✅ Venta registrada: ${p.cantidad || 1}x ${p.modelo || 'Producto'}${p.precio ? ` → $${p.precio}${contextStr}` : ''}${p.cliente ? ` (${p.cliente})` : ''}.`);
       }
     } catch (e) {
       results.push(`❌ Error en ${tipo}: ${e}`);
@@ -329,7 +513,9 @@ export async function POST(request: NextRequest) {
     }
 
     const { clean, results } = await executeActions(rawText, sede_id);
-    const finalResponse = results.length > 0 ? `${clean}\n\n${results.join('\n')}` : clean;
+    // Strip any raw UUIDs from results before showing to user
+    const cleanResults = results.map(r => r.replace(/\s*\(ID: [0-9a-f-]{36}\)/gi, '').replace(/ID: [0-9a-f-]{36}/gi, ''));
+    const finalResponse = cleanResults.length > 0 ? `${clean}\n\n---\n${cleanResults.join('\n')}` : clean;
 
     return NextResponse.json({ response: finalResponse });
   } catch (error) {
@@ -385,21 +571,70 @@ INSTRUCCIONES CRÍTICAS:
 - Usa los datos exactos que aparecen en la sección BASE DE DATOS al final de este prompt.
 - No inventes datos. Solo usa los reales de la base de datos.
 
-ACCIONES DE ESCRITURA (incluye exactamente al final de tu respuesta, el sistema las procesa invisiblemente):
+ACCIONES DE ESCRITURA (REGLAS CRÍTICAS):
+
+⚠️ REGLA DE ORO — AL REGISTRAR UNA VENTA CON MÚLTIPLES PRODUCTOS:
+1. Si el cliente NO existe → usa [ACTION: crear_cliente] PRIMERO.
+2. Si se menciona un vehículo → usa [ACTION: crear_vehiculo] DESPUÉS del cliente.
+    - Todos los productos de la MISMA venta → registra TODO en UNA SOLA acción [ACTION: registrar_venta_completa] con todos los ítems listados en el campo 'items'.
+    - El campo 'items' usa formato ESTRICTO: "Producto1:Precio1, Producto2:Precio2" (SÓLO números, sin símbolos de moneda).
+
+REGLA CASHEA (MUY IMPORTANTE):
+- Cashea SIEMPRE usa el Precio BCV como base (campo precio_bs del inventario), NO el precio en dólares divisas.
+- El total Cashea = Precio_BCV ÷ Tasa_BCV_actual × 1.16 (incluye 16% IVA obligatorio).
+- En el campo 'metodo_pago' usa: cashea_bcv. En 'total' muestra el monto en dólares al cambio BCV.
+- La tasa BCV actual aparece en la sección INVENTARIO del contexto de datos.
+
+PAGOS MIXTOS:
+- Si una venta se pagó parte en divisas y parte en Bs/BCV, usá el campo 'pago_mixto' en registrar_venta_completa.
+- Formato: pago_mixto=$20 Divisas + $30 BCV
+
+ID DE INVENTARIO (INV_ID):
+- Para descontar stock, usa el campo INV_ID exacto que aparece en la sección INVENTARIO (formato: INV_ID:xxxx).
+- NUNCA muestres IDs UUID crudos en tu respuesta al usuario. Si necesitas referenciar un producto, usa su NOMBRE.
+
+TRACKING DE TALLER:
+- Cuando te pregunten cuántos vehículos o clientes fueron al taller, reporta:
+  1. Vehículos con servicio activo (sección VEHÍCULOS EN TALLER).
+  2. Ventas del día como referencia de quienes pasaron a comprar.
+  3. Menciona si hay citas pendientes también.
+
 • Crear cita: [ACTION: crear_cita | fecha=AAAA-MM-DD | hora=HH:MM | telefono=NUM | descripcion=SERVICIO | tipo_servicio=otro]
 • Actualizar cita: [ACTION: actualizar_cita | id=ID | estado=confirmada]
-• Actualizar stock: [ACTION: actualizar_stock | id=ID | stock=NUMERO]
-• Eliminar producto inventario: [ACTION: eliminar_producto | id=ID]
+• Actualizar stock manual: [ACTION: actualizar_stock | id=INV_ID | stock=NUMERO]
+• Descontar stock: [ACTION: descontar_stock | id=INV_ID | cantidad=N]
+• Eliminar producto: [ACTION: eliminar_producto | id=INV_ID]
 • Crear cliente: [ACTION: crear_cliente | nombre=N | apellido=A | telefono=T | email=E | cedula=CI]
-• Actualizar estado servicio: [ACTION: actualizar_servicio | id=ID | estado=finalizado]
-• Registrar Nuevo Trabajo de Taller: [ACTION: registrar_servicio | descripcion=Texto | tipo=mecanica | estado=en_proceso | costo_estimado=Numero]
-• Registrar Venta de Silenciador: [ACTION: registrar_venta_silenciador | cantidad=Numero | modelo=ModeloOpcional | notas=NotasOpcionales]
+• Crear vehículo: [ACTION: crear_vehiculo | marca=MARCA | modelo_vehiculo=MODELO | placa=PLACA | anio=ANO | color=COLOR]
+• Actualizar servicio: [ACTION: actualizar_servicio | id=ID | estado=finalizado]
+• Registrar trabajo taller: [ACTION: registrar_servicio | descripcion=Texto | tipo=mecanica | estado=en_proceso | costo_estimado=Numero]
+• Registrar venta COMPLETA (TODO EN UNO): [ACTION: registrar_venta_completa | titulo=TITULO_PRINCIPAL | items=Producto1:$precio1,Producto2:$precio2 | total=TOTAL | iva=MONTO_IVA | inicial=INICIAL_CASHEA | metodo_pago=cashea_bcv/divisas/bcv/binance | pago_mixto=DESCRIPCION | cliente=NOMBRE | vehiculo=MARCA_PLACA | inv_ids=ID1,ID2]
+
+EJEMPLO (William, Cashea, 2 productos):
+[ACTION: crear_cliente | nombre=Juan | apellido=Perez | cedula=12345678 | telefono=0414123456]
+[ACTION: crear_vehiculo | marca=Toyota | modelo_vehiculo=Corolla | placa=ABC123 | anio=2015]
+[ACTION: registrar_venta_completa]
+- total: (Suma de los items en dólares USD)
+- items: "Nombre:Precio, Nombre:Precio" (Ej: "Muffler:50, Tuberia:20")
+- cantidad: (Suma de cantidades)
+- metodo_pago: (efectivo_usd, zelle, cashea_bcv, binance)
+- cliente: (Nombre del cliente)
+- vehiculo: (Opcional)
+- inv_ids: (IDs de inventario separados por comas)
+- pago_mixto: (Opcional)
 
 TONO: Profesional, ejecutivo y eficiente. Español venezolano amable. Presentación IMPECABLE y ORDENADA.
 HORARIO: L–Sáb 8AM–5PM | Dom: Cerrado | +58 412-334-3519 | lycosteam7@gmail.com
 FECHA/HORA: ${getVzlaDateTime()}
 
-PRECIOS PRINCIPALES: Silenciadores $40–$140 | Amortiguadores $40 | Alineación $15–$25 | Balanceo $5–$10 | Elevavidrios $40 | OBD I $20 | Catalizador $30 | Flowmaster $140 | Cashea: IVA 16%.
+PRECIOS PRINCIPALES: Silenciadores $40–$140 | Amortiguadores $40 | Alineación $15–$25 | Balanceo $5–$10 | Elevavidrios $40 | OBD I $20 | Catalizador $30 | Flowmaster $140.
+
+CASHEA — REGLA DE PRECIOS:
+- Cashea usa el PRECIO BCV (precio_bs del inventario) como base, NO el precio divisas.
+- Total Cashea = (precio_bs / tasa_bcv_actual) × 1.16 (16% IVA obligatorio).
+- Ejemplo: Si CL40 = Bs.70 y tasa = 50 Bs/$, base en USD = $1.40. Total con IVA = $1.62.
+- Menciona siempre el inicial (cuota 1) y el resto en cuotas (normalmente 3 cuotas iguales del resto).
+- La tasa BCV actual está en la sección INVENTARIO del contexto abajo.
 
 CATEGORIZACIÓN DE SILENCIADORES:
 - CL27/CL30 ($40): Motores hasta 1.3L.
@@ -407,6 +642,7 @@ CATEGORIZACIÓN DE SILENCIADORES:
 - CLH40 ($60): Motores 1.6L a 2.0L (Aveo, Gol, Corolla 1.6).
 - CL60 ($90): Motores grandes, Camionetas, Camiones, Plataneros.
 - CLK60 ($100 - Fabricación Especial): Dodge Caliber, EcoSport, Previa, Tucson, Sportage, Malibu, Cherokee, Compass.
+- TUBERÍA: El precio varía según los metros instalados. Al registrar una venta de tubería, usa el precio cobrado real (ej: $25, $30 o $35 por metro) basándote en lo discutido con el cliente. Esto NO afecta el precio base del inventario.
 
 REGLA DE CITAS: HOY es ${getVzlaDateTime()}. Si agendan para mañana siendo sábado, recuerda que el domingo cerramos y ofrece el lunes.
 

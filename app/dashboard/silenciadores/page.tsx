@@ -9,9 +9,11 @@ import {
   ArrowDown, ChevronRight, X, CreditCard, Banknote, 
   Wallet, Sparkles, Filter, Eye, Download, History,
   FileText, Car, User, DollarSign, Info, Calculator,
-  Coins, Smartphone, Repeat, RefreshCw
+  Coins, Smartphone, Repeat, RefreshCw, Bot
 } from 'lucide-react';
 import { supabase, updateInventarioStock } from '@/lib/supabase';
+import { logActivity } from '@/lib/activity';
+import { useAppStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
@@ -57,6 +59,10 @@ export default function VentasPage() {
   const [conIva, setConIva] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  // Cashea: porcentaje de inicial (40, 50 o 60%)
+  const [casheaPct, setCasheaPct] = useState<40 | 50 | 60>(50);
+  // Custom item prices (for tubería and variable-price items)
+  const [customItemPrices, setCustomItemPrices] = useState<Record<string, number>>({});
   
   // Modals
   const [showPreview, setShowPreview] = useState(false);
@@ -72,6 +78,7 @@ export default function VentasPage() {
     punto_de_venta: 0,
     transferencia: 0,
     cashea: 0,
+    binance: 0,
     otro: 0
   });
 
@@ -87,6 +94,9 @@ export default function VentasPage() {
   const [searchTermVenta, setSearchTermVenta] = useState('');
   const [showSelector, setShowSelector] = useState(false);
   const [secondVenta, setSecondVenta] = useState<any | null>(null);
+  const [modoCashea, setModoCashea] = useState(false);
+  // Local state for Bs. inputs to avoid rounding issues while typing
+  const [bsInputs, setBsInputs] = useState<Record<string, string>>({});
 
   useEffect(() => {
     fetchData();
@@ -111,11 +121,119 @@ export default function VentasPage() {
         .order('nombre');
       setProductos(invData || []);
 
-      const { data: salesData } = await withSedeFilter(supabase.from('ventas_dia'))
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(10);
-      setVentasRecientes(salesData || []);
+      // Fetch both accounting sales and IA-registered silencer sales
+      const [salesDia, salesSil] = await Promise.all([
+        withSedeFilter(supabase.from('ventas_dia'))
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(10),
+        withSedeFilter(supabase.from('ventas_silenciadores'))
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(10)
+      ]);
+
+
+       const normalizedSil = (salesSil.data || []).map((v: any) => {
+        const notes = v.notas || '';
+        
+        // Robust multi-format price extraction:
+        // Prioritize "Total" lines to avoid picking up individual item prices or IVA
+        const totalMatch =
+          notes.match(/[Tt]otal(?:\s+a\s+pagar)?\s*(?:[Cc]ashea|USD|BCV)?\s*[:=]?\s*(?:USD\s*)?\$?\s*([\d]+(?:[.,][\d]+)?)/i) ||
+          notes.match(/\[[Tt]otal\s+[^\]]+\]\s*[:=]?\s*\$?\s*([\d]+(?:[.,][\d]+)?)/i) ||
+          notes.match(/USD\s+([\d]+(?:[.,][\d]+)?)/i);
+
+        const rawPrice = totalMatch ? totalMatch[1].replace(',', '.') : null;
+        const extractedPrice = rawPrice ? parseFloat(rawPrice) : null;
+
+        // Detect currency context (BCV, Divisas, Cashea, Binance)
+        const isBcv = /bcv/i.test(notes) && !/cashea/i.test(notes);
+        const isDivisas = /divisas|promo/i.test(notes) && !/cashea/i.test(notes);
+        const isCashea = /cashea/i.test(notes);
+        const isBinance = /binance|usdt/i.test(notes);
+        
+        let context: string | null = isBcv ? 'BCV' : isDivisas ? 'Div' : null;
+        if (isCashea) context = 'Cashea';
+        if (isBinance) context = 'USDT';
+
+        // Extract client from notes
+        const clientMatch = notes.match(/[Cc]liente[:\s]+([^|\n,]+)/i);
+        const clientFromNotes = clientMatch ? clientMatch[1].trim() : null;
+
+        // Parse 'Items: A:$10, B:$20' format into proper desglose
+        const itemsMatch = notes.match(/Items?:\s*([^|\n]+)/i);
+        let parsedDesglose: { descripcion: string; cantidad: number; total: number }[] = [];
+        if (itemsMatch) {
+          parsedDesglose = itemsMatch[1].split(',').map((item: string) => {
+            const parts = item.trim().split(':');
+            const desc = parts[0]?.trim() || item.trim();
+            const priceStr = parts[1]?.replace(/[^\d.]/g, '') || '0';
+            return { descripcion: desc, cantidad: 1, total: parseFloat(priceStr) || 0 };
+          });
+        }
+
+        // Fallback to inventory lookup if no price found in notes
+        let unitPrice: number | null = extractedPrice;
+        let matchedProduct = null;
+
+        if (unitPrice === null) {
+          const modelLower = (v.modelo || '').toLowerCase().trim();
+          matchedProduct = (invData || []).find((p: any) => {
+            const nameLower = (p.nombre || '').toLowerCase();
+            return nameLower === modelLower || nameLower.includes(modelLower) || (modelLower.length > 2 && modelLower.includes(nameLower));
+          });
+          // Cashea uses BCV price; otherwise use divisas price
+          if (matchedProduct) {
+            unitPrice = isCashea
+              ? (matchedProduct.precio_bs || 0)
+              : (matchedProduct.precio_promo || matchedProduct.precio_usd || matchedProduct.precio || 0);
+          } else {
+            unitPrice = 0;
+          }
+        }
+
+        const total = (unitPrice ?? 0) * (v.cantidad || 1);
+
+        // Use parsedDesglose if available, else build single item
+        const desglose = parsedDesglose.length > 0 ? parsedDesglose : [{
+          descripcion: v.modelo || 'Producto',
+          cantidad: v.cantidad || 1,
+          total: total
+        }];
+
+        return {
+          id: v.id,
+          created_at: v.created_at || v.fecha,
+          cliente: clientFromNotes || 'Consumidor Final',
+          total_ingresos: total,
+          context: context,
+          isCashea: isCashea,
+          isBinance: isBinance,
+          desglose: desglose,
+          notas: v.notas,
+          source: 'ia'
+        };
+      });
+
+      const normalizedAccounting = (salesDia.data || []).map((v: any) => {
+        const isCashea = v.metodo_pago?.toLowerCase().includes('cashea') || (v.notas || '').toLowerCase().includes('cashea');
+        const isBinance = v.metodo_pago?.toLowerCase().includes('binance') || (v.notas || '').toLowerCase().includes('binance');
+        
+        return {
+          ...v,
+          cliente: v.cliente || 'Consumidor Final',
+          isCashea,
+          isBinance,
+          source: 'pos'
+        };
+      });
+
+      const mergedSales = [...normalizedAccounting, ...normalizedSil]
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 10);
+
+      setVentasRecientes(mergedSales);
     } catch (err) {
       console.error('Error fetching inventory:', err);
     } finally {
@@ -125,24 +243,36 @@ export default function VentasPage() {
 
   const addToCart = (prod: any) => {
     const existing = cart.find(item => item.id === prod.id);
+    const customPrice = customItemPrices[prod.id];
+    const effectivePrice = customPrice !== undefined ? customPrice : (prod.precio_usd || 0);
     if (existing) {
       if (existing.cantidad >= prod.stock) return alert("Stock insuficiente");
       setCart(cart.map(item => 
         item.id === prod.id 
-          ? { ...item, cantidad: item.cantidad + 1, total: (item.cantidad + 1) * (prod.precio_usd || 0) }
+          ? { ...item, cantidad: item.cantidad + 1, total: (item.cantidad + 1) * item.precio_unitario }
           : item
       ));
     } else {
+      const effectivePrecioBs = prod.precio_bs || (effectivePrice * rates.bcv);
       setCart([...cart, {
         id: prod.id,
         nombre: prod.nombre,
         cantidad: 1,
-        precio_unitario: prod.precio_usd || 0,
-        precio_bs: prod.precio_bs || 0,
-        total: prod.precio_usd || 0,
+        precio_unitario: effectivePrice,
+        precio_bs: effectivePrecioBs,
+        total: effectivePrice,
         stock: prod.stock
       }]);
     }
+  };
+
+  // Update custom price for an item already in cart
+  const updateCartItemPrice = (id: string, newPrice: number) => {
+    setCart(cart.map(item =>
+      item.id === id
+        ? { ...item, precio_unitario: newPrice, total: newPrice * item.cantidad }
+        : item
+    ));
   };
 
   const updateQuantity = (id: string, delta: number) => {
@@ -164,8 +294,21 @@ export default function VentasPage() {
     setCart(cart.filter(item => item.id !== id));
   };
 
-  const subtotal = cart.reduce((sum, item) => sum + item.total, 0);
+  // Cashea uses precio_bs (which stores the BCV base price in USD) or precio_unitario.
+  const isCasheaActive = modoCashea || metodosPago.cashea > 0;
+  const subtotal = cart.reduce((sum, item) => {
+    // Si es Cashea, usamos el precio base (precio_bs que ya está en USD para tasa BCV)
+    const basePrice = (conIva && isCasheaActive)
+      ? (item.precio_bs || item.precio_unitario)
+      : item.precio_unitario;
+    return sum + (item.cantidad * basePrice);
+  }, 0);
+
   const total = subtotal * (conIva ? 1.16 : 1);
+  // Cashea initial payment = total * casheaPct%
+  const casheaInicial = total * (casheaPct / 100);
+  const casheaResto = total - casheaInicial;
+  const casheaCuota = casheaResto / 3;
 
   const totalPaid = Object.values(metodosPago).reduce((acc, val) => acc + val, 0);
   const balance = total - totalPaid;
@@ -181,7 +324,7 @@ export default function VentasPage() {
         .insert(withSedeInsert({
           fecha: format(selectedDate, 'yyyy-MM-dd'),
           cliente: clienteNombre || 'Consumidor Final',
-          total_ingresos: subtotal,
+          total_ingresos: total,
           desglose: cart.map(item => ({
             descripcion: item.nombre,
             cantidad: item.cantidad,
@@ -191,6 +334,8 @@ export default function VentasPage() {
           metodos_pago: metodosPago,
           con_iva: conIva,
           tasa_cambio: rates.bcv,
+          total_servicios: cart.reduce((s, i) => s + i.cantidad, 0),
+          total_clientes: 1,
           notas: `${notas}${vehiculoInfo ? ` | Vehículo: ${vehiculoInfo}` : ''}`,
           creado_por: 'Admin'
         }))
@@ -199,10 +344,25 @@ export default function VentasPage() {
 
       if (ventaError) throw ventaError;
 
+      // Log Activity
+      await logActivity({
+        usuario: useAppStore.getState().user?.nombre || 'Admin',
+        modulo: 'IA',
+        accion: 'Registró venta POS (Silenciadores)',
+        detalles: `Cliente: ${clienteNombre || 'Consumidor Final'}, Total: $${Number(total).toFixed(2)}`,
+        referencia_id: ventaDia.id,
+        referencia_tabla: 'ventas_dia'
+      });
+
       for (const item of cart) {
         const newStock = Math.max(0, item.stock - item.cantidad);
         await updateInventarioStock(item.id, newStock);
       }
+
+      const bcvTotal = cart.reduce((sum, item) => {
+        const base = item.precio_bs || item.precio_unitario;
+        return sum + (item.cantidad * base);
+      }, 0) * (conIva ? 1.16 : 1);
 
       const data1 = {
         id: ventaDia.id,
@@ -217,6 +377,7 @@ export default function VentasPage() {
         })),
         total: total,
         tasa_bcv: rates.bcv,
+        total_ves: bcvTotal * rates.bcv,
         iva_aplicado: conIva
       };
 
@@ -231,6 +392,7 @@ export default function VentasPage() {
           items: secondVenta.desglose || [],
           total: secondVenta.total_ingresos,
           tasa_bcv: secondVenta.tasa_cambio || rates.bcv,
+          total_ves: secondVenta.total_ingresos * (secondVenta.tasa_cambio || rates.bcv),
           iva_aplicado: secondVenta.con_iva
         });
       }
@@ -241,7 +403,7 @@ export default function VentasPage() {
       setClienteNombre('');
       setVehiculoInfo('');
       setNotas('');
-      setMetodosPago({ efectivo_usd: 0, zelle: 0, pago_movil: 0, efectivo_ves: 0, punto_de_venta: 0, transferencia: 0, cashea: 0, otro: 0 });
+      setMetodosPago({ efectivo_usd: 0, zelle: 0, pago_movil: 0, efectivo_ves: 0, punto_de_venta: 0, transferencia: 0, cashea: 0, binance: 0, otro: 0 });
       setShowPreview(false);
       fetchData();
       alert('¡Venta realizada con éxito!');
@@ -282,7 +444,7 @@ export default function VentasPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-[1600px] mx-auto pb-20 animate-in fade-in duration-500">
+    <div className="space-y-6 max-w-[1600px] mx-auto pb-40 animate-in fade-in duration-500">
       {/* Header Premium */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 bg-card/30 backdrop-blur-xl p-6 rounded-3xl border border-border/50 shadow-xl">
         <div className="flex items-center gap-5">
@@ -375,10 +537,10 @@ export default function VentasPage() {
         )}
       </AnimatePresence>
 
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 h-[calc(100vh-12rem)] mt-6">
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 mt-6">
         {/* LADO IZQUIERDO: PRODUCTOS */}
-        <div className="xl:col-span-7 h-full flex flex-col">
-          <Card className="flex-1 flex flex-col glass-panel border-border/50 bg-card/40 overflow-hidden shadow-xl rounded-[40px]">
+        <div className="xl:col-span-7 flex flex-col gap-6">
+          <Card className="flex flex-col glass-panel border-border/50 bg-card/40 overflow-hidden shadow-xl rounded-[40px]">
             <CardHeader className="pb-4 pt-8 px-8 border-b border-border/10 bg-white/5">
               <div className="flex flex-col sm:flex-row gap-3">
                 <div className="relative flex-1">
@@ -440,25 +602,33 @@ export default function VentasPage() {
                     <p className="text-sm font-black text-foreground mt-1 truncate group-hover:text-primary transition-colors">{prod.nombre}</p>
                     
                     <div className="flex items-center gap-3 mt-2">
-                       <div className="flex flex-col">
-                          <span className="text-[9px] font-black text-primary uppercase tracking-tight">Precio Divisas</span>
-                          <span className="text-base font-black text-primary italic tracking-tighter">${prod.precio_usd || '0'}</span>
-                       </div>
-                       <div className="w-[1px] h-6 bg-border/40" />
-                       <div className="flex flex-col">
-                          <span className="text-[9px] font-black text-muted-foreground uppercase tracking-tight">Precio BCV (Bs)</span>
-                          <span className="text-base font-black text-foreground/70 italic tracking-tighter">{prod.precio_bs || '0'} Bs.</span>
-                       </div>
+                        <div className="flex flex-col">
+                           <span className="text-[9px] font-black text-primary uppercase tracking-tight">Dólar Divisa ($)</span>
+                           <span className="text-base font-black text-primary italic tracking-tighter">${prod.precio_usd || '0'}</span>
+                        </div>
+                        <div className="w-[1px] h-6 bg-border/40" />
+                        <div className="flex flex-col">
+                           <span className="text-[9px] font-black text-muted-foreground uppercase tracking-tight">Dólar BCV</span>
+                           <span className="text-base font-black text-foreground/70 italic tracking-tighter">
+                             ${(prod.precio_bs || prod.precio_usd).toFixed(2)}
+                           </span>
+                           <span className="text-[8px] font-bold text-muted-foreground/50 leading-none">
+                             {((prod.precio_bs || prod.precio_usd) * rates.bcv).toLocaleString('es-VE', {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2
+                             })} Bs.
+                           </span>
+                        </div>
                     </div>
                   </div>
                 </button>
             ))}
           </div>
         </CardContent>
-      </Card>
-
+          </Card>
+          
           {/* Historial Dinámico Interactivo por Sede */}
-          <Card className="glass-panel border-border/50 bg-card/20 rounded-3xl overflow-hidden shadow-sm mt-8 border-t-4 border-t-primary/20">
+          <Card className="glass-panel border-border/50 bg-card/20 rounded-3xl overflow-hidden shadow-sm border-t-4 border-t-primary/20">
             <CardHeader className="p-5 bg-primary/5 flex flex-row items-center justify-between border-b border-border/10">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white shadow-lg shadow-primary/20">
@@ -502,11 +672,30 @@ export default function VentasPage() {
                   </div>
                   <div className="flex items-center gap-6">
                     <div className="flex flex-col items-end">
-                      <span className="text-base font-black text-primary italic tracking-tighter drop-shadow-sm">${v.total_ingresos?.toFixed(2)}</span>
+                      <span className="text-base font-black text-primary italic tracking-tighter drop-shadow-sm">
+                        ${v.total_ingresos?.toFixed(2)}
+                        {v.context && <span className="text-[9px] ml-1 opacity-50 not-italic font-bold">({v.context})</span>}
+                      </span>
+                      <span className="text-[10px] font-bold text-muted-foreground leading-none">
+                        {((v.total_ingresos || 0) * (v.tasa_cambio || rates.bcv)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.
+                      </span>
                       <div className="flex items-center gap-1 mt-0.5">
-                        <Badge variant="outline" className="text-[8px] font-black h-4 px-1.5 border-primary/20 text-primary/70 uppercase bg-primary/5 group-hover:bg-primary group-hover:text-white transition-colors">
-                          Ver Factura
+                        <Badge variant="outline" className={cn(
+                          "text-[8px] font-black h-4 px-1.5 border-primary/20 uppercase transition-colors",
+                          v.source === 'ia' ? "bg-violet-500/10 text-violet-500 border-violet-500/30" : "bg-primary/5 text-primary/70 group-hover:bg-primary group-hover:text-white"
+                        )}>
+                          {v.source === 'ia' ? '🤖 IA ASSISTANT' : 'Ver Factura'}
                         </Badge>
+                        {v.isCashea && (
+                          <Badge className="bg-[#3366FF] text-white border-none text-[8px] font-black h-4 px-1.5 animate-pulse">
+                            CASHEA
+                          </Badge>
+                        )}
+                        {v.isBinance && (
+                          <Badge className="bg-yellow-500 text-black border-none text-[8px] font-black h-4 px-1.5">
+                            BINANCE
+                          </Badge>
+                        )}
                       </div>
                     </div>
                     <ChevronRight className="w-4 h-4 text-muted-foreground opacity-20 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
@@ -530,7 +719,7 @@ export default function VentasPage() {
         {/* LADO DERECHO: CARRITO / INVOICE */}
         <div id="checkout-section" className="xl:col-span-5">
           <div className="sticky top-24 space-y-6">
-            <Card className="glass-panel border-primary/20 bg-card/60 shadow-2xl rounded-[2.5rem] relative overflow-hidden flex flex-col min-h-[850px]">
+            <Card className="glass-panel border-primary/20 bg-card/60 shadow-2xl rounded-[2.5rem] relative overflow-hidden flex flex-col">
               <CardHeader className="border-b border-border/30 bg-primary/5 p-7">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-xl font-black tracking-tighter flex items-center gap-3">
@@ -542,35 +731,93 @@ export default function VentasPage() {
                   </button>
                 </div>
                 
-                {/* Selector de Fecha Dinámico */}
-                <div className="mt-4 flex items-center justify-between bg-background/40 p-3 rounded-2xl border border-border/50">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
-                      <Calendar className="w-5 h-5" />
+                {/* Datos del Cliente */}
+                <div className="px-7 py-4 space-y-4 border-b border-border/10 bg-primary/5">
+                   <div className="flex items-center gap-2 text-xs font-black text-primary uppercase tracking-widest mb-2">
+                     <User className="w-4 h-4" /> Datos del Cliente
+                   </div>
+                   <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-[9px] font-black uppercase text-muted-foreground">Nombre / Razón Social</Label>
+                        <Input 
+                          placeholder="Nombre del cliente"
+                          className="h-9 bg-background/50 text-xs font-black border-border/50 rounded-xl"
+                          value={clienteNombre}
+                          onChange={e => setClienteNombre(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[9px] font-black uppercase text-muted-foreground">Vehículo (Placa/Modelo)</Label>
+                        <Input 
+                          placeholder="Ej: ABC-123 / Corolla"
+                          className="h-9 bg-background/50 text-xs font-black border-border/50 rounded-xl"
+                          value={vehiculoInfo}
+                          onChange={e => setVehiculoInfo(e.target.value)}
+                        />
+                      </div>
+                   </div>
+                </div>
+
+                {/* Selector de Fecha y Toggle IVA */}
+                <div className="px-7 py-4 flex items-center justify-between border-b border-border/10">
+                  <div className="flex items-center gap-6">
+                    <div className="flex items-center gap-3">
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button variant="ghost" className="h-10 p-0 hover:bg-transparent flex items-center gap-2">
+                            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-white transition-all">
+                              <Calendar className="w-5 h-5" />
+                            </div>
+                            <div className="text-left">
+                              <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest leading-none">Fecha</p>
+                              <p className="text-xs font-black text-foreground mt-1">{format(selectedDate, "dd/MM/yyyy")}</p>
+                            </div>
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0 rounded-2xl border-border/50 shadow-2xl">
+                          <CalendarUI
+                            mode="single"
+                            selected={selectedDate}
+                            onSelect={(date) => date && setSelectedDate(date)}
+                            initialFocus
+                            locale={es}
+                            className="rounded-2xl"
+                          />
+                        </PopoverContent>
+                      </Popover>
                     </div>
-                    <div>
-                      <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest leading-none">Fecha de Venta</p>
-                      <p className="text-xs font-black text-foreground mt-1">{format(selectedDate, "PPP", { locale: es })}</p>
+
+                    <div className="flex items-center gap-3">
+                      <div className={cn(
+                        "w-10 h-10 rounded-xl flex items-center justify-center transition-all border cursor-pointer",
+                        conIva ? "bg-primary text-white border-primary shadow-lg shadow-primary/20" : "bg-muted/30 text-muted-foreground border-border/50"
+                      )} onClick={() => setConIva(!conIva)}>
+                        <Receipt className="w-5 h-5" />
+                      </div>
+                      <div className="text-left cursor-pointer" onClick={() => setConIva(!conIva)}>
+                        <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest leading-none">Impuestos</p>
+                        <p className={cn("text-xs font-black mt-1", conIva ? "text-primary" : "text-foreground")}>{conIva ? '+16% IVA' : 'Sin IVA'}</p>
+                      </div>
                     </div>
                   </div>
-                  
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" size="sm" className="h-9 rounded-xl border-primary/20 text-primary font-black text-[10px] uppercase px-3 hover:bg-primary hover:text-white transition-all">
-                        CAMBIAR
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0 rounded-2xl border-border/50 shadow-2xl" align="end">
-                      <CalendarUI
-                        mode="single"
-                        selected={selectedDate}
-                        onSelect={(date) => date && setSelectedDate(date)}
-                        initialFocus
-                        locale={es}
-                        className="rounded-2xl"
-                      />
-                    </PopoverContent>
-                  </Popover>
+
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => {
+                        const newModo = !modoCashea;
+                        setModoCashea(newModo);
+                        if (newModo) {
+                          setConIva(true);
+                        }
+                      }}
+                      className={cn(
+                        "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border",
+                        modoCashea ? "bg-[#3366FF] text-white border-[#3366FF] shadow-lg shadow-blue-500/20" : "bg-blue-500/5 text-blue-500 border-blue-500/20 hover:bg-blue-500/10"
+                      )}
+                    >
+                      {modoCashea ? 'Modo Cashea Activo' : 'Activar Cashea'}
+                    </button>
+                  </div>
                 </div>
               </CardHeader>
 
@@ -594,7 +841,16 @@ export default function VentasPage() {
                             <span className="w-8 text-center text-xs font-black">{item.cantidad}</span>
                             <button onClick={() => updateQuantity(item.id, 1)} className="w-6 h-6 flex items-center justify-center text-muted-foreground hover:text-primary font-black">+</button>
                           </div>
-                          <p className="w-20 text-right text-sm font-black italic tracking-tighter">${item.total.toFixed(2)}</p>
+                          <div className="flex flex-col items-end gap-0.5">
+                             <input
+                               type="number" step="0.01" min="0"
+                               title="Precio editable — útil para tubería o servicios variables"
+                               className="w-20 text-right text-sm font-black italic tracking-tighter bg-transparent border-b border-dashed border-primary/40 focus:border-primary focus:outline-none text-primary pb-0.5"
+                               value={item.precio_unitario}
+                               onChange={e => updateCartItemPrice(item.id, parseFloat(e.target.value) || 0)}
+                             />
+                             <span className="text-[8px] text-muted-foreground font-bold opacity-50">USD c/u</span>
+                           </div>
                           <button onClick={() => removeFromCart(item.id)} className="text-destructive/40 hover:text-destructive transition-colors">
                             <X className="w-4 h-4" />
                           </button>
@@ -620,6 +876,80 @@ export default function VentasPage() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
+                   {/* ── Cashea Panel ── */}
+                    <div className={`space-y-3 p-4 rounded-2xl border col-span-full transition-all ${isCasheaActive ? 'bg-blue-600/10 border-blue-600/40 shadow-lg shadow-blue-600/10' : 'bg-blue-600/5 border-blue-600/10'}`}>
+                       <div className="flex items-center justify-between">
+                          <Label className="text-[10px] font-black uppercase text-blue-600 flex items-center gap-2">
+                            <Smartphone className="w-4 h-4" /> Cashea
+                          </Label>
+                          <button
+                            onClick={() => { setConIva(true); autoFillMethod('cashea'); }}
+                            className="text-[8px] font-black text-blue-600 bg-white/50 px-2 py-0.5 rounded-lg border border-blue-600/20"
+                          >USAR CASHEA (+16% IVA)</button>
+                       </div>
+
+                       {/* Porcentaje de inicial: 40%, 50%, 60% */}
+                       <div className="flex items-center gap-2">
+                         <span className="text-[9px] font-black text-blue-600/70 uppercase tracking-widest">Inicial:</span>
+                         {([40, 50, 60] as const).map(pct => (
+                           <button
+                             key={pct}
+                             onClick={() => { setCasheaPct(pct); setConIva(true); if (metodosPago.cashea === 0) autoFillMethod('cashea'); }}
+                             className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all border ${casheaPct === pct && isCasheaActive ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white/40 text-blue-600 border-blue-600/20 hover:bg-blue-600/10'}`}
+                           >{pct}%</button>
+                         ))}
+                       </div>
+
+                       {/* Desglose en tiempo real */}
+                       {isCasheaActive && total > 0 && (
+                         <div className="grid grid-cols-4 gap-2 p-3 rounded-xl bg-white/60 border border-blue-600/10">
+                           <div className="col-span-4 flex justify-between text-[9px] font-black text-blue-700 border-b border-blue-600/10 pb-1.5 mb-1">
+                             <span>BASE BCV (sin IVA)</span><span>${subtotal.toFixed(2)}</span>
+                           </div>
+                           <div className="col-span-4 flex justify-between text-[9px] font-black text-orange-500">
+                             <span>IVA 16%</span><span>+${(total - subtotal).toFixed(2)}</span>
+                           </div>
+                           <div className="col-span-4 flex justify-between text-[10px] font-black text-blue-800 border-t border-blue-600/10 pt-1.5 mt-0.5">
+                             <span>TOTAL CASHEA</span><span>${total.toFixed(2)}</span>
+                           </div>
+                           <div className="col-span-4 grid grid-cols-4 gap-1.5 mt-1">
+                             <div className="col-span-2 bg-blue-600 text-white p-2 rounded-xl text-center">
+                               <p className="text-[8px] font-bold opacity-80">INICIAL ({casheaPct}%)</p>
+                               <p className="text-sm font-black">${casheaInicial.toFixed(2)}</p>
+                             </div>
+                             <div className="col-span-2 bg-blue-600/10 text-blue-700 p-2 rounded-xl">
+                               <p className="text-[8px] font-bold">RESTO (3 cuotas)</p>
+                               <p className="text-xs font-black">${casheaResto.toFixed(2)}</p>
+                               <p className="text-[8px] opacity-70">${casheaCuota.toFixed(2)}/cuota</p>
+                             </div>
+                           </div>
+                         </div>
+                       )}
+
+                       <Input
+                         placeholder="Monto $ total Cashea"
+                         className="h-10 bg-white/60 text-sm font-black border-blue-600/20 text-blue-700"
+                         value={metodosPago.cashea || ''}
+                         onChange={e => handlePaymentChange('cashea', e.target.value)}
+                       />
+                    </div>
+
+                   {/* Binance / USDT */}
+                   <div className="space-y-1.5 p-3 rounded-2xl bg-yellow-500/5 border border-yellow-500/10">
+                      <div className="flex items-center justify-between">
+                         <Label className="text-[9px] font-black uppercase text-muted-foreground flex items-center gap-1">
+                           <Coins className="w-3 h-3" /> Binance (USDT)
+                         </Label>
+                         <button onClick={() => autoFillMethod('binance')} className="text-[8px] font-black text-yellow-600">AUTO</button>
+                      </div>
+                      <Input 
+                        placeholder="Monto $"
+                        className="h-9 bg-background/50 text-xs font-black border-none"
+                        value={metodosPago.binance || ''}
+                        onChange={e => handlePaymentChange('binance', e.target.value)}
+                      />
+                   </div>
+
                    {/* Divisas Cash */}
                    <div className="space-y-1.5 p-3 rounded-2xl bg-primary/5 border border-primary/10">
                       <div className="flex items-center justify-between">
@@ -688,8 +1018,17 @@ export default function VentasPage() {
                           <Input 
                             placeholder="Bs."
                             className="h-9 bg-background/50 text-xs font-black border-none"
-                            value={metodosPago.efectivo_ves ? (metodosPago.efectivo_ves * rates.bcv).toFixed(2) : ''}
-                            onChange={e => handlePaymentChange('efectivo_ves', (parseFloat(e.target.value) / rates.bcv).toString())}
+                            value={bsInputs['efectivo_ves'] ?? (metodosPago.efectivo_ves ? (metodosPago.efectivo_ves * rates.bcv).toFixed(2) : '')}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setBsInputs(prev => ({ ...prev, ['efectivo_ves']: val }));
+                              const num = parseFloat(val);
+                              if (!isNaN(num)) {
+                                handlePaymentChange('efectivo_ves', (num / rates.bcv).toString());
+                              } else if (val === '') {
+                                handlePaymentChange('efectivo_ves', '0');
+                              }
+                            }}
                           />
                         </div>
                         <div className="space-y-1">
@@ -698,7 +1037,16 @@ export default function VentasPage() {
                             placeholder="$"
                             className="h-9 bg-background/50 text-xs font-black border-none"
                             value={metodosPago.efectivo_ves || ''}
-                            onChange={e => handlePaymentChange('efectivo_ves', e.target.value)}
+                            onChange={e => {
+                              const val = e.target.value;
+                              handlePaymentChange('efectivo_ves', val);
+                              const num = parseFloat(val);
+                              if (!isNaN(num)) {
+                                setBsInputs(prev => ({ ...prev, ['efectivo_ves']: (num * rates.bcv).toFixed(2) }));
+                              } else {
+                                setBsInputs(prev => ({ ...prev, ['efectivo_ves']: '' }));
+                              }
+                            }}
                           />
                         </div>
                       </div>
@@ -713,11 +1061,30 @@ export default function VentasPage() {
                     <p className="text-[11px] text-primary font-black uppercase tracking-[0.3em] mb-2">TOTAL A PAGAR USD</p>
                     <span className="text-5xl font-black text-primary tracking-tighter italic">${total.toFixed(2)}</span>
                   </div>
-                  <div className="text-right">
+                  <div className="flex flex-col items-end pt-2 border-t border-border/10">
                     <p className="text-[10px] text-muted-foreground font-black uppercase tracking-[0.15em] opacity-60">Total en Bolívares</p>
-                    <p className="text-2xl font-black text-foreground tracking-tighter italic">{(total * rates.bcv).toLocaleString('es-VE')} Bs.</p>
+                    <p className="text-2xl font-black text-foreground tracking-tighter italic">{(total * rates.bcv).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</p>
                   </div>
                 </div>
+
+                {isCasheaActive && (
+                  <div className="mt-4 p-4 rounded-2xl bg-blue-50 border border-blue-100 space-y-3 animate-in slide-in-from-top-2 duration-300">
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <Badge className="bg-blue-600 text-white font-black text-[9px] px-1.5 h-4">INICIAL {casheaPct}%</Badge>
+                        <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest">A Pagar Hoy</span>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xl font-black text-blue-700 leading-none">${Number(casheaInicial).toFixed(2)}</p>
+                        <p className="text-[11px] font-bold text-blue-600/70">{(casheaInicial * rates.bcv).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</p>
+                      </div>
+                    </div>
+                    <div className="pt-2 border-t border-blue-200/50 flex justify-between items-center opacity-60">
+                      <span className="text-[9px] font-black text-blue-700 uppercase tracking-widest">3 Cuotas de</span>
+                      <p className="text-sm font-black text-blue-700">${Number(casheaCuota).toFixed(2)}</p>
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-5 pt-4">
                    <Button 
@@ -744,60 +1111,62 @@ export default function VentasPage() {
 
       {/* MODAL DE VISTA PREVIA */}
       <Dialog open={showPreview} onOpenChange={setShowPreview}>
-        <DialogContent className="max-w-2xl bg-card border-border/50 rounded-[2rem] p-0 overflow-hidden shadow-2xl">
-          <div className="bg-primary/5 p-8 border-b border-border/30">
-             <DialogTitle className="text-2xl font-black tracking-tighter flex items-center gap-3 uppercase italic">
-               <FileText className="w-8 h-8 text-primary" /> RESUMEN DE FACTURACIÓN
+        <DialogContent className="max-w-[95vw] md:max-w-2xl bg-card border-border/50 rounded-[2rem] p-0 overflow-hidden shadow-2xl max-h-[90vh] flex flex-col">
+          <div className="bg-primary/5 p-4 md:p-8 border-b border-border/30 flex-shrink-0">
+             <DialogTitle className="text-xl md:text-2xl font-black tracking-tighter flex items-center gap-3 uppercase italic">
+               <FileText className="w-6 h-6 md:w-8 md:h-8 text-primary" /> RESUMEN DE FACTURACIÓN
              </DialogTitle>
           </div>
-          <div className="p-8 space-y-6">
-            <div className="grid grid-cols-2 gap-8">
+          <div className="p-4 md:p-8 space-y-6 overflow-y-auto custom-scrollbar flex-1">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8">
               <div className="space-y-1">
                 <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">CLIENTE / VEHÍCULO</p>
-                <p className="text-sm font-black text-foreground uppercase">{clienteNombre || 'Consumidor Final'}</p>
-                <p className="text-xs font-bold text-muted-foreground uppercase">{vehiculoInfo || 'S/D'}</p>
+                <p className="text-sm font-black text-foreground uppercase truncate">{clienteNombre || 'Consumidor Final'}</p>
+                <p className="text-xs font-bold text-muted-foreground uppercase truncate">{vehiculoInfo || 'S/D'}</p>
               </div>
-              <div className="text-right space-y-1">
+              <div className="md:text-right space-y-1">
                 <Badge className="bg-primary/20 text-primary border-none font-black text-[9px] mb-2">{currentSede?.nombre}</Badge>
                 <p className="text-sm font-black text-foreground uppercase">{format(selectedDate, 'dd/MM/yyyy')}</p>
               </div>
             </div>
 
             <div className="rounded-2xl border border-border/50 overflow-hidden">
-               <table className="w-full text-left text-xs">
-                 <thead className="bg-muted/50 border-b border-border/30 font-black uppercase text-muted-foreground">
-                   <tr><th className="px-4 py-3">ITEM</th><th className="px-4 py-3 text-center">CANT</th><th className="px-4 py-3 text-right">TOTAL USD</th></tr>
-                 </thead>
-                 <tbody className="divide-y divide-border/20">
-                   {cart.map((item, idx) => (
-                     <tr key={idx} className="font-bold">
-                       <td className="px-4 py-3 uppercase">{item.nombre}</td>
-                       <td className="px-4 py-3 text-center font-black">{item.cantidad}</td>
-                       <td className="px-4 py-3 text-right font-black">${item.total.toFixed(2)}</td>
-                     </tr>
-                   ))}
-                 </tbody>
-               </table>
+               <div className="overflow-x-auto">
+                 <table className="w-full text-left text-xs min-w-[400px]">
+                   <thead className="bg-muted/50 border-b border-border/30 font-black uppercase text-muted-foreground">
+                     <tr><th className="px-4 py-3">ITEM</th><th className="px-4 py-3 text-center">CANT</th><th className="px-4 py-3 text-right">TOTAL USD</th></tr>
+                   </thead>
+                   <tbody className="divide-y divide-border/20">
+                     {cart.map((item, idx) => (
+                       <tr key={idx} className="font-bold">
+                         <td className="px-4 py-3 uppercase truncate max-w-[150px]">{item.nombre}</td>
+                         <td className="px-4 py-3 text-center font-black">{item.cantidad}</td>
+                         <td className="px-4 py-3 text-right font-black">${Number(item.total).toFixed(2)}</td>
+                       </tr>
+                     ))}
+                   </tbody>
+                 </table>
+               </div>
             </div>
 
             <div className="flex justify-between items-center py-4 border-t border-border/30">
                <span className="text-xs font-black uppercase tracking-widest text-muted-foreground">TOTAL A COBRAR:</span>
-               <span className="text-3xl font-black text-primary italic tracking-tighter">${total.toFixed(2)}</span>
+               <span className="text-2xl md:text-3xl font-black text-primary italic tracking-tighter">${Number(total).toFixed(2)}</span>
             </div>
           </div>
-          <DialogFooter className="p-8 bg-muted/20 flex flex-col gap-4">
-             <div className="flex items-center justify-between w-full">
-                <div className="flex items-center gap-2">
-                    <div className="flex items-center bg-slate-100 rounded-xl p-1 gap-1 border border-slate-200">
+          <DialogFooter className="p-4 md:p-8 bg-muted/20 flex flex-col gap-4 flex-shrink-0">
+             <div className="flex flex-col md:flex-row items-center justify-between w-full gap-4">
+                <div className="flex flex-col md:flex-row items-center gap-2 w-full md:w-auto">
+                    <div className="flex items-center bg-slate-100 rounded-xl p-1 gap-1 border border-slate-200 w-full md:w-auto justify-center">
                       <button 
                         onClick={() => setPrintMode('single')}
-                        className={cn("px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all", printMode === 'single' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
+                        className={cn("px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex-1 md:flex-none", printMode === 'single' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
                       >
                         Única
                       </button>
                       <button 
                         onClick={() => setPrintMode('dual')}
-                        className={cn("px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all", printMode === 'dual' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
+                        className={cn("px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex-1 md:flex-none", printMode === 'dual' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
                         title="Dos copias de la misma factura"
                       >
                         Dual
@@ -807,34 +1176,34 @@ export default function VentasPage() {
                           setPrintMode('diferente');
                           if (!secondVenta) setShowSelector(true);
                         }}
-                        className={cn("px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all", printMode === 'diferente' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
+                        className={cn("px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex-1 md:flex-none", printMode === 'diferente' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
                         title="Dos facturas diferentes"
                       >
-                        Diferente
+                        Dif.
                       </button>
                     </div>
 
                   {printMode === 'single' && (
-                    <div className="flex items-center bg-background rounded-lg p-0.5 border border-border">
+                    <div className="flex items-center bg-background rounded-lg p-0.5 border border-border w-full md:w-auto justify-center">
                       <button 
                         onClick={() => setPrintSide('left')}
-                        className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all", printSide === 'left' ? "bg-primary text-white" : "text-slate-500")}
+                        className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printSide === 'left' ? "bg-primary text-white" : "text-slate-500")}
                       >
                         Izq
                       </button>
                       <button 
                         onClick={() => setPrintSide('right')}
-                        className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all", printSide === 'right' ? "bg-primary text-white" : "text-slate-500")}
+                        className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printSide === 'right' ? "bg-primary text-white" : "text-slate-500")}
                       >
                         Der
                       </button>
                     </div>
                   )}
                 </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" className="h-10 rounded-xl font-bold px-6" onClick={() => setShowPreview(false)}>VOLVER</Button>
-                  <Button className="h-10 rounded-xl bg-primary text-white font-black uppercase tracking-widest gap-2 px-6" onClick={handleFinalize}>
-                    <Printer className="w-4 h-4" /> CONFIRMAR Y REGISTRAR
+                <div className="flex gap-2 w-full md:w-auto">
+                  <Button variant="outline" className="h-10 rounded-xl font-bold flex-1 md:px-6" onClick={() => setShowPreview(false)}>VOLVER</Button>
+                  <Button className="h-10 rounded-xl bg-primary text-white font-black uppercase tracking-widest gap-2 flex-[2] md:px-6" onClick={handleFinalize}>
+                    <Printer className="w-4 h-4" /> CONFIRMAR
                   </Button>
                 </div>
              </div>
@@ -849,7 +1218,8 @@ export default function VentasPage() {
             <>
               <div className="bg-primary/5 p-8 border-b border-border/30">
                  <DialogTitle className="text-2xl font-black tracking-tighter flex items-center gap-3 uppercase italic">
-                   <Receipt className="w-8 h-8 text-primary" /> FACTURA #{selectedSale.id?.slice(0, 8)}
+                   {selectedSale.source === 'ia' ? <Bot className="w-8 h-8 text-violet-500" /> : <Receipt className="w-8 h-8 text-primary" />}
+                   {selectedSale.source === 'ia' ? 'REGISTRO DE IA' : `FACTURA #${selectedSale.id?.slice(0, 8)}`}
                  </DialogTitle>
               </div>
               <div className="p-8 space-y-6">
@@ -859,8 +1229,11 @@ export default function VentasPage() {
                     <p className="text-sm font-black uppercase">{selectedSale.cliente}</p>
                   </div>
                   <div className="text-right space-y-1">
-                    <p className="text-[10px] font-black text-muted-foreground uppercase">MONTO</p>
-                    <p className="text-2xl font-black text-primary">${selectedSale.total_ingresos?.toFixed(2)}</p>
+                    <p className="text-[10px] font-black text-muted-foreground uppercase">MONTO TOTAL</p>
+                    <p className="text-2xl font-black text-primary italic">${selectedSale.total_ingresos?.toFixed(2)}</p>
+                    <p className="text-xs font-bold text-muted-foreground">
+                      {((selectedSale.total_ingresos || 0) * (selectedSale.tasa_cambio || rates.bcv)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.
+                    </p>
                   </div>
                 </div>
                 <div className="rounded-2xl border border-border/50 overflow-hidden">
@@ -913,16 +1286,20 @@ export default function VentasPage() {
                    <div className="flex gap-2">
                      <Button variant="outline" className="h-10 rounded-xl font-bold px-6" onClick={() => setShowSaleDetail(false)}>CERRAR</Button>
                      <Button className="h-10 rounded-xl bg-primary text-white font-black uppercase tracking-widest gap-2 px-6" 
-                       onClick={() => generateInvoicePDF([{
-                         id: selectedSale.id,
-                         fecha: new Date(selectedSale.created_at).toLocaleDateString(),
-                         cliente: selectedSale.cliente,
-                         items: selectedSale.desglose || [],
-                         total: selectedSale.total_ingresos,
-                         notas: selectedSale.notas,
-                         tasa_bcv: selectedSale.tasa_cambio,
-                         iva_aplicado: selectedSale.con_iva
-                       }], { mode: printMode, side: printSide })}>
+                       onClick={() => {
+                          const bcvRate = selectedSale.tasa_cambio || rates.bcv;
+                          generateInvoicePDF([{
+                            id: selectedSale.id,
+                            fecha: new Date(selectedSale.created_at).toLocaleDateString(),
+                            cliente: selectedSale.cliente,
+                            items: selectedSale.desglose || [],
+                            total: selectedSale.total_ingresos,
+                            notas: selectedSale.notas,
+                            tasa_bcv: bcvRate,
+                            total_ves: selectedSale.total_ingresos * bcvRate,
+                            iva_aplicado: selectedSale.con_iva
+                          }], { mode: printMode, side: printSide });
+                       }}>
                        <Download className="w-4 h-4" /> DESCARGAR
                      </Button>
                    </div>
@@ -966,7 +1343,7 @@ export default function VentasPage() {
                         <p className="text-xs font-black text-slate-900 uppercase italic">{v.cliente || 'Consumidor Final'}</p>
                         <p className="text-[10px] text-slate-400 font-bold">{v.fecha}</p>
                       </div>
-                      <p className="text-xs font-black text-orange-500 italic">${v.total_ingresos.toFixed(2)}</p>
+                      <p className="text-xs font-black text-orange-500 italic">${Number(v.total_ingresos).toFixed(2)}</p>
                     </button>
                   ))}
                 </div>
@@ -974,6 +1351,28 @@ export default function VentasPage() {
             </div>
           </div>
         )}
+        {/* Footer Premium */}
+        <footer className="mt-16 pb-12 border-t border-border/20 pt-12 text-center space-y-4">
+          <div className="flex flex-col items-center gap-2">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary border border-primary/20">
+                <ShoppingCart className="w-4 h-4" />
+              </div>
+              <span className="text-sm font-black uppercase tracking-[0.3em] text-foreground/40">Lycos Team POS</span>
+            </div>
+            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+              Plataforma de Gestión de Ventas e Inventario
+            </p>
+          </div>
+          <div className="pt-4 border-t border-border/5 max-w-xs mx-auto">
+            <p className="text-[9px] font-black uppercase text-primary italic tracking-[0.1em]">
+              Elaborado por Leandro Marquez
+            </p>
+            <p className="text-[8px] font-medium text-muted-foreground mt-1">
+              &copy; {new Date().getFullYear()} Lycos Garage. Todos los derechos reservados.
+            </p>
+          </div>
+        </footer>
       </div>
     );
 }

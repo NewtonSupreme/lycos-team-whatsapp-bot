@@ -73,7 +73,7 @@ export async function GET() {
     }
 
     // Final Hard Fallback if everything fails
-    if (!bcvRate) bcvRate = 36.5;
+    if (!bcvRate) bcvRate = 518.0;
     if (!binanceRate) binanceRate = bcvRate * 1.15; // Estimate 15% spread if totally blind
 
     return NextResponse.json({
