@@ -276,11 +276,116 @@ export async function updateInventarioItem(id: string, updates: Partial<Inventar
   return data;
 }
 
-export async function deleteInventarioItem(id: string) {
+export async function deleteInventarioItem(id: string, eliminadoPor?: string, motivo?: string) {
   if (!supabase) return null;
-  // Soft delete by setting activo to false
+  
+  // 1. Obtener el producto antes de eliminarlo
+  const { data: producto } = await supabase.from('inventario')
+    .select('*')
+    .eq('id', id)
+    .single();
+  
+  if (!producto) {
+    throw new Error('Producto no encontrado');
+  }
+
+  // 2. Copiar a la papelera
+  const papeleraData = {
+    nombre: producto.nombre,
+    codigo: producto.codigo,
+    categoria: producto.categoria,
+    marca: producto.marca,
+    descripcion: producto.descripcion,
+    precio_usd: producto.precio_usd,
+    precio_bs: producto.precio_bs,
+    stock: producto.stock,
+    stock_minimo: producto.stock_minimo,
+    unidad: producto.unidad,
+    notas: producto.notas,
+    ubicacion: producto.ubicacion,
+    clasificacion: producto.clasificacion,
+    orden: producto.orden,
+    eliminado_por: eliminadoPor || 'Sistema',
+    motivo_eliminacion: motivo || null,
+    fecha_eliminacion: new Date().toISOString(),
+    sede_id: producto.sede_id
+  };
+
+  const { error: errorPapelera } = await supabase
+    .from('inventario_papelera')
+    .insert(papeleraData);
+
+  if (errorPapelera) {
+    console.error('Error guardando en papelera:', errorPapelera);
+  }
+
+  // 3. Eliminar completamente de la tabla inventario
   const { error } = await supabase.from('inventario')
-    .update({ activo: false, updated_at: new Date().toISOString() })
+    .delete()
+    .eq('id', id);
+  if (error) throw error;
+}
+
+// ─── Inventario Papelera ───────────────────────────────────────
+export async function fetchInventarioPapelera() {
+  if (!supabase) return null;
+  const { data, error } = await withSedeFilter(supabase.from('inventario_papelera'))
+    .select('*')
+    .order('fecha_eliminacion', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+export async function restaurarInventarioItem(id: string) {
+  if (!supabase) return null;
+  
+  // 1. Obtener el producto de la papelera
+  const { data: papeleraItem } = await supabase.from('inventario_papelera')
+    .select('*')
+    .eq('id', id)
+    .single();
+
+  if (!papeleraItem) {
+    throw new Error('Producto en papelera no encontrado');
+  }
+
+  // 2. Restaurar a inventario (crear nuevo o actualizar existente)
+  const inventarioData = {
+    nombre: papeleraItem.nombre,
+    codigo: papeleraItem.codigo,
+    categoria: papeleraItem.categoria,
+    marca: papeleraItem.marca,
+    descripcion: papeleraItem.descripcion,
+    precio_usd: papeleraItem.precio_usd,
+    precio_bs: papeleraItem.precio_bs,
+    stock: papeleraItem.stock,
+    stock_minimo: papeleraItem.stock_minimo,
+    unidad: papeleraItem.unidad,
+    notas: papeleraItem.notas,
+    ubicacion: papeleraItem.ubicacion,
+    clasificacion: papeleraItem.clasificacion,
+    orden: papeleraItem.orden,
+    activo: true
+  };
+
+  const { error: errorInsert } = await supabase
+    .from('inventario')
+    .insert(inventarioData);
+
+  if (errorInsert) throw errorInsert;
+
+  // 3. Eliminar de la papelera
+  const { error: errorDelete } = await supabase.from('inventario_papelera')
+    .delete()
+    .eq('id', id);
+
+  if (errorDelete) throw errorDelete;
+}
+
+export async function eliminarPermanentePapelera(id: string) {
+  if (!supabase) return null;
+  const { error } = await supabase.from('inventario_papelera')
+    .delete()
     .eq('id', id);
   if (error) throw error;
 }

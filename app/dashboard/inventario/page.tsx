@@ -308,15 +308,15 @@ export default function InventarioPage() {
   };
 
   const handleDelete = async (id: string, nombre: string) => {
-    if (confirm(`¿Estás seguro de eliminar "${nombre}"?`)) {
+    if (confirm(`¿Estás seguro de eliminar "${nombre}"?\n\nEl producto se enviará a la papelera y podrá ser restaurado por el administrador.`)) {
       try {
-        await deleteInventarioItem(id);
+        await deleteInventarioItem(id, user?.nombre || 'Sistema');
         
         await logActivity({
           usuario: user?.nombre || 'Sistema',
           modulo: 'Inventario',
           accion: 'Eliminó producto',
-          detalles: nombre,
+          detalles: `${nombre} (enviado a papelera)`,
           referencia_id: id,
           referencia_tabla: 'inventario'
         });

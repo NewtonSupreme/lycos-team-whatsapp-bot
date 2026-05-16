@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Users, Car, Wrench, Calendar, MessageSquare,
   Bot, FileText, Settings, ChevronLeft, ChevronRight,
-  Activity, LogOut, TrendingUp, UserCircle, Package, Calculator, ShoppingCart
+  Activity, LogOut, TrendingUp, UserCircle, Package, Calculator, ShoppingCart, Trash2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -23,6 +23,7 @@ const navItemsConfig = [
   { href: '/dashboard/whatsapp', icon: MessageSquare, label: 'WhatsApp', badge: null },
   { href: '/dashboard/leads', icon: TrendingUp, label: 'Leads', badge: null },
   { href: '/dashboard/inventario', icon: Package, label: 'Inventario', badge: null },
+  { href: '/dashboard/inventario/papelera', icon: Trash2, label: 'Papelera', badge: null },
   { href: '/dashboard/silenciadores', icon: ShoppingCart, label: 'Ventas', badge: null },
   { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente', badge: null },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', badge: null },
@@ -72,6 +73,8 @@ export default function Sidebar() {
   const navItems = navItemsConfig
     .filter(item => {
       if (item.label === 'Actividad' && !isAdmin) return false;
+      if (item.label === 'Papelera' && !isAdmin) return false;
+      if (item.label === 'Gestión Empleados' && !isAdmin) return false;
       return true;
     })
     .map(item => {
