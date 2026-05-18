@@ -27,8 +27,8 @@ const DEFAULT_SEDE_ID = process.env.WHATSAPP_DEFAULT_SEDE_ID || '310595c5-5258-4
 
 // ─── AI Models — ordered by priority (primary first, then fallback) ──────────
 const GEMINI_MODELS = [
-  'gemini-2.5-flash--',              // [PRIMARY]
-  'gemini-3.1-flash-lite--',         // [FALLBACK]
+  'gemini-2.5-flash',              // [PRIMARY]
+  'gemini-3.1-flash-lite',         // [FALLBACK]
 ] as const;
 
 const ASESOR_PHONE = '584123343519';
@@ -177,15 +177,13 @@ Sigue ESTRICTAMENTE estas reglas para dar precios al cliente:
    - AVISO DE PAGO: Cuando des un precio, puedes advertir MUY BREVEMENTE que "se trabaja a tasa BCV al momento de pagar". NUNCA lo repitas en cada uno de tus mensajes para no ser repetitivo, hazlo solo en el momento exacto que dictes el precio de un presupuesto y ya.
 
 2) SERVICIOS EN 'PROMOCIÓN EN DIVISAS':
-   - Aplica para: Escapes, Silenciadores, Resonadores, Mecánica, Frenos, Catalizador, Electrónica, Estética, etc. (Todo lo que sea de la lista general o se mencione como promo).
-   - PRECIO: Debes mostrar DOS montos en dólares:
+   - Aplica para: Escapes, Resonadores, Mecánica, Frenos, Catalizador, Electrónica, Estética, etc. (Todo lo que sea de la lista general o se mencione como promo).
+   - **EXCEPCIÓN CRÍTICA DE SILENCIADORES**: Para silenciadores, ignora cualquier precio de base de datos o cálculo automático, y aplica **ÚNICAMENTE** los 3 precios unificados detallados en LYCOS_KNOWLEDGE (Carro pequeño/sedán: $80 a tasa BCV; Camioneta: $80 Promo Divisa; Fabricación Especial: $100 Promo Divisa).
+   - PRECIO: Para otros servicios en promoción, debes mostrar DOS montos en dólares:
      a) "Promocion en divisas: $[MontoOriginal]"
      b) "Precio: $[MontoConvertido] a tasa BCV"
    - CONVERSIÓN: El MontoConvertido se calcula como: MontoOriginal * ${multiplier.toFixed(4)}.
-    - **TABLA DE PRECIOS BCV FIJOS (OBLIGATORIO)**: Para los siguientes casos populares, **NO uses el cálculo matemático**, usa estos montos fijos:
-        * Si el precio Promo es **$40**, el precio BCV siempre es **$55**.
-        * Si el precio Promo es **$60**, el precio BCV siempre es **$90**.
-        * Si el precio Promo es **$90**, el precio BCV siempre es **$120**.
+
     - REDONDEO (Para otros montos): Redondea siempre el resultado final HACIA ARRIBA al múltiplo de 5 más cercano ($42 -> $45, $46 -> $50, etc.). NUNCA redondees hacia abajo.
     - REGLA ESTRICTA: NUNCA le digas al cliente que redondeaste el precio ni le des explicaciones matemáticas o sobre la tabla. Simplemente asume ese número final como el precio oficial y dáselo con total naturalidad.
    - REGLA DE ORO: ¡PROHIBIDO! NUNCA menciones "Binance", "P2P", "paralela", "externa", ni des el precio en bolívares (Bs.) bajo ninguna circunstancia.
@@ -282,14 +280,18 @@ SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gr
 - "Intermedio": significa resonador. Da el precio del resonador ($40) y menciona que si requiere tubería adicional, el metro sale en $35 (hierro) o $20 (a partir del segundo metro).
 - El Sistema de Escape Completo Incluye: Silenciador, Resonador, Tubería, Flexible, Bajante, gomas y Empacaduras. En este caso específico de sistema completo, debe venir al taller para el precio exacto.
 - Silenciadores PLANOS (Ej. Malibú) y MOFLES: NO TENEMOS DISPONIBILIDAD de planos ni de mofles. Solo vendemos silenciadores Redondos. Si el cliente pide mofles, discúlpate y ofrécele inmediatamente Silenciadores, Flowmaster o cualquier otro servicio del taller (Mecánica, Frenos, Alineación, etc.). PERO, hay carros que originalmente usan planos y sí tienen espacio para adaptar uno redondo, si tiene duda pídele vernos para revisión gratuita.
-- **REGLA OBLIGATORIA DE CILINDRAJE**: Si el cliente pregunta por el precio de un silenciador para su carro (ej: Aveo, Corolla, etc.), **DEBES preguntarle OBLIGATORIAMENTE el cilindraje o versión del motor** (ej: 1.6, 2.0, 1.4...) si no lo ha mencionado. Explícale que hay versiones "grande" o "pequeño" y el silenciador cambia según el motor y le das luego los precios para las diferentes versiones.
-- **LISTA DE PRECIOS POR MOTOR** (instalación incluida):
-  - CL27 / CL30: Motores hasta 1.3L → $40
-  - CL40: Motores hasta 1.5L → $50
-  - CLH40: Motores 1.6L hasta 2.0L (Casos típicos: Aveo 1.6, Volkswagen Gol, Toyota Corolla 1.6, Neon, Chevy Comfort 1.6, etc.) → $60. **NOTA**: Vehículos como EcoSport, Caliber o SUVs compactos NO entran aquí, son de fabricación especial.
-  - CL60 (Motores Grandes / Camiones / Plataneros): Motores desde 3.8L en adelante o vehículos de carga pesada → $90.
-  - CLK60 (Fabricación Especial): $100 — Aplicable OBLIGATORIAMENTE a vehículos con sistemas complejos, poco espacio o fabricación a medida.
-    LISTA OBLIGATORIA CLK60: Dodge Caliber, Ford EcoSport, Toyota Previa, Kia Sportage, Hyundai Tucson, Chevrolet Malibú, Jeep Compass, Jeep Cherokee, Mitsubishi Outlander, y SUVs compactas similares.
+- **TRES PRECIOS ÚNICOS PARA SILENCIADORES** (Instalación y revisión incluida, ignora precios de la base de datos):
+    1) **Carros Pequeños o Sedanes**: **$80 a tasa BCV** (sin promoción en divisas, precio único para pago en Bs o Cashea). Ejemplos: Aveo, Spark, Corolla, Yaris, Corsa, Twingo, Gol, Arauca, Optra, Neon, etc.
+    2) **Camionetas (SUVs / Pickups)**: **$80 en Promoción en Divisas** (efectivo/divisas). Ejemplos: Fortuner, Hilux, Explorer, Blazer, Grand Vitara, Terios, etc.
+    3) **Fabricación Especial**: **$100 en Promoción en Divisas** (efectivo/divisas). (para transferencias o Cashea). Aplica para: CLK 60, Dodge Caliber, Ford EcoSport, Toyota Previa, Kia Sportage, Hyundai Tucson, Chevrolet Malibú, Jeep Compass, Jeep Cherokee, Mitsubishi Outlander, y SUVs compactas similares o de poco espacio.
+- **REGLA DE IMAGEN**: Cuando le des el precio del silenciador al cliente, incluye el tag [IMAGE: slug] correspondiente al final del mensaje:
+    * Para carros pequeños/sedanes usa [IMAGE: clh40] (para CLH40/CL40/CL30).
+    * Para camionetas usa [IMAGE: cl60].
+    * Para fabricación especial usa [IMAGE: clk60].
+- **REGLA DE PRECIOS ALTERNATIVOS Y QUEJAS (CRÍTICO)**:
+    * Si el cliente pregunta por alternativas de precio, descuentos, rebajas, precios más económicos o se queja de las tarifas: Explícale cordialmente que **actualmente solo se están manejando estos tres precios unificados para todas nuestras sedes con el fin de simplificar y unificar las operaciones**.
+    * Si el cliente insiste, muestra quejas del precio o solicita específicamente consultar promociones en divisas ("promos divisas"): **DEBES** responder de manera servicial y decir: "Te envío el contacto de nuestro asesor 👇" para que el sistema le comparta automáticamente su tarjeta de contacto del asesor (no intentes convencerlo tú, deja que el asesor humano lo atienda).
+
 
 - Resonador: $40
 - Flowmaster Serie 40: $140 (instalación incluida). **NOTA**: El flexible NO está incluido, se vende por separado si el vehículo lo requiere.
@@ -1158,13 +1160,13 @@ async function loadConversationContext(
         'camry', 'sentra', 'blazer', 'lancer', 'cherokee', 'explorer', 'samuray', 'macho'];
       if (invKw.some(k => lower.includes(k))) {
         const { data: items } = await db.from('inventario')
-          .select('nombre, codigo, precio_usd, stock, categoria').eq('activo', true)
+          .select('nombre, codigo, stock, categoria').eq('activo', true)
           .order('categoria').order('nombre');
         if (items && items.length > 0) {
           const list = items.map(i =>
-            `  - ${i.nombre}${i.codigo ? ' [' + i.codigo + ']' : ''}${i.precio_usd ? ': $' + i.precio_usd : ''} — ${i.stock > 0 ? 'Stock: ' + i.stock : 'SIN STOCK'}`
+            `  - ${i.nombre}${i.codigo ? ' [' + i.codigo + ']' : ''} — ${i.stock > 0 ? 'Stock: ' + i.stock : 'SIN STOCK'}`
           ).join('\n');
-          inventarioInfo = `\nINVENTARIO ACTUAL:\n${list}`;
+          inventarioInfo = `\nINVENTARIO ACTUAL (SÓLO STOCK/DISPONIBILIDAD, SIN PRECIOS):\n${list}`;
         }
       }
     }
