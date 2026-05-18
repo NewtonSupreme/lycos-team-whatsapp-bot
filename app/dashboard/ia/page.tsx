@@ -64,7 +64,7 @@ export default function IAPage() {
   const { user } = useAppStore();
   const { currentSede } = useSedeStore();
   
-  const allowedSedes = ['San Antonio de los Altos', 'El cementerio (Caracas)', 'Caracas El Paraíso'];
+  const allowedSedes = ['San Antonio de los Altos', 'El cementerio (Caracas)', 'Caracas El Paraíso', 'El Paraíso (Caracas)', 'El Paraiso (Caracas)', 'Caracas El Paraiso'];
   const isAllowedSede = currentSede && allowedSedes.includes(currentSede.nombre);
 
   // Load conversations on mount
