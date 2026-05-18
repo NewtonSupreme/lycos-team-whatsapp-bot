@@ -222,7 +222,7 @@ Sigue ESTRICTAMENTE estas reglas para dar precios al cliente:
 
 2) SERVICIOS EN 'PROMOCIÓN EN DIVISAS':
    - Aplica para: Escapes, Resonadores, Mecánica, Frenos, Catalizador, Electrónica, Estética, etc. (Todo lo que sea de la lista general o se mencione como promo).
-   - **EXCEPCIÓN CRÍTICA DE SILENCIADORES**: Para silenciadores, ignora cualquier precio de base de datos o cálculo automático, y aplica **ÚNICAMENTE** los 3 precios unificados detallados en LYCOS_KNOWLEDGE (Carro pequeño/sedán: $80 a tasa BCV; Camioneta: $80 Promo Divisa; Fabricación Especial: $100 Promo Divisa).
+   - **EXCEPCIÓN CRÍTICA DE SILENCIADORES**: Para silenciadores, ignora cualquier precio de base de datos o cálculo automático, y aplica **ÚNICAMENTE** los 3 precios unificados detallados en LYCOS_KNOWLEDGE (Carro pequeño/sedán 4 cilindros: $80 a tasa BCV y promo en divisas 40$; Camioneta: $80 Promo Divisa y $120 a tasa BCV; Fabricación Especial: $100 Promo Divisa).
    - PRECIO: Para otros servicios en promoción, debes mostrar DOS montos en dólares:
      a) "Promoción en divisas: $[MontoOriginal]"
      b) "Precio: $[MontoConvertido] a tasa BCV"
