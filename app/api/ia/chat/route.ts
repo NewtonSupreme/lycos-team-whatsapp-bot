@@ -454,10 +454,25 @@ export async function POST(request: NextRequest) {
     const dbContext = await loadDbContext(sede_id);
     const finalSystemPrompt = systemPrompt || buildSystemPrompt(dbContext, sede_nombre, user);
 
-    const geminiMessages = messages.map((m: { role: string; content: string }) => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
-    }));
+    const geminiMessages = messages.map((m: { role: string; content: string; image?: { mimeType: string; data: string } }) => {
+      const parts: any[] = [];
+      
+      if (m.image && m.image.data) {
+        parts.push({
+          inlineData: {
+            mimeType: m.image.mimeType || 'image/jpeg',
+            data: m.image.data
+          }
+        });
+      }
+      
+      parts.push({ text: m.content || '' });
+      
+      return {
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts,
+      };
+    });
 
     let rawText = '';
 
