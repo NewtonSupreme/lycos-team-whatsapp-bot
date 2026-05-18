@@ -1128,7 +1128,9 @@ async function loadConversationContext(
         { data: sedes },
         { count: msgsToday },
         { count: msgsWeek },
-        { count: msgsMonth }
+        { count: msgsMonth },
+        { data: allVentasSil },
+        { data: allVentasDia }
       ] = await Promise.all([
         db.from('citas').select('*, sede:sedes(nombre)').gte('fecha', monthStr).order('fecha').limit(100),
         db.from('inventario').select('*, sede:sedes(nombre)').eq('activo', true).order('nombre').limit(200),
@@ -1137,7 +1139,9 @@ async function loadConversationContext(
         db.from('sedes').select('id, nombre'),
         db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', todayDateStr),
         db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', weekDate.toISOString()),
-        db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', monthStartStr)
+        db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', monthStartStr),
+        db.from('ventas_silenciadores').select('*, sede:sedes(nombre)').gte('created_at', todayDateStr).order('created_at', { ascending: false }).limit(50),
+        db.from('ventas_dia').select('*, sede:sedes(nombre)').gte('created_at', todayDateStr).order('created_at', { ascending: false }).limit(50)
       ]);
       
       const revenueToday = allServs?.filter(s => s.created_at.startsWith(today)).reduce((sum, s) => sum + (Number(s.costo_final || s.costo_estimado || 0)), 0) || 0;
@@ -1251,7 +1255,20 @@ async function loadConversationContext(
         }
       }
 
-      historialTecnico = `\n--- FIN DE DATOS DEL SISTEMA ---\nInstrucción estricta: Eres el asistente administrativo (Modo Dios). Debes dar la información precisa de lo que se te pide usando la data anterior. Puedes ejecutar comandos para modificar la base de datos si el admin te lo pide. No inventes nada.`;
+      let ventasInfo = `\n[VENTAS POS HOY]`;
+      if (allVentasDia && allVentasDia.length > 0) {
+        ventasInfo += `\nRESUMEN VENTAS DIA:\n` + allVentasDia.map(v => `- Sede: ${v.sede?.nombre || 'General'} | Ingreso: $${v.ingreso_total} | Pagos: [Efectivo: $${v.efectivo}, Zelle: $${v.zelle}, Cashea: $${v.cashea}, PagoMovil: Bs${v.pago_movil}, Punto: Bs${v.punto}]`).join('\n');
+      } else {
+        ventasInfo += `\nNo hay resumen de ventas por día registrado hoy.`;
+      }
+
+      if (allVentasSil && allVentasSil.length > 0) {
+        ventasInfo += `\nVENTAS DETALLADAS SILENCIADORES:\n` + allVentasSil.map(v => `- Sede: ${v.sede?.nombre || 'General'} | Ítem: ${v.producto_nombre} x${v.cantidad} | Total: $${v.total} | Pago: ${v.metodo_pago} | Cliente: ${v.cliente_nombre || 'N/A'}`).join('\n');
+      } else {
+        ventasInfo += `\nNo hay ventas de silenciadores detalladas registradas hoy.`;
+      }
+
+      historialTecnico = `\n--- FIN DE DATOS DEL SISTEMA ---\nInstrucción estricta: Eres el asistente administrativo (Modo Dios). Debes dar la información precisa de lo que se te pide usando la data anterior. Puedes ejecutar comandos para modificar la base de datos si el admin te lo pide. No inventes nada. ${ventasInfo}`;
 
     } else {
       // Logic for regular clients (same as before)
@@ -2367,7 +2384,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       }
 
       // If it's a generic location request and we haven't sent a specific one yet
-      if (isLocationRequest(lowerBody)) {
+      if (isLocationRequest(lowerBody) && !ctx.isAdmin) {
         console.log(`📍 [${from}] Preguntando por sede para ubicación con botones...`);
         const buttons = [
           { id: 'sede_1', title: 'San Antonio' },
