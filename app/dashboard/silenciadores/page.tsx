@@ -61,6 +61,8 @@ export default function VentasPage() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   // Cashea: porcentaje de inicial (40, 50 o 60%)
   const [casheaPct, setCasheaPct] = useState<40 | 50 | 60>(50);
+  // Cashea: moneda visual ('usd' o 'ves')
+  const [casheaCurrency, setCasheaCurrency] = useState<'usd' | 'ves'>('usd');
   // Custom item prices (for tubería and variable-price items)
   const [customItemPrices, setCustomItemPrices] = useState<Record<string, number>>({});
   
@@ -255,7 +257,7 @@ export default function VentasPage() {
           : item
       ));
     } else {
-      const effectivePrecioBs = prod.precio_bs || (effectivePrice * rates.bcv);
+      const effectivePrecioBs = prod.precio_bs || effectivePrice;
       setCart([...cart, {
         id: prod.id,
         nombre: prod.nombre,
@@ -273,6 +275,15 @@ export default function VentasPage() {
     setCart(cart.map(item =>
       item.id === id
         ? { ...item, precio_unitario: newPrice, total: newPrice * item.cantidad }
+        : item
+    ));
+  };
+
+  // Update Dólar BCV price (expressed in USD) for an item already in cart
+  const updateCartItemPrecioBs = (id: string, newPrecioBs: number) => {
+    setCart(cart.map(item =>
+      item.id === id
+        ? { ...item, precio_bs: newPrecioBs }
         : item
     ));
   };
@@ -441,6 +452,21 @@ export default function VentasPage() {
   };
 
   const autoFillMethod = (method: string) => {
+    if (method === 'cashea') {
+      const casheaSubtotal = cart.reduce((sum, item) => {
+        const basePrice = item.precio_bs || item.precio_unitario;
+        return sum + (item.cantidad * basePrice);
+      }, 0);
+      const casheaTotal = casheaSubtotal * 1.16;
+      const otherPayments = Object.entries(metodosPago).reduce((acc, [k, v]) => {
+        if (k === 'cashea') return acc;
+        return acc + v;
+      }, 0);
+      const targetVal = Math.max(0, casheaTotal - otherPayments);
+      setMetodosPago(prev => ({ ...prev, cashea: Number(targetVal.toFixed(2)) }));
+      return;
+    }
+
     if (balance <= 0) return;
     setMetodosPago(prev => ({ ...prev, [method]: Number(balance.toFixed(2)) }));
   };
@@ -837,7 +863,9 @@ export default function VentasPage() {
                       <div key={item.id} className="p-4 flex items-center gap-4 group border-l-4 border-transparent hover:border-primary transition-all">
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-black uppercase truncate">{item.nombre}</p>
-                          <p className="text-[10px] font-black text-muted-foreground italic mt-0.5">${item.precio_unitario} C/U</p>
+                          <p className="text-[9px] font-black text-muted-foreground italic mt-0.5">
+                            Divisa: ${item.precio_unitario} | BCV: ${item.precio_bs || item.precio_unitario}
+                          </p>
                         </div>
                         <div className="flex items-center gap-3">
                           <div className="flex items-center bg-background/60 rounded-xl border border-border/50 p-1">
@@ -845,16 +873,31 @@ export default function VentasPage() {
                             <span className="w-8 text-center text-xs font-black">{item.cantidad}</span>
                             <button onClick={() => updateQuantity(item.id, 1)} className="w-6 h-6 flex items-center justify-center text-muted-foreground hover:text-primary font-black">+</button>
                           </div>
+                          
+                          {/* Precio Divisa Editable */}
                           <div className="flex flex-col items-end gap-0.5">
                              <input
                                type="number" step="0.01" min="0"
-                               title="Precio editable — útil para tubería o servicios variables"
-                               className="w-20 text-right text-sm font-black italic tracking-tighter bg-transparent border-b border-dashed border-primary/40 focus:border-primary focus:outline-none text-primary pb-0.5"
+                               title="Precio Divisa USD"
+                               className="w-16 text-right text-xs font-black italic tracking-tighter bg-transparent border-b border-dashed border-primary/40 focus:border-primary focus:outline-none text-primary pb-0.5"
                                value={item.precio_unitario}
                                onChange={e => updateCartItemPrice(item.id, parseFloat(e.target.value) || 0)}
                              />
-                             <span className="text-[8px] text-muted-foreground font-bold opacity-50">USD c/u</span>
-                           </div>
+                             <span className="text-[7px] text-primary/75 font-black uppercase opacity-60">USD C/U</span>
+                          </div>
+
+                          {/* Precio BCV Editable */}
+                          <div className="flex flex-col items-end gap-0.5">
+                             <input
+                               type="number" step="0.01" min="0"
+                               title="Precio Dólar BCV (en USD)"
+                               className="w-16 text-right text-xs font-black italic tracking-tighter bg-transparent border-b border-dashed border-blue-500/40 focus:border-blue-500 focus:outline-none text-blue-600 pb-0.5"
+                               value={item.precio_bs || item.precio_unitario}
+                               onChange={e => updateCartItemPrecioBs(item.id, parseFloat(e.target.value) || 0)}
+                             />
+                             <span className="text-[7px] text-blue-600/75 font-black uppercase opacity-60">USD BCV</span>
+                          </div>
+
                           <button onClick={() => removeFromCart(item.id)} className="text-destructive/40 hover:text-destructive transition-colors">
                             <X className="w-4 h-4" />
                           </button>
@@ -881,58 +924,88 @@ export default function VentasPage() {
 
                 <div className="grid grid-cols-2 gap-4">
                    {/* ── Cashea Panel ── */}
-                    <div className={`space-y-3 p-4 rounded-2xl border col-span-full transition-all ${isCasheaActive ? 'bg-blue-600/10 border-blue-600/40 shadow-lg shadow-blue-600/10' : 'bg-blue-600/5 border-blue-600/10'}`}>
+                    <div className={`space-y-3 p-4 rounded-2xl border col-span-full transition-all ${isCasheaActive ? 'bg-blue-600/10 dark:bg-blue-950/30 border-blue-600/40 dark:border-blue-500/30 shadow-lg shadow-blue-600/10' : 'bg-blue-600/5 dark:bg-blue-950/10 border-blue-600/10 dark:border-blue-950/20'}`}>
                        <div className="flex items-center justify-between">
-                          <Label className="text-[10px] font-black uppercase text-blue-600 flex items-center gap-2">
+                          <Label className="text-[10px] font-black uppercase text-blue-600 dark:text-blue-400 flex items-center gap-2">
                             <Smartphone className="w-4 h-4" /> Cashea
                           </Label>
                           <button
                             onClick={() => { setConIva(true); autoFillMethod('cashea'); }}
-                            className="text-[8px] font-black text-blue-600 bg-white/50 px-2 py-0.5 rounded-lg border border-blue-600/20"
+                            className="text-[8px] font-black text-blue-600 dark:text-blue-400 bg-white/50 dark:bg-slate-900/60 px-2 py-0.5 rounded-lg border border-blue-600/20 dark:border-blue-500/30"
                           >USAR CASHEA (+16% IVA)</button>
                        </div>
 
                        {/* Porcentaje de inicial: 40%, 50%, 60% */}
                        <div className="flex items-center gap-2">
-                         <span className="text-[9px] font-black text-blue-600/70 uppercase tracking-widest">Inicial:</span>
+                         <span className="text-[9px] font-black text-blue-600/70 dark:text-blue-400/70 uppercase tracking-widest">Inicial:</span>
                          {([40, 50, 60] as const).map(pct => (
                            <button
                              key={pct}
                              onClick={() => { setCasheaPct(pct); setConIva(true); if (metodosPago.cashea === 0) autoFillMethod('cashea'); }}
-                             className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all border ${casheaPct === pct && isCasheaActive ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white/40 text-blue-600 border-blue-600/20 hover:bg-blue-600/10'}`}
+                             className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all border ${casheaPct === pct && isCasheaActive ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white/40 dark:bg-slate-900/40 text-blue-600 dark:text-blue-400 border-blue-600/20 dark:border-blue-500/20 hover:bg-blue-600/10 dark:hover:bg-blue-400/10'}`}
                            >{pct}%</button>
                          ))}
                        </div>
 
-                       {/* Desglose en tiempo real */}
-                       {isCasheaActive && total > 0 && (
-                         <div className="grid grid-cols-4 gap-2 p-3 rounded-xl bg-white/60 border border-blue-600/10">
-                           <div className="col-span-4 flex justify-between text-[9px] font-black text-blue-700 border-b border-blue-600/10 pb-1.5 mb-1">
-                             <span>BASE BCV (sin IVA)</span><span>${(subtotal || 0).toFixed(2)}</span>
-                           </div>
-                           <div className="col-span-4 flex justify-between text-[9px] font-black text-orange-500">
-                             <span>IVA 16%</span><span>+${((total - subtotal) || 0).toFixed(2)}</span>
-                           </div>
-                           <div className="col-span-4 flex justify-between text-[10px] font-black text-blue-800 border-t border-blue-600/10 pt-1.5 mt-0.5">
-                             <span>TOTAL CASHEA</span><span>${(total || 0).toFixed(2)}</span>
-                           </div>
-                           <div className="col-span-4 grid grid-cols-4 gap-1.5 mt-1">
-                             <div className="col-span-2 bg-blue-600 text-white p-2 rounded-xl text-center">
-                               <p className="text-[8px] font-bold opacity-80">INICIAL ({casheaPct}%)</p>
-                               <p className="text-sm font-black">${(casheaInicial || 0).toFixed(2)}</p>
-                             </div>
-                             <div className="col-span-2 bg-blue-600/10 text-blue-700 p-2 rounded-xl">
-                               <p className="text-[8px] font-bold">RESTO (3 cuotas)</p>
-                               <p className="text-xs font-black">${(casheaResto || 0).toFixed(2)}</p>
-                               <p className="text-[8px] opacity-70">${(casheaCuota || 0).toFixed(2)}/cuota</p>
-                             </div>
-                           </div>
-                         </div>
-                       )}
+                        {isCasheaActive && (
+                          <div className="flex items-center justify-between bg-white/50 dark:bg-slate-900/50 p-1 rounded-xl border border-blue-600/10 dark:border-blue-500/20 mb-1.5">
+                            <span className="text-[9px] font-black text-blue-600/70 dark:text-blue-400/70 uppercase pl-1.5">Visualizar en:</span>
+                            <div className="flex gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setCasheaCurrency('usd')}
+                                className={`px-2.5 py-1 rounded-lg text-[9px] font-black transition-all ${casheaCurrency === 'usd' ? 'bg-blue-600 text-white shadow-sm' : 'text-blue-600 dark:text-blue-400 hover:bg-blue-600/5 dark:hover:bg-blue-400/5'}`}
+                              >
+                                DÓLARES ($)
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setCasheaCurrency('ves')}
+                                className={`px-2.5 py-1 rounded-lg text-[9px] font-black transition-all ${casheaCurrency === 'ves' ? 'bg-blue-600 text-white shadow-sm' : 'text-blue-600 dark:text-blue-400 hover:bg-blue-600/5 dark:hover:bg-blue-400/5'}`}
+                              >
+                                BOLÍVARES (Bs.)
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {isCasheaActive && total > 0 && (() => {
+                          const formatVal = (val: number) => {
+                            if (casheaCurrency === 'ves') {
+                              return `${((val || 0) * rates.bcv).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Bs.`;
+                            }
+                            return `$${(val || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                          };
+
+                          return (
+                            <div className="grid grid-cols-4 gap-2 p-3 rounded-xl bg-white/60 dark:bg-slate-900/80 border border-blue-600/10 dark:border-blue-500/25">
+                              <div className="col-span-4 flex justify-between text-[9px] font-black text-blue-700 dark:text-blue-300 border-b border-blue-600/10 dark:border-blue-500/20 pb-1.5 mb-1">
+                                <span>BASE BCV (sin IVA)</span><span>{formatVal(subtotal)}</span>
+                              </div>
+                              <div className="col-span-4 flex justify-between text-[9px] font-black text-orange-500 dark:text-orange-400">
+                                <span>IVA 16%</span><span>+{formatVal(total - subtotal)}</span>
+                              </div>
+                              <div className="col-span-4 flex justify-between text-[10px] font-black text-blue-800 dark:text-blue-200 border-t border-blue-600/10 dark:border-blue-500/20 pt-1.5 mt-0.5">
+                                <span>TOTAL CASHEA</span><span>{formatVal(total)}</span>
+                              </div>
+                              <div className="col-span-4 grid grid-cols-4 gap-1.5 mt-1">
+                                <div className="col-span-2 bg-blue-600 text-white p-2 rounded-xl text-center flex flex-col justify-center items-center">
+                                  <p className="text-[8px] font-bold opacity-80 uppercase leading-none mb-1">INICIAL ({casheaPct}%)</p>
+                                  <p className="text-xs font-black leading-none">{formatVal(casheaInicial)}</p>
+                                </div>
+                                <div className="col-span-2 bg-blue-600/10 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 p-2 rounded-xl border border-blue-600/5 dark:border-blue-500/10">
+                                  <p className="text-[8px] font-bold uppercase leading-none mb-1">RESTO (3 cuotas)</p>
+                                  <p className="text-[10px] font-black leading-none mb-0.5">{formatVal(casheaResto)}</p>
+                                  <p className="text-[8px] opacity-75 dark:opacity-85 leading-none">{formatVal(casheaCuota)}/cuota</p>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
 
                        <Input
                          placeholder="Monto $ total Cashea"
-                         className="h-10 bg-white/60 text-sm font-black border-blue-600/20 text-blue-700"
+                         className="h-10 bg-white/60 dark:bg-slate-950/60 text-sm font-black border-blue-600/20 dark:border-blue-500/20 text-blue-700 dark:text-blue-300 placeholder:text-blue-700/50 dark:placeholder:text-blue-300/40"
                          value={metodosPago.cashea || ''}
                          onChange={e => handlePaymentChange('cashea', e.target.value)}
                        />
