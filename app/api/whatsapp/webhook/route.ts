@@ -82,11 +82,37 @@ interface ExchangeRates {
 
 let ratesCache: ExchangeRates | null = null;
 let ratesCacheTime = 0;
-const RATES_TTL = 5 * 60 * 1000; // 5 minutes (more frequent updates as requested)
+const RATES_TTL = 5 * 60 * 1000; // 5 minutes
 
 async function fetchExchangeRates(): Promise<ExchangeRates | null> {
   if (ratesCache && Date.now() - ratesCacheTime < RATES_TTL) return ratesCache;
   console.log('📈 Fetching fresh exchange rates...');
+  
+  // 1. Try fetching from unified local API first
+  try {
+    const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000';
+    const ratesResp = await fetch(`${baseUrl}/api/rates?t=${Date.now()}`, { 
+      signal: AbortSignal.timeout(4000),
+      cache: 'no-store'
+    });
+    if (ratesResp.ok) {
+      const ratesData = await ratesResp.json();
+      if (ratesData.bcv && (ratesData.binance || ratesData.paralelo)) {
+        ratesCache = {
+          bcv: ratesData.bcv,
+          paralelo: ratesData.binance || ratesData.paralelo,
+          fetchedAt: new Date().toISOString()
+        };
+        ratesCacheTime = Date.now();
+        console.log(`💱 Webhook successfully retrieved rates from /api/rates: BCV ${ratesCache.bcv} | PARALELO ${ratesCache.paralelo}`);
+        return ratesCache;
+      }
+    }
+  } catch (e) {
+    console.warn('⚠️ Local API rates fetch failed, trying direct fallback endpoints:', e);
+  }
+
+  // 2. Direct APIs Fallback
   try {
     let bcvRate = 0;
     try {
@@ -97,6 +123,14 @@ async function fetchExchangeRates(): Promise<ExchangeRates | null> {
       if (respBcv.ok) {
         const bcvEntry: { promedio?: number; precio?: number } = await respBcv.json();
         if (bcvEntry) bcvRate = bcvEntry.promedio || bcvEntry.precio || 0;
+      }
+      
+      if (!bcvRate) {
+        const respPy = await fetch('https://pydolarvenezuela-api.vercel.app/api/v1/dollar?page=bcv', { signal: AbortSignal.timeout(5000) });
+        if (respPy.ok) {
+          const dataPy = await respPy.json();
+          bcvRate = dataPy.monitors?.bcv?.price || 0;
+        }
       }
     } catch (e) { console.error('Error fetching BCV:', e); }
 
@@ -132,26 +166,31 @@ async function fetchExchangeRates(): Promise<ExchangeRates | null> {
 
     if (!binanceRate) {
       try {
-        const tempResp = await fetch('https://ve.dolarapi.com/v1/dolares/paralelo', { cache: 'no-store' });
+        const tempResp = await fetch('https://ve.dolarapi.com/v1/dolares', { cache: 'no-store', signal: AbortSignal.timeout(4000) });
         if (tempResp.ok) {
-          const parEntry: any = await tempResp.json();
-          binanceRate = parseFloat(parEntry?.promedio || parEntry?.precio || 0);
+          const tempData = await tempResp.json();
+          const parEntry = tempData.find((d: any) => 
+            d.nombre?.toLowerCase().includes('paralelo') || 
+            d.nombre?.toLowerCase().includes('binance') ||
+            d.fuente === 'enparalelovzla'
+          );
+          if (parEntry) binanceRate = parEntry.promedio || parEntry.precio;
         }
       } catch (e) { console.error('Error in parallel fallback:', e); }
     }
 
     if (!bcvRate || !binanceRate) {
-      console.warn('⚠️ Could not fetch real-time rates, using previous cache');
-      return ratesCache || { bcv: 36.5, paralelo: 54.0, fetchedAt: 'HARD_FALLBACK' };
+      console.warn('⚠️ Could not fetch real-time rates, using previous cache or realistic defaults');
+      return ratesCache || { bcv: 40.0, paralelo: 46.0, fetchedAt: 'HARD_FALLBACK' };
     }
 
     ratesCache = { bcv: bcvRate, paralelo: binanceRate, fetchedAt: new Date().toISOString() };
     ratesCacheTime = Date.now();
-    console.log(`💱 TASAS: BCV ${bcvRate} | PARALELO ${binanceRate.toFixed(2)} | RATIO: ${(binanceRate/bcvRate).toFixed(4)}`);
+    console.log(`💱 TASAS ACTUALIZADAS: BCV ${bcvRate} | PARALELO ${binanceRate.toFixed(2)} | RATIO: ${(binanceRate/bcvRate).toFixed(4)}`);
     return ratesCache;
   } catch (e) {
     console.error('Error general fetchExchangeRates:', e);
-    return ratesCache;
+    return ratesCache || { bcv: 40.0, paralelo: 46.0, fetchedAt: 'HARD_FALLBACK' };
   }
 }
 
@@ -167,6 +206,11 @@ function buildRatesContext(rates: ExchangeRates | null): string {
   if (!rates) return '\nTASAS DE CAMBIO: No disponibles en este momento.';
   const multiplier = rates.paralelo / rates.bcv;
   return `
+TASAS DE CAMBIO EN TIEMPO REAL (Usa estos valores exactos):
+- Tasa Oficial BCV: ${rates.bcv.toFixed(2)} Bs/$
+- Tasa Paralela / Binance P2P: ${rates.paralelo.toFixed(2)} Bs/$
+- Multiplicador de Promoción: ${multiplier.toFixed(4)}
+
 REGLA DE CONVERSIÓN MONETARIA (CRÍTICO):
 Sigue ESTRICTAMENTE estas reglas para dar precios al cliente:
 
@@ -180,7 +224,7 @@ Sigue ESTRICTAMENTE estas reglas para dar precios al cliente:
    - Aplica para: Escapes, Resonadores, Mecánica, Frenos, Catalizador, Electrónica, Estética, etc. (Todo lo que sea de la lista general o se mencione como promo).
    - **EXCEPCIÓN CRÍTICA DE SILENCIADORES**: Para silenciadores, ignora cualquier precio de base de datos o cálculo automático, y aplica **ÚNICAMENTE** los 3 precios unificados detallados en LYCOS_KNOWLEDGE (Carro pequeño/sedán: $80 a tasa BCV; Camioneta: $80 Promo Divisa; Fabricación Especial: $100 Promo Divisa).
    - PRECIO: Para otros servicios en promoción, debes mostrar DOS montos en dólares:
-     a) "Promocion en divisas: $[MontoOriginal]"
+     a) "Promoción en divisas: $[MontoOriginal]"
      b) "Precio: $[MontoConvertido] a tasa BCV"
    - CONVERSIÓN: El MontoConvertido se calcula como: MontoOriginal * ${multiplier.toFixed(4)}.
 
@@ -200,7 +244,10 @@ Sigue ESTRICTAMENTE estas reglas para dar precios al cliente:
    - EJEMPLO CASHEA ($100 base):
      Total con IVA (16%): $116 a tasa BCV
      Si es Nivel 2 (50%): Inicial $58 a tasa BCV y 3 cuotas de $19.33 a tasa BCV.
-`;
+
+4) EXCEPCIÓN DE TASAS EN BOLÍVARES (ÚNICA EXCEPCIÓN):
+   - Si el usuario o el administrador pregunta explícitamente por el valor de la tasa actual (BCV o Binance/Paralelo), puedes responder con los montos exactos en Bolívares (ej: "La tasa oficial del BCV hoy es 36.50 Bs/$" o "La tasa Binance está en 48.00 Bs/$"). Esta es la ÚNICA excepción permitida para mencionar montos en bolívares (Bs.).
+  `;
 }
 
 // ─── Strip markdown for WhatsApp ──────────────────────────────────────────────
@@ -399,14 +446,46 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
    - Caracas (El Paraíso) -> Reconoce "PARAÍSO" como esta sede.
 4. ELIMINACIÓN (CRÍTICO): Si se te pide ELIMINAR algo, NUNCA lo hagas de inmediato. Debes preguntar: "¿Está seguro de que desea eliminar [elemento]? Responda SÍ para confirmar."
    - Solo si el historial muestra que el usuario respondió "SÍ", "CONFIRMADO" o similar a tu pregunta de confirmación, puedes imprimir el tag de DELETE.
-5. ACTUALIZACIÓN DE STOCK Y VEHÍCULOS: Puedes recibir descripciones de imágenes para actualizar el stock o registrar vehículos. 
-   - Si recibes una foto de un carro, busca la placa y el modelo en la descripción y regístralo usando VEHICULO_UPSERT.
-
+5. ACTUALIZACIÓN DE STOCK Y VEHÍCULOS: Tienes acceso directo para registrar vehículos e inventario.
 6. ELECCIÓN DE SEDE (PROACTIVO): Si el administrador pide ver inventario, registrar una venta, o cualquier acción de gestión pero NO especifica la sede, DEBES imprimir el tag [ASK_SEDE: motivo] para que el sistema le muestre los botones de selección.
    - Motivos: 'inventario', 'registro', 'servicio', 'cita'.
 
+7. COBROS PERSONALIZADOS:
+   - Si el administrador solicita registrar un servicio o venta con un precio que difiere del valor estándar en el inventario para ese servicio o repuesto, el asistente DEBE preguntarle cortésmente si desea proceder con ese precio personalizado (ej. "He detectado un precio personalizado de $X, que difiere de la tasa estándar. ¿Procedemos con este registro con precio personalizado? 😊").
+   - Si el administrador confirma o insiste en que se use ese monto (o si lo indica de forma explícita de entrada), el asistente debe generar el tag [CITA_UPSERT] con ese costo personalizado de forma exacta.
+
+8. VENTAS Y SERVICIOS MÚLTIPLES (FACTURA ÚNICA):
+   - Si el administrador desea registrar más de un servicio o repuesto para un cliente en un mismo registro/factura, el asistente debe unificar todo en una sola Cita/Ticket del taller.
+   - En el campo 'descripcion' de la etiqueta [CITA_UPSERT], enumera los distintos ítems de forma muy clara separados por " + " (ej: "Alineación + Silenciador CL40 + Cambio de Aceite").
+   - El costo_estimado debe ser la sumatoria exacta de todos los precios de los ítems cotizados. Esto permite guardar todo el control en una única factura o registro en el sistema.
+
+9. ANÁLISIS DE IMÁGENES DE VEHÍCULOS (ADMIN):
+   - Si el administrador envía una imagen de un vehículo y NO especifica el servicio o trabajo a realizar en el texto/caption (caption vacío):
+     * El asistente DEBE describir el vehículo de forma detallada y profesional (marca, modelo, color, placa y lo que se ve en la imagen).
+     * Seguidamente, DEBE preguntarle explícitamente qué acción desea realizar con el vehículo de la imagen:
+       1. REGISTRAR un nuevo servicio o cita en el sistema.
+       2. EDITAR o actualizar un servicio o cita existente.
+     * PROACTIVIDAD (OBLIGATORIO): El asistente debe revisar la sección [HISTORIAL DE CITAS] y [SERVICIOS RECIENTES] buscando citas/servicios programados para el día de HOY (según la fecha de Venezuela indicada en el prompt).
+       - Si existen servicios agendados para el día de hoy, el asistente DEBE listarlos de forma clara indicando Cliente, Vehículo y Estatus (ej: *"Para el día de hoy [Fecha] tengo registrados estos servicios: 1️⃣ [Cliente] - [Vehículo] (Estatus: [Estado])"*).
+       - A continuación, debe preguntar: *"¿Deseas editar/actualizar alguno de estos servicios existentes o prefieres registrar un nuevo servicio para el vehículo de la imagen? 🚗🔧"*
+       - Si no hay servicios registrados para hoy, debe indicar: *"No tengo servicios programados para hoy [Fecha]. ¿Deseas registrar un nuevo servicio para este vehículo o editar alguna cita de otro día?"*
+     * NUNCA intentes generar tags de UPSERT/DELETE todavía en esta primera respuesta. Espera pacientemente su decisión.
+   - Si el administrador envía una imagen de un vehículo Y TAMBIÉN especifica el servicio, precio o estatus en el texto/caption:
+     * El asistente DEBE registrar el servicio de forma inmediata imprimiendo el tag [CITA_UPSERT: ...] al final.
+     * Nombre del cliente por defecto: Debe registrarse a nombre del administrador que escribe (por ejemplo, Jorge, Juan Pablo o Leandro), a menos que en el mensaje se mencione explícitamente el nombre de otro cliente (ej. "a nombre de Carlos Perez").
+     * Si más adelante el administrador especifica el nombre del cliente real, edita la cita correspondiente usando [CITA_UPSERT: ...] actualizando el nombre_cliente al nuevo nombre.
+     * Estatus de la cita: Mapea estrictamente los estados indicados:
+       - "pendiente" o "por hacer" -> 'pendiente'
+       - "en proceso" -> 'en_proceso'
+       - "terminado", "completado" o "entregado" -> 'completada'
+       - "cancelada" -> 'cancelada'
+     * Costo/Precio: Si indica un precio, inclúyelo en la etiqueta [CITA_UPSERT: ...].
+
+10. DETALLES Y NOTAS EXTRAS:
+    - Cualquier dato extra relevante que no tenga una columna específica (como color del carro, cédula del cliente, dirección, o notas administrativas extras) debe ser obligatoriamente colocado en el campo 'descripcion' o concatenado de forma legible en el tag de registro para que nada de información se pierda en el sistema.
+
 FORMATO DE REPORTES (OBLIGATORIO):
-Cuando presentes listas de inventario, stock o reportes, es OBLIGATORIO usar este formato ESPACIADO con UNA LÍNEA EN BLANCO REAL entre cada producto. Si no lo haces, el reporte es ilegible.
+Cuando presents listas de inventario, stock o reportes, es OBLIGATORIO usar este formato ESPACIADO con UNA LÍNEA EN BLANCO REAL entre cada producto. Si no lo haces, el reporte es ilegible.
 
 📦 *TITULO DEL REPORTE* 📍
 ------------------------------------
@@ -423,7 +502,7 @@ REGLA DE TAGS (Imprimir SIEMPRE al final de tu respuesta):
    - [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca | sede_id | ubicacion | clasificacion]
    - [STOCK_DELETE: id_o_codigo | sede_id]
    - [VEHICULO_UPSERT: id_opcional | cliente_id | placa | marca | modelo | anio | sede_id]
-   - [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion | sede_id]
+   - [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion | sede_id | costo_estimado | nombre_cliente | vehiculo_info | placa | telefono]
    - [CITA_DELETE: id]
    - [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion | sede_id]
    - [ASK_SEDE: motivo] -> Úsalo si falta la sede en una orden administrativa.
@@ -603,7 +682,6 @@ export async function POST(request: NextRequest) {
         currentMediaId = imageId || null;
         currentMediaType = 'image';
         const rawCaption = message.image?.caption || '';
-        const captionStr = rawCaption ? ` - Mensaje del cliente adjunto: "${rawCaption}"` : '';
         if (imageId && WHATSAPP_TOKEN) {
           try {
             const mediaUrlResp = await fetch(`https://graph.facebook.com/v21.0/${imageId}`, {
@@ -620,30 +698,47 @@ export async function POST(request: NextRequest) {
                   const base64Data = Buffer.from(arrayBuffer).toString('base64');
                   const mimeType = mediaData.mime_type || 'image/jpeg';
 
-                  const description = await describeImage(base64Data, mimeType, ADMIN_PHONES.includes(from));
+                  const phone = from.replace(/[^0-9]/g, '');
+                  let isSenderAdmin = ADMIN_PHONES.includes(from);
+                  if (!isSenderAdmin && db) {
+                    try {
+                      const { data: adminCheck } = await db.from('usuarios')
+                        .select('id')
+                        .eq('telefono', phone)
+                        .eq('rol', 'admin')
+                        .eq('activo', true)
+                        .maybeSingle();
+                      if (adminCheck) isSenderAdmin = true;
+                    } catch (e) {}
+                  }
+
+                  const description = await describeImage(base64Data, mimeType, isSenderAdmin);
+                  const senderLabel = isSenderAdmin ? 'administrador' : 'cliente';
+                  const captionStr = rawCaption ? ` - Mensaje del ${senderLabel} adjunto: "${rawCaption}"` : '';
+
                   if (description) {
-                    messageBody = `[Imagen enviada por el cliente. Descripción automática (analízala y respondele en base a esto): ${description}]${captionStr}`;
-                    console.log(`🖼️ Imagen descrita de [${from}]: ${description.substring(0, 50)}...`);
+                    messageBody = `[Imagen enviada por el ${senderLabel}. Descripción automática (analízala y respondele en base a esto): ${description}]${captionStr}`;
+                    console.log(`🖼️ Imagen descrita de [${from}] (${senderLabel}): ${description.substring(0, 50)}...`);
                   } else {
-                    messageBody = `[Cliente envió imagen]${captionStr}`;
+                    messageBody = `[El ${senderLabel} envió una imagen]${captionStr}`;
                   }
                 } else {
                   console.error('Error descargando imagen de WhatsApp');
-                  messageBody = `[Cliente envió imagen]${captionStr}`;
+                  messageBody = `[El cliente envió una imagen]${rawCaption ? ' - Mensaje adjunto: "' + rawCaption + '"' : ''}`;
                 }
               } else {
-                messageBody = `[Cliente envió imagen]${captionStr}`;
+                messageBody = `[El cliente envió una imagen]${rawCaption ? ' - Mensaje adjunto: "' + rawCaption + '"' : ''}`;
               }
             } else {
               console.error('Error obteniendo URL de la imagen', await mediaUrlResp.text());
-              messageBody = `[Cliente envió imagen]${captionStr}`;
+              messageBody = `[El cliente envió una imagen]${rawCaption ? ' - Mensaje adjunto: "' + rawCaption + '"' : ''}`;
             }
           } catch (e) {
             console.error('Excepción al procesar imagen:', e);
-            messageBody = `[Cliente envió imagen]${captionStr}`;
+            messageBody = `[El cliente envió una imagen]${rawCaption ? ' - Mensaje adjunto: "' + rawCaption + '"' : ''}`;
           }
         } else {
-          messageBody = `[Cliente envió imagen]${captionStr}`;
+          messageBody = `[El cliente envió una imagen]${rawCaption ? ' - Mensaje adjunto: "' + rawCaption + '"' : ''}`;
         }
       } else if (message.type === 'audio') {
         const audioId = message.audio?.id;
@@ -875,6 +970,7 @@ interface ConversationContext {
   historialTecnico: string;
   estado?: string; // Mode: 'ia' or 'humano'
   isAdmin?: boolean;
+  adminName?: string;
   sede_id?: string;
 }
 
@@ -913,38 +1009,52 @@ async function loadConversationContext(
     if (adminCheck) {
       isAdmin = true;
       adminName = adminCheck.nombre;
+    } else if (ADMIN_PHONES.includes(phone)) {
+      isAdmin = true;
+      if (phone === '584123343519') adminName = 'Juan Pablo';
+      else if (phone === '584241648710') adminName = 'Jorge';
+      else if (phone === '584123193206') adminName = 'Leandro';
+      else adminName = 'Administrador';
     }
   } catch (e) { console.error('Error checking admin status:', e); }
 
   try {
-    // History (Memory clipping for admins to prevent context bloat)
-    // History (Memory clipping for admins to prevent context bloat, but enough for flow)
-    const historyLimit = isAdmin ? 20 : 50; 
+    // History with sliding window for admins (prevent context bloat but keep multi-turn context)
     const { data: msgs } = await db
       .from('mensajes_whatsapp')
       .select('body, tipo, created_at')
       .or(`from_number.eq.${from},to_number.eq.${from}`)
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
-      .limit(historyLimit);
+      .limit(50);
       
     if (msgs && msgs.length > 0) {
-      const filtered = msgs
+      let filteredMsgs = msgs;
+      if (isAdmin) {
+        // Sliding window of 10 minutes and max 4 messages for admins
+        const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+        filteredMsgs = msgs.filter(m => new Date(m.created_at) > tenMinutesAgo).slice(0, 4);
+      }
+      
+      const filtered = filteredMsgs
         .filter(m => !(m.body === currentMessage && m.tipo === 'entrante'))
-        .slice(0, isAdmin ? 4 : 48).reverse();
+        .slice(0, 48).reverse();
       historia = filtered.map(m => ({ role: m.tipo === 'entrante' ? 'user' : 'model', parts: [{ text: m.body }] }));
-      const latest = msgs[0];
-      if (latest?.created_at) {
-        // Session is NEW if last message was on a DIFFERENT calendar day in Venezuela
-        const lastMsgDate = new Date(latest.created_at);
-        const lastMsgVzla = new Date(lastMsgDate.getTime() + lastMsgDate.getTimezoneOffset() * 60000 + (-4 * 60) * 60000);
-        const lastDayStr = lastMsgVzla.toISOString().split('T')[0];
-        const todayStr = getVzlaDateString();
-        if (lastDayStr === todayStr) {
-          // Same calendar day → continue session (no greeting)
-          isNewSession = false;
+      
+      if (!isAdmin) {
+        const latest = msgs[0];
+        if (latest?.created_at) {
+          // Session is NEW if last message was on a DIFFERENT calendar day in Venezuela
+          const lastMsgDate = new Date(latest.created_at);
+          const lastMsgVzla = new Date(lastMsgDate.getTime() + lastMsgDate.getTimezoneOffset() * 60000 + (-4 * 60) * 60000);
+          const lastDayStr = lastMsgVzla.toISOString().split('T')[0];
+          const todayStr = getVzlaDateString();
+          if (lastDayStr === todayStr) {
+            isNewSession = false;
+          }
         }
-        // Different day → isNewSession stays true → bot will greet
+      } else {
+        isNewSession = false; // Admins never need introductory greeting loops
       }
     }
   } catch (e) { console.error('Error loading history:', e); }
@@ -1182,7 +1292,7 @@ async function loadConversationContext(
     }
   } catch (e) { console.error('Error loading context for admin/client:', e); }
 
-  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado, isAdmin, sede_id };
+  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado, isAdmin, adminName, sede_id };
 }
 
 // ─── AI Response ───────────────────────────────────────────────────────────────
@@ -1232,7 +1342,7 @@ async function getAIResponse(
     : `- BREVEDAD: Tus respuestas NO DEBEN EXCEDER las 3 líneas. Sé extremadamente directo.
 - NUNCA uses asteriscos (*) en tus respuestas. Texto plano siempre. Listas con - o numeradas.`;
 
-  const systemPrompt = `${knowledge}
+  let systemPrompt = `${knowledge}
 
 FECHA/HORA VENEZUELA: ${vzlaDateTime}
 HOY ES: ${dayName} ${vzlaDateStr}
@@ -1267,6 +1377,11 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
 - En 'servicio', resume lo que se hará. En 'vehículo', pon MARCA y MODELO.
 - CRITICO: NUNCA pongas estados como 'pendiente' o 'confirmada' en VEHÍCULO.
 - Si detectas el nombre del cliente por primera vez, usa: [NOMBRE: Juan Pérez]`;
+
+  if (isAdmin) {
+    systemPrompt += `\n\n⚠️ INSTRUCCIÓN DE MONEDA (ADMIN): Si el administrador especifica un precio en dólares en efectivo (divisas) o en dólares a tasa BCV, mantenlo exactamente como él lo indique. NO calcules ni agregues conversiones alternativas de forma automática a menos que te lo solicite explícitamente.`;
+  }
+
   const contents = [...ctx.historia, { role: 'user', parts: [{ text: userMessage }] }];
 
   // ── ROBUST SEQUENTIAL RETRY STRATEGY ─────────────────────────────────────────
@@ -1965,6 +2080,50 @@ async function logActivityAdmin(db: any, usuario: string, accion: string, detall
   } catch (e) { console.error('❌ Error logActivityAdmin:', e); }
 }
 
+async function handleCompletedServiceSale(db: any, citaId: string, citaObj: any) {
+  try {
+    // Treat 'completada' status as completed/delivered
+    const isCompleted = citaObj.estado === 'completada';
+    const hasPrice = citaObj.costo_estimado && citaObj.costo_estimado > 0;
+    
+    if (isCompleted && hasPrice) {
+      // 1. Check if a sale for this cita is already registered in ventas_silenciadores
+      const citaRefTag = `[CitaID: ${citaId}]`;
+      const { data: existingSale } = await db.from('ventas_silenciadores')
+        .select('id')
+        .like('notas', `%${citaRefTag}%`)
+        .limit(1)
+        .maybeSingle();
+
+      const contextStr = 'Divisas'; // Default context
+      const clienteStr = citaObj.nombre_cliente ? ` | Cliente: ${citaObj.nombre_cliente}` : '';
+      const vehiculoStr = citaObj.vehiculo_info ? ` | Vehículo: ${citaObj.vehiculo_info}` : '';
+      const notesFinal = `${citaObj.descripcion || 'Servicio taller'} [Total: $${citaObj.costo_estimado} (${contextStr})]${clienteStr}${vehiculoStr} ${citaRefTag}`.trim();
+
+      const saleData = {
+        cantidad: 1,
+        modelo: citaObj.vehiculo_info || 'Servicio',
+        notas: notesFinal,
+        fecha: new Date().toISOString(),
+        precio_registrado: citaObj.costo_estimado,
+        sede_id: citaObj.sede_id || DEFAULT_SEDE_ID
+      };
+
+      if (existingSale) {
+        // Update existing sale
+        await db.from('ventas_silenciadores').update(saleData).eq('id', existingSale.id);
+        console.log(`✅ Venta actualizada en ventas_silenciadores para la cita ${citaId}`);
+      } else {
+        // Insert new sale
+        await db.from('ventas_silenciadores').insert(saleData);
+        console.log(`✅ Venta auto-registrada en ventas_silenciadores para la cita ${citaId}`);
+      }
+    }
+  } catch (err) {
+    console.error('Error auto-registering sale for completed service:', err);
+  }
+}
+
 // ─── Send Native Contact Card ──────────────────────────────────────────────────
 async function sendContactCard(to: string, phone: string, displayName: string): Promise<void> {
   const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
@@ -2476,23 +2635,82 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             }
           }
 
-          // 3. [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion]
-          const citaUpsertMatches = cleanedAi.matchAll(/\[CITA_UPSERT:\s*([^|]*)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^\]]+)\s*\]/gi);
-          for (const m of citaUpsertMatches) {
+          // 3. [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion | sede_id | costo_estimado | nombre_cliente | vehiculo_info | placa | telefono]
+          const citaUpsertMatches = Array.from(cleanedAi.matchAll(/\[CITA_UPSERT:\s*([^\]]+)\]/gi));
+          for (const match of citaUpsertMatches) {
             try {
-              const [, id, fecha, hora, clientId, vehId, estado, desc, sedeId] = Array.from(m).map(s => s?.trim());
-              const citaObj = {
-                fecha, hora, cliente_id: clientId, vehiculo_id: vehId, estado, descripcion: desc, telefono: from,
-                sede_id: sedeId || DEFAULT_SEDE_ID
+              const parts = match[1].split('|').map(s => s.trim());
+              const id = (parts[0] && parts[0] !== 'id_opcional' && parts[0] !== 'null') ? parts[0] : null;
+              const fecha = parts[1] || getVzlaDateString();
+              const hora = parts[2] || '08:00';
+              const clientId = (parts[3] && parts[3] !== 'null' && parts[3] !== 'undefined') ? parts[3] : null;
+              const vehId = (parts[4] && parts[4] !== 'null' && parts[4] !== 'undefined') ? parts[4] : null;
+              const estado = parts[5] || 'pendiente';
+              const desc = parts[6] || '';
+              const sedeId = (parts[7] && parts[7] !== 'null' && parts[7] !== 'undefined') ? parts[7] : (ctx.sede_id || DEFAULT_SEDE_ID);
+              const costoEstimado = (parts[8] && parts[8] !== 'null') ? parseFloat(parts[8]) : null;
+              const nombreCliente = (parts[9] && parts[9] !== 'null') ? parts[9] : null;
+              const vehiculoInfo = (parts[10] && parts[10] !== 'null') ? parts[10] : null;
+              const placa = (parts[11] && parts[11] !== 'null') ? parts[11].toUpperCase().replace(/[-\s]/g, '') : null;
+              const phoneParam = (parts[12] && parts[12] !== 'null') ? parts[12] : from;
+
+              // Resolve or create Client & Vehicle if IDs are missing but details are present
+              let finalClientId = clientId;
+              let finalVehId = vehId;
+
+              // Default name to admin's name if client name not provided
+              const defaultName = ctx.adminName || 'Administrador';
+              const nameToUse = nombreCliente || defaultName;
+
+              if (!finalClientId && nameToUse) {
+                const { clientId: newCId } = await getOrCreateClientAndVehicle(
+                  db, phoneParam, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
+                );
+                finalClientId = newCId || null;
+              }
+
+              if (finalClientId && !finalVehId && (vehiculoInfo || placa)) {
+                const { vehicleId: newVId } = await getOrCreateClientAndVehicle(
+                  db, phoneParam, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
+                );
+                finalVehId = newVId || null;
+              }
+
+              const citaObj: any = {
+                fecha, 
+                hora, 
+                cliente_id: finalClientId, 
+                vehiculo_id: finalVehId, 
+                estado, 
+                descripcion: desc, 
+                telefono: phoneParam,
+                sede_id: sedeId,
+                nombre_cliente: nameToUse,
+                vehiculo_info: vehiculoInfo || null,
+                placa: placa || null
               };
-              if (id && id !== 'id_opcional' && id.length > 5 && db) {
+              if (costoEstimado !== null && !isNaN(costoEstimado)) {
+                citaObj.costo_estimado = costoEstimado;
+              }
+
+              let finalCitaId = id;
+
+              if (id && id.length > 5 && db) {
                 await db.from('citas').update(citaObj).eq('id', id);
                 console.log(`📅 ADMIN: Cita actualizada: ${id}`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Actualizó cita', `Cita ${id} actualizada vía ChatBot`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Actualizó cita', `Cita ${id} actualizada vía ChatBot`, sedeId);
               } else if (db) {
-                await db.from('citas').insert({ ...citaObj, sede_id: citaObj.sede_id || DEFAULT_SEDE_ID });
-                console.log(`📅 ADMIN: Nueva cita creada por administrador`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Agendó cita', `Cita para ${fecha} creada vía ChatBot`);
+                const { data: newCita, error: insErr } = await db.from('citas').insert(citaObj).select('id').single();
+                if (insErr) throw insErr;
+                finalCitaId = newCita?.id || null;
+                console.log(`📅 ADMIN: Nueva cita creada por administrador: ${finalCitaId}`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Agendó cita', `Cita para ${fecha} creada vía ChatBot`, sedeId);
+              }
+
+              // Trigger sale auto-registration if completed
+              if (finalCitaId && db) {
+                const fullCitaObj = { ...citaObj, id: finalCitaId };
+                await handleCompletedServiceSale(db, finalCitaId, fullCitaObj);
               }
             } catch (e) { console.error('Error in CITA_UPSERT:', e); }
           }
@@ -2507,58 +2725,70 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             } catch (e) { console.error('Error in CITA_DELETE:', e); }
           }
 
-          // 5. [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion]
-          const clientUpsertMatches = cleanedAi.matchAll(/\[CLIENTE_UPSERT:\s*([^|]*)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)?\|\s*([^\]]+)?\s*\]/gi);
-          for (const m of clientUpsertMatches) {
+          // 5. [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion | sede_id]
+          const clientUpsertMatches = Array.from(cleanedAi.matchAll(/\[CLIENTE_UPSERT:\s*([^\]]+)\]/gi));
+          for (const match of clientUpsertMatches) {
             try {
-              const [, id, name, last, tel, ced, dir, sedeId] = Array.from(m).map(s => s?.trim());
+              const parts = match[1].split('|').map(s => s.trim());
+              const id = (parts[0] && parts[0] !== 'id_opcional' && parts[0] !== 'null') ? parts[0] : null;
+              const name = parts[1];
+              const last = parts[2] || '';
+              const tel = parts[3];
+              const ced = (parts[4] && parts[4] !== 'null') ? parts[4] : null;
+              const dir = (parts[5] && parts[5] !== 'null') ? parts[5] : null;
+              const sedeId = parts[6] || ctx.sede_id || DEFAULT_SEDE_ID;
+
               const clientObj = { 
-                nombre: name, apellido: last, telefono: tel, 
-                cedula: ced || null, direccion: dir || null,
-                sede_id: sedeId || DEFAULT_SEDE_ID
+                nombre: name, 
+                apellido: last, 
+                telefono: tel, 
+                cedula: ced, 
+                direccion: dir,
+                sede_id: sedeId
               };
-              if (id && id !== 'id_opcional' && id.length > 5 && db) {
+              if (id && id.length > 5 && db) {
                 await db.from('clientes').update(clientObj).eq('id', id);
                 console.log(`👤 ADMIN: Cliente actualizado: ${id}`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Actualizó cliente', `Cliente actualizado vía ChatBot`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Actualizó cliente', `Cliente actualizado vía ChatBot`, sedeId);
               } else if (db) {
-                await db.from('clientes').insert({ ...clientObj, sede_id: clientObj.sede_id || DEFAULT_SEDE_ID });
+                await db.from('clientes').insert(clientObj);
                 console.log(`👤 ADMIN: Nuevo cliente agregado por administrador`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Creó cliente', `Cliente creado vía ChatBot`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Creó cliente', `Cliente creado vía ChatBot`, sedeId);
               }
             } catch (e) { console.error('Error in CLIENTE_UPSERT:', e); }
           }
 
           // 6. [VEHICULO_UPSERT: id_opcional | cliente_id | placa | marca | modelo | anio | sede_id]
-          const vehUpsertMatches = cleanedAi.matchAll(/\[VEHICULO_UPSERT:\s*([^|]*)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)?\|\s*([^\]]+)?\s*\]/gi);
-          for (const m of vehUpsertMatches) {
+          const vehUpsertMatches = Array.from(cleanedAi.matchAll(/\[VEHICULO_UPSERT:\s*([^\]]+)\]/gi));
+          for (const match of vehUpsertMatches) {
             try {
-              const [, id, clientId, placa, marca, modelo, anio, sedeId] = Array.from(m).map(s => s?.trim());
-              
-              // Resolve clientId if null but we have a context or can find it by phone?
-              // In Admin mode, the admin might be talking ABOUT another client.
-              // If clientId is 'null', we try to use the current conversation's client or just leave it null for now.
-              let targetClientId = clientId === 'null' ? null : clientId;
-              
-              const vehObj: any = { 
-                placa: placa.toUpperCase(), 
-                marca, modelo, 
-                anio: anio ? parseInt(anio) : null,
-                sede_id: sedeId || DEFAULT_SEDE_ID
-              };
-              if (targetClientId) vehObj.cliente_id = targetClientId;
+              const parts = match[1].split('|').map(s => s.trim());
+              const id = (parts[0] && parts[0] !== 'id_opcional' && parts[0] !== 'null') ? parts[0] : null;
+              const clientId = (parts[1] && parts[1] !== 'null' && parts[1] !== 'undefined') ? parts[1] : null;
+              const placa = parts[2]?.toUpperCase().replace(/[-\s]/g, '') || '';
+              const marca = parts[3] || 'Desconocida';
+              const modelo = parts[4] || 'Modelo';
+              const anio = (parts[5] && parts[5] !== 'null') ? parseInt(parts[5]) : null;
+              const sedeId = parts[6] || ctx.sede_id || DEFAULT_SEDE_ID;
 
-              if (id && id !== 'id_opcional' && id.length > 5) {
+              const vehObj: any = { 
+                placa, 
+                marca, 
+                modelo, 
+                anio: isNaN(Number(anio)) ? null : anio,
+                sede_id: sedeId
+              };
+              if (clientId) vehObj.cliente_id = clientId;
+
+              if (id && id.length > 5 && db) {
                 await db.from('vehiculos').update(vehObj).eq('id', id);
                 console.log(`🚗 ADMIN: Vehículo actualizado: ${id}`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Actualizó vehículo', `Vehículo ${placa} actualizado vía ChatBot`);
-              } else {
-                // If new and no clientId, try to find a client with the same phone as sender (unlikely for admin, but safe fallback)
-                // Or leave it for the admin to link later.
+                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Actualizó vehículo', `Vehículo ${placa} actualizado vía ChatBot`, sedeId);
+              } else if (db) {
                 const { data: newVeh, error: insErr } = await db.from('vehiculos').insert(vehObj).select('id').single();
                 if (insErr) throw insErr;
                 console.log(`🚗 ADMIN: Nuevo vehículo registrado: ${placa} (ID: ${newVeh?.id})`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Registró vehículo', `Vehículo ${placa} (${marca} ${modelo}) registrado vía ChatBot`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Registró vehículo', `Vehículo ${placa} (${marca} ${modelo}) registrado vía ChatBot`, sedeId);
               }
             } catch (e) { console.error('Error in VEHICULO_UPSERT:', e); }
           }
