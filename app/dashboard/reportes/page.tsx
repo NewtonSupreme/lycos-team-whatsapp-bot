@@ -2019,7 +2019,10 @@ export default function ReportesPage() {
   const [serviciosHistory, setServiciosHistory] = useState<any[]>([]);
   const [inventarioHistory, setInventarioHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'graficos' | 'ventas' | 'cierres' | 'egresos' | 'historial'>('graficos');
+  const [tab, setTab] = useState<'graficos' | 'ventas' | 'cierres' | 'egresos' | 'historial' | 'papelera'>('graficos');
+  const [papeleraVentas, setPapeleraVentas] = useState<any[]>([]);
+  const [loadingPapelera, setLoadingPapelera] = useState(false);
+  const [actioningId, setActioningId] = useState<string | null>(null);
   const [period, setPeriod] = useState('30d');
   const [showManual, setShowManual] = useState(false);
   const [showManualEgreso, setShowManualEgreso] = useState(false);
@@ -2034,6 +2037,8 @@ export default function ReportesPage() {
   const [mounted, setMounted] = useState(false);
   const [currentTasa, setCurrentTasa] = useState(518.0);
   const { currentSede } = useSedeStore();
+  const { user } = useAppStore();
+  const isAdmin = user?.rol === 'admin';
 
   useEffect(() => {
     setMounted(true);
@@ -2059,13 +2064,14 @@ export default function ReportesPage() {
     const days = period === '7d' ? 7 : period === '30d' ? 30 : period === '3m' ? 90 : 365;
     const from = new Date(Date.now() - days * 86400000).toISOString().split('T')[0];
     
-    const [vRes, sRes, eRes, cRes, invRes, serRes] = await Promise.all([
+    const [vRes, sRes, eRes, cRes, invRes, serRes, papRes] = await Promise.all([
       withSedeFilter(supabase.from('ventas_dia')).select('*').gte('fecha', from).order('fecha', { ascending: false }),
       withSedeFilter(supabase.from('ventas_silenciadores')).select('*').gte('fecha', from).order('created_at', { ascending: false }),
       withSedeFilter(supabase.from('egresos')).select('*').gte('fecha', from).order('fecha', { ascending: false }),
       withSedeFilter(supabase.from('cierres_caja')).select('*').gte('fecha', from).order('fecha', { ascending: false }),
       withSedeFilter(supabase.from('inventario')).select('*'),
-      withSedeFilter(supabase.from('servicios')).select('*').gte('created_at', from)
+      withSedeFilter(supabase.from('servicios')).select('*').gte('created_at', from),
+      withSedeFilter(supabase.from('logs_actividad')).select('*').eq('accion', 'Eliminó venta (Papelera)').order('created_at', { ascending: false })
     ]);
 
     const invData = invRes.data || [];
@@ -2208,6 +2214,7 @@ export default function ReportesPage() {
     setVentas(allVentas);
     setEgresos((eRes.data as Egreso[]) || []);
     setCierresOficiales((cRes.data as CierreOficial[])?.map((c, i) => ({ ...c, id: c.id || `c-${i}-${Date.now()}` })) || []);
+    setPapeleraVentas(papRes.data || []);
     setLoading(false);
   }, [period, currentSede]);
 
@@ -2348,11 +2355,129 @@ export default function ReportesPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm('¿Eliminar cierre?')) {
+    const sale = ventas.find(v => v.id === id);
+    if (!sale) return;
+
+    if (confirm('¿Estás seguro de eliminar esta venta? Se enviará a la papelera y podrá ser restaurada.')) {
       setDeleting(id);
-      await withSedeFilter(supabase?.from('ventas_dia')).delete().eq('id', id);
+      
+      // Guardar respaldo en logs_actividad como papelera
+      await logActivity({
+        usuario: useAppStore.getState().user?.nombre || 'Admin',
+        modulo: 'Reportes',
+        accion: 'Eliminó venta (Papelera)',
+        detalles: JSON.stringify({
+          originalRecord: sale,
+          source: sale.source,
+          deletedAt: new Date().toISOString()
+        }),
+        referencia_id: String(id),
+        referencia_tabla: sale.source === 'ia' ? 'ventas_silenciadores' : 'ventas_dia'
+      });
+
+      // Eliminar de la tabla correspondiente
+      if (sale.source === 'ia') {
+        await withSedeFilter(supabase?.from('ventas_silenciadores')).delete().eq('id', id);
+      } else {
+        await withSedeFilter(supabase?.from('ventas_dia')).delete().eq('id', id);
+      }
+
       setDeleting(null);
       loadData();
+    }
+  };
+
+  const handleRestoreVenta = async (logRecord: any) => {
+    if (!supabase) return;
+    try {
+      const payload = JSON.parse(logRecord.detalles);
+      const originalRecord = payload.originalRecord;
+      const source = payload.source;
+
+      if (!originalRecord) {
+        alert('No se encontraron los datos originales para restaurar.');
+        return;
+      }
+
+      if (confirm('¿Restaurar esta venta eliminada?')) {
+        setActioningId(logRecord.id);
+        
+        // Reconstruir registro para inserción
+        if (source === 'ia') {
+          const { error: insError } = await supabase.from('ventas_silenciadores').insert({
+            id: originalRecord.id,
+            fecha: originalRecord.fecha,
+            total_ingresos: originalRecord.total_ingresos,
+            total_servicios: originalRecord.total_servicios,
+            total_clientes: originalRecord.total_clientes,
+            notas: originalRecord.notas,
+            creado_por: originalRecord.creado_por || 'Chatbot',
+            created_at: originalRecord.created_at,
+            metodos_pago: originalRecord.metodos_pago,
+            desglose: originalRecord.desglose,
+            sede_id: logRecord.sede_id
+          });
+          if (insError) throw insError;
+        } else {
+          const { error: insError } = await supabase.from('ventas_dia').insert({
+            id: originalRecord.id,
+            fecha: originalRecord.fecha,
+            cliente: originalRecord.cliente,
+            total_ingresos: originalRecord.total_ingresos,
+            total_servicios: originalRecord.total_servicios,
+            total_clientes: originalRecord.total_clientes,
+            desglose: originalRecord.desglose,
+            notas: originalRecord.notas,
+            creado_por: originalRecord.creado_por,
+            created_at: originalRecord.created_at,
+            sede_id: logRecord.sede_id,
+            pago_usd: originalRecord.pago_usd || 0,
+            pago_ves: originalRecord.pago_ves || 0,
+            tasa_cambio: originalRecord.tasa_cambio || 0
+          });
+          if (insError) throw insError;
+        }
+
+        // Registrar auditoría de restauración
+        await logActivity({
+          usuario: useAppStore.getState().user?.nombre || 'Admin',
+          modulo: 'Reportes',
+          accion: 'Restauró venta (Papelera)',
+          detalles: `Restauró venta de ${originalRecord.cliente || 'Cons. Final'} por $${originalRecord.total_ingresos}`,
+          referencia_id: originalRecord.id,
+          referencia_tabla: source === 'ia' ? 'ventas_silenciadores' : 'ventas_dia'
+        });
+
+        // Eliminar log de eliminación
+        await supabase.from('logs_actividad').delete().eq('id', logRecord.id);
+
+        alert('Venta restaurada exitosamente.');
+        loadData();
+      }
+    } catch (err: any) {
+      console.error('Error restaurando venta:', err);
+      alert(`Error al restaurar venta: ${err.message || 'Error desconocido'}`);
+    } finally {
+      setActioningId(null);
+    }
+  };
+
+  const handlePurgeVenta = async (logId: string) => {
+    if (!supabase) return;
+    if (confirm('¿Estás seguro de eliminar PERMANENTEMENTE esta venta de la papelera? Esta acción no se puede deshacer.')) {
+      try {
+        setActioningId(logId);
+        const { error } = await supabase.from('logs_actividad').delete().eq('id', logId);
+        if (error) throw error;
+        
+        alert('Venta eliminada permanentemente de la papelera.');
+        loadData();
+      } catch (err: any) {
+        console.error('Error purgando venta:', err);
+        alert(`Error al purgar venta: ${err.message || 'Error desconocido'}`);
+      } finally {
+        setActioningId(null);
+      }
     }
   };
 
@@ -2517,6 +2642,21 @@ export default function ReportesPage() {
         >
           <Calendar className="w-4 h-4" /> Historial
         </button>
+        {isAdmin && (
+          <button
+            onClick={() => setTab('papelera')}
+            className={cn('flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex-shrink-0',
+              tab === 'papelera' ? 'bg-card shadow-sm text-red-500 font-bold border border-red-500/20' : 'text-muted-foreground hover:text-foreground hover:text-red-400'
+            )}
+          >
+            <Trash2 className="w-4 h-4 text-red-500 animate-pulse" /> Papelera
+            {papeleraVentas.length > 0 && (
+              <span className="text-[10px] bg-red-500/20 text-red-500 px-1.5 py-0.5 rounded-full font-semibold ml-1">
+                {papeleraVentas.length}
+              </span>
+            )}
+          </button>
+        )}
       </div>
 
       {/* KPI Cards */}
@@ -3211,6 +3351,137 @@ export default function ReportesPage() {
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {/* ── Tab: Papelera de Ventas ──────────────────────── */}
+      {tab === 'papelera' && isAdmin && (
+        <Card className="glass-panel border-border/50 bg-card/40 overflow-hidden shadow-xl">
+          <CardHeader className="pb-3 border-b border-border/30">
+            <CardTitle className="text-lg font-bold flex items-center gap-2 text-red-500">
+              <Trash2 className="w-5 h-5 text-red-500 animate-float" />
+              Papelera de Ventas
+            </CardTitle>
+            <CardDescription className="text-xs text-muted-foreground">
+              Ventas eliminadas en la sede actual. Las ventas pueden ser restauradas a su estado original o ser eliminadas de forma permanente.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="pt-6">
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-20 gap-2">
+                <Loader2 className="w-8 h-8 text-primary animate-spin opacity-40" />
+                <span className="text-muted-foreground animate-pulse text-xs">Cargando papelera...</span>
+              </div>
+            ) : papeleraVentas.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 gap-3 opacity-30">
+                <Trash2 className="w-12 h-12" />
+                <span className="text-xs font-medium">La papelera está vacía.</span>
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-border/30">
+                <table className="w-full text-sm text-left border-collapse">
+                  <thead className="bg-muted/50 text-[10px] uppercase tracking-widest text-muted-foreground font-bold">
+                    <tr>
+                      <th className="px-4 py-3 text-left">Eliminado</th>
+                      <th className="px-4 py-3 text-center">Por</th>
+                      <th className="px-4 py-3 text-left">Original</th>
+                      <th className="px-4 py-3 text-left">Cliente / Notas</th>
+                      <th className="px-4 py-3 text-right">Monto</th>
+                      <th className="px-4 py-3 text-right">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/30 text-xs">
+                    {papeleraVentas.map((item) => {
+                      let original = null;
+                      let source = 'pos';
+                      let deletedAt = item.created_at;
+                      try {
+                        const parsed = JSON.parse(item.detalles);
+                        original = parsed.originalRecord;
+                        source = parsed.source || 'pos';
+                        if (parsed.deletedAt) deletedAt = parsed.deletedAt;
+                      } catch (e) {
+                        console.error('Error parsing details of log:', item.id, e);
+                      }
+
+                      if (!original) return null;
+
+                      return (
+                        <tr key={item.id} className="hover:bg-white/5 transition-colors text-xs text-foreground/80 border-b border-border/20">
+                          <td className="px-4 py-4 font-mono text-[10px] whitespace-nowrap text-muted-foreground">
+                            {new Date(deletedAt).toLocaleString('es-VE', {
+                              day: '2-digit',
+                              month: 'short',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </td>
+                          <td className="px-4 py-4 text-center">
+                            <span className="px-2 py-0.5 rounded bg-red-500/10 text-red-400 font-bold uppercase text-[9px] border border-red-500/10">
+                              {item.usuario}
+                            </span>
+                          </td>
+                          <td className="px-4 py-4">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold">{original.fecha}</span>
+                              <span className={cn(
+                                "text-[9px] px-1.5 py-0.2 rounded w-fit font-bold uppercase",
+                                source === 'ia' ? "bg-primary/20 text-primary border border-primary/20" : "bg-green-500/20 text-green-400 border border-green-500/20"
+                              )}>
+                                {source === 'ia' ? 'IA / Bot' : 'Manual / POS'}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-4 max-w-[280px]">
+                            <div className="flex flex-col">
+                              <span className="font-bold text-foreground text-sm">
+                                {original.cliente || 'Consumidor Final'}
+                              </span>
+                              <span className="text-muted-foreground text-[10px] truncate max-w-[240px] italic">
+                                {original.notas || 'Sin observaciones'}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-4 text-right font-bold text-green-400 text-sm font-mono">
+                            ${Number(original.total_ingresos).toFixed(2)}
+                          </td>
+                          <td className="px-4 py-4 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={actioningId === item.id}
+                                onClick={() => handleRestoreVenta(item)}
+                                className="h-8 text-xs text-green-500 hover:text-green-400 hover:bg-green-500/10 border border-green-500/20 flex items-center gap-1 px-2.5 rounded-lg"
+                              >
+                                {actioningId === item.id ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="w-3.5 h-3.5" />
+                                )}
+                                Restaurar
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={actioningId === item.id}
+                                onClick={() => handlePurgeVenta(item.id)}
+                                className="h-8 text-xs text-red-500 hover:text-red-400 hover:bg-red-500/10 border border-red-500/20 flex items-center gap-1 px-2.5 rounded-lg"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                                Borrar Permanente
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {/* Modals con Portals */}
