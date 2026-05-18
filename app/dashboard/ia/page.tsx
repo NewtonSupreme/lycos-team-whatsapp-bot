@@ -547,7 +547,7 @@ export default function IAPage() {
             )}
             
             {messages.map(msg => {
-              const imgMatch = msg.content.match(/^!\[Foto\]\((https?:\/\/[^\s)]+)\)\n*(.*)/s);
+              const imgMatch = msg.content.match(/^!\[Foto\]\((https?:\/\/[^\s)]+)\)\n*([\s\S]*)/);
               const imageUrl = imgMatch ? imgMatch[1] : null;
               const textContent = imgMatch ? imgMatch[2] : msg.content;
               
