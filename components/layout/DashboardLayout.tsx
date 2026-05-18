@@ -116,7 +116,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <Header />
         {/* pb-20 en móvil para que el bottom nav no tape el contenido */}
         <main className="flex-1 p-4 md:p-6 pb-24 lg:pb-6">
-          <div key={currentSede?.id} className="page-enter">
+          <div key={currentSede?.id || 'default-sede'} className="page-enter">
             {children}
           </div>
         </main>

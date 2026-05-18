@@ -289,8 +289,8 @@ export default function Header() {
               <SelectValue placeholder="Sede" />
             </SelectTrigger>
             <SelectContent>
-              {availableSedes.map(sede => (
-                <SelectItem key={sede.id} value={sede.id}>{sede.nombre}</SelectItem>
+              {availableSedes.map((sede, idx) => (
+                <SelectItem key={sede.id || idx} value={sede.id}>{sede.nombre}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -336,14 +336,14 @@ export default function Header() {
                     <p className="text-xs text-muted-foreground">Sin notificaciones</p>
                   </div>
                 )}
-                {notifications.map((n) => {
+                {notifications.map((n, idx) => {
                   const typeKey = n.titulo.includes('💬') || n.titulo.includes('📱') || n.titulo.includes('🆘') ? 'whatsapp'
                     : n.titulo.includes('📅') ? 'cita'
                     : n.titulo.includes('🔧') || n.titulo.includes('🔄') ? 'servicio'
                     : 'general';
                   return (
                     <div
-                      key={n.id}
+                      key={n.id || idx}
                       className={cn(
                         'px-4 py-3 border-b border-border/20 hover:bg-white/3 transition-colors',
                         !n.leida && 'bg-primary/5'

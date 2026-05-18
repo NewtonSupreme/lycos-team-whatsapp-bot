@@ -351,6 +351,7 @@ export default function ServiciosPage() {
       <AnimatePresence>
         {selectedForDual.length > 0 && (
           <motion.div 
+            key="dual-print-bar"
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
@@ -423,9 +424,9 @@ function KanbanColumn({ estado, items, onEdit, onDelete, onTracking, onInvoice, 
         className="flex-1 space-y-4"
       >
         <AnimatePresence mode="popLayout">
-          {items.map((cita: CitaServicio) => (
+          {items.map((cita: CitaServicio, idx: number) => (
             <ServiceCard 
-              key={cita.id} 
+              key={cita.id || idx}
               cita={cita} 
               onEdit={onEdit} 
               onDelete={onDelete} 
@@ -517,6 +518,7 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onMove, is
       <AnimatePresence>
         {prevEstado && (
           <motion.button
+            key="prev-estado-btn"
             initial={{ opacity: 0, x: 10 }}
             whileHover={{ scale: 1.2, backgroundColor: '#f59e0b', color: '#000' }}
             animate={{ opacity: 1, x: 0 }}
@@ -528,6 +530,7 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onMove, is
         )}
         {nextEstado && (
           <motion.button
+            key="next-estado-btn"
             initial={{ opacity: 0, x: -10 }}
             whileHover={{ scale: 1.2, backgroundColor: '#f59e0b', color: '#000' }}
             animate={{ opacity: 1, x: 0 }}
@@ -641,11 +644,11 @@ function ListView({ items, onEdit, onDelete, onTracking, onInvoice }: any) {
           </tr>
         </thead>
         <tbody className="divide-y divide-white/5">
-          {items.map((cita: CitaServicio) => {
+          {items.map((cita: CitaServicio, idx: number) => {
             const cfg = ESTADO_CONFIG[cita.estado] || ESTADO_CONFIG.pendiente;
             const progress = cita.seguimiento?.[cita.seguimiento.length - 1]?.progreso || 0;
             return (
-              <tr key={cita.id} className="group hover:bg-white/[0.02] transition-colors">
+              <tr key={cita.id || idx} className="group hover:bg-white/[0.02] transition-colors">
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-3">
                     <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center border", cfg.bg)}>
@@ -929,9 +932,9 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
   };
 
   return (
-    <div className="fixed inset-0 z-[110] flex flex-col sm:grid sm:place-items-center bg-black/80 backdrop-blur-xl p-0 sm:p-4 overflow-y-auto">
-      <div className="bg-[#0a0a0a] border-y sm:border border-white/10 w-full max-w-xl shadow-2xl flex flex-col min-h-screen sm:min-h-0 sm:max-h-[90vh] rounded-none sm:rounded-[32px] sm:overflow-hidden">
-        <div className="p-6 sm:p-8 border-b border-white/5 flex items-center justify-between bg-gradient-to-br from-primary/10 to-transparent shrink-0">
+    <div className="fixed inset-0 z-[110] flex justify-center items-start sm:items-center bg-black/80 backdrop-blur-xl p-4 overflow-y-auto">
+      <div className="bg-[#0a0a0a] border border-white/10 w-full max-w-xl shadow-2xl flex flex-col my-auto sm:my-0 rounded-[24px] sm:rounded-[32px] overflow-hidden sm:max-h-[90vh]">
+        <div className="p-4 sm:p-6 border-b border-white/5 flex items-center justify-between bg-gradient-to-br from-primary/10 to-transparent shrink-0">
           <div className="flex items-center gap-3 sm:gap-4">
             <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-primary/20 flex items-center justify-center border border-primary/30 shrink-0">
               {cita ? <Edit3 className="w-5 h-5 sm:w-6 sm:h-6 text-primary" /> : <Plus className="w-5 h-5 sm:w-6 sm:h-6 text-primary" />}
@@ -946,12 +949,12 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           <button onClick={onClose} className="w-10 h-10 rounded-2xl hover:bg-white/5 flex items-center justify-center transition-all shrink-0"><X className="w-5 h-5 text-muted-foreground" /></button>
         </div>
 
-        <div className="p-6 sm:p-8 sm:flex-1 sm:overflow-y-auto no-scrollbar">
+        <div className="p-4 sm:p-8 flex-1 overflow-y-auto">
           <div className="grid grid-cols-2 gap-4 sm:gap-6">
             <div className="col-span-2 sm:col-span-1 space-y-2 relative">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Cliente Principal</label>
               <input 
-                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                className="w-full bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
                 placeholder="Nombre y Apellido"
                 value={formData.nombre_cliente}
                 onChange={e => {
@@ -963,10 +966,10 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
                 onFocus={() => formData.nombre_cliente.length > 1 && setShowClientResults(true)}
               />
               {showClientResults && (
-                <div className="absolute top-full left-0 right-0 z-[150] mt-2 bg-[#0a0a0a] border border-white/10 rounded-2xl shadow-2xl max-h-48 overflow-y-auto no-scrollbar py-2">
-                  {filteredClientes.map(c => (
+                <div className="absolute top-full left-0 right-0 z-[150] mt-1 bg-[#0a0a0a] border border-white/10 rounded-xl sm:rounded-2xl shadow-2xl max-h-40 overflow-y-auto no-scrollbar py-1">
+                  {filteredClientes.map((c, idx) => (
                     <button
-                      key={c.id}
+                      key={c.id || idx}
                       onClick={() => selectCliente(c)}
                       className="w-full text-left px-4 py-2 hover:bg-white/5 transition-colors group"
                     >
@@ -980,7 +983,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
             <div className="col-span-2 sm:col-span-1 space-y-2">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Teléfono Contacto</label>
               <input 
-                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                className="w-full bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
                 placeholder="0424 123 4567"
                 value={formData.telefono}
                 onChange={e => setFormData({...formData, telefono: e.target.value})}
@@ -989,7 +992,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
             <div className="col-span-2 sm:col-span-1 space-y-2">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Vehículo / Modelo</label>
               <input 
-                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                className="w-full bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
                 placeholder="Ej: Toyota Corolla 2015"
                 value={formData.vehiculo_info}
                 onChange={e => {
@@ -1001,7 +1004,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
             <div className="col-span-2 sm:col-span-1 space-y-2">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Número de Placa</label>
               <input 
-                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white font-mono uppercase focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                className="w-full bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-white font-mono uppercase focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
                 placeholder="ABC-123"
                 value={formData.placa}
                 onChange={e => setFormData({...formData, placa: e.target.value.toUpperCase()})}
@@ -1011,7 +1014,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Tipo de Servicio</label>
               <div className="flex gap-2">
                 <select 
-                  className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all appearance-none"
+                  className="flex-1 bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all appearance-none"
                   value={isCustomServicio ? 'custom' : formData.tipo_servicio}
                   onChange={e => {
                     if (e.target.value === 'custom') {
@@ -1030,7 +1033,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
                 <motion.input 
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="w-full mt-2 bg-white/5 border border-primary/30 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                  className="w-full mt-2 bg-white/5 border border-primary/30 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
                   placeholder="Escribe el tipo de servicio..."
                   value={customServicio}
                   onChange={e => setCustomServicio(e.target.value)}
@@ -1041,7 +1044,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Costo Estimado ($)</label>
               <input 
                 type="number"
-                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                className="w-full bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
                 placeholder="0.00"
                 value={formData.costo_estimado}
                 onChange={e => setFormData({...formData, costo_estimado: e.target.value})}
@@ -1082,9 +1085,9 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
               </div>
 
               <div className="relative">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Search className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 w-3.5 h-3.5 sm:w-4 sm:h-4 text-muted-foreground" />
                 <input 
-                  className="w-full bg-white/5 border border-white/10 rounded-2xl pl-12 pr-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl pl-10 pr-3 py-2.5 sm:pl-12 sm:pr-4 sm:py-3 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
                   placeholder="Buscar o agregar encargado..."
                   value={staffSearch}
                   onChange={e => {
@@ -1149,7 +1152,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
             <div className="col-span-2 space-y-2">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Descripción de la Falla / Trabajo</label>
               <textarea 
-                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all min-h-[100px] resize-none"
+                className="w-full bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all min-h-[80px] sm:min-h-[100px] resize-none"
                 placeholder="Escribe aquí los detalles técnicos..."
                 value={formData.descripcion}
                 onChange={e => setFormData({...formData, descripcion: e.target.value})}
@@ -1158,7 +1161,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           </div>
         </div>
 
-        <div className="p-6 sm:p-8 border-t border-white/5 bg-white/[0.01] flex flex-col-reverse sm:flex-row justify-end gap-3 shrink-0">
+        <div className="p-4 sm:p-6 border-t border-white/5 bg-white/[0.01] flex flex-col-reverse sm:flex-row justify-end gap-3 shrink-0">
           <button onClick={onClose} className="w-full sm:w-auto px-5 py-2.5 sm:px-6 sm:py-3 rounded-2xl text-xs sm:text-sm font-bold text-muted-foreground hover:bg-white/5 transition-all text-center">Cancelar</button>
           <Button 
             onClick={handleSave} 
@@ -1668,6 +1671,7 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
         <AnimatePresence>
           {showSelector && (
             <motion.div 
+              key="selector-overlay"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -1675,6 +1679,7 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
             >
               <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setShowSelector(false)} />
               <motion.div 
+                key="selector-modal"
                 initial={{ scale: 0.95, opacity: 0, y: 20 }}
                 animate={{ scale: 1, opacity: 1, y: 0 }}
                 exit={{ scale: 0.95, opacity: 0, y: 20 }}
@@ -1700,8 +1705,8 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
                     />
                   </div>
                   <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
-                    {citas.filter(c => c.id !== cita.id && (searchTerm === '' || `${c.nombre_cliente} ${c.vehiculo_info}`.toLowerCase().includes(searchTerm.toLowerCase()))).map(c => (
-                      <button key={c.id} onClick={() => { setSecondCita(c); setShowSelector(false); }} className="w-full flex items-center justify-between p-4 rounded-2xl bg-slate-50/50 border-2 border-transparent hover:border-slate-100 transition-all">
+                    {citas.filter(c => c.id !== cita.id && (searchTerm === '' || `${c.nombre_cliente} ${c.vehiculo_info}`.toLowerCase().includes(searchTerm.toLowerCase()))).map((c, idx) => (
+                      <button key={c.id || idx} onClick={() => { setSecondCita(c); setShowSelector(false); }} className="w-full flex items-center justify-between p-4 rounded-2xl bg-slate-50/50 border-2 border-transparent hover:border-slate-100 transition-all">
                         <div className="text-left">
                           <p className="text-xs font-black text-slate-900 uppercase italic">{c.nombre_cliente || c.clientes?.nombre}</p>
                           <p className="text-[9px] text-slate-400 font-bold mt-1 uppercase">{c.vehiculo_info || `${c.vehiculos?.marca} ${c.vehiculos?.modelo}`}</p>

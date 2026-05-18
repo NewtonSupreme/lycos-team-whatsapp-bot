@@ -622,11 +622,11 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
                 {citas
                   .filter(c => c.fecha >= new Date().toISOString().split('T')[0])
                   .sort((a,b) => (a.fecha+a.hora).localeCompare(b.fecha+b.hora))
-                  .slice(0,8).map(cita => {
+                  .slice(0,8).map((cita, idx) => {
                   const cliente = getCliente(cita.cliente_id);
                   const vehiculo = getVehiculo(cita.vehiculo_id);
                   return (
-                    <tr key={cita.id} className="hover:bg-white/2 transition-colors group">
+                    <tr key={cita.id || idx} className="hover:bg-white/2 transition-colors group">
                       <td className="p-3">
                         <div>
                           <p className="text-xs font-medium">{formatDate(cita.fecha + 'T12:00:00', { day: '2-digit', month: 'short' })}</p>
@@ -781,7 +781,7 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
                   <label className="text-xs font-medium text-muted-foreground">Cliente *</label>
                   <Select value={form.cliente_id} onValueChange={v => { setForm(p => ({ ...p, cliente_id: v, vehiculo_id: '' })); }}>
                     <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Seleccionar cliente" /></SelectTrigger>
-                    <SelectContent>{(clientes || []).map(c => <SelectItem key={c.id} value={c.id}>{c.nombre} {c.apellido}</SelectItem>)}</SelectContent>
+                    <SelectContent>{(clientes || []).map((c, idx) => <SelectItem key={c.id || idx} value={c.id}>{c.nombre} {c.apellido}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-1.5">
@@ -793,8 +793,8 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
                   >
                     <SelectTrigger className="h-10 text-sm"><SelectValue placeholder={form.cliente_id ? "Seleccionar vehículo" : "Primero selecciona un cliente"} /></SelectTrigger>
                     <SelectContent>
-                      {(vehiculos || []).filter(v => v.cliente_id === form.cliente_id).map(v => (
-                        <SelectItem key={v.id} value={v.id}>{v.marca} {v.modelo} ({v.placa})</SelectItem>
+                      {(vehiculos || []).filter(v => v.cliente_id === form.cliente_id).map((v, idx) => (
+                        <SelectItem key={v.id || idx} value={v.id}>{v.marca} {v.modelo} ({v.placa})</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
