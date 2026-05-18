@@ -842,6 +842,8 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           const names = formData.vehiculo_info.trim().split(' ');
           const marca = names[0];
           const modelo = names.slice(1).join(' ') || '—';
+          const yearMatch = formData.vehiculo_info.match(/\b(19\d\d|20\d\d)\b/);
+          const anio = yearMatch ? parseInt(yearMatch[0]) : 2025;
 
           const { data: newVehiculo, error: vehErr } = await withSedeFilter(supabase.from('vehiculos'))
             .insert(withSedeInsert({
@@ -849,6 +851,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
               marca,
               modelo,
               placa: formData.placa,
+              anio,
               estado: 'en_servicio'
             }))
             .select()
@@ -926,241 +929,243 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
   };
 
   return (
-    <div className="fixed inset-0 z-[110] grid place-items-center bg-black/80 backdrop-blur-xl p-4">
-      <div className="bg-[#0a0a0a] border border-white/10 rounded-[32px] w-full max-w-xl shadow-2xl flex flex-col overflow-hidden">
-        <div className="p-8 border-b border-white/5 flex items-center justify-between bg-gradient-to-br from-primary/10 to-transparent">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-primary/20 flex items-center justify-center border border-primary/30">
-              {cita ? <Edit3 className="w-6 h-6 text-primary" /> : <Plus className="w-6 h-6 text-primary" />}
+    <div className="fixed inset-0 z-[110] grid place-items-center bg-black/80 backdrop-blur-xl p-0 sm:p-4 overflow-y-auto">
+      <div className="bg-[#0a0a0a] border border-white/10 w-full max-w-xl shadow-2xl flex flex-col overflow-hidden h-full sm:h-auto max-h-none sm:max-h-[90vh] rounded-none sm:rounded-[32px]">
+        <div className="p-6 sm:p-8 border-b border-white/5 flex items-center justify-between bg-gradient-to-br from-primary/10 to-transparent shrink-0">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-primary/20 flex items-center justify-center border border-primary/30 shrink-0">
+              {cita ? <Edit3 className="w-5 h-5 sm:w-6 sm:h-6 text-primary" /> : <Plus className="w-5 h-5 sm:w-6 sm:h-6 text-primary" />}
             </div>
             <div>
-              <h3 className="text-xl font-black text-white tracking-tight" style={{ fontFamily: 'Syne, sans-serif' }}>
+              <h3 className="text-lg sm:text-xl font-black text-white tracking-tight" style={{ fontFamily: 'Syne, sans-serif' }}>
                 {cita ? 'Editar Orden de Servicio' : 'Nueva Orden de Servicio'}
               </h3>
-              <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest mt-0.5">Gestión de Taller Lycos Team</p>
+              <p className="text-[9px] sm:text-[10px] text-muted-foreground font-bold uppercase tracking-widest mt-0.5">Gestión de Taller Lycos Team</p>
             </div>
           </div>
-          <button onClick={onClose} className="w-10 h-10 rounded-2xl hover:bg-white/5 flex items-center justify-center transition-all"><X className="w-5 h-5 text-muted-foreground" /></button>
+          <button onClick={onClose} className="w-10 h-10 rounded-2xl hover:bg-white/5 flex items-center justify-center transition-all shrink-0"><X className="w-5 h-5 text-muted-foreground" /></button>
         </div>
 
-        <div className="p-8 grid grid-cols-2 gap-6">
-          <div className="col-span-2 sm:col-span-1 space-y-2 relative">
-            <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Cliente Principal</label>
-            <input 
-              className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
-              placeholder="Nombre y Apellido"
-              value={formData.nombre_cliente}
-              onChange={e => {
-                setFormData({...formData, nombre_cliente: e.target.value});
-                setSelectedClienteId(null); // Reset if typed manually
-                setSelectedVehiculoId(null);
-              }}
-              onBlur={() => setTimeout(() => setShowClientResults(false), 200)}
-              onFocus={() => formData.nombre_cliente.length > 1 && setShowClientResults(true)}
-            />
-            {showClientResults && (
-              <div className="absolute top-full left-0 right-0 z-[150] mt-2 bg-[#0a0a0a] border border-white/10 rounded-2xl shadow-2xl max-h-48 overflow-y-auto no-scrollbar py-2">
-                {filteredClientes.map(c => (
-                  <button
-                    key={c.id}
-                    onClick={() => selectCliente(c)}
-                    className="w-full text-left px-4 py-2 hover:bg-white/5 transition-colors group"
-                  >
-                    <p className="text-sm font-bold text-white group-hover:text-primary transition-colors">{c.nombre} {c.apellido}</p>
-                    <p className="text-[10px] text-muted-foreground">{c.telefono}</p>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="col-span-2 sm:col-span-1 space-y-2">
-            <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Teléfono Contacto</label>
-            <input 
-              className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
-              placeholder="0424 123 4567"
-              value={formData.telefono}
-              onChange={e => setFormData({...formData, telefono: e.target.value})}
-            />
-          </div>
-          <div className="col-span-2 sm:col-span-1 space-y-2">
-            <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Vehículo / Modelo</label>
-            <input 
-              className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
-              placeholder="Ej: Toyota Corolla 2015"
-              value={formData.vehiculo_info}
-              onChange={e => {
-                setFormData({...formData, vehiculo_info: e.target.value});
-                setSelectedVehiculoId(null); // Reset if typed manually
-              }}
-            />
-          </div>
-          <div className="col-span-2 sm:col-span-1 space-y-2">
-            <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Número de Placa</label>
-            <input 
-              className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white font-mono uppercase focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
-              placeholder="ABC-123"
-              value={formData.placa}
-              onChange={e => setFormData({...formData, placa: e.target.value.toUpperCase()})}
-            />
-          </div>
-          <div className="col-span-2 sm:col-span-1 space-y-2">
-            <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Tipo de Servicio</label>
-            <div className="flex gap-2">
-              <select 
-                className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all appearance-none"
-                value={isCustomServicio ? 'custom' : formData.tipo_servicio}
-                onChange={e => {
-                  if (e.target.value === 'custom') {
-                    setIsCustomServicio(true);
-                  } else {
-                    setIsCustomServicio(false);
-                    setFormData({...formData, tipo_servicio: e.target.value});
-                  }
-                }}
-              >
-                {Object.entries(SERVICIO_LABELS).map(([k,v]) => <option key={k} value={k} className="bg-[#0a0a0a]">{v}</option>)}
-                <option value="custom" className="bg-[#0a0a0a] font-bold text-primary">+ Personalizado...</option>
-              </select>
-            </div>
-            {isCustomServicio && (
-              <motion.input 
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="w-full mt-2 bg-white/5 border border-primary/30 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
-                placeholder="Escribe el tipo de servicio..."
-                value={customServicio}
-                onChange={e => setCustomServicio(e.target.value)}
-              />
-            )}
-          </div>
-          <div className="col-span-2 sm:col-span-1 space-y-2">
-            <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Costo Estimado ($)</label>
-            <input 
-              type="number"
-              className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
-              placeholder="0.00"
-              value={formData.costo_estimado}
-              onChange={e => setFormData({...formData, costo_estimado: e.target.value})}
-            />
-          </div>
-
-          <div className="col-span-2 space-y-3">
-            <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Personal a Cargo (Jefe / Mecánicos)</label>
-            
-            {/* Tag List */}
-            <div className="flex flex-wrap gap-2 mb-2">
-              {encargados.map((e, idx) => (
-                <div key={idx} className="flex items-center gap-2 bg-white/5 border border-white/10 pl-3 pr-1 py-1 rounded-xl group animate-in zoom-in-95 duration-200">
-                  <span className="text-[11px] font-bold text-white">{e.nombre}</span>
-                  <button 
-                    type="button"
-                    onClick={() => {
-                      const next = [...encargados];
-                      next[idx].rol = e.rol === 'jefe_taller' ? 'mecanico' : 'jefe_taller';
-                      setEncargados(next);
-                    }}
-                    className={cn(
-                      "px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-tighter transition-all",
-                      e.rol === 'jefe_taller' ? "bg-primary text-primary-foreground" : "bg-blue-500/20 text-blue-400"
-                    )}
-                  >
-                    {e.rol === 'jefe_taller' ? 'Jefe' : 'Mecánico'}
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => setEncargados(encargados.filter((_, i) => i !== idx))}
-                    className="w-6 h-6 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-400 flex items-center justify-center"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            <div className="relative">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <div className="flex-1 overflow-y-auto p-6 sm:p-8 no-scrollbar">
+          <div className="grid grid-cols-2 gap-4 sm:gap-6">
+            <div className="col-span-2 sm:col-span-1 space-y-2 relative">
+              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Cliente Principal</label>
               <input 
-                className="w-full bg-white/5 border border-white/10 rounded-2xl pl-12 pr-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
-                placeholder="Buscar o agregar encargado..."
-                value={staffSearch}
+                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                placeholder="Nombre y Apellido"
+                value={formData.nombre_cliente}
                 onChange={e => {
-                  setStaffSearch(e.target.value);
-                  setShowStaffResults(true);
+                  setFormData({...formData, nombre_cliente: e.target.value});
+                  setSelectedClienteId(null); // Reset if typed manually
+                  setSelectedVehiculoId(null);
                 }}
-                onFocus={() => setShowStaffResults(true)}
-                onBlur={() => setTimeout(() => setShowStaffResults(false), 200)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && staffSearch.trim()) {
-                    e.preventDefault();
-                    if (!encargados.some(enc => enc.nombre === staffSearch.trim())) {
-                      setEncargados([...encargados, { nombre: staffSearch.trim(), rol: 'mecanico' }]);
-                    }
-                    setStaffSearch('');
-                  }
-                }}
+                onBlur={() => setTimeout(() => setShowClientResults(false), 200)}
+                onFocus={() => formData.nombre_cliente.length > 1 && setShowClientResults(true)}
               />
-              {showStaffResults && (
+              {showClientResults && (
                 <div className="absolute top-full left-0 right-0 z-[150] mt-2 bg-[#0a0a0a] border border-white/10 rounded-2xl shadow-2xl max-h-48 overflow-y-auto no-scrollbar py-2">
-                  {staffSearch && !staffSuggestions.some(s => s.nombre.toLowerCase().includes(staffSearch.toLowerCase())) && (
+                  {filteredClientes.map(c => (
                     <button
-                      type="button"
-                      onClick={() => {
-                        setEncargados([...encargados, { nombre: staffSearch, rol: 'mecanico' }]);
-                        setStaffSearch('');
-                      }}
-                      className="w-full text-left px-4 py-3 hover:bg-white/5 transition-colors group flex items-center gap-3"
+                      key={c.id}
+                      onClick={() => selectCliente(c)}
+                      className="w-full text-left px-4 py-2 hover:bg-white/5 transition-colors group"
                     >
-                      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                        <Plus className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <p className="text-xs font-bold text-white uppercase italic">Agregar "{staffSearch}"</p>
-                        <p className="text-[10px] text-muted-foreground">Nuevo personal de taller</p>
-                      </div>
+                      <p className="text-sm font-bold text-white group-hover:text-primary transition-colors">{c.nombre} {c.apellido}</p>
+                      <p className="text-[10px] text-muted-foreground">{c.telefono}</p>
                     </button>
-                  )}
-                  {staffSuggestions
-                    .filter(s => s.nombre.toLowerCase().includes(staffSearch.toLowerCase()) && !encargados.some(e => e.nombre === s.nombre))
-                    .map((s, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => {
-                          setEncargados([...encargados, { nombre: s.nombre, rol: (s.rol === 'jefe_taller' ? 'jefe_taller' : 'mecanico') }]);
-                          setStaffSearch('');
-                        }}
-                        className="w-full text-left px-4 py-2 hover:bg-white/5 transition-colors group flex items-center justify-between"
-                      >
-                        <div>
-                          <p className="text-sm font-bold text-white group-hover:text-primary transition-colors">{s.nombre}</p>
-                          <p className="text-[10px] text-muted-foreground uppercase">{s.rol}</p>
-                        </div>
-                        <Plus className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                      </button>
-                    ))}
+                  ))}
                 </div>
               )}
             </div>
-          </div>
-          <div className="col-span-2 space-y-2">
-            <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Descripción de la Falla / Trabajo</label>
-            <textarea 
-              className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all min-h-[100px] resize-none"
-              placeholder="Escribe aquí los detalles técnicos..."
-              value={formData.descripcion}
-              onChange={e => setFormData({...formData, descripcion: e.target.value})}
-            />
+            <div className="col-span-2 sm:col-span-1 space-y-2">
+              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Teléfono Contacto</label>
+              <input 
+                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                placeholder="0424 123 4567"
+                value={formData.telefono}
+                onChange={e => setFormData({...formData, telefono: e.target.value})}
+              />
+            </div>
+            <div className="col-span-2 sm:col-span-1 space-y-2">
+              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Vehículo / Modelo</label>
+              <input 
+                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                placeholder="Ej: Toyota Corolla 2015"
+                value={formData.vehiculo_info}
+                onChange={e => {
+                  setFormData({...formData, vehiculo_info: e.target.value});
+                  setSelectedVehiculoId(null); // Reset if typed manually
+                }}
+              />
+            </div>
+            <div className="col-span-2 sm:col-span-1 space-y-2">
+              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Número de Placa</label>
+              <input 
+                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white font-mono uppercase focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                placeholder="ABC-123"
+                value={formData.placa}
+                onChange={e => setFormData({...formData, placa: e.target.value.toUpperCase()})}
+              />
+            </div>
+            <div className="col-span-2 sm:col-span-1 space-y-2">
+              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Tipo de Servicio</label>
+              <div className="flex gap-2">
+                <select 
+                  className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all appearance-none"
+                  value={isCustomServicio ? 'custom' : formData.tipo_servicio}
+                  onChange={e => {
+                    if (e.target.value === 'custom') {
+                      setIsCustomServicio(true);
+                    } else {
+                      setIsCustomServicio(false);
+                      setFormData({...formData, tipo_servicio: e.target.value});
+                    }
+                  }}
+                >
+                  {Object.entries(SERVICIO_LABELS).map(([k,v]) => <option key={k} value={k} className="bg-[#0a0a0a]">{v}</option>)}
+                  <option value="custom" className="bg-[#0a0a0a] font-bold text-primary">+ Personalizado...</option>
+                </select>
+              </div>
+              {isCustomServicio && (
+                <motion.input 
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="w-full mt-2 bg-white/5 border border-primary/30 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                  placeholder="Escribe el tipo de servicio..."
+                  value={customServicio}
+                  onChange={e => setCustomServicio(e.target.value)}
+                />
+              )}
+            </div>
+            <div className="col-span-2 sm:col-span-1 space-y-2">
+              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Costo Estimado ($)</label>
+              <input 
+                type="number"
+                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                placeholder="0.00"
+                value={formData.costo_estimado}
+                onChange={e => setFormData({...formData, costo_estimado: e.target.value})}
+              />
+            </div>
+
+            <div className="col-span-2 space-y-3">
+              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Personal a Cargo (Jefe / Mecánicos)</label>
+              
+              {/* Tag List */}
+              <div className="flex flex-wrap gap-2 mb-2">
+                {encargados.map((e, idx) => (
+                  <div key={idx} className="flex items-center gap-2 bg-white/5 border border-white/10 pl-3 pr-1 py-1 rounded-xl group animate-in zoom-in-95 duration-200">
+                    <span className="text-[11px] font-bold text-white">{e.nombre}</span>
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        const next = [...encargados];
+                        next[idx].rol = e.rol === 'jefe_taller' ? 'mecanico' : 'jefe_taller';
+                        setEncargados(next);
+                      }}
+                      className={cn(
+                        "px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-tighter transition-all",
+                        e.rol === 'jefe_taller' ? "bg-primary text-primary-foreground" : "bg-blue-500/20 text-blue-400"
+                      )}
+                    >
+                      {e.rol === 'jefe_taller' ? 'Jefe' : 'Mecánico'}
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => setEncargados(encargados.filter((_, i) => i !== idx))}
+                      className="w-6 h-6 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-400 flex items-center justify-center"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="relative">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input 
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl pl-12 pr-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                  placeholder="Buscar o agregar encargado..."
+                  value={staffSearch}
+                  onChange={e => {
+                    setStaffSearch(e.target.value);
+                    setShowStaffResults(true);
+                  }}
+                  onFocus={() => setShowStaffResults(true)}
+                  onBlur={() => setTimeout(() => setShowStaffResults(false), 200)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && staffSearch.trim()) {
+                      e.preventDefault();
+                      if (!encargados.some(enc => enc.nombre === staffSearch.trim())) {
+                        setEncargados([...encargados, { nombre: staffSearch.trim(), rol: 'mecanico' }]);
+                      }
+                      setStaffSearch('');
+                    }
+                  }}
+                />
+                {showStaffResults && (
+                  <div className="absolute top-full left-0 right-0 z-[150] mt-2 bg-[#0a0a0a] border border-white/10 rounded-2xl shadow-2xl max-h-48 overflow-y-auto no-scrollbar py-2">
+                    {staffSearch && !staffSuggestions.some(s => s.nombre.toLowerCase().includes(staffSearch.toLowerCase())) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEncargados([...encargados, { nombre: staffSearch, rol: 'mecanico' }]);
+                          setStaffSearch('');
+                        }}
+                        className="w-full text-left px-4 py-3 hover:bg-white/5 transition-colors group flex items-center gap-3"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                          <Plus className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-white uppercase italic">Agregar "{staffSearch}"</p>
+                          <p className="text-[10px] text-muted-foreground">Nuevo personal de taller</p>
+                        </div>
+                      </button>
+                    )}
+                    {staffSuggestions
+                      .filter(s => s.nombre.toLowerCase().includes(staffSearch.toLowerCase()) && !encargados.some(e => e.nombre === s.nombre))
+                      .map((s, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            setEncargados([...encargados, { nombre: s.nombre, rol: (s.rol === 'jefe_taller' ? 'jefe_taller' : 'mecanico') }]);
+                            setStaffSearch('');
+                          }}
+                          className="w-full text-left px-4 py-2 hover:bg-white/5 transition-colors group flex items-center justify-between"
+                        >
+                          <div>
+                            <p className="text-sm font-bold text-white group-hover:text-primary transition-colors">{s.nombre}</p>
+                            <p className="text-[10px] text-muted-foreground uppercase">{s.rol}</p>
+                          </div>
+                          <Plus className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </button>
+                      ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="col-span-2 space-y-2">
+              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Descripción de la Falla / Trabajo</label>
+              <textarea 
+                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all min-h-[100px] resize-none"
+                placeholder="Escribe aquí los detalles técnicos..."
+                value={formData.descripcion}
+                onChange={e => setFormData({...formData, descripcion: e.target.value})}
+              />
+            </div>
           </div>
         </div>
 
-        <div className="p-8 border-t border-white/5 bg-white/[0.01] flex justify-end gap-3">
-          <button onClick={onClose} className="px-6 py-3 rounded-2xl text-sm font-bold text-muted-foreground hover:bg-white/5 transition-all">Cancelar</button>
+        <div className="p-6 sm:p-8 border-t border-white/5 bg-white/[0.01] flex justify-end gap-3 shrink-0">
+          <button onClick={onClose} className="px-5 py-2.5 sm:px-6 sm:py-3 rounded-2xl text-xs sm:text-sm font-bold text-muted-foreground hover:bg-white/5 transition-all">Cancelar</button>
           <Button 
             onClick={handleSave} 
             disabled={isSaving} 
-            className="rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground font-black px-10 h-12 shadow-2xl shadow-primary/20 gap-2"
+            className="rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground font-black px-6 sm:px-10 h-10 sm:h-12 text-xs sm:text-sm shadow-2xl shadow-primary/20 gap-2"
           >
-            {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <BadgeCheck className="w-5 h-5" />}
+            {isSaving ? <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" /> : <BadgeCheck className="w-4 h-4 sm:w-5 sm:h-5" />}
             {cita ? 'Actualizar Orden' : 'Crear Orden Ahora'}
           </Button>
         </div>
