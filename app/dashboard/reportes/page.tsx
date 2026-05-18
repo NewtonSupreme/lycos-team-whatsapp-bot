@@ -1353,75 +1353,225 @@ function ScanModal({ onClose, onConfirm, modo }: {
               </div>
 
               {/* Datos extraídos editables - Dinámico según modo */}
-              {modo === 'cierre' ? (
-                <>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5"><label className="text-xs text-muted-foreground">Fecha</label><input type="date" value={scanned.fecha} onChange={e => setScanned({...scanned, fecha: e.target.value})} className="w-full px-3 py-2 rounded border border-border/50 bg-background text-sm font-semibold" /></div>
-                    <div className="space-y-1.5"><label className="text-xs text-muted-foreground">Cliente</label><input type="text" placeholder="Nombre del cliente" value={scanned.cliente_nombre || ''} onChange={e => setScanned({...scanned, cliente_nombre: e.target.value})} className="w-full px-3 py-2 rounded border border-border/50 bg-background text-sm" /></div>
-                    <div className="space-y-1.5"><label className="text-xs text-muted-foreground">Total Ingresos ($)</label><input type="number" step="0.01" value={scanned.total_ingresos} onChange={e => setScanned({...scanned, total_ingresos: Number(e.target.value)})} className="w-full px-3 py-2 rounded border border-border/50 bg-background text-sm font-bold text-green-400" /></div>
-                    <div className="space-y-1.5"><label className="text-xs text-muted-foreground">Servicios</label><input type="number" value={scanned.total_servicios} onChange={e => setScanned({...scanned, total_servicios: Number(e.target.value)})} className="w-full px-3 py-2 rounded border border-border/50 bg-background text-sm" /></div>
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Fecha</label>
+                    <input
+                      type="date"
+                      value={scanned.fecha || ''}
+                      onChange={e => setScanned({ ...scanned, fecha: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl border border-border bg-background text-sm font-semibold focus:ring-1 focus:ring-primary outline-none"
+                    />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs text-muted-foreground flex justify-between">
-                      <span>Desglose Resumido ({scanned.items?.length || 0})</span>
-                    </label>
-                    <div className="p-3 bg-background border border-border/50 rounded-lg text-xs space-y-1 max-h-[150px] overflow-y-auto">
-                      {scanned.items?.map((it, i) => (
-                        <div key={i} className="flex justify-between border-b border-border/30 pb-1 last:border-0 last:pb-0">
-                          <span className="text-muted-foreground">{it.cantidad}x {it.descripcion}</span>
-                          <span className="font-semibold">${it.total}</span>
+                    <label className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Cliente</label>
+                    <input
+                      type="text"
+                      placeholder="Nombre del cliente"
+                      value={scanned.cliente_nombre || ''}
+                      onChange={e => setScanned({ ...scanned, cliente_nombre: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl border border-border bg-background text-sm focus:ring-1 focus:ring-primary outline-none"
+                    />
+                  </div>
+                  {modo === 'ticket' && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Vehículo del Cliente</label>
+                      <input
+                        type="text"
+                        placeholder="Ej: Toyota Corolla"
+                        value={scanned.cliente_vehiculo || ''}
+                        onChange={e => setScanned({ ...scanned, cliente_vehiculo: e.target.value })}
+                        className="w-full px-3 py-2 rounded-xl border border-border bg-background text-sm focus:ring-1 focus:ring-primary outline-none"
+                      />
+                    </div>
+                  )}
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Total Ingresos ($)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={scanned.total_ingresos || 0}
+                      onChange={e => setScanned({ ...scanned, total_ingresos: Number(e.target.value) })}
+                      className="w-full px-3 py-2 rounded-xl border border-border bg-background text-sm font-bold text-green-400 focus:ring-1 focus:ring-primary outline-none"
+                    />
+                  </div>
+                  {modo === 'cierre' && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Servicios Realizados</label>
+                      <input
+                        type="number"
+                        value={scanned.total_servicios || 0}
+                        onChange={e => setScanned({ ...scanned, total_servicios: Number(e.target.value) })}
+                        className="w-full px-3 py-2 rounded-xl border border-border bg-background text-sm focus:ring-1 focus:ring-primary outline-none"
+                      />
+                    </div>
+                  )}
+                  {modo === 'ticket' && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Método de Pago</label>
+                      <input
+                        type="text"
+                        placeholder="Zelle, Efectivo, Pago Móvil..."
+                        value={scanned.metodo_pago || ''}
+                        onChange={e => setScanned({ ...scanned, metodo_pago: e.target.value })}
+                        className="w-full px-3 py-2 rounded-xl border border-border bg-background text-sm focus:ring-1 focus:ring-primary outline-none"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2 border-t border-border/30 pt-3">
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex justify-between items-center">
+                    <span>Líneas de Detalle / Desglose</span>
+                    <span className="text-[10px] text-muted-foreground">({(scanned.items?.length || scanned.clientes?.length || 0)} ítems)</span>
+                  </label>
+                  
+                  <div className="p-3 bg-muted/20 border border-border/50 rounded-xl text-xs space-y-2.5 max-h-[220px] overflow-y-auto custom-scrollbar">
+                    {scanned.items && scanned.items.length > 0 ? (
+                      scanned.items.map((it, i) => (
+                        <div key={i} className="flex gap-2 items-center bg-background/50 p-2 rounded-lg border border-border/30 hover:border-violet-500/20 transition-all">
+                          <div className="w-12">
+                            <label className="text-[8px] text-muted-foreground uppercase font-bold block mb-0.5">Cant</label>
+                            <input
+                              type="number"
+                              value={it.cantidad}
+                              onChange={e => {
+                                const newItems = [...(scanned.items || [])];
+                                const cant = Number(e.target.value);
+                                newItems[i] = {
+                                  ...newItems[i],
+                                  cantidad: cant,
+                                  total: cant * newItems[i].precio_unitario
+                                };
+                                const newTotal = newItems.reduce((acc, curr) => acc + curr.total, 0);
+                                setScanned({ ...scanned, items: newItems, total_ingresos: newTotal });
+                              }}
+                              className="w-full px-1.5 py-1 bg-background border border-border rounded text-center text-foreground font-semibold"
+                            />
+                          </div>
+                          <div className="flex-1">
+                            <label className="text-[8px] text-muted-foreground uppercase font-bold block mb-0.5">Descripción del Servicio / Producto</label>
+                            <input
+                              type="text"
+                              value={it.descripcion}
+                              onChange={e => {
+                                const newItems = [...(scanned.items || [])];
+                                newItems[i] = { ...newItems[i], descripcion: e.target.value };
+                                setScanned({ ...scanned, items: newItems });
+                              }}
+                              className="w-full px-2 py-1 bg-background border border-border rounded text-foreground text-[11px]"
+                              placeholder="Ej: Silenciador de Aveo"
+                            />
+                          </div>
+                          <div className="w-20">
+                            <label className="text-[8px] text-muted-foreground uppercase font-bold block mb-0.5 text-right">P. Unitario</label>
+                            <div className="flex items-center gap-1">
+                              <span className="text-muted-foreground text-[9px]">$</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={it.precio_unitario}
+                                onChange={e => {
+                                  const newItems = [...(scanned.items || [])];
+                                  const pu = Number(e.target.value);
+                                  newItems[i] = {
+                                    ...newItems[i],
+                                    precio_unitario: pu,
+                                    total: newItems[i].cantidad * pu
+                                  };
+                                  const newTotal = newItems.reduce((acc, curr) => acc + curr.total, 0);
+                                  setScanned({ ...scanned, items: newItems, total_ingresos: newTotal });
+                                }}
+                                className="w-full px-1.5 py-1 bg-background border border-border rounded text-right text-foreground font-semibold"
+                              />
+                            </div>
+                          </div>
+                          <div className="w-20 text-right pr-1">
+                            <label className="text-[8px] text-muted-foreground uppercase font-bold block mb-0.5">Subtotal</label>
+                            <span className="text-sm font-bold text-green-400">${(it.total || 0).toFixed(2)}</span>
+                          </div>
                         </div>
-                      ))}
-                      {!scanned.items?.length && <span className="text-muted-foreground italic">No se detectaron items individuales</span>}
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="bg-white text-black p-4 rounded shadow font-mono text-xs border border-gray-200">
-                  <div className="text-center border-b border-dashed border-gray-400 pb-2 mb-2">
-                    <h3 className="font-bold text-sm">{scanned.empresa_nombre || 'LYCOS TEAM CA'}</h3>
-                    <p>RIF: {scanned.empresa_rif}</p>
-                    <p>Factura N° {scanned.nro_factura}</p>
-                    <p>{scanned.fecha} {scanned.hora}</p>
-                  </div>
-                  <div className="mb-2">
-                    <p>Cliente: {scanned.cliente_nombre}</p>
-                    <p>Vehículo: {scanned.cliente_vehiculo}</p>
-                  </div>
-                  <div className="border-b border-dashed border-gray-400 pb-2 mb-2">
-                    <div className="grid grid-cols-12 font-bold mb-1">
-                      <span className="col-span-2">CANT</span>
-                      <span className="col-span-6">DESCRIPCIÓN</span>
-                      <span className="col-span-2 text-right">P.U</span>
-                      <span className="col-span-2 text-right">TOT</span>
-                    </div>
-                    {scanned.items?.map((it, i) => (
-                      <div key={i} className="grid grid-cols-12 mb-1">
-                        <span className="col-span-2">{it.cantidad}</span>
-                        <span className="col-span-6 line-clamp-1">{it.descripcion}</span>
-                        <span className="col-span-2 text-right">{it.precio_unitario}</span>
-                        <span className="col-span-2 text-right">{it.total}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="text-right font-bold space-y-1">
-                    <p>SUBTOTAL: ${scanned.subtotal}</p>
-                    <p>IMPUESTOS: ${scanned.impuestos}</p>
-                    <p className="text-sm">TOTAL: ${scanned.total_ingresos}</p>
-                  </div>
-                  <div className="mt-2 text-center border-t border-dashed border-gray-400 pt-2">
-                    <p>MÉTODO DE PAGO: {scanned.metodo_pago}</p>
+                      ))
+                    ) : scanned.clientes && scanned.clientes.length > 0 ? (
+                      scanned.clientes.map((c, i) => (
+                        <div key={i} className="flex gap-2 items-center bg-background/50 p-2 rounded-lg border border-border/30 hover:border-violet-500/20 transition-all">
+                          <div className="flex-1">
+                            <label className="text-[8px] text-muted-foreground uppercase font-bold block mb-0.5">Nombre Cliente</label>
+                            <input
+                              type="text"
+                              value={c.nombre}
+                              onChange={e => {
+                                const newClientes = [...(scanned.clientes || [])];
+                                newClientes[i] = { ...newClientes[i], nombre: e.target.value };
+                                setScanned({ ...scanned, clientes: newClientes });
+                              }}
+                              className="w-full px-2 py-1 bg-background border border-border rounded text-foreground font-semibold text-[11px]"
+                              placeholder="Nombre Cliente"
+                            />
+                          </div>
+                          <div className="w-32">
+                            <label className="text-[8px] text-muted-foreground uppercase font-bold block mb-0.5">Vehículo</label>
+                            <input
+                              type="text"
+                              value={c.carro || ''}
+                              onChange={e => {
+                                const newClientes = [...(scanned.clientes || [])];
+                                newClientes[i] = { ...newClientes[i], carro: e.target.value };
+                                setScanned({ ...scanned, clientes: newClientes });
+                              }}
+                              className="w-full px-2 py-1 bg-background border border-border rounded text-foreground text-[11px]"
+                              placeholder="Vehículo"
+                            />
+                          </div>
+                          <div className="w-32">
+                            <label className="text-[8px] text-muted-foreground uppercase font-bold block mb-0.5">Servicio</label>
+                            <input
+                              type="text"
+                              value={c.servicio || ''}
+                              onChange={e => {
+                                const newClientes = [...(scanned.clientes || [])];
+                                newClientes[i] = { ...newClientes[i], servicio: e.target.value };
+                                setScanned({ ...scanned, clientes: newClientes });
+                              }}
+                              className="w-full px-2 py-1 bg-background border border-border rounded text-foreground text-[11px]"
+                              placeholder="Servicio"
+                            />
+                          </div>
+                          <div className="w-24">
+                            <label className="text-[8px] text-muted-foreground uppercase font-bold block mb-0.5 text-right">Monto Total</label>
+                            <div className="flex items-center gap-1">
+                              <span className="text-muted-foreground text-[9px]">$</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={c.total}
+                                onChange={e => {
+                                  const newClientes = [...(scanned.clientes || [])];
+                                  newClientes[i] = { ...newClientes[i], total: Number(e.target.value) };
+                                  const newTotal = newClientes.reduce((acc, curr) => acc + curr.total, 0);
+                                  setScanned({ ...scanned, clientes: newClientes, total_ingresos: newTotal });
+                                }}
+                                className="w-full px-1.5 py-1 bg-background border border-border rounded text-right text-foreground font-semibold text-green-400"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <span className="text-muted-foreground italic block text-center py-2">No se detectaron líneas de desglose en la imagen</span>
+                    )}
                   </div>
                 </div>
-              )}
-              
+              </div>
+
               <div className="space-y-1.5">
-                <label className="text-xs text-muted-foreground">Notas Adicionales (Opcional)</label>
+                <label className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Notas Adicionales (Opcional)</label>
                 <textarea 
                   value={scanned.notas || ''} 
                   onChange={e => setScanned({...scanned, notas: e.target.value})} 
                   rows={2} 
-                  className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-xs placeholder:text-muted-foreground" 
+                  className="w-full px-3 py-2 rounded-xl border border-border bg-background text-xs placeholder:text-muted-foreground focus:ring-1 focus:ring-primary outline-none" 
                 />
               </div>
             </div>
@@ -2158,25 +2308,37 @@ export default function ReportesPage() {
       finalNotas = finalNotas ? `${finalNotas}\n\n[FACTURA_IA_START]\n${scanned.rawText}\n[FACTURA_IA_END]` : `[FACTURA_IA_START]\n${scanned.rawText}\n[FACTURA_IA_END]`;
     }
 
-    // Map items from either 'items' (ticket) or 'clientes' (cierre)
+    // Map items and client details based on scan mode
+    let finalCliente = 'Cierre de Caja';
     let finalItems: DesglosItem[] = [];
-    if (scanned.items && scanned.items.length > 0) {
-      finalItems = scanned.items;
-    } else if (scanned.clientes && scanned.clientes.length > 0) {
-      finalItems = scanned.clientes.map(c => ({
-        descripcion: `${c.nombre}${c.carro ? ' - ' + c.carro : ''}${c.servicio ? ' (' + c.servicio + ')' : ''}`,
-        cantidad: 1,
-        precio_unitario: c.total,
-        total: c.total
-      }));
+
+    if (scanMode === 'ticket') {
+      finalCliente = scanned.cliente_nombre || '';
+      if (scanned.cliente_vehiculo) {
+        finalCliente = finalCliente ? `${finalCliente} (${scanned.cliente_vehiculo})` : scanned.cliente_vehiculo;
+      }
+      finalItems = scanned.items || [];
+    } else {
+      // Cierre mode
+      finalCliente = scanned.cliente_nombre || (scanned.clientes?.[0]?.nombre) || 'Cierre de Caja';
+      if (scanned.clientes && scanned.clientes.length > 0) {
+        finalItems = scanned.clientes.map(c => ({
+          descripcion: `${c.nombre}${c.carro ? ' - ' + c.carro : ''}${c.servicio ? ' (' + c.servicio + ')' : ''}`,
+          cantidad: 1,
+          precio_unitario: c.total,
+          total: c.total
+        }));
+      } else {
+        finalItems = scanned.items || [];
+      }
     }
 
     await handleSaveVenta({
       fecha: scanned.fecha,
-      cliente: scanned.cliente_nombre || (scanned.clientes?.[0]?.nombre) || null,
+      cliente: finalCliente || null,
       total_ingresos: scanned.total_ingresos,
       total_servicios: scanned.total_servicios || finalItems.length || 1,
-      total_clientes: scanned.total_clientes || scanned.clientes_atendidos || 1,
+      total_clientes: scanned.total_clientes || scanned.clientes_atendidos || (scanMode === 'ticket' ? 1 : (scanned.clientes?.length || 1)),
       desglose: finalItems,
       notas: finalNotas || null,
       pago_usd: scanned.formas_de_pago?.dolares || 0,

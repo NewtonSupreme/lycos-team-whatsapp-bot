@@ -929,8 +929,8 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
   };
 
   return (
-    <div className="fixed inset-0 z-[110] grid place-items-center bg-black/80 backdrop-blur-xl p-0 sm:p-4 overflow-y-auto">
-      <div className="bg-[#0a0a0a] border border-white/10 w-full max-w-xl shadow-2xl flex flex-col overflow-hidden h-full sm:h-auto max-h-none sm:max-h-[90vh] rounded-none sm:rounded-[32px]">
+    <div className="fixed inset-0 z-[110] flex flex-col sm:grid sm:place-items-center bg-black/80 backdrop-blur-xl p-0 sm:p-4 overflow-y-auto">
+      <div className="bg-[#0a0a0a] border-y sm:border border-white/10 w-full max-w-xl shadow-2xl flex flex-col min-h-screen sm:min-h-0 sm:max-h-[90vh] rounded-none sm:rounded-[32px] sm:overflow-hidden">
         <div className="p-6 sm:p-8 border-b border-white/5 flex items-center justify-between bg-gradient-to-br from-primary/10 to-transparent shrink-0">
           <div className="flex items-center gap-3 sm:gap-4">
             <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-primary/20 flex items-center justify-center border border-primary/30 shrink-0">
@@ -946,7 +946,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           <button onClick={onClose} className="w-10 h-10 rounded-2xl hover:bg-white/5 flex items-center justify-center transition-all shrink-0"><X className="w-5 h-5 text-muted-foreground" /></button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 sm:p-8 no-scrollbar">
+        <div className="p-6 sm:p-8 sm:flex-1 sm:overflow-y-auto no-scrollbar">
           <div className="grid grid-cols-2 gap-4 sm:gap-6">
             <div className="col-span-2 sm:col-span-1 space-y-2 relative">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Cliente Principal</label>
@@ -1158,12 +1158,12 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           </div>
         </div>
 
-        <div className="p-6 sm:p-8 border-t border-white/5 bg-white/[0.01] flex justify-end gap-3 shrink-0">
-          <button onClick={onClose} className="px-5 py-2.5 sm:px-6 sm:py-3 rounded-2xl text-xs sm:text-sm font-bold text-muted-foreground hover:bg-white/5 transition-all">Cancelar</button>
+        <div className="p-6 sm:p-8 border-t border-white/5 bg-white/[0.01] flex flex-col-reverse sm:flex-row justify-end gap-3 shrink-0">
+          <button onClick={onClose} className="w-full sm:w-auto px-5 py-2.5 sm:px-6 sm:py-3 rounded-2xl text-xs sm:text-sm font-bold text-muted-foreground hover:bg-white/5 transition-all text-center">Cancelar</button>
           <Button 
             onClick={handleSave} 
             disabled={isSaving} 
-            className="rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground font-black px-6 sm:px-10 h-10 sm:h-12 text-xs sm:text-sm shadow-2xl shadow-primary/20 gap-2"
+            className="w-full sm:w-auto rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground font-black px-6 sm:px-10 h-11 sm:h-12 text-xs sm:text-sm shadow-2xl shadow-primary/20 gap-2 flex items-center justify-center"
           >
             {isSaving ? <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" /> : <BadgeCheck className="w-4 h-4 sm:w-5 sm:h-5" />}
             {cita ? 'Actualizar Orden' : 'Crear Orden Ahora'}
