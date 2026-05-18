@@ -64,7 +64,7 @@ export default function IAPage() {
   const { user } = useAppStore();
   const { currentSede } = useSedeStore();
   
-  const allowedSedes = ['San Antonio de los Altos', 'El cementerio (Caracas)'];
+  const allowedSedes = ['San Antonio de los Altos', 'El cementerio (Caracas)', 'Caracas El Paraíso'];
   const isAllowedSede = currentSede && allowedSedes.includes(currentSede.nombre);
 
   // Load conversations on mount
@@ -429,7 +429,7 @@ export default function IAPage() {
             </div>
             <div>
               <h2 className="text-xl font-bold mb-2">Módulo No Disponible</h2>
-              <p className="text-muted-foreground text-sm">El asistente de Inteligencia Artificial (Chatbot) está configurado exclusivamente para las sedes de <strong>San Antonio</strong> y <strong>El Cementerio</strong> en este momento.</p>
+              <p className="text-muted-foreground text-sm">El asistente de Inteligencia Artificial (Chatbot) está configurado exclusivamente para las sedes de <strong>San Antonio</strong>, <strong>El Cementerio</strong> y <strong>El Paraíso</strong> en este momento.</p>
             </div>
           </div>
         </div>
