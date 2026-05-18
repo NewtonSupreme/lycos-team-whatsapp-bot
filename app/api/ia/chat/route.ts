@@ -13,6 +13,83 @@ const GEMINI_MODELS = [
   'gemini-3.1-flash-lite'
 ] as const;
 
+async function fetchExchangeRates(): Promise<{ bcv: number; binance: number }> {
+  let bcvRate = 0;
+  let binanceRate = 0;
+  
+  // 1. FETCH BCV (Oficial)
+  try {
+    const respBcv = await fetch('https://ve.dolarapi.com/v1/dolares/oficial', { cache: 'no-store', signal: AbortSignal.timeout(4000) });
+    if (respBcv.ok) {
+      const data = await respBcv.json();
+      bcvRate = data.promedio || data.precio || 0;
+    }
+    
+    if (!bcvRate) {
+      const respPy = await fetch('https://pydolarvenezuela-api.vercel.app/api/v1/dollar?page=bcv', { cache: 'no-store', signal: AbortSignal.timeout(4000) });
+      if (respPy.ok) {
+        const dataPy = await respPy.json();
+        bcvRate = dataPy.monitors?.bcv?.price || 0;
+      }
+    }
+  } catch (e) {
+    console.error('Error fetching BCV in IA chat:', e);
+  }
+
+  // 2. FETCH BINANCE (P2P)
+  try {
+    const respBin = await fetch('https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        fiat: "VES", page: 1, rows: 15, tradeType: "BUY", asset: "USDT",
+        countries: [], proMerchantAds: false, shieldMerchantAds: false,
+        publisherType: null, payTypes: ["PagoMovil"], classifies: ["mass", "profession", "user"]
+      }),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(4000)
+    });
+    
+    if (respBin.ok) {
+      const binData = await respBin.json();
+      if (binData.data && binData.data.length > 3) {
+        const marketAds = binData.data.slice(2, 7);
+        binanceRate = marketAds.reduce((acc: number, ad: any) => acc + parseFloat(ad.adv.price), 0) / marketAds.length;
+      } else if (binData.data && binData.data.length > 0) {
+        binanceRate = parseFloat(binData.data[0].adv.price);
+      }
+    }
+  } catch (e) {
+    console.error('Error fetching Binance in IA chat:', e);
+  }
+
+  // 3. FALLBACK PARALELO (if Binance fails)
+  if (!binanceRate) {
+    try {
+      const tempResp = await fetch('https://ve.dolarapi.com/v1/dolares', { cache: 'no-store', signal: AbortSignal.timeout(4000) });
+      if (tempResp.ok) {
+        const tempData = await tempResp.json();
+        const parEntry = tempData.find((d: any) => 
+          d.nombre?.toLowerCase().includes('paralelo') || 
+          d.nombre?.toLowerCase().includes('binance') ||
+          d.fuente === 'enparalelovzla'
+        );
+        if (parEntry) binanceRate = parEntry.promedio || parEntry.precio;
+      }
+    } catch (e) {}
+  }
+
+  // Hard fallbacks if both are 0
+  if (!bcvRate) bcvRate = 36.5; // reasonable fallback
+  if (!binanceRate) binanceRate = bcvRate * 1.15; // standard spread fallback
+
+  return { bcv: bcvRate, binance: binanceRate };
+}
+
 function getVzlaDateTime(): string {
   return new Intl.DateTimeFormat('es-VE', {
     timeZone: 'America/Caracas', weekday: 'long', year: 'numeric', 
@@ -28,6 +105,23 @@ async function loadDbContext(sedeId: string | null): Promise<string> {
 
   // Helper for server-side queries
   const db = (table: string) => withSedeFilterServer(client!.from(table), sedeId);
+
+  // Fetch Exchange Rates in real-time
+  let bcvRate = 0;
+  let binanceRate = 0;
+  try {
+    const rates = await fetchExchangeRates();
+    bcvRate = rates.bcv;
+    binanceRate = rates.binance;
+    sections.push(
+      `=== TASAS DE CAMBIO EN TIEMPO REAL ===\n` +
+      `• Tasa Oficial BCV: Bs. ${bcvRate.toFixed(2)} / USD\n` +
+      `• Tasa Paralela / Binance P2P: Bs. ${binanceRate.toFixed(2)} / USD\n` +
+      `• Ratio de Conversión (Binance/BCV): ${(binanceRate / bcvRate).toFixed(4)}`
+    );
+  } catch (e) {
+    sections.push(`=== TASAS DE CAMBIO: Error al cargar (${e}) ===`);
+  }
 
   // Clientes
   try {
@@ -101,16 +195,8 @@ async function loadDbContext(sedeId: string | null): Promise<string> {
   try {
     const { data: inventario } = await db('inventario').select('*').eq('activo', true).order('orden', { ascending: true });
     if (inventario && inventario.length > 0) {
-      // Fetch live BCV rate for display
-      let bcvRate = 0;
-      try {
-        const ratesRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/rates`);
-        const ratesJson = await ratesRes.json();
-        bcvRate = ratesJson.bcv || 0;
-      } catch { /* ignore */ }
-
       sections.push(
-        `=== INVENTARIO (${inventario.length} productos) — Tasa BCV actual: ${bcvRate > 0 ? `Bs.${bcvRate.toFixed(2)}/$` : 'N/D'} ===\n` +
+        `=== INVENTARIO (${inventario.length} productos) — Tasa BCV actual: ${bcvRate > 0 ? `Bs.${bcvRate.toFixed(2)}/$` : 'N/D'} | Tasa Binance P2P: ${binanceRate > 0 ? `Bs.${binanceRate.toFixed(2)}/$` : 'N/D'} ===\n` +
         inventario.map((i: any) =>
           `• INV_ID:${i.id} | ${i.nombre} | Stock: ${i.stock} | Precio Divisas: $${i.precio_usd ?? '-'} | Precio BCV: Bs.${i.precio_bs ?? '-'}${bcvRate > 0 && i.precio_bs ? ` (~$${(i.precio_bs / bcvRate).toFixed(2)})` : ''} | ${i.unidad || 'unidad'}${i.notas ? ' | ' + i.notas : ''}`
         ).join('\n')
@@ -402,13 +488,21 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
           precio_registrado: totalNum,
         });
 
-        // Auto-decrement stock for each item if inv_ids provided (comma-separated)
+        // Auto-decrement stock for each item if inv_ids provided (comma-separated, optional ID:qty format)
         if (p.inv_ids) {
           const idList = p.inv_ids.split(',').map((x: string) => x.trim());
-          for (const invId of idList) {
+          for (const itemStr of idList) {
+            let invId = itemStr;
+            let qty = 1;
+            if (itemStr.includes(':')) {
+              const [idPart, qtyPart] = itemStr.split(':');
+              invId = idPart.trim();
+              qty = parseInt(qtyPart) || 1;
+            }
             const { data: invItem } = await table('inventario').select('stock, nombre').eq('id', invId).single();
-            if (invItem && invItem.stock > 0) {
-              await table('inventario').update({ stock: invItem.stock - 1, updated_at: new Date().toISOString() }).eq('id', invId);
+            if (invItem) {
+              const newStock = Math.max(0, (invItem.stock || 0) - qty);
+              await table('inventario').update({ stock: newStock, updated_at: new Date().toISOString() }).eq('id', invId);
             }
           }
         }
@@ -588,17 +682,26 @@ INSTRUCCIONES CRÍTICAS:
 
 ACCIONES DE ESCRITURA (REGLAS CRÍTICAS):
 
-⚠️ REGLA DE ORO — AL REGISTRAR UNA VENTA CON MÚLTIPLES PRODUCTOS:
+⚠️ REGLA DE ORO — AL REGISTRAR UNA VENTA CON MÚLTIPLES PRODUCTOS (FACTURACIÓN MÚLTIPLE):
 1. Si el cliente NO existe → usa [ACTION: crear_cliente] PRIMERO.
 2. Si se menciona un vehículo → usa [ACTION: crear_vehiculo] DESPUÉS del cliente.
-    - Todos los productos de la MISMA venta → registra TODO en UNA SOLA acción [ACTION: registrar_venta_completa] con todos los ítems listados en el campo 'items'.
-    - El campo 'items' usa formato ESTRICTO: "Producto1:Precio1, Producto2:Precio2" (SÓLO números, sin símbolos de moneda).
+3. Si el usuario te pide registrar múltiples productos para un mismo cliente, regístralo todo en una sola acción consolidada usando [ACTION: registrar_venta_completa].
+    - El campo 'items' debe listar todos los productos con su precio cobrado en el formato: "NombreProducto1:Precio1, NombreProducto2:Precio2".
+    - El campo 'inv_ids' debe ser una lista separada por comas de los IDs de inventario de cada producto. Si se vendieron múltiples unidades de un mismo producto, puedes usar el formato ID:cantidad (ej: "ID1:2, ID2:1").
+    - Suma los precios cobrados de todos los productos y colócalos en el campo 'total'.
+
+⚠️ REGLA DE PRECIOS PERSONALIZADOS (CONFIRMACIÓN ANTES DE REGISTRAR):
+- Si el usuario te pide registrar una venta con un precio que es DIFERENTE al precio que figura en el INVENTARIO (o si te pide aplicar un cobro personalizado):
+  1. NO imprimas el tag [ACTION: registrar_venta_completa] ni [ACTION: registrar_venta_item] de inmediato en tu primera respuesta.
+  2. En su lugar, pregúntale al usuario para confirmar:
+     "El precio registrado en inventario para **[Producto]** es $[Precio_Inventario]. ¿Deseas proceder con este registro de venta con el precio personalizado de **$[Precio_Personalizado]**?"
+  3. Si el usuario responde afirmativamente ("sí", "procede", "confirmo", etc.), o si en el mensaje original ya te dio una orden directa y confirmada (ej. "sé que está en otro precio, regístralo a $45, procede"), entonces SÍ debes imprimir el tag [ACTION: registrar_venta_completa] con el precio personalizado.
 
 REGLA CASHEA (MUY IMPORTANTE):
 - Cashea SIEMPRE usa el Precio BCV como base (campo precio_bs del inventario), NO el precio en dólares divisas.
 - El total Cashea = Precio_BCV ÷ Tasa_BCV_actual × 1.16 (incluye 16% IVA obligatorio).
 - En el campo 'metodo_pago' usa: cashea_bcv. En 'total' muestra el monto en dólares al cambio BCV.
-- La tasa BCV actual aparece en la sección INVENTARIO del contexto de datos.
+- La tasa BCV y Binance actual aparecen en la sección TASAS DE CAMBIO del contexto de datos.
 
 PAGOS MIXTOS:
 - Si una venta se pagó parte en divisas y parte en Bs/BCV, usá el campo 'pago_mixto' en registrar_venta_completa.
@@ -623,7 +726,7 @@ TRACKING DE TALLER:
 • Crear vehículo: [ACTION: crear_vehiculo | marca=MARCA | modelo_vehiculo=MODELO | placa=PLACA | anio=ANO | color=COLOR]
 • Actualizar servicio: [ACTION: actualizar_servicio | id=ID | estado=finalizado]
 • Registrar trabajo taller: [ACTION: registrar_servicio | descripcion=Texto | tipo=mecanica | estado=en_proceso | costo_estimado=Numero]
-• Registrar venta COMPLETA (TODO EN UNO): [ACTION: registrar_venta_completa | titulo=TITULO_PRINCIPAL | items=Producto1:$precio1,Producto2:$precio2 | total=TOTAL | iva=MONTO_IVA | inicial=INICIAL_CASHEA | metodo_pago=cashea_bcv/divisas/bcv/binance | pago_mixto=DESCRIPCION | cliente=NOMBRE | vehiculo=MARCA_PLACA | inv_ids=ID1,ID2]
+• Registrar venta COMPLETA (TODO EN UNO): [ACTION: registrar_venta_completa | titulo=TITULO_PRINCIPAL | items=Producto1:$precio1,Producto2:$precio2 | total=TOTAL | iva=MONTO_IVA | inicial=INICIAL_CASHEA | metodo_pago=cashea_bcv/divisas/bcv/binance/cashea_bcv | pago_mixto=DESCRIPCION | cliente=NOMBRE | vehiculo=MARCA_PLACA | inv_ids=ID1:qty1,ID2:qty2]
 
 EJEMPLO (William, Cashea, 2 productos):
 [ACTION: crear_cliente | nombre=Juan | apellido=Perez | cedula=12345678 | telefono=0414123456]
@@ -635,7 +738,7 @@ EJEMPLO (William, Cashea, 2 productos):
 - metodo_pago: (efectivo_usd, zelle, cashea_bcv, binance)
 - cliente: (Nombre del cliente)
 - vehiculo: (Opcional)
-- inv_ids: (IDs de inventario separados por comas)
+- inv_ids: (IDs de inventario separados por comas, opcionalmente con :cantidad, ej: ID1:2,ID2:1)
 - pago_mixto: (Opcional)
 
 TONO: Profesional, ejecutivo y eficiente. Español venezolano amable. Presentación IMPECABLE y ORDENADA.
