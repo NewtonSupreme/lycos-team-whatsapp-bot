@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 
 const ASESOR_PHONE = '584123343519';
@@ -6,10 +7,37 @@ const ASESOR_DISPLAY_NAME = 'Asesor Lycos Team';
 
 export async function POST(request: NextRequest) {
   try {
-    const { to } = await request.json();
+    const body = await request.json();
+    const to = body.to;
+    let operatorName = body.operator_name || '';
 
     if (!to) {
       return NextResponse.json({ error: 'Falta el número de destino' }, { status: 400 });
+    }
+
+    if (!operatorName) {
+      try {
+        const cookieStore = await cookies();
+        const username = cookieStore.get('lycos_session')?.value;
+        if (username) {
+          const dbUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+          const dbKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+          if (dbUrl && dbKey) {
+            const db = createClient(dbUrl, dbKey);
+            const { data: usr } = await db.from('usuarios')
+              .select('nombre')
+              .eq('username', username)
+              .maybeSingle();
+            if (usr?.nombre) {
+              operatorName = usr.nombre;
+            } else {
+              operatorName = username.charAt(0).toUpperCase() + username.slice(1);
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Error fetching operator name from session:', e);
+      }
     }
 
     const token = process.env.WHATSAPP_TOKEN;
@@ -71,10 +99,14 @@ export async function POST(request: NextRequest) {
     const dbKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
     if (dbUrl && dbKey) {
       const db = createClient(dbUrl, dbKey);
+      const dbBody = operatorName 
+        ? `[Tarjeta de contacto: ${ASESOR_DISPLAY_NAME}] [env:${operatorName}]` 
+        : `[Tarjeta de contacto: ${ASESOR_DISPLAY_NAME}]`;
+
       await db.from('mensajes_whatsapp').insert({
         from_number: 'system',
         to_number: normalizedTo,
-        body: `[Tarjeta de contacto: ${ASESOR_DISPLAY_NAME}]`,
+        body: dbBody,
         tipo: 'saliente',
         estado: 'enviado',
         es_ia: false,

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 
 const DEFAULT_SEDE_ID = process.env.WHATSAPP_DEFAULT_SEDE_ID || '310595c5-5258-47fa-9b69-5ad9932685a7';
@@ -8,11 +9,14 @@ export async function POST(request: NextRequest) {
     let to = '', message = '', file: File | null = null, location: any = null, interactive: any = null, previewUrl = false, quotedMessageId = '';
     const contentType = request.headers.get('content-type') || '';
     
+    let operatorName = '';
+
     if (contentType.includes('multipart/form-data')) {
       const fd = await request.formData();
       to = (fd.get('to') as string) || '';
       message = (fd.get('message') as string) || '';
       quotedMessageId = (fd.get('quoted_message_id') as string) || '';
+      operatorName = (fd.get('operator_name') as string) || '';
       const f = fd.get('file');
       if (f && typeof f === 'object' && (f as File).name) {
         file = f as File;
@@ -25,6 +29,32 @@ export async function POST(request: NextRequest) {
       interactive = body.interactive || null;
       previewUrl = body.preview_url === true;
       quotedMessageId = body.quoted_message_id || '';
+      operatorName = body.operator_name || '';
+    }
+
+    if (!operatorName) {
+      try {
+        const cookieStore = await cookies();
+        const username = cookieStore.get('lycos_session')?.value;
+        if (username) {
+          const dbUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+          const dbKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+          if (dbUrl && dbKey) {
+            const db = createClient(dbUrl, dbKey);
+            const { data: usr } = await db.from('usuarios')
+              .select('nombre')
+              .eq('username', username)
+              .maybeSingle();
+            if (usr?.nombre) {
+              operatorName = usr.nombre;
+            } else {
+              operatorName = username.charAt(0).toUpperCase() + username.slice(1);
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Error fetching operator name from session:', e);
+      }
     }
 
     if (!to && (!message && !file)) {
@@ -162,12 +192,15 @@ export async function POST(request: NextRequest) {
         console.error('Error buscando sede_id:', e);
       }
 
+      const rawBody = location 
+        ? `[Ubicación: ${location.name || 'Sede'}]` 
+        : (interactive ? `[Botones: ${interactive.body?.text || 'Interactivo'}]` : (mediaType === 'audio' && !message ? '[Mensaje de voz]' : message));
+      const dbBody = operatorName ? `${rawBody} [env:${operatorName}]` : rawBody;
+
       await db.from('mensajes_whatsapp').insert({
         from_number: 'system',
         to_number: to.replace(/[^0-9]/g, ''),
-        body: location 
-          ? `[Ubicación: ${location.name || 'Sede'}]` 
-          : (interactive ? `[Botones: ${interactive.body?.text || 'Interactivo'}]` : (mediaType === 'audio' && !message ? '[Mensaje de voz]' : message)),
+        body: dbBody,
         tipo: 'saliente',
         estado: 'enviado',
         es_ia: false,

@@ -11,6 +11,7 @@ import { Vehiculo } from '@/types';
 import { cn, formatRelativeTime } from '@/lib/utils';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useSedeStore } from '@/lib/store/useSedeStore';
+import { useAppStore } from '@/lib/store';
 
 const QUICK_REPLIES = [
   '¡Hola! ¿En qué le puedo ayudar? 😊',
@@ -264,6 +265,7 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
 
 // ── Main Component ────────────────────────────────────────────
 export default function WhatsAppPage() {
+  const { user } = useAppStore();
   const [convs, setConvs] = useState<RawConv[]>([]);
   const [replyingTo, setReplyingTo] = useState<RawMsg | null>(null);
   const [selected, setSelected] = useState<RawConv | null>(null);
@@ -669,7 +671,10 @@ export default function WhatsAppPage() {
   // ── Send message ──────────────────────────────────────────────
   const handleSend = async () => {
     if ((!message.trim() && files.length === 0) || !selected || sending) return;
-    const body = message.trim();
+    const rawBody = message.trim();
+    const signature = user?.nombre ? `\n\n_— Asesor: ${user.nombre}_` : '';
+    const body = rawBody ? rawBody + signature : (user?.nombre ? `_— Asesor: ${user.nombre}_` : '');
+    
     setMessage('');
     setSending(true);
     setIsScrolledUp(false);
@@ -683,11 +688,12 @@ export default function WhatsAppPage() {
           const { file, url } = files[i];
           const optimisticId = `tmp-${Date.now()}-${i}`;
           
+          let fileBody = i === 0 ? body : '';
           const optimistic: RawMsg = {
             id: optimisticId,
             from_number: 'system',
             to_number: selected.telefono,
-            body: i === 0 ? body : '', // Only first file gets the caption
+            body: fileBody + (user?.nombre ? ` [env:${user.nombre}]` : ''),
             tipo: 'saliente',
             estado: 'enviado',
             es_ia: false,
@@ -708,6 +714,7 @@ export default function WhatsAppPage() {
           const fd = new FormData();
           fd.append('to', selected.telefono);
           if (i === 0 && body) fd.append('message', body);
+          if (user?.nombre) fd.append('operator_name', user.nombre);
           if (replyingTo?.wa_message_id) fd.append('quoted_message_id', replyingTo.wa_message_id);
           fd.append('file', file);
           await fetch('/api/whatsapp/send', { method: 'POST', body: fd });
@@ -719,7 +726,7 @@ export default function WhatsAppPage() {
           id: optimisticId,
           from_number: 'system',
           to_number: selected.telefono,
-          body,
+          body: body + (user?.nombre ? ` [env:${user.nombre}]` : ''),
           tipo: 'saliente',
           estado: 'enviado',
           es_ia: false,
@@ -731,6 +738,7 @@ export default function WhatsAppPage() {
         const fd = new FormData();
         fd.append('to', selected.telefono);
         fd.append('message', body);
+        if (user?.nombre) fd.append('operator_name', user.nombre);
         if (replyingTo?.wa_message_id) fd.append('quoted_message_id', replyingTo.wa_message_id);
         await fetch('/api/whatsapp/send', { method: 'POST', body: fd });
       }
@@ -1001,6 +1009,7 @@ export default function WhatsAppPage() {
           to: selected.telefono,
           message: label,
           preview_url: true,
+          operator_name: user?.nombre || undefined,
         }),
       });
 
@@ -1011,6 +1020,7 @@ export default function WhatsAppPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             to: selected.telefono,
+            operator_name: user?.nombre || undefined,
             interactive: {
               type: 'button',
               header: {
@@ -1073,7 +1083,10 @@ export default function WhatsAppPage() {
       const res = await fetch('/api/whatsapp/send-contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: selected.telefono }),
+        body: JSON.stringify({ 
+          to: selected.telefono,
+          operator_name: user?.nombre || undefined,
+        }),
       });
       if (res.ok) {
         await fetchNewMsgs(selected.telefono);
@@ -1207,7 +1220,7 @@ export default function WhatsAppPage() {
       id: optimisticId,
       from_number: 'system',
       to_number: selected.telefono,
-      body: '',
+      body: user?.nombre ? `[env:${user.nombre}]` : '',
       tipo: 'saliente',
       estado: 'enviado',
       media_url: blobUrl,
@@ -1220,6 +1233,7 @@ export default function WhatsAppPage() {
     
     const formData = new FormData();
     formData.append('to', selected.telefono);
+    if (user?.nombre) formData.append('operator_name', user.nombre);
     // Use audio/ogg for Meta API if we suspect it's opus, otherwise use recorded type
     const sendBlob = new Blob([blob], { type: extension === 'ogg' ? 'audio/ogg' : blob.type });
     formData.append('file', sendBlob, `voice-note-${Date.now()}.${extension}`);
@@ -1380,7 +1394,7 @@ export default function WhatsAppPage() {
                     </div>
                     <div className="flex items-center justify-between mt-0.5">
                       <p className="text-[12px] truncate" style={{ color: '#8696a0' }}>
-                        {conv.ultimo_mensaje || '...'}
+                        {conv.ultimo_mensaje ? conv.ultimo_mensaje.replace(/\s*\[env:(.*?)\]$/, '') : '...'}
                       </p>
                       {(conv.mensajes_sin_leer ?? 0) > 0 && (
                         <span className="flex-shrink-0 ml-2 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ background: '#00a884', color: '#111b21' }}>
@@ -1592,6 +1606,16 @@ export default function WhatsAppPage() {
                     const showDivider = thisDay !== prevDay;
                     const isOptimistic = msg.id.startsWith('tmp-');
 
+                    // Extract operator name tag from body
+                    let cleanBody = msg.body || '';
+                    let operatorName = '';
+                    const envMatch = cleanBody.match(/\s*\[env:(.*?)\]$/);
+                    if (envMatch) {
+                      cleanBody = cleanBody.replace(envMatch[0], '');
+                      operatorName = envMatch[1];
+                    }
+                    const cleanMsg = { ...msg, body: cleanBody };
+
                     return (
                       <React.Fragment key={msg.id}>
                         {showDivider && (
@@ -1617,7 +1641,7 @@ export default function WhatsAppPage() {
                                     <button key={emoji} onClick={() => handleReact(msg, emoji)} className="hover:scale-125 transition-transform p-0.5">{emoji}</button>
                                   ))}
                                 </div>
-                                <button onClick={() => copyToClipboard(msg.body)} className="p-1.5 hover:bg-white/10 rounded-full text-white/60 hover:text-white" title="Copiar">
+                                <button onClick={() => copyToClipboard(cleanBody)} className="p-1.5 hover:bg-white/10 rounded-full text-white/60 hover:text-white" title="Copiar">
                                   <Copy className="w-3.5 h-3.5" />
                                 </button>
                                   <button onClick={() => deleteMsg(msg)} className="p-1.5 hover:bg-red-500/20 rounded-full text-red-500/60 hover:text-red-500" title="Eliminar">
@@ -1633,16 +1657,32 @@ export default function WhatsAppPage() {
                             )}
                              {(() => {
                                const quoted = msg.quoted_wa_id ? msgs.find(m => m.wa_message_id === msg.quoted_wa_id) : null;
-                               return <MediaBubble msg={msg} isOut={isOut} onImageClick={setPreviewImage} quotedMsg={quoted} />;
+                               let cleanQuoted = null;
+                               if (quoted) {
+                                 let quotedBody = quoted.body || '';
+                                 const quotedEnvMatch = quotedBody.match(/\s*\[env:(.*?)\]$/);
+                                 if (quotedEnvMatch) {
+                                   quotedBody = quotedBody.replace(quotedEnvMatch[0], '');
+                                 }
+                                 cleanQuoted = { ...quoted, body: quotedBody };
+                               }
+                               return <MediaBubble msg={cleanMsg} isOut={isOut} onImageClick={setPreviewImage} quotedMsg={cleanQuoted} />;
                              })()}
-                            <div className="flex items-center gap-1 justify-end mt-1 flex-shrink-0" style={{ marginRight: '-2px' }}>
-                              <span className="text-[10px]" style={{ color: 'rgba(233,237,239,0.6)' }}>{formatTime(msg.created_at)}</span>
-                              {isOut && (
-                                isOptimistic ? <Check className="w-3 h-3" style={{ color: 'rgba(233,237,239,0.5)' }} /> :
-                                msg.estado === 'leido' ? <CheckCheck className="w-3.5 h-3.5" style={{ color: '#53bdeb' }} /> :
-                                msg.estado === 'entregado' ? <CheckCheck className="w-3.5 h-3.5" style={{ color: 'rgba(233,237,239,0.5)' }} /> :
-                                <Check className="w-3 h-3" style={{ color: 'rgba(233,237,239,0.5)' }} />
-                              )}
+                            <div className="flex items-center justify-between gap-2 mt-1 flex-wrap">
+                              {operatorName ? (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-black/25 text-emerald-300/80 font-semibold flex items-center gap-0.5 border border-emerald-500/10">
+                                  👤 {operatorName}
+                                </span>
+                              ) : <span />}
+                              <div className="flex items-center gap-1 justify-end flex-shrink-0" style={{ marginRight: '-2px' }}>
+                                <span className="text-[10px]" style={{ color: 'rgba(233,237,239,0.6)' }}>{formatTime(msg.created_at)}</span>
+                                {isOut && (
+                                  isOptimistic ? <Check className="w-3 h-3" style={{ color: 'rgba(233,237,239,0.5)' }} /> :
+                                  msg.estado === 'leido' ? <CheckCheck className="w-3.5 h-3.5" style={{ color: '#53bdeb' }} /> :
+                                  msg.estado === 'entregado' ? <CheckCheck className="w-3.5 h-3.5" style={{ color: 'rgba(233,237,239,0.5)' }} /> :
+                                  <Check className="w-3 h-3" style={{ color: 'rgba(233,237,239,0.5)' }} />
+                                )}
+                              </div>
                             </div>
                             {msg.reaccion && (
                               <div className={cn("absolute -bottom-2 px-1.5 py-0.5 rounded-full text-xs shadow-md border border-white/10", isOut ? "left-0" : "right-0")} style={{ background: '#374045' }}>{msg.reaccion}</div>

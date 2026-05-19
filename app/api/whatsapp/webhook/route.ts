@@ -871,7 +871,22 @@ export async function POST(request: NextRequest) {
             continue;
           }
 
-          if (convData?.estado === 'humano') {
+          // Check if sender is admin to bypass human takeover check
+          const phoneClean = from.replace(/[^0-9]/g, '');
+          let isSenderAdmin = ADMIN_PHONES.includes(from) || ADMIN_PHONES.includes(phoneClean);
+          if (!isSenderAdmin && db) {
+            try {
+              const { data: adminCheck } = await db.from('usuarios')
+                .select('id')
+                .eq('telefono', phoneClean)
+                .eq('rol', 'admin')
+                .eq('activo', true)
+                .maybeSingle();
+              if (adminCheck) isSenderAdmin = true;
+            } catch (e) {}
+          }
+
+          if (convData?.estado === 'humano' && !isSenderAdmin) {
             console.log(`👤 [${from}] Conversación en control humano — bot silenciado.`);
             // Update last message in CRM so admin sees it, incrementing unread count properly
             const { data: convUnread } = await db.from('conversaciones').select('mensajes_sin_leer').eq('telefono', from).eq('sede_id', effectiveSedeId).maybeSingle();
@@ -1574,12 +1589,12 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
 
   // ── ROBUST SEQUENTIAL RETRY STRATEGY ─────────────────────────────────────────
   // Configuración de reintentos ajustada para Vercel (evitar timeout de 10s)
-  const ATTEMPTS_DELAYS = [300, 800, 1500];
+  const ATTEMPTS_DELAYS = [300, 800, 1500, 2000];
   const MAX_ATTEMPTS = ATTEMPTS_DELAYS.length;
   
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    // Strategy: First 3 attempts with PRIMARY model, then 3 with FALLBACK
-    const modelIndex = attempt < 3 ? 0 : 1;
+    // Alternar entre los modelos disponibles en cada intento para evitar saturación de uno de ellos
+    const modelIndex = attempt % GEMINI_MODELS.length;
     const model = GEMINI_MODELS[modelIndex];
     
     console.log(`🧠 [Intento ${attempt + 1}/${MAX_ATTEMPTS}] Usando Modelo: ${model}`);
@@ -2440,8 +2455,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         console.error('❌ Error en persistencia temprana:', e);
       }
 
-      // 🛑 Silenciar bot si está en modo humano (Intervención manual)
-      if (ctx.estado === 'humano') {
+      // 🛑 Silenciar bot si está en modo humano (Intervención manual) - unless they are an admin
+      if (ctx.estado === 'humano' && !ctx.isAdmin) {
         console.log(`👤 [${from}] Modo Humano ACTIVO. El bot permanecerá en silencio.`);
         // Procesamos intenciones para extraer metadatos (nombre, vehículo) para el CRM
         const r = await processIntents(db, from, messageBody, ctx, waProfileName);
