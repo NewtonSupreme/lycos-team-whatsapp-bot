@@ -1140,24 +1140,51 @@ async function loadConversationContext(
         db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', todayDateStr),
         db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', weekDate.toISOString()),
         db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', monthStartStr),
-        db.from('ventas_silenciadores').select('*, sede:sedes(nombre)').gte('created_at', todayDateStr).order('created_at', { ascending: false }).limit(50),
-        db.from('ventas_dia').select('*, sede:sedes(nombre)').gte('created_at', todayDateStr).order('created_at', { ascending: false }).limit(50)
+        db.from('ventas_silenciadores').select('*, sede:sedes(nombre)').gte('created_at', monthDate.toISOString()).order('created_at', { ascending: false }).limit(100),
+        db.from('ventas_dia').select('*, sede:sedes(nombre)').gte('created_at', monthDate.toISOString()).order('created_at', { ascending: false }).limit(100)
       ]);
       
-      const revenueToday = allServs?.filter(s => s.created_at.startsWith(today)).reduce((sum, s) => sum + (Number(s.costo_final || s.costo_estimado || 0)), 0) || 0;
-      const revenueYesterday = allServs?.filter(s => s.created_at.startsWith(yesterdayStr)).reduce((sum, s) => sum + (Number(s.costo_final || s.costo_estimado || 0)), 0) || 0;
+      // Calculate revenue from actual sales (ventas_dia and ventas_silenciadores)
+      // We sum all POS sales, and all chatbot/IA sales that are not duplicates.
+      const posVentasToday = allVentasDia?.filter(v => v.fecha === today || v.created_at?.startsWith(today)) || [];
+      const posVentasYesterday = allVentasDia?.filter(v => v.fecha === yesterdayStr || v.created_at?.startsWith(yesterdayStr)) || [];
       
+      const iaVentasToday = allVentasSil?.filter(v => {
+        const isPOSDuplicate = /Venta POS #/i.test(v.notas || '');
+        const isToday = v.fecha?.startsWith(today) || v.created_at?.startsWith(today);
+        return isToday && !isPOSDuplicate;
+      }) || [];
+      const iaVentasYesterday = allVentasSil?.filter(v => {
+        const isPOSDuplicate = /Venta POS #/i.test(v.notas || '');
+        const isYesterday = v.fecha?.startsWith(yesterdayStr) || v.created_at?.startsWith(yesterdayStr);
+        return isYesterday && !isPOSDuplicate;
+      }) || [];
+
+      const revenueToday = posVentasToday.reduce((sum, v) => sum + Number(v.total_ingresos || 0), 0) +
+                           iaVentasToday.reduce((sum, v) => sum + Number(v.precio_registrado || v.total_ingresos || 0), 0);
+
+      const revenueYesterday = posVentasYesterday.reduce((sum, v) => sum + Number(v.total_ingresos || 0), 0) +
+                               iaVentasYesterday.reduce((sum, v) => sum + Number(v.precio_registrado || v.total_ingresos || 0), 0);
+
       const revenueBySede: Record<string, number> = {};
       const statusCounts: Record<string, Record<string, number>> = {}; // Sede -> Status -> Count
       const invAddedBySede: Record<string, number> = {};
 
+      // Fill statusCounts from services as before
       allServs?.forEach(s => {
         const sName = s.sede?.nombre || 'General';
-        if (s.created_at.startsWith(today)) {
-          revenueBySede[sName] = (revenueBySede[sName] || 0) + Number(s.costo_final || s.costo_estimado || 0);
-        }
         if (!statusCounts[sName]) statusCounts[sName] = {};
         statusCounts[sName][s.estado] = (statusCounts[sName][s.estado] || 0) + 1;
+      });
+
+      // Calculate revenueBySede from sales
+      posVentasToday.forEach(v => {
+        const sName = v.sede?.nombre || 'General';
+        revenueBySede[sName] = (revenueBySede[sName] || 0) + Number(v.total_ingresos || 0);
+      });
+      iaVentasToday.forEach(v => {
+        const sName = v.sede?.nombre || 'General';
+        revenueBySede[sName] = (revenueBySede[sName] || 0) + Number(v.precio_registrado || v.total_ingresos || 0);
       });
 
       allLogs?.forEach(l => {
@@ -1255,17 +1282,95 @@ async function loadConversationContext(
         }
       }
 
-      let ventasInfo = `\n[VENTAS POS HOY]`;
-      if (allVentasDia && allVentasDia.length > 0) {
-        ventasInfo += `\nRESUMEN VENTAS DIA:\n` + allVentasDia.map(v => `- Sede: ${v.sede?.nombre || 'General'} | Ingreso: $${v.ingreso_total} | Pagos: [Efectivo: $${v.efectivo}, Zelle: $${v.zelle}, Cashea: $${v.cashea}, PagoMovil: Bs${v.pago_movil}, Punto: Bs${v.punto}]`).join('\n');
+      // 1. Filter today's sales
+      const todayVentasDia = allVentasDia?.filter(v => v.fecha === today || v.created_at?.startsWith(today)) || [];
+      const todayVentasSil = allVentasSil?.filter(v => v.fecha?.startsWith(today) || v.created_at?.startsWith(today)) || [];
+
+      // 2. Filter yesterday's sales
+      const yesterdayVentasDia = allVentasDia?.filter(v => v.fecha === yesterdayStr || v.created_at?.startsWith(yesterdayStr)) || [];
+      const yesterdayVentasSil = allVentasSil?.filter(v => v.fecha?.startsWith(yesterdayStr) || v.created_at?.startsWith(yesterdayStr)) || [];
+
+      // 3. Build today's sales display with full items detail
+      let ventasInfo = `\n[VENTAS Y FACTURACIÓN REGISTRADAS HOY (${today})]\n`;
+      
+      if (todayVentasDia.length > 0) {
+        ventasInfo += `* VENTAS POS MANUALES (ventas_dia):\n`;
+        todayVentasDia.forEach((v) => {
+          // Parse payments
+          const mp = v.metodos_pago || {};
+          const paymentsStr = [
+            mp.efectivo_usd ? `Efectivo USD: $${mp.efectivo_usd}` : '',
+            mp.zelle ? `Zelle: $${mp.zelle}` : '',
+            mp.cashea ? `Cashea: $${mp.cashea}` : '',
+            mp.pago_movil ? `Pago Móvil: Bs.${mp.pago_movil}` : '',
+            mp.punto_de_venta ? `Punto de Venta: Bs.${mp.punto_de_venta}` : '',
+            mp.efectivo_ves ? `Efectivo Ves: Bs.${mp.efectivo_ves}` : '',
+            mp.transferencia ? `Transferencia: $${mp.transferencia}` : '',
+            mp.otro ? `Otro: $${mp.otro}` : ''
+          ].filter(Boolean).join(', ') || 'Sin especificar';
+
+          // Extract desglose items
+          const itemsStr = Array.isArray(v.desglose)
+            ? v.desglose.map((item: any) => `${item.descripcion || item.nombre || 'Producto'} (x${item.cantidad || 1}) - $${item.precio_unitario || item.precio || 0}`).join(', ')
+            : 'Sin desglose de ítems';
+
+          ventasInfo += `  - Sede: ${v.sede?.nombre || 'General'} | Cliente: ${v.cliente || 'Consumidor Final'} | Total: $${v.total_ingresos} | Ítems: [${itemsStr}] | Pagos: [${paymentsStr}] | Notas: ${v.notas || 'N/A'}\n`;
+        });
       } else {
-        ventasInfo += `\nNo hay resumen de ventas por día registrado hoy.`;
+        ventasInfo += `* No hay ventas POS manuales registradas hoy.\n`;
       }
 
-      if (allVentasSil && allVentasSil.length > 0) {
-        ventasInfo += `\nVENTAS DETALLADAS SILENCIADORES:\n` + allVentasSil.map(v => `- Sede: ${v.sede?.nombre || 'General'} | Ítem: ${v.producto_nombre} x${v.cantidad} | Total: $${v.total} | Pago: ${v.metodo_pago} | Cliente: ${v.cliente_nombre || 'N/A'}`).join('\n');
+      if (todayVentasSil.length > 0) {
+        ventasInfo += `* VENTAS DETALLADAS/IA (ventas_silenciadores):\n`;
+        todayVentasSil.forEach(v => {
+          // Exclude POS duplicates from display if they are already listed above to keep it clean
+          const isPOSDuplicate = /Venta POS #/i.test(v.notas || '');
+          const duplicateTag = isPOSDuplicate ? ' [Duplicado POS]' : '';
+          
+          // Parse client from notes
+          const cliMatch = v.notas?.match(/Cliente:\s*([^|\]\n]+)/i) || v.notas?.match(/\| Cliente:\s*([^|]+)/i);
+          const cliente = cliMatch ? cliMatch[1].trim() : 'N/A';
+
+          // Payment method
+          const pago = v.metodo_pago || (v.notas?.match(/\[Total:\s*\$[^(\n]+?\(?([^)]+)\)?\]/)?.[1]) || 'N/A';
+
+          ventasInfo += `  - Sede: ${v.sede?.nombre || 'General'} | Ítem: ${v.modelo || 'Silenciador'} (x${v.cantidad || 1}) | Total: $${v.precio_registrado || v.total_ingresos || 0} | Pago: ${pago} | Cliente: ${cliente}${duplicateTag} | Notas: ${v.notas || 'N/A'}\n`;
+        });
       } else {
-        ventasInfo += `\nNo hay ventas de silenciadores detalladas registradas hoy.`;
+        ventasInfo += `* No hay ventas detalladas/IA registradas hoy.\n`;
+      }
+
+      // 4. Build yesterday's sales summary
+      ventasInfo += `\n[VENTAS Y FACTURACIÓN REGISTRADAS AYER (${yesterdayStr})]\n`;
+      if (yesterdayVentasDia.length > 0 || yesterdayVentasSil.length > 0) {
+        if (yesterdayVentasDia.length > 0) {
+          ventasInfo += `* VENTAS POS MANUALES (ventas_dia):\n`;
+          yesterdayVentasDia.forEach(v => {
+            const itemsStr = Array.isArray(v.desglose)
+              ? v.desglose.map((item: any) => `${item.descripcion || item.nombre || 'Producto'} (x${item.cantidad || 1}) - $${item.precio_unitario || item.precio || 0}`).join(', ')
+              : 'Sin desglose';
+            ventasInfo += `  - Sede: ${v.sede?.nombre || 'General'} | Cliente: ${v.cliente || 'Consumidor Final'} | Total: $${v.total_ingresos} | Ítems: [${itemsStr}]\n`;
+          });
+        }
+        if (yesterdayVentasSil.length > 0) {
+          ventasInfo += `* VENTAS IA (ventas_silenciadores):\n`;
+          yesterdayVentasSil.forEach(v => {
+            if (!/Venta POS #/i.test(v.notas || '')) {
+              ventasInfo += `  - Sede: ${v.sede?.nombre || 'General'} | Ítem: ${v.modelo || 'Silenciador'} (x${v.cantidad || 1}) | Total: $${v.precio_registrado || v.total_ingresos || 0} | Notas: ${v.notas || 'N/A'}\n`;
+            }
+          });
+        }
+      } else {
+        ventasInfo += `* No se registraron ventas ayer.\n`;
+      }
+
+      // 5. Add a 30-day summary for the chatbot context to query historical trends
+      const recentVentasDia = allVentasDia?.filter(v => v.fecha !== today && v.fecha !== yesterdayStr).slice(0, 10) || [];
+      if (recentVentasDia.length > 0) {
+        ventasInfo += `\n[MUESTRA DE VENTAS RECIENTES (ÚLTIMOS 30 DÍAS)]\n`;
+        recentVentasDia.forEach(v => {
+          ventasInfo += `- Fecha: ${v.fecha} | Sede: ${v.sede?.nombre || 'General'} | Cliente: ${v.cliente || 'Consumidor Final'} | Total: $${v.total_ingresos}\n`;
+        });
       }
 
       historialTecnico = `\n--- FIN DE DATOS DEL SISTEMA ---\nInstrucción estricta: Eres el asistente administrativo (Modo Dios). Debes dar la información precisa de lo que se te pide usando la data anterior. Puedes ejecutar comandos para modificar la base de datos si el admin te lo pide. No inventes nada. ${ventasInfo}`;
