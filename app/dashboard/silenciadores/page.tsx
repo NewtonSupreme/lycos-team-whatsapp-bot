@@ -338,12 +338,17 @@ export default function VentasPage() {
           fecha: format(selectedDate, 'yyyy-MM-dd'),
           cliente: clienteNombre || 'Consumidor Final',
           total_ingresos: total,
-          desglose: cart.map(item => ({
-            descripcion: item.nombre,
-            cantidad: item.cantidad,
-            precio_unitario: item.precio_unitario,
-            total: item.total
-          })),
+          desglose: cart.map(item => {
+            const effectivePrice = (conIva && isCasheaActive)
+              ? (item.precio_bs || item.precio_unitario)
+              : item.precio_unitario;
+            return {
+              descripcion: item.nombre,
+              cantidad: item.cantidad,
+              precio_unitario: effectivePrice,
+              total: effectivePrice * item.cantidad
+            };
+          }),
           metodos_pago: metodosPago,
           con_iva: conIva,
           tasa_cambio: rates.bcv,
@@ -382,12 +387,17 @@ export default function VentasPage() {
         fecha: format(selectedDate, 'dd/MM/yyyy'),
         cliente: clienteNombre || 'Consumidor Final',
         vehiculo: vehiculoInfo,
-        items: cart.map(item => ({
-          descripcion: item.nombre,
-          cantidad: item.cantidad,
-          precio_unitario: item.precio_unitario,
-          total: item.total
-        })),
+        items: cart.map(item => {
+          const effectivePrice = (conIva && isCasheaActive)
+            ? (item.precio_bs || item.precio_unitario)
+            : item.precio_unitario;
+          return {
+            descripcion: item.nombre,
+            cantidad: item.cantidad,
+            precio_unitario: effectivePrice,
+            total: effectivePrice * item.cantidad
+          };
+        }),
         total: total,
         tasa_bcv: rates.bcv,
         total_ves: bcvTotal * rates.bcv,
@@ -1215,13 +1225,19 @@ export default function VentasPage() {
                      <tr><th className="px-4 py-3">ITEM</th><th className="px-4 py-3 text-center">CANT</th><th className="px-4 py-3 text-right">TOTAL USD</th></tr>
                    </thead>
                    <tbody className="divide-y divide-border/20">
-                     {cart.map((item, idx) => (
-                       <tr key={idx} className="font-bold">
-                         <td className="px-4 py-3 uppercase truncate max-w-[150px]">{item.nombre}</td>
-                         <td className="px-4 py-3 text-center font-black">{item.cantidad}</td>
-                         <td className="px-4 py-3 text-right font-black">${Number(item.total).toFixed(2)}</td>
-                       </tr>
-                     ))}
+                     {cart.map((item, idx) => {
+                        const effectivePrice = (conIva && isCasheaActive)
+                          ? (item.precio_bs || item.precio_unitario)
+                          : item.precio_unitario;
+                        const itemTotal = effectivePrice * item.cantidad;
+                        return (
+                          <tr key={idx} className="font-bold">
+                            <td className="px-4 py-3 uppercase truncate max-w-[150px]">{item.nombre}</td>
+                            <td className="px-4 py-3 text-center font-black">{item.cantidad}</td>
+                            <td className="px-4 py-3 text-right font-black">${Number(itemTotal).toFixed(2)}</td>
+                          </tr>
+                        );
+                      })}
                    </tbody>
                  </table>
                </div>
