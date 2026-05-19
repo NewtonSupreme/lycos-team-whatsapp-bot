@@ -453,6 +453,7 @@ export default function VentasPage() {
 
   const autoFillMethod = (method: string) => {
     if (method === 'cashea') {
+      setModoCashea(true);
       const casheaSubtotal = cart.reduce((sum, item) => {
         const basePrice = item.precio_bs || item.precio_unitario;
         return sum + (item.cantidad * basePrice);
@@ -930,7 +931,7 @@ export default function VentasPage() {
                             <Smartphone className="w-4 h-4" /> Cashea
                           </Label>
                           <button
-                            onClick={() => { setConIva(true); autoFillMethod('cashea'); }}
+                            onClick={() => { setConIva(true); setModoCashea(true); autoFillMethod('cashea'); }}
                             className="text-[8px] font-black text-blue-600 dark:text-blue-400 bg-white/50 dark:bg-slate-900/60 px-2 py-0.5 rounded-lg border border-blue-600/20 dark:border-blue-500/30"
                           >USAR CASHEA (+16% IVA)</button>
                        </div>
@@ -941,7 +942,7 @@ export default function VentasPage() {
                          {([40, 50, 60] as const).map(pct => (
                            <button
                              key={pct}
-                             onClick={() => { setCasheaPct(pct); setConIva(true); if (metodosPago.cashea === 0) autoFillMethod('cashea'); }}
+                             onClick={() => { setCasheaPct(pct); setConIva(true); setModoCashea(true); if (metodosPago.cashea === 0) autoFillMethod('cashea'); }}
                              className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all border ${casheaPct === pct && isCasheaActive ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white/40 dark:bg-slate-900/40 text-blue-600 dark:text-blue-400 border-blue-600/20 dark:border-blue-500/20 hover:bg-blue-600/10 dark:hover:bg-blue-400/10'}`}
                            >{pct}%</button>
                          ))}

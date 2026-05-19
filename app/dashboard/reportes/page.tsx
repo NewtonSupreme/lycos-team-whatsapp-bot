@@ -2376,10 +2376,19 @@ export default function ReportesPage() {
       });
 
       // Eliminar de la tabla correspondiente
-      if (sale.source === 'ia') {
-        await withSedeFilter(supabase?.from('ventas_silenciadores')).delete().eq('id', id);
-      } else {
-        await withSedeFilter(supabase?.from('ventas_dia')).delete().eq('id', id);
+      try {
+        if (!supabase) throw new Error('Supabase client not initialized');
+        if (sale.source === 'ia') {
+          const { error } = await supabase.from('ventas_silenciadores').delete().eq('id', id);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.from('ventas_dia').delete().eq('id', id);
+          if (error) throw error;
+        }
+        alert('Venta eliminada con éxito y trasladada a la papelera.');
+      } catch (err: any) {
+        console.error('Error deleting sale:', err);
+        alert('No se pudo eliminar la venta: ' + (err.message || err.details || JSON.stringify(err)));
       }
 
       setDeleting(null);

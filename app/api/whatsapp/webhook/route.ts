@@ -222,7 +222,7 @@ Sigue ESTRICTAMENTE estas reglas para dar precios al cliente:
 
 2) SERVICIOS EN 'PROMOCIÓN EN DIVISAS':
    - Aplica para: Escapes, Resonadores, Mecánica, Frenos, Catalizador, Electrónica, Estética, etc. (Todo lo que sea de la lista general o se mencione como promo).
-   - **EXCEPCIÓN CRÍTICA DE SILENCIADORES**: Para silenciadores, ignora cualquier precio de base de datos o cálculo automático, y aplica **ÚNICAMENTE** los 3 precios unificados detallados en LYCOS_KNOWLEDGE (Carro pequeño/sedán 4 cilindros: $80 a tasa BCV y promo en divisas 40$; Camioneta: $80 Promo Divisa y $120 a tasa BCV; Fabricación Especial: $100 Promo Divisa). **REGLA DE EXPLICACIÓN**: Cuando un vehículo aplique para Fabricación Especial ($100), explícale de forma muy clara y amable al cliente que esto se debe a que algunos modelos tienen un diseño de escape diferente, con curvas onduladas pronunciadas, entradas/salidas dobles o poco espacio, lo que requiere fabricar y adaptar la pieza a la medida de forma artesanal y especial para garantizar su correcto funcionamiento sin comprometer el chasis.
+   - **EXCEPCIÓN CRÍTICA DE SILENCIADORES**: Para silenciadores, ignora cualquier precio de base de datos o cálculo automático, y aplica **ÚNICAMENTE** los 3 precios unificados detallados en LYCOS_KNOWLEDGE (Carro pequeño/sedán 4 cilindros: $80 a tasa BCV y promo en divisas 40$; Camioneta: $80 Promo Divisa y $120 a tasa BCV; Fabricación Especial: $100 Promo Divisa). **REGLA DE EXPLICACIÓN**: Cuando un vehículo aplique para Fabricación Especial ($100), explícale al cliente de manera sumamente clara, atenta y profesional que la fabricación es diferente porque el recorrido de escape de su modelo es particular. Explícale que algunos vehículos requieren silenciadores y tuberías fabricados a medida de forma artesanal y especial debido a entradas/salidas dobles, tramos con curvas onduladas pronunciadas para esquivar el puente de suspensión, o espacio sumamente limitado bajo el chasis. Destaca que esto garantiza que la pieza acople perfectamente sin generar vibraciones, ruidos extraños o golpear con la carrocería, asegurando un flujo de gases óptimo y una durabilidad superior.
    - PRECIO: Para otros servicios en promoción, debes mostrar DOS montos en dólares:
      a) "Promoción en divisas: $[MontoOriginal]"
      b) "Precio: $[MontoConvertido] a tasa BCV"
@@ -330,7 +330,7 @@ SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gr
 - **TRES PRECIOS ÚNICOS PARA SILENCIADORES** (Instalación y revisión incluida, ignora precios de la base de datos):
     1) **Carros Pequeños o Sedanes**: **$80 a tasa BCV** (sin promoción en divisas, precio único para pago en Bs o Cashea). Ejemplos: Aveo, Spark, Corolla, Yaris, Corsa, Twingo, Gol, Arauca, Optra, Neon, etc.
     2) **Camionetas (SUVs / Pickups)**: **$80 en Promoción en Divisas** (efectivo/divisas). Ejemplos: Fortuner, Hilux, Explorer, Blazer, Grand Vitara, Terios, etc.
-    3) **Fabricación Especial**: **$100 en Promoción en Divisas** (efectivo/divisas). (para transferencias o Cashea). Aplica para vehículos con curvas complejas, salidas/entradas dobles, tubería ondulada, o espacio sumamente limitado (ej. Dodge Caliber, Ford EcoSport, Toyota Previa, Kia Sportage, Hyundai Tucson, Chevrolet Malibú, Jeep Compass, Jeep Cherokee, Mitsubishi Outlander, y SUVs compactas similares). **EXPLICACIÓN COMPLETA PARA EL CLIENTE**: Explícales que la fabricación especial se debe a las características específicas de su escape. Muchos modelos tienen tuberías complejas con curvas onduladas pronunciadas, entradas o salidas dobles, o un espacio sumamente reducido bajo el chasis. Por lo tanto, requiere un silenciador adaptado a la medida de forma artesanal y especial para asegurar el flujo correcto de los gases y evitar vibraciones o golpes con la carrocería, lo que toma más dedicación e insumos.
+    3) **Fabricación Especial**: **$100 en Promoción en Divisas** (efectivo/divisas). (para transferencias o Cashea). Aplica para vehículos con curvas complejas, salidas/entradas dobles, tubería ondulada, o espacio sumamente limitado (ej. Dodge Caliber, Ford EcoSport, Toyota Previa, Kia Sportage, Hyundai Tucson, Chevrolet Malibú, Jeep Compass, Jeep Cherokee, Mitsubishi Outlander, y SUVs compactas similares). **EXPLICACIÓN COMPLETA PARA EL CLIENTE**: Explícales con empatía y claridad que para su vehículo la fabricación es completamente diferente y personalizada. Esto se debe a que el diseño original de su escape requiere silenciadores con entradas o salidas dobles, o tramos de tuberías onduladas y con curvas pronunciadas para adaptarse perfectamente al espacio tan reducido debajo del chasis. Por ello, para garantizar que la pieza quede impecable, con el flujo de gases óptimo, y sin vibraciones ni golpes contra la carrocería, realizamos una fabricación y adaptación especial a la medida de forma artesanal que requiere mayor dedicación, insumos y precisión técnica.
 - **REGLA DE IMAGEN**: Cuando le des el precio del silenciador al cliente, incluye el tag [IMAGE: slug] correspondiente al final del mensaje:
     * Para carros pequeños/sedanes usa [IMAGE: clh40] (para CLH40/CL40/CL30).
     * Para camionetas usa [IMAGE: cl60].
@@ -998,23 +998,28 @@ async function loadConversationContext(
   let isAdmin = false;
 
   try {
-    // Determinar si el usuario es un Administrador del Bot IA
-    const { data: adminCheck } = await db.from('usuarios')
-      .select('nombre')
-      .eq('telefono', phone)
-      .eq('rol', 'admin')
-      .eq('activo', true)
-      .maybeSingle();
-      
-    if (adminCheck) {
+    // Determinar si el usuario es un Administrador o Gerente del Bot IA
+    const { data: activeUsers } = await db.from('usuarios')
+      .select('nombre, telefono, rol')
+      .eq('activo', true);
+
+    const matchedUser = activeUsers?.find(u => {
+      if (!u.telefono) return false;
+      const uClean = u.telefono.replace(/[^0-9]/g, '');
+      return uClean.slice(-10) === phone.slice(-10);
+    });
+
+    if (matchedUser && (matchedUser.rol === 'admin' || matchedUser.rol === 'gerente')) {
       isAdmin = true;
-      adminName = adminCheck.nombre;
+      adminName = matchedUser.nombre;
+      console.log(`👑 [${from}] Admin detectado dinámicamente: ${adminName} (${matchedUser.rol})`);
     } else if (ADMIN_PHONES.includes(phone)) {
       isAdmin = true;
       if (phone === '584123343519') adminName = 'Juan Pablo';
       else if (phone === '584241648710') adminName = 'Jorge';
       else if (phone === '584123193206') adminName = 'Leandro';
       else adminName = 'Administrador';
+      console.log(`👑 [${from}] Admin detectado por lista hardcodeada: ${adminName}`);
     }
   } catch (e) { console.error('Error checking admin status:', e); }
 
@@ -1076,25 +1081,21 @@ async function loadConversationContext(
           db.from('servicios').select('id, vehiculo_id, tipo_servicio, descripcion, fecha, costo, estado').in('vehiculo_id', vehIds).order('fecha', { ascending: false }).limit(10),
           db.from('revisiones').select('id, vehiculo_id, detalles, presupuesto, created_at').in('vehiculo_id', vehIds).order('created_at', { ascending: false }).limit(5)
         ]);
-
-        if ((servs.data && servs.data.length > 0) || (revs.data && revs.data.length > 0)) {
-          historialTecnico = '\n--- HISTORIAL TÉCNICO DEL CLIENTE ---\n';
-          vehs.forEach(v => {
-            const vServs = servs.data?.filter(s => s.vehiculo_id === v.id) || [];
-            const vRevs = revs.data?.filter(r => r.vehiculo_id === v.id) || [];
-            if (vServs.length > 0 || vRevs.length > 0) {
-              historialTecnico += `VEHÍCULO: ${v.marca} ${v.modelo} (Placa: ${v.placa || 'N/A'})\n`;
-              vServs.forEach(s => {
-                historialTecnico += `  - SERVICIO [${s.fecha}]: ${s.tipo_servicio} - ${s.descripcion} (${s.estado}) | Costo: $${s.costo}\n`;
-              });
-              vRevs.forEach(r => {
-                const date = new Date(r.created_at).toISOString().split('T')[0];
-                historialTecnico += `  - REVISIÓN [${date}]: ${r.detalles} | Presupuesto: $${r.presupuesto}\n`;
-              });
-            }
-          });
-          historialTecnico += '-------------------------------------\n';
-        }
+        vehs.forEach(v => {
+          const vServs = servs.data?.filter(s => s.vehiculo_id === v.id) || [];
+          const vRevs = revs.data?.filter(r => r.vehiculo_id === v.id) || [];
+          if (vServs.length > 0 || vRevs.length > 0) {
+            historialTecnico += `VEHÍCULO: ${v.marca} ${v.modelo} (Placa: ${v.placa || 'N/A'})\n`;
+            vServs.forEach(s => {
+              historialTecnico += `  - SERVICIO [${s.fecha}]: ${s.tipo_servicio} - ${s.descripcion} (${s.estado}) | Costo: $${s.costo}\n`;
+            });
+            vRevs.forEach(r => {
+              const date = new Date(r.created_at).toISOString().split('T')[0];
+              historialTecnico += `  - REVISIÓN [${date}]: ${r.detalles} | Presupuesto: $${r.presupuesto}\n`;
+            });
+          }
+        });
+        historialTecnico += '-------------------------------------\n';
       }
     }
   } catch (e) { console.error('Error loading memoria/historial:', e); }
@@ -1132,32 +1133,97 @@ async function loadConversationContext(
         { data: allVentasSil },
         { data: allVentasDia }
       ] = await Promise.all([
-        db.from('citas').select('*, sede:sedes(nombre)').gte('fecha', monthStr).order('fecha').limit(100),
-        db.from('inventario').select('*, sede:sedes(nombre)').eq('activo', true).order('nombre').limit(200),
-        db.from('servicios').select('*, sede:sedes(nombre)').gte('created_at', monthStr).order('created_at', { ascending: false }).limit(100),
-        db.from('logs_actividad').select('*, sede:sedes(nombre)').gte('created_at', monthStr).order('created_at', { ascending: false }).limit(50),
+        db.from('citas').select('*').gte('fecha', monthStr).order('fecha').limit(100),
+        db.from('inventario').select('*').eq('activo', true).order('nombre').limit(200),
+        db.from('servicios').select('*').gte('created_at', monthStr).order('created_at', { ascending: false }).limit(100),
+        db.from('logs_actividad').select('*').gte('created_at', monthStr).order('created_at', { ascending: false }).limit(50),
         db.from('sedes').select('id, nombre'),
         db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', todayDateStr),
         db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', weekDate.toISOString()),
         db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', monthStartStr),
-        db.from('ventas_silenciadores').select('*, sede:sedes(nombre)').gte('created_at', monthDate.toISOString()).order('created_at', { ascending: false }).limit(100),
-        db.from('ventas_dia').select('*, sede:sedes(nombre)').gte('created_at', monthDate.toISOString()).order('created_at', { ascending: false }).limit(100)
+        db.from('ventas_silenciadores').select('*').gte('created_at', monthDate.toISOString()).order('created_at', { ascending: false }).limit(200),
+        db.from('ventas_dia').select('*').gte('created_at', monthDate.toISOString()).order('created_at', { ascending: false }).limit(200)
       ]);
+
+      const toVzlaDateStr = (dateInput: any): string => {
+        if (!dateInput) return '';
+        if (typeof dateInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+          return dateInput;
+        }
+        try {
+          const d = new Date(dateInput);
+          if (isNaN(d.getTime())) return '';
+          return new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'America/Caracas',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+          }).format(d);
+        } catch (e) {
+          return '';
+        }
+      };
+
+      const sedeMap = new Map((sedes || []).map(s => [s.id, s.nombre]));
+
+      // Manually map sede names in JS to bypass missing database foreign keys
+      if (allCitas) {
+        allCitas.forEach(c => {
+          const sName = c.sede_id ? (sedeMap.get(c.sede_id) || 'General') : 'General';
+          c.sede = { nombre: sName };
+        });
+      }
+      if (allInv) {
+        allInv.forEach(i => {
+          const sName = i.sede_id ? (sedeMap.get(i.sede_id) || 'General') : 'General';
+          i.sede = { nombre: sName };
+        });
+      }
+      if (allServs) {
+        allServs.forEach(s => {
+          const sName = s.sede_id ? (sedeMap.get(s.sede_id) || 'General') : 'General';
+          s.sede = { nombre: sName };
+        });
+      }
+      if (allLogs) {
+        allLogs.forEach(l => {
+          const sName = l.sede_id ? (sedeMap.get(l.sede_id) || 'General') : 'General';
+          l.sede = { nombre: sName };
+        });
+      }
+      if (allVentasSil) {
+        allVentasSil.forEach(v => {
+          const sName = v.sede_id ? (sedeMap.get(v.sede_id) || 'General') : 'General';
+          v.sede = { nombre: sName };
+        });
+      }
+      if (allVentasDia) {
+        allVentasDia.forEach(v => {
+          const sName = v.sede_id ? (sedeMap.get(v.sede_id) || 'General') : 'General';
+          v.sede = { nombre: sName };
+        });
+      }
       
       // Calculate revenue from actual sales (ventas_dia and ventas_silenciadores)
       // We sum all POS sales, and all chatbot/IA sales that are not duplicates.
-      const posVentasToday = allVentasDia?.filter(v => v.fecha === today || v.created_at?.startsWith(today)) || [];
-      const posVentasYesterday = allVentasDia?.filter(v => v.fecha === yesterdayStr || v.created_at?.startsWith(yesterdayStr)) || [];
+      const posVentasToday = allVentasDia?.filter(v => {
+        const vDate = toVzlaDateStr(v.fecha || v.created_at);
+        return vDate === today;
+      }) || [];
+      const posVentasYesterday = allVentasDia?.filter(v => {
+        const vDate = toVzlaDateStr(v.fecha || v.created_at);
+        return vDate === yesterdayStr;
+      }) || [];
       
       const iaVentasToday = allVentasSil?.filter(v => {
-        const isPOSDuplicate = /Venta POS #/i.test(v.notas || '');
-        const isToday = v.fecha?.startsWith(today) || v.created_at?.startsWith(today);
-        return isToday && !isPOSDuplicate;
+        const isPOSDuplicate = /Venta POS #/i.test(v.notes || v.notas || '');
+        const vDate = toVzlaDateStr(v.fecha || v.created_at);
+        return vDate === today && !isPOSDuplicate;
       }) || [];
       const iaVentasYesterday = allVentasSil?.filter(v => {
-        const isPOSDuplicate = /Venta POS #/i.test(v.notas || '');
-        const isYesterday = v.fecha?.startsWith(yesterdayStr) || v.created_at?.startsWith(yesterdayStr);
-        return isYesterday && !isPOSDuplicate;
+        const isPOSDuplicate = /Venta POS #/i.test(v.notes || v.notas || '');
+        const vDate = toVzlaDateStr(v.fecha || v.created_at);
+        return vDate === yesterdayStr && !isPOSDuplicate;
       }) || [];
 
       const revenueToday = posVentasToday.reduce((sum, v) => sum + Number(v.total_ingresos || 0), 0) +
@@ -1283,12 +1349,12 @@ async function loadConversationContext(
       }
 
       // 1. Filter today's sales
-      const todayVentasDia = allVentasDia?.filter(v => v.fecha === today || v.created_at?.startsWith(today)) || [];
-      const todayVentasSil = allVentasSil?.filter(v => v.fecha?.startsWith(today) || v.created_at?.startsWith(today)) || [];
+      const todayVentasDia = allVentasDia?.filter(v => toVzlaDateStr(v.fecha || v.created_at) === today) || [];
+      const todayVentasSil = allVentasSil?.filter(v => toVzlaDateStr(v.fecha || v.created_at) === today) || [];
 
       // 2. Filter yesterday's sales
-      const yesterdayVentasDia = allVentasDia?.filter(v => v.fecha === yesterdayStr || v.created_at?.startsWith(yesterdayStr)) || [];
-      const yesterdayVentasSil = allVentasSil?.filter(v => v.fecha?.startsWith(yesterdayStr) || v.created_at?.startsWith(yesterdayStr)) || [];
+      const yesterdayVentasDia = allVentasDia?.filter(v => toVzlaDateStr(v.fecha || v.created_at) === yesterdayStr) || [];
+      const yesterdayVentasSil = allVentasSil?.filter(v => toVzlaDateStr(v.fecha || v.created_at) === yesterdayStr) || [];
 
       // 3. Build today's sales display with full items detail
       let ventasInfo = `\n[VENTAS Y FACTURACIÓN REGISTRADAS HOY (${today})]\n`;
@@ -2412,7 +2478,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       const mentionsParaiso = selectedSedeFromButton === 'paraiso' || bodyClean.includes('paraiso') || bodyClean.includes('paraíso') || (isLocationChoicePending && (bodyClean === '4' || bodyClean.includes('paraiso'))) || (isCaracasChoicePending && (bodyClean === '2' || bodyClean.includes('paraiso')));
       const mentionsCaracasGeneral = bodyClean.includes('caracas') && !bodyClean.includes('cementerio') && !bodyClean.includes('paraiso') && !bodyClean.includes('paraíso');
 
-      if (mentionsCaracasGeneral) {
+      if (!ctx.isAdmin && mentionsCaracasGeneral) {
         console.log(`📍 [${from}] Preguntando por sede de Caracas específica con 2 botones...`);
         const buttons = [
           { id: 'ccs_choice_1', title: 'El Cementerio' },
@@ -2424,7 +2490,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         return;
       }
 
-      if (mentionsSanAntonio || mentionsCarrizal || mentionsCaracas || mentionsParaiso) {
+      if (!ctx.isAdmin && (mentionsSanAntonio || mentionsCarrizal || mentionsCaracas || mentionsParaiso)) {
         let locationSent = false;
         let selectedSedeName = '';
         const selectedSedePhone = '584123343519';
