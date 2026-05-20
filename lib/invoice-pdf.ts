@@ -25,11 +25,12 @@ interface InvoiceData {
 export interface PrintOptions {
   mode: 'single' | 'dual' | 'diferente';
   side?: 'left' | 'right';
+  currencyMode?: 'usd' | 'dual' | 'auto';
 }
 
 export const generateInvoicePDF = (
   dataList: (InvoiceData & { iva_aplicado?: boolean; tasa_bcv?: number; total_ves?: number })[],
-  options: PrintOptions = { mode: 'dual' }
+  options: PrintOptions = { mode: 'dual', currencyMode: 'dual' }
 ) => {
   // Orientation: Landscape (l), Unit: mm, Format: a4 (297x210)
   const doc = new jsPDF('l', 'mm', 'a4') as any;
@@ -99,15 +100,30 @@ export const generateInvoicePDF = (
     doc.text(data.vehiculo?.toUpperCase() || '---', rightAlign, 54, { align: 'right' });
 
     // ── Table ───────────────────────────────────────────────────
-    const tableRows = data.items.map((item: any) => [
-      item.descripcion.toUpperCase(),
-      item.cantidad,
-      `$${Number(item.total).toFixed(2)}`
-    ]);
+    const bcvRateUsed = data.tasa_bcv || data.tasa_cambio || 518.0;
+    const isDual = options.currencyMode === 'dual';
+
+    const tableHead = isDual 
+      ? [['DESCRIPCIÓN DEL SERVICIO', 'CANT', 'TOTAL BS', 'TOTAL USD']]
+      : [['DESCRIPCIÓN DEL SERVICIO', 'CANT', 'TOTAL USD']];
+
+    const tableRows = data.items.map((item: any) => isDual 
+      ? [
+          item.descripcion.toUpperCase(),
+          item.cantidad,
+          `${(Number(item.total) * bcvRateUsed).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`,
+          `$${Number(item.total).toFixed(2)}`
+        ]
+      : [
+          item.descripcion.toUpperCase(),
+          item.cantidad,
+          `$${Number(item.total).toFixed(2)}`
+        ]
+    );
 
     autoTable(doc, {
       startY: 62,
-      head: [['DESCRIPCIÓN DEL SERVICIO', 'CANT', 'TOTAL USD']],
+      head: tableHead,
       body: tableRows,
       theme: 'plain',
       headStyles: { 
@@ -124,7 +140,12 @@ export const generateInvoicePDF = (
         cellPadding: 3,
         font: 'helvetica'
       },
-      columnStyles: {
+      columnStyles: isDual ? {
+        0: { cellWidth: 'auto' },
+        1: { cellWidth: 10, halign: 'center' },
+        2: { cellWidth: 20, halign: 'right', fontStyle: 'bold', textColor: grayDark },
+        3: { cellWidth: 20, halign: 'right', fontStyle: 'bold', textColor: black }
+      } : {
         0: { cellWidth: 'auto' },
         1: { cellWidth: 15, halign: 'center' },
         2: { cellWidth: 25, halign: 'right', fontStyle: 'bold', textColor: black }
@@ -171,25 +192,26 @@ export const generateInvoicePDF = (
     doc.text(`$${Number(data.total).toFixed(2)}`, rightAlign - 4, boxY + 9, { align: 'right' });
 
     // Total VES
-    doc.setDrawColor(255, 255, 255, 0.15);
-    doc.line(boxX + 4, boxY + 13, rightAlign - 4, boxY + 13);
+    if (isDual) {
+      doc.setDrawColor(255, 255, 255, 0.15);
+      doc.line(boxX + 4, boxY + 13, rightAlign - 4, boxY + 13);
 
-    doc.setTextColor(180, 180, 180);
-    doc.setFontSize(7);
-    doc.setFont('helvetica', 'normal');
-    doc.text('TOTAL EN BOLÍVARES (BS)', boxX + 4, boxY + 20);
-    
-    doc.setTextColor(...white);
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    const bcvRateUsed = data.tasa_bcv || data.tasa_cambio || 518.0;
-    const vesTotal = data.total_ves || (data.total * bcvRateUsed);
-    doc.text(`${vesTotal.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`, rightAlign - 4, boxY + 20, { align: 'right' });
+      doc.setTextColor(180, 180, 180);
+      doc.setFontSize(7);
+      doc.setFont('helvetica', 'normal');
+      doc.text('TOTAL EN BOLÍVARES (BS)', boxX + 4, boxY + 20);
+      
+      doc.setTextColor(...white);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      const vesTotal = data.total_ves || (data.total * bcvRateUsed);
+      doc.text(`${vesTotal.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`, rightAlign - 4, boxY + 20, { align: 'right' });
+    }
 
     // ── Bottom Info ─────────────────────────────────────────────
     let infoY = boxY + boxHeight + 10;
     
-    if (data.tasa_bcv || data.tasa_cambio) {
+    if (isDual && (data.tasa_bcv || data.tasa_cambio)) {
       doc.setTextColor(...grayLight);
       doc.setFontSize(7);
       doc.setFont('helvetica', 'bold');

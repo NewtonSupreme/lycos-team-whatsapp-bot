@@ -558,10 +558,11 @@ function CierreWizard({ ventas, onClose, onSaved }: {
 }
 
 // ── Modal: Formulario Manual ────────────────────────────────────
-function ManualModal({ onClose, onSave, initial }: {
+function ManualModal({ onClose, onSave, initial, inventario = [] }: {
   onClose: () => void;
   onSave: (data: Partial<VentaDia>) => Promise<void>;
   initial?: VentaDia | null;
+  inventario?: any[];
 }) {
   const [form, setForm] = useState({
     fecha: initial?.fecha || new Date().toISOString().split('T')[0],
@@ -592,6 +593,7 @@ function ManualModal({ onClose, onSave, initial }: {
   const [rateType, setRateType] = useState<'bcv' | 'binance'>('bcv');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [searchActive, setSearchActive] = useState<number | null>(null);
 
   useEffect(() => {
     const fetchRates = async () => {
@@ -736,7 +738,7 @@ function ManualModal({ onClose, onSave, initial }: {
               <input
                 type="text"
                 placeholder="Ej: Juan Pérez o Empresa X"
-                value={form.cliente}
+                value={form.cliente || ''}
                 onChange={e => setForm(f => ({ ...f, cliente: e.target.value }))}
                 className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
               />
@@ -814,8 +816,8 @@ function ManualModal({ onClose, onSave, initial }: {
                 <div key={method.id} className={cn(
                   "flex items-center justify-between p-3 rounded-2xl border transition-all",
                   (method.mixed ? ((form.metodos_pago as any)[`${method.id}_usd`] > 0 || (form.metodos_pago as any)[`${method.id}_ves`] > 0) : (form.metodos_pago as any)[method.id] > 0)
-                    ? "bg-white border-primary/30 shadow-md" 
-                    : "bg-slate-50/50 border-border/20 opacity-70"
+                    ? "bg-card border-primary/30 shadow-md" 
+                    : "bg-muted/30 border-border/20 opacity-70"
                 )}>
                   <label className="flex items-center gap-3 cursor-pointer">
                     <input 
@@ -835,18 +837,18 @@ function ManualModal({ onClose, onSave, initial }: {
                   
                   {method.mixed ? (
                     <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-1 bg-slate-50 px-2 py-1 rounded-lg border border-border/50">
+                      <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-900/50 px-2 py-1 rounded-lg border border-border/50">
                         <span className="text-[9px] font-bold text-slate-400">$</span>
                         <input 
-                          type="number" step="0.01" className="w-12 text-right text-[10px] font-black bg-transparent border-none p-0 focus:ring-0"
+                          type="number" step="0.01" className="w-12 text-right text-[10px] font-black bg-transparent border-none p-0 focus:ring-0 text-foreground"
                           value={(form.metodos_pago as any)[`${method.id}_usd`] || 0}
                           onChange={(e) => handlePaymentCalc(`${method.id}_usd`, parseFloat(e.target.value) || 0, true)}
                         />
                       </div>
-                      <div className="flex items-center gap-1 bg-slate-50 px-2 py-1 rounded-lg border border-border/50">
+                      <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-900/50 px-2 py-1 rounded-lg border border-border/50">
                         <span className="text-[9px] font-bold text-slate-400">Bs</span>
                         <input 
-                          type="number" step="0.01" className="w-12 text-right text-[10px] font-black bg-transparent border-none p-0 focus:ring-0"
+                          type="number" step="0.01" className="w-12 text-right text-[10px] font-black bg-transparent border-none p-0 focus:ring-0 text-foreground"
                           value={(form.metodos_pago as any)[`${method.id}_ves`] || 0}
                           onChange={(e) => handlePaymentCalc(`${method.id}_ves`, parseFloat(e.target.value) || 0, true)}
                         />
@@ -854,12 +856,12 @@ function ManualModal({ onClose, onSave, initial }: {
                     </div>
                   ) : (
                     (form.metodos_pago as any)[method.id] !== undefined && (
-                      <div className="flex items-center gap-1 bg-slate-50 px-3 py-1.5 rounded-xl border border-border/50">
+                      <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-900/50 px-3 py-1.5 rounded-xl border border-border/50">
                         <span className="text-[10px] font-bold text-slate-400">{method.currency}</span>
                         <input 
                           type="number" 
                           step="0.01"
-                          className="w-16 text-right text-xs font-black bg-transparent border-none p-0 focus:ring-0"
+                          className="w-16 text-right text-xs font-black bg-transparent border-none p-0 focus:ring-0 text-foreground"
                           value={(form.metodos_pago as any)[method.id]}
                           onChange={(e) => handlePaymentCalc(method.id, parseFloat(e.target.value) || 0, true)}
                         />
@@ -927,12 +929,33 @@ function ManualModal({ onClose, onSave, initial }: {
                   <div className="col-span-1 text-[10px] font-bold text-muted-foreground text-center bg-white h-7 flex items-center justify-center rounded-lg shadow-sm border border-slate-100">
                     {i + 1}
                   </div>
-                  <input
-                    className="col-span-4 px-2 py-1.5 rounded-lg border-none bg-transparent text-xs font-bold text-slate-700 focus:ring-0"
-                    placeholder="Descripción..."
-                    value={item.descripcion}
-                    onChange={e => updateItem(i, 'descripcion', e.target.value)}
-                  />
+                  <div className="col-span-4 relative">
+                    <input
+                      className="w-full px-2 py-1.5 rounded-lg border-none bg-transparent text-xs font-bold text-slate-700 dark:text-slate-200 focus:ring-0"
+                      placeholder="Descripción o buscar producto..."
+                      value={item.descripcion || ''}
+                      onChange={e => {
+                        updateItem(i, 'descripcion', e.target.value);
+                        setSearchActive(i);
+                      }}
+                      onFocus={() => setSearchActive(i)}
+                      onBlur={() => setTimeout(() => setSearchActive(null), 200)}
+                    />
+                    {searchActive === i && item.descripcion.length > 0 && (
+                      <div className="absolute z-50 top-full left-0 w-64 bg-white dark:bg-slate-800 shadow-xl border border-slate-200 dark:border-slate-700 rounded-lg max-h-48 overflow-y-auto mt-1">
+                        {inventario.filter(p => p.nombre.toLowerCase().includes(item.descripcion.toLowerCase())).map(p => (
+                          <div key={p.id} className="p-2 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer text-xs flex flex-col gap-0.5 border-b border-border/50 last:border-0" onClick={() => {
+                            updateItem(i, 'descripcion', p.nombre);
+                            updateItem(i, 'precio_unitario', p.precio || p.precio_usd || 0);
+                            setSearchActive(null);
+                          }}>
+                            <div className="font-bold text-slate-700 dark:text-slate-200">{p.nombre}</div>
+                            <div className="text-[9px] text-slate-500 dark:text-slate-400">Stock: {p.stock} | Precio: ${p.precio || p.precio_usd || 0}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <input
                     className="col-span-2 px-2 py-1.5 rounded-lg border-none bg-transparent text-xs font-black text-slate-600 text-center focus:ring-0"
                     type="number" placeholder="0" min="1"
@@ -968,7 +991,7 @@ function ManualModal({ onClose, onSave, initial }: {
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">Notas adicionales</label>
             <textarea
-              value={form.notas}
+              value={form.notas || ''}
               onChange={e => setForm(f => ({ ...f, notas: e.target.value }))}
               placeholder="Observaciones del día, pagos pendientes, etc."
               rows={2}
@@ -1096,7 +1119,7 @@ function EgresoModal({ onClose, onSave, initial }: {
               <input
                 type="text"
                 placeholder="Ej: Repuestos El Chamo"
-                value={form.cliente}
+                value={form.cliente || ''}
                 onChange={e => setForm(f => ({ ...f, cliente: e.target.value }))}
                 className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm"
               />
@@ -1131,7 +1154,7 @@ function EgresoModal({ onClose, onSave, initial }: {
                   <input
                     className="col-span-4 px-2 py-1.5 rounded-lg border border-border/40 bg-background/50 text-xs"
                     placeholder="¿En qué se gastó?"
-                    value={item.descripcion}
+                    value={item.descripcion || ''}
                     onChange={e => updateItem(i, 'descripcion', e.target.value)}
                   />
                   <input
@@ -1161,7 +1184,7 @@ function EgresoModal({ onClose, onSave, initial }: {
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">Notas</label>
             <textarea
-              value={form.notas}
+              value={form.notas || ''}
               onChange={e => setForm(f => ({ ...f, notas: e.target.value }))}
               placeholder="Detalles adicionales..."
               rows={2}
@@ -1616,6 +1639,7 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
   const { currentSede } = useSedeStore();
   const [printMode, setPrintMode] = useState<'single' | 'dual' | 'diferente'>('dual');
   const [printSide, setPrintSide] = useState<'left' | 'right'>('left');
+  const [printCurrencyMode, setPrintCurrencyMode] = useState<'auto' | 'usd' | 'dual'>('auto');
   const [secondVenta, setSecondVenta] = useState<any | null>(null);
   const [showSelector, setShowSelector] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -1652,7 +1676,12 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
         });
       }
 
-      generateInvoicePDF(dataList, { mode: printMode, side: printSide });
+      const mp = venta.metodos_pago || {};
+      const resolvedCurrencyMode = printCurrencyMode === 'auto'
+        ? ((mp.pago_movil > 0 || mp.efectivo_ves > 0 || venta.isCashea) ? 'dual' : 'usd')
+        : printCurrencyMode;
+
+      generateInvoicePDF(dataList, { mode: printMode, side: printSide, currencyMode: resolvedCurrencyMode as any });
     } catch (err) {
       alert('Error al generar PDF');
     }
@@ -1831,6 +1860,30 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
                 title="Dos facturas diferentes"
               >
                 Diferente
+              </button>
+            </div>
+
+            <div className="flex items-center bg-white/5 rounded-xl p-1 gap-1 border border-border/30">
+              <button 
+                onClick={() => setPrintCurrencyMode('auto')}
+                className={cn("px-2 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all", printCurrencyMode === 'auto' ? "bg-primary text-white shadow-sm" : "text-muted-foreground hover:text-white")}
+                title="Auto detecta si pagó en Bs para imprimir Dual, sino Solo USD"
+              >
+                Auto
+              </button>
+              <button 
+                onClick={() => setPrintCurrencyMode('usd')}
+                className={cn("px-2 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all", printCurrencyMode === 'usd' ? "bg-primary text-white shadow-sm" : "text-muted-foreground hover:text-white")}
+                title="Imprimir solo columnas en USD"
+              >
+                Solo USD
+              </button>
+              <button 
+                onClick={() => setPrintCurrencyMode('dual')}
+                className={cn("px-2 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all", printCurrencyMode === 'dual' ? "bg-primary text-white shadow-sm" : "text-muted-foreground hover:text-white")}
+                title="Imprimir columnas en Bs y USD"
+              >
+                Bs+USD
               </button>
             </div>
 
@@ -2024,6 +2077,7 @@ export default function ReportesPage() {
   const [loadingPapelera, setLoadingPapelera] = useState(false);
   const [actioningId, setActioningId] = useState<string | null>(null);
   const [period, setPeriod] = useState('30d');
+  const [chartGranularity, setChartGranularity] = useState<'days' | 'weeks' | 'months'>('weeks');
   const [showManual, setShowManual] = useState(false);
   const [showManualEgreso, setShowManualEgreso] = useState(false);
   const [showCierreWizard, setShowCierreWizard] = useState(false);
@@ -2203,8 +2257,8 @@ export default function ReportesPage() {
       ...v,
       id: v.id || `pos-${idx}-${Date.now()}`,
       source: 'pos',
-      isCashea: (v.notas || '').toLowerCase().includes('cashea') || (v.metodos_pago && JSON.stringify(v.metodos_pago).toLowerCase().includes('cashea')),
-      isBinance: (v.notas || '').toLowerCase().includes('binance') || (v.metodos_pago && JSON.stringify(v.metodos_pago).toLowerCase().includes('binance'))
+      isCashea: (v.notas || '').toLowerCase().includes('cashea') || (v.metodos_pago && Number(v.metodos_pago.cashea) > 0),
+      isBinance: (v.notas || '').toLowerCase().includes('binance') || (v.metodos_pago && Number(v.metodos_pago.binance) > 0)
     }));
 
     const allVentas = [...normalizedManual, ...normalizedSil].sort((a, b) => 
@@ -2231,29 +2285,48 @@ export default function ReportesPage() {
     return () => { supabase?.removeChannel(ch); };
   }, [loadData]);
 
-  // Chart data grouping by week
+  // Chart data grouping by granularity
   const chartData = React.useMemo(() => {
-    const byWeek: Record<string, { semana: string; ingresos: number; egresos: number; servicios: number }> = {};
+    const dataObj: Record<string, { semana: string; ingresos: number; egresos: number; servicios: number }> = {};
     
-    [...ventas].reverse().forEach(v => {
-      const d = new Date(v.fecha + 'T12:00:00');
+    const getKey = (d: Date) => {
+      if (chartGranularity === 'days') return d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
+      if (chartGranularity === 'months') return d.toLocaleDateString('es-ES', { month: 'short', year: '2-digit' });
       const weekNum = Math.floor(d.getDate() / 7) + 1;
-      const key = `${d.toLocaleString('es', { month: 'short' })} S${weekNum}`;
-      if (!byWeek[key]) byWeek[key] = { semana: key, ingresos: 0, egresos: 0, servicios: 0 };
-      byWeek[key].ingresos += Number(v.total_ingresos);
-      byWeek[key].servicios += Number(v.total_servicios);
+      return `${d.toLocaleString('es-ES', { month: 'short' })} S${weekNum}`;
+    };
+
+    // Generate timeline deterministically
+    const numPoints = chartGranularity === 'days' ? 14 : (chartGranularity === 'months' ? 6 : 12);
+    for (let i = numPoints - 1; i >= 0; i--) {
+      const d = new Date();
+      if (chartGranularity === 'days') d.setDate(d.getDate() - i);
+      else if (chartGranularity === 'months') d.setMonth(d.getMonth() - i);
+      else d.setDate(d.getDate() - (i * 7));
+      
+      const key = getKey(d);
+      dataObj[key] = { semana: key, ingresos: 0, egresos: 0, servicios: 0 };
+    }
+    
+    ventas.forEach(v => {
+      const d = new Date((v.fecha || v.created_at).split('T')[0] + 'T12:00:00');
+      const key = getKey(d);
+      if (dataObj[key]) {
+        dataObj[key].ingresos += Number(v.total_ingresos) || 0;
+        dataObj[key].servicios += Number(v.total_servicios) || 0;
+      }
     });
 
-    [...egresos].reverse().forEach(e => {
+    egresos.forEach(e => {
       const d = new Date(e.fecha + 'T12:00:00');
-      const weekNum = Math.floor(d.getDate() / 7) + 1;
-      const key = `${d.toLocaleString('es', { month: 'short' })} S${weekNum}`;
-      if (!byWeek[key]) byWeek[key] = { semana: key, ingresos: 0, egresos: 0, servicios: 0 };
-      byWeek[key].egresos += Number(e.total_egresos);
+      const key = getKey(d);
+      if (dataObj[key]) {
+        dataObj[key].egresos += Number(e.total_egresos) || 0;
+      }
     });
 
-    return Object.values(byWeek).slice(-12);
-  }, [ventas, egresos]);
+    return Object.values(dataObj);
+  }, [ventas, egresos, chartGranularity]);
 
   const handleSaveVenta = async (data: Partial<VentaDia>) => {
     if (!supabase) return;
@@ -2712,14 +2785,30 @@ export default function ReportesPage() {
           ) : (
             <>
               <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 gap-4">
                   <div>
                     <CardTitle className="text-base">Evolución Financiera</CardTitle>
-                    <CardDescription className="text-xs">Comparativa semanal de ingresos vs egresos</CardDescription>
+                    <CardDescription className="text-xs">Comparativa de ingresos vs egresos</CardDescription>
                   </div>
-                  <div className="flex gap-4 text-[10px] font-bold">
-                    <span className="flex items-center gap-1 text-orange-400"><span className="w-2 h-2 rounded-full bg-orange-400" /> INGRESOS</span>
-                    <span className="flex items-center gap-1 text-rose-400"><span className="w-2 h-2 rounded-full bg-rose-400" /> EGRESOS</span>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                    <div className="flex bg-muted/50 p-1 rounded-xl border border-border/50">
+                      <button 
+                        onClick={() => setChartGranularity('days')}
+                        className={cn("px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all", chartGranularity === 'days' ? "bg-white dark:bg-slate-800 text-primary shadow-sm" : "text-muted-foreground hover:text-slate-700")}
+                      >Días</button>
+                      <button 
+                        onClick={() => setChartGranularity('weeks')}
+                        className={cn("px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all", chartGranularity === 'weeks' ? "bg-white dark:bg-slate-800 text-primary shadow-sm" : "text-muted-foreground hover:text-slate-700")}
+                      >Semanas</button>
+                      <button 
+                        onClick={() => setChartGranularity('months')}
+                        className={cn("px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all", chartGranularity === 'months' ? "bg-white dark:bg-slate-800 text-primary shadow-sm" : "text-muted-foreground hover:text-slate-700")}
+                      >Meses</button>
+                    </div>
+                    <div className="flex gap-4 text-[10px] font-bold">
+                      <span className="flex items-center gap-1 text-orange-400"><span className="w-2 h-2 rounded-full bg-orange-400" /> INGRESOS</span>
+                      <span className="flex items-center gap-1 text-rose-400"><span className="w-2 h-2 rounded-full bg-rose-400" /> EGRESOS</span>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -3496,6 +3585,7 @@ export default function ReportesPage() {
       {/* Modals con Portals */}
       {mounted && showManual && createPortal(
         <ManualModal
+          inventario={inventarioHistory}
           onClose={() => { setShowManual(false); setEditando(null); }}
           onSave={handleSaveVenta}
           initial={editando}

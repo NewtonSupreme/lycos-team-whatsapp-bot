@@ -45,6 +45,10 @@ interface CartItem {
   precio_bs?: number;
   total: number;
   stock: number;
+  isTuberia?: boolean;
+  medida_tuberia?: 'completo' | 'metros';
+  metros_tuberia?: number;
+  precio_tuberia_completo?: number;
 }
 
 export default function VentasPage() {
@@ -86,9 +90,11 @@ export default function VentasPage() {
 
   const [printMode, setPrintMode] = useState<'single' | 'dual' | 'diferente'>('dual');
   const [printSide, setPrintSide] = useState<'left' | 'right'>('left');
+  const [printCurrencyMode, setPrintCurrencyMode] = useState<'auto' | 'usd' | 'dual'>('auto');
 
   const { currentSede } = useSedeStore();
   const [rates, setRates] = useState({ bcv: 36.5 });
+  const [customRate, setCustomRate] = useState<number | null>(null);
 
   // Stats
   const [ventasRecientes, setVentasRecientes] = useState<any[]>([]);
@@ -221,8 +227,8 @@ export default function VentasPage() {
       });
 
       const normalizedAccounting = (salesDia.data || []).map((v: any) => {
-        const isCashea = v.metodo_pago?.toLowerCase().includes('cashea') || (v.notas || '').toLowerCase().includes('cashea');
-        const isBinance = v.metodo_pago?.toLowerCase().includes('binance') || (v.notas || '').toLowerCase().includes('binance');
+        const isCashea = (v.notas || '').toLowerCase().includes('cashea') || (v.metodos_pago && Number(v.metodos_pago.cashea) > 0);
+        const isBinance = (v.notas || '').toLowerCase().includes('binance') || (v.metodos_pago && Number(v.metodos_pago.binance) > 0);
         
         return {
           ...v,
@@ -249,8 +255,22 @@ export default function VentasPage() {
     const existing = cart.find(item => item.id === prod.id);
     const customPrice = customItemPrices[prod.id];
     const effectivePrice = customPrice !== undefined ? customPrice : (prod.precio_usd || 0);
+    const isTub = prod.nombre.toLowerCase().includes('tuberia') || 
+                  prod.nombre.toLowerCase().includes('tubería') || 
+                  prod.nombre.toLowerCase().startsWith('tubo') || 
+                  prod.nombre.toLowerCase().includes('tubo ') ||
+                  (prod.categoria && (
+                    prod.categoria.toLowerCase() === 'tuberia' || 
+                    prod.categoria.toLowerCase() === 'tubería'
+                  ));
+
     if (existing) {
-      if (existing.cantidad >= prod.stock) return alert("Stock insuficiente");
+      let qtyNeeded = existing.cantidad + 1;
+      if (existing.isTuberia && existing.medida_tuberia === 'metros') {
+        qtyNeeded = Math.ceil((qtyNeeded * (existing.metros_tuberia || 6)) / 6);
+      }
+      if (qtyNeeded > prod.stock) return alert("Stock insuficiente");
+      
       setCart(cart.map(item => 
         item.id === prod.id 
           ? { ...item, cantidad: item.cantidad + 1, total: (item.cantidad + 1) * item.precio_unitario }
@@ -265,7 +285,11 @@ export default function VentasPage() {
         precio_unitario: effectivePrice,
         precio_bs: effectivePrecioBs,
         total: effectivePrice,
-        stock: prod.stock
+        stock: prod.stock,
+        isTuberia: isTub,
+        medida_tuberia: isTub ? 'completo' : undefined,
+        metros_tuberia: isTub ? 6 : undefined,
+        precio_tuberia_completo: isTub ? effectivePrice : undefined
       }]);
     }
   };
@@ -288,12 +312,68 @@ export default function VentasPage() {
     ));
   };
 
+  const handleTuberiaChange = (id: string, medida: 'completo' | 'metros', metros: number) => {
+    const prod = productos.find(p => p.id === id);
+    if (!prod) return;
+
+    setCart(cart.map(item => {
+      if (item.id === id) {
+        let qtyNeeded = item.cantidad;
+        if (medida === 'metros') {
+          qtyNeeded = Math.ceil((item.cantidad * metros) / 6);
+        }
+        
+        if (qtyNeeded > prod.stock) {
+          alert(`Stock insuficiente. Solo hay ${prod.stock} tubo(s) disponible(s).`);
+          return item;
+        }
+
+        const precioCompleto = item.precio_tuberia_completo !== undefined ? item.precio_tuberia_completo : item.precio_unitario;
+        let newPrecioUnitario = item.precio_unitario;
+        let newTotal = item.total;
+        let newPrecioBs = item.precio_bs;
+
+        if (medida === 'completo') {
+          newPrecioUnitario = precioCompleto;
+          newTotal = precioCompleto * item.cantidad;
+          newPrecioBs = item.precio_bs || precioCompleto;
+        } else {
+          const calculatedPrice = (precioCompleto / 6) * metros;
+          newPrecioUnitario = Number(calculatedPrice.toFixed(2));
+          newTotal = newPrecioUnitario * item.cantidad;
+          if (item.precio_bs) {
+            const originalBsCompleto = (item.precio_bs * 6) / (item.metros_tuberia || 6);
+            newPrecioBs = Number(((originalBsCompleto / 6) * metros).toFixed(2));
+          } else {
+            newPrecioBs = newPrecioUnitario;
+          }
+        }
+
+        return {
+          ...item,
+          medida_tuberia: medida,
+          metros_tuberia: metros,
+          precio_unitario: newPrecioUnitario,
+          precio_bs: newPrecioBs,
+          total: newTotal
+        };
+      }
+      return item;
+    }));
+  };
+
   const updateQuantity = (id: string, delta: number) => {
     setCart(cart.map(item => {
       if (item.id === id) {
         const prod = productos.find(p => p.id === id);
         const newQty = Math.max(1, item.cantidad + delta);
-        if (delta > 0 && prod && newQty > prod.stock) {
+        
+        let qtyNeeded = newQty;
+        if (item.isTuberia && item.medida_tuberia === 'metros') {
+          qtyNeeded = Math.ceil((newQty * (item.metros_tuberia || 6)) / 6);
+        }
+
+        if (delta > 0 && prod && qtyNeeded > prod.stock) {
            alert("Stock insuficiente");
            return item;
         }
@@ -306,6 +386,8 @@ export default function VentasPage() {
   const removeFromCart = (id: string) => {
     setCart(cart.filter(item => item.id !== id));
   };
+
+  const activeRate = customRate !== null ? customRate : rates.bcv;
 
   // Cashea uses precio_bs (which stores the BCV base price in USD) or precio_unitario.
   const isCasheaActive = modoCashea || metodosPago.cashea > 0;
@@ -326,6 +408,10 @@ export default function VentasPage() {
   const totalPaid = Object.values(metodosPago).reduce((acc, val) => acc + val, 0);
   const balance = total - totalPaid;
 
+  const resolvedCurrencyMode = printCurrencyMode === 'auto'
+    ? ((metodosPago.pago_movil > 0 || metodosPago.efectivo_ves > 0 || isCasheaActive) ? 'dual' : 'usd')
+    : printCurrencyMode;
+
   const handleFinalize = async () => {
     if (cart.length === 0) return alert("El carrito está vacío");
     if (Math.abs(balance) > 0.05 && balance > 0) return alert(`Aún falta pagar $${(balance || 0).toFixed(2)}`);
@@ -342,8 +428,16 @@ export default function VentasPage() {
             const effectivePrice = (conIva && isCasheaActive)
               ? (item.precio_bs || item.precio_unitario)
               : item.precio_unitario;
+            
+            let name = item.nombre;
+            if (item.isTuberia && item.medida_tuberia === 'metros') {
+              name = `${item.nombre} (${item.metros_tuberia} metros)`;
+            } else if (item.isTuberia && item.medida_tuberia === 'completo') {
+              name = `${item.nombre} (Tubo Completo 6m)`;
+            }
+
             return {
-              descripcion: item.nombre,
+              descripcion: name,
               cantidad: item.cantidad,
               precio_unitario: effectivePrice,
               total: effectivePrice * item.cantidad
@@ -351,7 +445,7 @@ export default function VentasPage() {
           }),
           metodos_pago: metodosPago,
           con_iva: conIva,
-          tasa_cambio: rates.bcv,
+          tasa_cambio: activeRate,
           total_servicios: cart.reduce((s, i) => s + i.cantidad, 0),
           total_clientes: 1,
           notas: `${notas}${vehiculoInfo ? ` | Vehículo: ${vehiculoInfo}` : ''}`,
@@ -373,7 +467,11 @@ export default function VentasPage() {
       });
 
       for (const item of cart) {
-        const newStock = Math.max(0, item.stock - item.cantidad);
+        let qtyToDeduct = item.cantidad;
+        if (item.isTuberia && item.medida_tuberia === 'metros') {
+          qtyToDeduct = Math.ceil((item.cantidad * (item.metros_tuberia || 6)) / 6);
+        }
+        const newStock = Math.max(0, item.stock - qtyToDeduct);
         await updateInventarioStock(item.id, newStock);
       }
 
@@ -391,16 +489,24 @@ export default function VentasPage() {
           const effectivePrice = (conIva && isCasheaActive)
             ? (item.precio_bs || item.precio_unitario)
             : item.precio_unitario;
+
+          let name = item.nombre;
+          if (item.isTuberia && item.medida_tuberia === 'metros') {
+            name = `${item.nombre} (${item.metros_tuberia}m)`;
+          } else if (item.isTuberia && item.medida_tuberia === 'completo') {
+            name = `${item.nombre} (Completo 6m)`;
+          }
+
           return {
-            descripcion: item.nombre,
+            descripcion: name,
             cantidad: item.cantidad,
             precio_unitario: effectivePrice,
             total: effectivePrice * item.cantidad
           };
         }),
         total: total,
-        tasa_bcv: rates.bcv,
-        total_ves: bcvTotal * rates.bcv,
+        tasa_bcv: activeRate,
+        total_ves: bcvTotal * activeRate,
         iva_aplicado: conIva
       };
 
@@ -414,13 +520,13 @@ export default function VentasPage() {
           cliente: secondVenta.cliente || undefined,
           items: secondVenta.desglose || [],
           total: secondVenta.total_ingresos,
-          tasa_bcv: secondVenta.tasa_cambio || rates.bcv,
-          total_ves: secondVenta.total_ingresos * (secondVenta.tasa_cambio || rates.bcv),
+          tasa_bcv: secondVenta.tasa_cambio || activeRate,
+          total_ves: secondVenta.total_ingresos * (secondVenta.tasa_cambio || activeRate),
           iva_aplicado: secondVenta.con_iva
         });
       }
 
-      generateInvoicePDF(dataList, { mode: printMode, side: printSide });
+      generateInvoicePDF(dataList, { mode: printMode, side: printSide, currencyMode: resolvedCurrencyMode as any });
 
       setCart([]);
       setClienteNombre('');
@@ -871,48 +977,132 @@ export default function VentasPage() {
                 ) : (
                   <div className="divide-y divide-border/20">
                     {cart.map(item => (
-                      <div key={item.id} className="p-4 flex items-center gap-4 group border-l-4 border-transparent hover:border-primary transition-all">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-black uppercase truncate">{item.nombre}</p>
-                          <p className="text-[9px] font-black text-muted-foreground italic mt-0.5">
-                            Divisa: ${item.precio_unitario} | BCV: ${item.precio_bs || item.precio_unitario}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <div className="flex items-center bg-background/60 rounded-xl border border-border/50 p-1">
-                            <button onClick={() => updateQuantity(item.id, -1)} className="w-6 h-6 flex items-center justify-center text-muted-foreground hover:text-primary font-black">-</button>
-                            <span className="w-8 text-center text-xs font-black">{item.cantidad}</span>
-                            <button onClick={() => updateQuantity(item.id, 1)} className="w-6 h-6 flex items-center justify-center text-muted-foreground hover:text-primary font-black">+</button>
+                      <div key={item.id} className="p-4 flex flex-col gap-2 group border-l-4 border-transparent hover:border-primary transition-all">
+                        <div className="flex items-center gap-4">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-black uppercase truncate">{item.nombre}</p>
+                            <p className="text-[9px] font-black text-muted-foreground italic mt-0.5">
+                              Divisa: ${item.precio_unitario} | BCV: ${item.precio_bs || item.precio_unitario}
+                            </p>
                           </div>
-                          
-                          {/* Precio Divisa Editable */}
-                          <div className="flex flex-col items-end gap-0.5">
-                             <input
-                               type="number" step="0.01" min="0"
-                               title="Precio Divisa USD"
-                               className="w-16 text-right text-xs font-black italic tracking-tighter bg-transparent border-b border-dashed border-primary/40 focus:border-primary focus:outline-none text-primary pb-0.5"
-                               value={item.precio_unitario}
-                               onChange={e => updateCartItemPrice(item.id, parseFloat(e.target.value) || 0)}
-                             />
-                             <span className="text-[7px] text-primary/75 font-black uppercase opacity-60">USD C/U</span>
-                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="flex items-center bg-background/60 rounded-xl border border-border/50 p-1">
+                              <button onClick={() => updateQuantity(item.id, -1)} className="w-6 h-6 flex items-center justify-center text-muted-foreground hover:text-primary font-black">-</button>
+                              <span className="w-8 text-center text-xs font-black">{item.cantidad}</span>
+                              <button onClick={() => updateQuantity(item.id, 1)} className="w-6 h-6 flex items-center justify-center text-muted-foreground hover:text-primary font-black">+</button>
+                            </div>
+                            
+                            {/* Precio Divisa Editable */}
+                            <div className="flex flex-col items-end gap-0.5">
+                               <input
+                                 type="number" step="0.01" min="0"
+                                 title="Precio Divisa USD"
+                                 className="w-16 text-right text-xs font-black italic tracking-tighter bg-transparent border-b border-dashed border-primary/40 focus:border-primary focus:outline-none text-primary pb-0.5"
+                                 value={item.precio_unitario}
+                                 onChange={e => updateCartItemPrice(item.id, parseFloat(e.target.value) || 0)}
+                               />
+                               <span className="text-[7px] text-primary/75 font-black uppercase opacity-60">USD C/U</span>
+                            </div>
 
-                          {/* Precio BCV Editable */}
-                          <div className="flex flex-col items-end gap-0.5">
-                             <input
-                               type="number" step="0.01" min="0"
-                               title="Precio Dólar BCV (en USD)"
-                               className="w-16 text-right text-xs font-black italic tracking-tighter bg-transparent border-b border-dashed border-blue-500/40 focus:border-blue-500 focus:outline-none text-blue-600 pb-0.5"
-                               value={item.precio_bs || item.precio_unitario}
-                               onChange={e => updateCartItemPrecioBs(item.id, parseFloat(e.target.value) || 0)}
-                             />
-                             <span className="text-[7px] text-blue-600/75 font-black uppercase opacity-60">USD BCV</span>
-                          </div>
+                            {/* Precio BCV Editable */}
+                            <div className="flex flex-col items-end gap-0.5">
+                               <input
+                                 type="number" step="0.01" min="0"
+                                 title="Precio Dólar BCV (en USD)"
+                                 className="w-16 text-right text-xs font-black italic tracking-tighter bg-transparent border-b border-dashed border-blue-500/40 focus:border-blue-500 focus:outline-none text-blue-600 pb-0.5"
+                                 value={item.precio_bs || item.precio_unitario}
+                                 onChange={e => updateCartItemPrecioBs(item.id, parseFloat(e.target.value) || 0)}
+                               />
+                               <span className="text-[7px] text-blue-600/75 font-black uppercase opacity-60">USD BCV</span>
+                            </div>
 
-                          <button onClick={() => removeFromCart(item.id)} className="text-destructive/40 hover:text-destructive transition-colors">
-                            <X className="w-4 h-4" />
-                          </button>
+                            <button onClick={() => removeFromCart(item.id)} className="text-destructive/40 hover:text-destructive transition-colors">
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
+
+                        {/* Controles de tubería específicos */}
+                        {item.isTuberia && (
+                          <div className="ml-1 mt-1.5 p-3.5 rounded-2xl bg-primary/5 border border-primary/10 space-y-3.5 text-xs">
+                            <div className="flex flex-col gap-1.5">
+                              <span className="font-black text-muted-foreground uppercase text-[10px] tracking-wider">Modo de venta:</span>
+                              <div className="flex items-center gap-4">
+                                <label className="flex items-center gap-2 cursor-pointer font-bold text-xs select-none">
+                                  <input 
+                                    type="radio" 
+                                    name={`medida-${item.id}`} 
+                                    checked={item.medida_tuberia === 'completo'} 
+                                    onChange={() => handleTuberiaChange(item.id, 'completo', 6)}
+                                    className="accent-primary w-4 h-4"
+                                  />
+                                  Tubo Completo (6m)
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer font-bold text-xs select-none">
+                                  <input 
+                                    type="radio" 
+                                    name={`medida-${item.id}`} 
+                                    checked={item.medida_tuberia === 'metros'} 
+                                    onChange={() => handleTuberiaChange(item.id, 'metros', 1)}
+                                    className="accent-primary w-4 h-4"
+                                  />
+                                  Por Metros
+                                </label>
+                              </div>
+                            </div>
+
+                            {item.medida_tuberia === 'metros' && (
+                              <div className="flex items-center gap-2.5 select-none">
+                                <span className="font-extrabold text-muted-foreground text-xs">Metros a vender:</span>
+                                <div className="flex items-center bg-background/60 rounded-xl border border-border p-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const current = item.metros_tuberia || 1;
+                                      const next = Math.max(0.1, Number((current - 0.5).toFixed(1)));
+                                      handleTuberiaChange(item.id, 'metros', next);
+                                    }}
+                                    className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-primary/5 active:bg-primary/10 rounded-lg transition-all font-black text-base"
+                                  >
+                                    -
+                                  </button>
+                                  <input
+                                    type="number"
+                                    step="0.1"
+                                    min="0.1"
+                                    value={item.metros_tuberia || 1}
+                                    onChange={(e) => handleTuberiaChange(item.id, 'metros', parseFloat(e.target.value) || 0)}
+                                    className="w-14 h-8 bg-transparent border-none text-center font-black text-sm focus:outline-none focus:ring-0"
+                                    placeholder="m"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const current = item.metros_tuberia || 1;
+                                      const next = Number((current + 0.5).toFixed(1));
+                                      handleTuberiaChange(item.id, 'metros', next);
+                                    }}
+                                    className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-primary/5 active:bg-primary/10 rounded-lg transition-all font-black text-base"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                                <span className="text-muted-foreground font-black text-xs">metros</span>
+                              </div>
+                            )}
+
+                            <div className="p-2.5 rounded-lg bg-background/40 border border-border/40 text-[11px] font-medium text-muted-foreground leading-normal space-y-1">
+                              {item.medida_tuberia === 'completo' ? (
+                                <p>✓ <strong>Venta completa</strong>. Se descontará <strong>{item.cantidad} tubo(s)</strong> de 6 metros del stock de inventario.</p>
+                              ) : (
+                                <>
+                                  <p>✓ Fraccionado a <strong>{item.metros_tuberia}m</strong> por pieza (Total: <strong>{((item.metros_tuberia || 1) * item.cantidad).toFixed(1)}m</strong>).</p>
+                                  <p>✓ Redondeo de stock: Se descontará <strong>{Math.ceil(((item.metros_tuberia || 1) * item.cantidad) / 6)} tubo(s)</strong> del stock de inventario.</p>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -921,10 +1111,23 @@ export default function VentasPage() {
 
               {/* PAGOS: MEJORADO CON DOBLE INPUT BS/USD */}
               <div className="px-8 py-6 space-y-6 border-t border-border/30 bg-background/50 backdrop-blur-md">
-                <div className="flex items-center justify-between">
-                   <h3 className="text-xs font-black uppercase tracking-[0.2em] text-primary flex items-center gap-2">
-                     <Calculator className="w-4 h-4" /> MÉTODOS DE PAGO
-                   </h3>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                   <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                     <h3 className="text-xs font-black uppercase tracking-[0.2em] text-primary flex items-center gap-2">
+                       <Calculator className="w-4 h-4" /> MÉTODOS DE PAGO
+                     </h3>
+                     <div className="flex items-center gap-2 bg-primary/5 p-1.5 rounded-xl border border-primary/10">
+                       <Label className="text-[9px] font-bold uppercase text-primary/70">Tasa Manual (Bs):</Label>
+                       <input
+                         type="number" step="0.01" min="0"
+                         title="Tasa BCV del día. Escribe para usar una tasa personalizada para esta venta."
+                         placeholder={`Auto: ${rates.bcv}`}
+                         className="h-6 w-24 bg-background text-xs font-black border border-primary/20 rounded-lg text-center focus:ring-1 focus:ring-primary focus:outline-none"
+                         value={customRate !== null ? customRate : ''}
+                         onChange={e => setCustomRate(e.target.value ? parseFloat(e.target.value) : null)}
+                       />
+                     </div>
+                   </div>
                    <div className="text-right">
                       <p className="text-[9px] font-black text-muted-foreground uppercase">Por Cobrar</p>
                       <p className={cn("text-lg font-black italic", balance > 0.05 ? "text-destructive" : "text-green-500")}>
@@ -1277,6 +1480,30 @@ export default function VentasPage() {
                       </button>
                     </div>
 
+                    <div className="flex items-center bg-slate-100 rounded-xl p-1 gap-1 border border-slate-200 w-full md:w-auto justify-center">
+                      <button 
+                        onClick={() => setPrintCurrencyMode('auto')}
+                        className={cn("px-2 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex-1 md:flex-none", printCurrencyMode === 'auto' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
+                        title="Auto detecta si pagó en Bs para imprimir en Dual, sino Solo USD"
+                      >
+                        Auto
+                      </button>
+                      <button 
+                        onClick={() => setPrintCurrencyMode('usd')}
+                        className={cn("px-2 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex-1 md:flex-none", printCurrencyMode === 'usd' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
+                        title="Imprimir solo columnas en USD"
+                      >
+                        Solo USD
+                      </button>
+                      <button 
+                        onClick={() => setPrintCurrencyMode('dual')}
+                        className={cn("px-2 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex-1 md:flex-none", printCurrencyMode === 'dual' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
+                        title="Imprimir columnas en Bs y USD"
+                      >
+                        Bs + USD
+                      </button>
+                    </div>
+
                   {printMode === 'single' && (
                     <div className="flex items-center bg-background rounded-lg p-0.5 border border-border w-full md:w-auto justify-center">
                       <button 
@@ -1344,44 +1571,74 @@ export default function VentasPage() {
                 </div>
               </div>
               <DialogFooter className="p-8 bg-muted/20 flex flex-col gap-4">
-                 <div className="flex items-center justify-between w-full">
-                   <div className="flex items-center gap-2">
-                     <div className="flex items-center bg-background rounded-lg p-0.5 border border-border">
+                 <div className="flex flex-col md:flex-row items-center justify-between w-full gap-4">
+                   <div className="flex flex-col md:flex-row items-center gap-2 w-full md:w-auto">
+                     <div className="flex items-center bg-background rounded-lg p-0.5 border border-border w-full md:w-auto justify-center">
                        <button 
                          onClick={() => setPrintMode('single')}
-                         className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all", printMode === 'single' ? "bg-primary text-white" : "text-slate-500")}
+                         className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printMode === 'single' ? "bg-primary text-white" : "text-slate-500")}
                        >
                          Única
                        </button>
                        <button 
                          onClick={() => setPrintMode('dual')}
-                         className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all", printMode === 'dual' ? "bg-primary text-white" : "text-slate-500")}
+                         className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printMode === 'dual' ? "bg-primary text-white" : "text-slate-500")}
                        >
                          Dual
                        </button>
                      </div>
+
+                     <div className="flex items-center bg-background rounded-lg p-0.5 border border-border w-full md:w-auto justify-center">
+                       <button 
+                         onClick={() => setPrintCurrencyMode('auto')}
+                         className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printCurrencyMode === 'auto' ? "bg-primary text-white" : "text-slate-500")}
+                         title="Auto detecta si pagó en Bs para imprimir en Dual, sino Solo USD"
+                       >
+                         Auto
+                       </button>
+                       <button 
+                         onClick={() => setPrintCurrencyMode('usd')}
+                         className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printCurrencyMode === 'usd' ? "bg-primary text-white" : "text-slate-500")}
+                         title="Imprimir solo columnas en USD"
+                       >
+                         Solo USD
+                       </button>
+                       <button 
+                         onClick={() => setPrintCurrencyMode('dual')}
+                         className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printCurrencyMode === 'dual' ? "bg-primary text-white" : "text-slate-500")}
+                         title="Imprimir columnas en Bs y USD"
+                       >
+                         Bs + USD
+                       </button>
+                     </div>
+
                      {printMode === 'single' && (
-                       <div className="flex items-center bg-background rounded-lg p-0.5 border border-border">
+                       <div className="flex items-center bg-background rounded-lg p-0.5 border border-border w-full md:w-auto justify-center">
                          <button 
                            onClick={() => setPrintSide('left')}
-                           className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all", printSide === 'left' ? "bg-primary text-white" : "text-slate-500")}
+                           className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printSide === 'left' ? "bg-primary text-white" : "text-slate-500")}
                          >
                            Izq
                          </button>
                          <button 
                            onClick={() => setPrintSide('right')}
-                           className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all", printSide === 'right' ? "bg-primary text-white" : "text-slate-500")}
+                           className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printSide === 'right' ? "bg-primary text-white" : "text-slate-500")}
                          >
                            Der
                          </button>
                        </div>
                      )}
                    </div>
-                   <div className="flex gap-2">
-                     <Button variant="outline" className="h-10 rounded-xl font-bold px-6" onClick={() => setShowSaleDetail(false)}>CERRAR</Button>
-                     <Button className="h-10 rounded-xl bg-primary text-white font-black uppercase tracking-widest gap-2 px-6" 
+                   <div className="flex gap-2 w-full md:w-auto">
+                     <Button variant="outline" className="h-10 rounded-xl font-bold px-6 flex-1 md:flex-none" onClick={() => setShowSaleDetail(false)}>CERRAR</Button>
+                     <Button className="h-10 rounded-xl bg-primary text-white font-black uppercase tracking-widest gap-2 px-6 flex-[2] md:flex-none" 
                        onClick={() => {
                           const bcvRate = selectedSale.tasa_cambio || rates.bcv;
+                          const mp = selectedSale.metodos_pago || {};
+                          const resolvedCurrencyMode = printCurrencyMode === 'auto'
+                            ? ((mp.pago_movil > 0 || mp.efectivo_ves > 0 || selectedSale.isCashea) ? 'dual' : 'usd')
+                            : printCurrencyMode;
+
                           generateInvoicePDF([{
                             id: selectedSale.id,
                             fecha: new Date(selectedSale.created_at).toLocaleDateString(),
@@ -1392,7 +1649,7 @@ export default function VentasPage() {
                             tasa_bcv: bcvRate,
                             total_ves: selectedSale.total_ingresos * bcvRate,
                             iva_aplicado: selectedSale.con_iva
-                          }], { mode: printMode, side: printSide });
+                          }], { mode: printMode, side: printSide, currencyMode: resolvedCurrencyMode as any });
                        }}>
                        <Download className="w-4 h-4" /> DESCARGAR
                      </Button>
