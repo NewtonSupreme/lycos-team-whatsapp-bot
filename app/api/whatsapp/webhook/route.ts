@@ -586,7 +586,9 @@ REGLA DE TAGS (Imprimir SIEMPRE al final de tu respuesta):
    - [STOCK_DELETE: id_o_codigo | sede_id]
    - [VEHICULO_UPSERT: id_opcional | cliente_id | placa | marca | modelo | anio | sede_id]
    - [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion | sede_id | costo_estimado | nombre_cliente | vehiculo_info | placa | telefono]
-   - [SERVICIO_UPSERT: id_opcional | cliente_id | vehiculo_id | nombre_cliente | telefono | vehiculo_info | placa | tipo | descripcion | estado | costo_estimado | sede_id | tipo_personalizado]
+   - ⚠️ FORMATO CORRECTO (SOLO valores separados por |, NUNCA incluyas los nombres de los campos): [SERVICIO_UPSERT: | | | Jorge Muñoz | 584146857440 | Chevrolet D-MAX | A46AZOA | otro | Cambio pastillas freno + Aceite 10W30 | pendiente | 45 | 310595c5-5258-47fa-9b69-5ad9932685a7 | Frenos]
+   - ⚠️ EJEMPLO INCORRECTO (NO hagas esto — esto rompe el parser): [SERVICIO_UPSERT: nombre_cliente | Jorge Muñoz | telefono | | ...]
+   - ⚠️ REGLA CRITICA: El tag debe contener SOLO los valores separados por |. NUNCA incluyas etiquetas/nombres de campos dentro del tag. El primer campo (id_opcional) se deja vacío para crear un nuevo servicio, o se pone un UUID válido (36 caracteres con guiones) para actualizar uno existente.
    - [CITA_DELETE: id]
    - [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion | sede_id]
    - [ASK_SEDE: motivo] -> Úsalo si falta la sede en una orden administrativa.
@@ -3140,20 +3142,76 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           const servUpsertMatches = Array.from(cleanedAi.matchAll(/\[SERVICIO_UPSERT:\s*([^\]]+)\]/gi));
           for (const match of servUpsertMatches) {
             try {
-              const parts = match[1].split('|').map(s => s.trim());
-              const id = (parts[0] && parts[0] !== 'id_opcional' && parts[0] !== 'null') ? parts[0] : null;
-              const clienteId = (parts[1] && parts[1] !== 'null' && parts[1] !== 'undefined') ? parts[1] : null;
-              const vehId = (parts[2] && parts[2] !== 'null' && parts[2] !== 'undefined') ? parts[2] : null;
-              const nombreCliente = (parts[3] && parts[3] !== 'null') ? parts[3] : null;
-              const telefono = (parts[4] && parts[4] !== 'null') ? parts[4] : null;
-              const vehiculoInfo = (parts[5] && parts[5] !== 'null') ? parts[5] : null;
-              const placa = (parts[6] && parts[6] !== 'null') ? parts[6].toUpperCase().replace(/[-\s]/g, '') : null;
-              const tipo = (parts[7] && parts[7] !== 'null') ? parts[7] : 'otro';
-              const descripcion = (parts[8] && parts[8] !== 'null') ? parts[8] : '';
-              const estado = (parts[9] && parts[9] !== 'null') ? parts[9] : 'pendiente';
-              const costoEstimado = (parts[10] && parts[10] !== 'null') ? parseFloat(parts[10]) : null;
-              const sedeId = (parts[11] && parts[11] !== 'null' && parts[11] !== 'undefined') ? parts[11] : (ctx.sede_id || DEFAULT_SEDE_ID);
-              const tipoPersonalizado = (parts[12] && parts[12] !== 'null') ? parts[12] : null;
+              const rawTag = match[1].trim();
+              const rawParts = rawTag.split('|').map(s => s.trim());
+              
+              // UUID regex to validate ID fields
+              const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+              // Known field labels the AI might mistakenly include
+              const FIELD_LABELS = new Set([
+                'id_opcional', 'cliente_id', 'vehiculo_id', 'nombre_cliente', 'telefono',
+                'vehiculo_info', 'placa', 'tipo', 'descripcion', 'estado', 'costo_estimado',
+                'sede_id', 'tipo_personalizado'
+              ]);
+
+              let id: string | null = null;
+              let clienteId: string | null = null;
+              let vehId: string | null = null;
+              let nombreCliente: string | null = null;
+              let telefono: string | null = null;
+              let vehiculoInfo: string | null = null;
+              let placa: string | null = null;
+              let tipo: string = 'otro';
+              let descripcion: string = '';
+              let estado: string = 'pendiente';
+              let costoEstimado: number | null = null;
+              let sedeId: string | null = null;
+              let tipoPersonalizado: string | null = null;
+
+              // Detect labeled format: first part is a known field label (e.g., "nombre_cliente" not a UUID)
+              const isLabeledFormat = rawParts.length > 13 && FIELD_LABELS.has(rawParts[0]?.toLowerCase());
+
+              if (isLabeledFormat) {
+                // Extract values by known field labels
+                const fieldMap: Record<string, string> = {};
+                for (let i = 0; i < rawParts.length - 1; i += 2) {
+                  const label = rawParts[i]?.toLowerCase().trim() || '';
+                  const value = rawParts[i + 1]?.trim() || '';
+                  if (label && value) fieldMap[label] = value;
+                }
+                console.log(`🔧 ADMIN: Tag con formato etiquetado detectado. Extrayendo por nombre de campo.`, Object.keys(fieldMap));
+                id = fieldMap['id_opcional'] && UUID_RE.test(fieldMap['id_opcional']) ? fieldMap['id_opcional'] : null;
+                clienteId = fieldMap['cliente_id'] && UUID_RE.test(fieldMap['cliente_id']) ? fieldMap['cliente_id'] : null;
+                vehId = fieldMap['vehiculo_id'] && UUID_RE.test(fieldMap['vehiculo_id']) ? fieldMap['vehiculo_id'] : null;
+                nombreCliente = fieldMap['nombre_cliente'] || null;
+                telefono = fieldMap['telefono'] || null;
+                vehiculoInfo = fieldMap['vehiculo_info'] || null;
+                const rawPlaca = fieldMap['placa'] || '';
+                placa = rawPlaca ? rawPlaca.toUpperCase().replace(/[-\s]/g, '') : null;
+                tipo = fieldMap['tipo'] || 'otro';
+                descripcion = fieldMap['descripcion'] || '';
+                estado = fieldMap['estado'] || 'pendiente';
+                costoEstimado = fieldMap['costo_estimado'] ? parseFloat(fieldMap['costo_estimado']) : null;
+                sedeId = fieldMap['sede_id'] || ctx.sede_id || DEFAULT_SEDE_ID;
+                tipoPersonalizado = fieldMap['tipo_personalizado'] || null;
+                console.log(`🔧 ADMIN: Tag etiquetado parseado: nombre=${nombreCliente}, placa=${placa}, tipo=${tipo}, sede=${sedeId}`);
+              } else {
+                // Standard positional parsing
+                id = (rawParts[0] && UUID_RE.test(rawParts[0])) ? rawParts[0] : null;
+                clienteId = (rawParts[1] && UUID_RE.test(rawParts[1])) ? rawParts[1] : null;
+                vehId = (rawParts[2] && UUID_RE.test(rawParts[2])) ? rawParts[2] : null;
+                nombreCliente = (rawParts[3] && rawParts[3] !== 'null' && !FIELD_LABELS.has(rawParts[3].toLowerCase())) ? rawParts[3] : null;
+                telefono = (rawParts[4] && rawParts[4] !== 'null' && !FIELD_LABELS.has(rawParts[4].toLowerCase())) ? rawParts[4] : null;
+                vehiculoInfo = (rawParts[5] && rawParts[5] !== 'null' && !FIELD_LABELS.has(rawParts[5].toLowerCase())) ? rawParts[5] : null;
+                const rawPlaca6 = (rawParts[6] && rawParts[6] !== 'null' && !FIELD_LABELS.has(rawParts[6].toLowerCase())) ? rawParts[6] : '';
+                placa = rawPlaca6 ? rawPlaca6.toUpperCase().replace(/[-\s]/g, '') : null;
+                tipo = (rawParts[7] && rawParts[7] !== 'null' && !FIELD_LABELS.has(rawParts[7].toLowerCase())) ? rawParts[7] : 'otro';
+                descripcion = (rawParts[8] && rawParts[8] !== 'null' && !FIELD_LABELS.has(rawParts[8].toLowerCase())) ? rawParts[8] : '';
+                estado = (rawParts[9] && rawParts[9] !== 'null' && !FIELD_LABELS.has(rawParts[9].toLowerCase())) ? rawParts[9] : 'pendiente';
+                costoEstimado = (rawParts[10] && rawParts[10] !== 'null' && !isNaN(parseFloat(rawParts[10]))) ? parseFloat(rawParts[10]) : null;
+                sedeId = (rawParts[11] && rawParts[11] !== 'null' && rawParts[11] !== 'undefined' && UUID_RE.test(rawParts[11])) ? rawParts[11] : (ctx.sede_id || DEFAULT_SEDE_ID);
+                tipoPersonalizado = (rawParts[12] && rawParts[12] !== 'null' && !FIELD_LABELS.has(rawParts[12].toLowerCase())) ? rawParts[12] : null;
+              }
 
               const now = new Date();
               const defaultName = ctx.adminName || 'Administrador';
@@ -3163,18 +3221,24 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               let finalVehId = vehId;
 
               // Resolve or create client & vehicle if IDs missing
+              const clientPhone = telefono || from;
               if (!finalClientId && nameToUse) {
                 const { clientId: newCId } = await getOrCreateClientAndVehicle(
-                  db, from, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
+                  db, clientPhone, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
                 );
                 finalClientId = newCId || null;
               }
               if (finalClientId && !finalVehId && (vehiculoInfo || placa)) {
                 const { vehicleId: newVId } = await getOrCreateClientAndVehicle(
-                  db, from, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
+                  db, clientPhone, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
                 );
                 finalVehId = newVId || null;
               }
+
+              const vzlaDateStr = getVzlaDateString();
+              const vzlaTime = new Intl.DateTimeFormat('es-VE', {
+                timeZone: 'America/Caracas', hour: '2-digit', minute: '2-digit', hour12: false,
+              }).format(new Date());
 
               const servObj: any = {
                 cliente_id: finalClientId,
@@ -3188,8 +3252,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 descripcion: descripcion,
                 estado: estado,
                 costo_estimado: costoEstimado,
-                fecha: now.toISOString().split('T')[0],
-                hora: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+                fecha: vzlaDateStr,
+                hora: vzlaTime,
                 seguimiento: [{
                   fecha: now.toISOString(),
                   accion: estado === 'pendiente' ? 'Registrado vía WhatsApp Admin' : `Estado inicial: ${estado}`,
@@ -3203,19 +3267,29 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               if (id && id.length > 5 && db) {
                 // Update existing servicio
                 const { data: existing } = await db.from('servicios').select('seguimiento').eq('id', id).single();
-                const existingSeg = existing?.seguimiento || [];
-                servObj.seguimiento = [...existingSeg, {
-                  fecha: now.toISOString(),
-                  accion: `Actualizado vía WhatsApp Admin — Estado: ${estado}`,
-                  usuario: ctx.memoria?.nombre || ctx.adminName || 'Admin IA',
-                  tipo: 'sistema',
-                }];
-                servObj.updated_at = now.toISOString();
-                delete servObj.fecha;
-                delete servObj.hora;
-                await db.from('servicios').update(servObj).eq('id', id);
-                console.log(`🔧 ADMIN: Servicio actualizado: ${id}`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Actualizó servicio', `Servicio ${id} actualizado vía ChatBot`, sedeId);
+                if (existing) {
+                  const existingSeg = existing.seguimiento || [];
+                  servObj.seguimiento = [...existingSeg, {
+                    fecha: now.toISOString(),
+                    accion: `Actualizado vía WhatsApp Admin — Estado: ${estado}`,
+                    usuario: ctx.memoria?.nombre || ctx.adminName || 'Admin IA',
+                    tipo: 'sistema',
+                  }];
+                  servObj.updated_at = now.toISOString();
+                  delete servObj.fecha;
+                  delete servObj.hora;
+                  await db.from('servicios').update(servObj).eq('id', id);
+                  console.log(`🔧 ADMIN: Servicio actualizado: ${id}`);
+                  await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Actualizó servicio', `Servicio ${id} actualizado vía ChatBot`, sedeId);
+                } else {
+                  console.log(`🔧 ADMIN: ID proporcionado pero servicio no encontrado: ${id}. Creando nuevo.`);
+                  // Force create new instead
+                  delete servObj.updated_at;
+                  const { data: newServ, error: insErr } = await db.from('servicios').insert(servObj).select('id').single();
+                  if (insErr) throw insErr;
+                  console.log(`🔧 ADMIN: Nuevo servicio creado (fallback tras update fallido): ${newServ?.id}`);
+                  await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot (fallback)`, sedeId);
+                }
               } else if (db) {
                 const { data: newServ, error: insErr } = await db.from('servicios').insert(servObj).select('id').single();
                 if (insErr) throw insErr;
