@@ -1657,7 +1657,8 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
 - Ejemplo: [CITA: 2026-04-16 08:00 | Silenciador | Mazda Allegro]
 - En 'servicio', resume lo que se hará. En 'vehículo', pon MARCA y MODELO.
 - CRITICO: NUNCA pongas estados como 'pendiente' o 'confirmada' en VEHÍCULO.
-- Si detectas el nombre del cliente por primera vez, usa: [NOMBRE: Juan Pérez]`;
+- Si detectas el nombre del cliente por primera vez, usa: [NOMBRE: Juan Pérez]
+- IMPORTANTE — REGISTRO DE CLIENTES: Solo registramos en el sistema a los clientes que proporcionan su nombre real. Si después de 2-3 mensajes el cliente aún no te ha dicho su nombre, pregúntale cortésmente: "¿Me regalas tu nombre para poder atenderte mejor? 😊". Una vez que te dé su nombre, USA SIEMPRE el tag [NOMBRE: Nombre] para registrarlo.`;
 
   if (isAdmin) {
     systemPrompt += `\n\n⚠️ INSTRUCCIÓN DE MONEDA (ADMIN): Si el administrador especifica un precio en dólares en efectivo (divisas) o en dólares a tasa BCV, mantenlo exactamente como él lo indique. NO calcules ni agregues conversiones alternativas de forma automática a menos que te lo solicite explícitamente.`;
@@ -1992,10 +1993,19 @@ async function processIntents(
     } catch (e) { console.error('Error saving memoria:', e); }
   }
 
-  // Get or Create record IDs
-  const { clientId, vehicleId } = await getOrCreateClientAndVehicle(
-    db, from, newMemoria.nombre || '', detectedVeh, detectedPlaca || newMemoria.placa || '', undefined, waProfileName, ctx.sede_id
-  );
+  // Get or Create record IDs — only if we have a real name
+  let clientId: string | undefined;
+  let vehicleId: string | undefined;
+  const hasName = newMemoria.nombre && newMemoria.nombre !== from && !NAME_BLACKLIST.some(w => newMemoria.nombre!.toLowerCase().includes(w));
+  if (hasName) {
+    const result = await getOrCreateClientAndVehicle(
+      db, from, newMemoria.nombre || '', detectedVeh, detectedPlaca || newMemoria.placa || '', undefined, waProfileName, ctx.sede_id
+    );
+    clientId = result.clientId;
+    vehicleId = result.vehicleId;
+  } else {
+    console.log(`⏭️ Skipping client creation (no real name yet): ${from}`);
+  }
 
   return { clientId, vehicleId };
 }
@@ -2038,10 +2048,14 @@ async function getOrCreateClientAndVehicle(
       }
       console.log(`👤 Cliente existente: ${clientId} | ${phone}`);
     } else {
-      // New client — register them
+      // New client — ONLY register if we have a REAL name
+      const hasRealName = name && name.toLowerCase() !== 'cliente' && name.trim() !== '' && !['nivel', 'cashea', 'cliente', 'usuario', 'hola', 'buenas', 'buenos'].some(w => name.toLowerCase().startsWith(w));
+      if (!hasRealName) {
+        console.log(`⏭️ Cliente NO registrado (sin nombre real): ${phone}`);
+        return {};
+      }
       isNew = true;
-      const hasRealName = name && name.toLowerCase() !== 'cliente' && name.trim() !== '';
-      const parts = hasRealName ? name.split(' ') : [phone];
+      const parts = name.split(' ');
       const { data: newClient, error: clientErr } = await db.from('clientes').insert({
         nombre: parts[0],
         apellido: parts.slice(1).join(' ') || '(WhatsApp)',
@@ -2050,7 +2064,7 @@ async function getOrCreateClientAndVehicle(
       }).select('id').single();
       if (clientErr) { console.error('Error creando cliente:', clientErr.message); }
       clientId = newClient?.id;
-      console.log(`👤 Nuevo cliente registrado: ${clientId} | ${phone} | ${parts[0]}`);
+      console.log(`👤 Nuevo cliente registrado: ${clientId} | ${phone} | ${name}`);
     }
 
     // 2. Vehicle — search by plate if available, then by client+marca
