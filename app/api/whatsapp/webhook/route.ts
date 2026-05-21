@@ -1236,7 +1236,8 @@ async function loadConversationContext(
         { count: msgsWeek },
         { count: msgsMonth },
         { data: allVentasSil },
-        { data: allVentasDia }
+        { data: allVentasDia },
+        { data: allServiciosActivos }
       ] = await Promise.all([
         db.from('citas').select('*').gte('fecha', monthStr).order('fecha').limit(100),
         db.from('inventario').select('*').eq('activo', true).order('nombre').limit(200),
@@ -1247,7 +1248,8 @@ async function loadConversationContext(
         db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', weekDate.toISOString()),
         db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', monthStartStr),
         db.from('ventas_silenciadores').select('*').gte('created_at', monthDate.toISOString()).order('created_at', { ascending: false }).limit(200),
-        db.from('ventas_dia').select('*').gte('created_at', monthDate.toISOString()).order('created_at', { ascending: false }).limit(200)
+        db.from('ventas_dia').select('*').gte('created_at', monthDate.toISOString()).order('created_at', { ascending: false }).limit(200),
+        db.from('servicios').select('*').in('estado', ['pendiente', 'en_proceso', 'en_progreso', 'confirmada']).limit(200)
       ]);
 
       const toVzlaDateStr = (dateInput: any): string => {
@@ -1306,6 +1308,12 @@ async function loadConversationContext(
         allVentasDia.forEach(v => {
           const sName = v.sede_id ? (sedeMap.get(v.sede_id) || 'General') : 'General';
           v.sede = { nombre: sName };
+        });
+      }
+      if (allServiciosActivos) {
+        allServiciosActivos.forEach(s => {
+          const sName = s.sede_id ? (sedeMap.get(s.sede_id) || 'General') : 'General';
+          s.sede = { nombre: sName };
         });
       }
       
@@ -1375,8 +1383,7 @@ async function loadConversationContext(
 
       // ─── BUILD "HOY" SECTION ─────────────────────────────────────────────
       const hoyCitas = allCitas?.filter(c => c.fecha === today) || [];
-      const STATUS_ACTIVOS = ['pendiente', 'en_proceso', 'en_progreso', 'confirmada'];
-      const serviciosActivos = allServs?.filter(s => STATUS_ACTIVOS.includes(s.estado)) || [];
+      const serviciosActivos = allServiciosActivos || [];
       // Fetch vehicles for ALL active services (not just today-created ones)
       const vehIdsActivos = [...new Set(serviciosActivos.filter(s => s.vehiculo_id).map(s => s.vehiculo_id))];
       let vehMapActivos: Record<string, any> = {};
