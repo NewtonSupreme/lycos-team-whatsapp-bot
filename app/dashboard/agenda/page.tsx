@@ -33,7 +33,7 @@ const estadoColorMap: Record<string, string> = {
   pendiente: 'bg-yellow-500/20 border-yellow-500/30 text-yellow-400',
   cancelada: 'bg-red-500/20 border-red-500/30 text-red-400',
   completada: 'bg-blue-500/20 border-blue-500/30 text-blue-400',
-  ocupado: 'bg-rose-600/30 border-rose-500/40 text-rose-200'
+  ocupado: 'bg-rose-600/30 border-rose-500/40 text-rose-600 dark:text-rose-200'
 };
 
 export default function AgendaPage() {
@@ -483,7 +483,7 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
           <button 
             key={s.label} 
             onClick={() => handleStatClick(s.label, s.type)}
-            className="stat-card border border-border/50 p-3 bg-white/2 hover:bg-white/5 transition-all cursor-pointer text-left group"
+            className="stat-card border border-border/50 p-3 cursor-pointer text-left group"
           >
             <div className="flex justify-between items-start">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">{s.label}</p>
@@ -532,7 +532,7 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
                       'relative flex flex-col items-center py-1.5 rounded-lg transition-all text-sm',
                       isSelected ? 'bg-primary text-primary-foreground' :
                       isToday ? 'bg-primary/10 text-primary border border-primary/20' :
-                      'hover:bg-white/5 text-foreground'
+                      'hover:bg-muted/50 text-foreground'
                     )}
                   >
                     <span className="font-medium text-xs">{day}</span>
@@ -626,7 +626,7 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
                   const cliente = getCliente(cita.cliente_id);
                   const vehiculo = getVehiculo(cita.vehiculo_id);
                   return (
-                    <tr key={cita.id || idx} className="hover:bg-white/2 transition-colors group">
+                    <tr key={cita.id || idx} className="hover:bg-muted/30 transition-colors group">
                       <td className="p-3">
                         <div>
                           <p className="text-xs font-medium">{formatDate(cita.fecha + 'T12:00:00', { day: '2-digit', month: 'short' })}</p>
@@ -657,7 +657,7 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
                       </td>
                       <td className="p-3">
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => openEdit(cita)} className="w-7 h-7 rounded-lg hover:bg-white/10 flex items-center justify-center">
+                          <button onClick={() => openEdit(cita)} className="w-7 h-7 rounded-lg hover:bg-muted/50 flex items-center justify-center">
                             <Clock className="w-3.5 h-3.5 text-muted-foreground" />
                           </button>
                           <button onClick={() => handleDelete(cita.id)} className="w-7 h-7 rounded-lg hover:bg-red-500/10 flex items-center justify-center">
@@ -869,7 +869,7 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
     )}
       {/* Dialog para ver lista filtrada de citas */}
       <Dialog open={filterDialogOpen} onOpenChange={setFilterDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col glass-card border-white/10">
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col glass-card border-border">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
               Citas: {selectedFilter?.label}
@@ -885,7 +885,7 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
                   return (
                     <div 
                       key={cita.id || `cita-filter-${idx}`} 
-                      className="p-3 border border-white/5 bg-white/5 rounded-lg flex items-center justify-between hover:bg-white/10 transition-colors"
+                      className="p-3 border border-border/50 bg-muted/30 rounded-lg flex items-center justify-between hover:bg-muted/50 transition-colors"
                     >
                       <div className="flex-1">
                         <div className="flex items-center gap-2">

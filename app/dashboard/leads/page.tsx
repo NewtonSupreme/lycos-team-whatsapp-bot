@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
+import { useSedeStore } from '@/lib/store/useSedeStore';
+import { useRouter } from 'next/navigation';
 
 // ── Types ─────────────────────────────────────────────────────
 interface Lead {
@@ -144,6 +146,17 @@ function classifyLead(lead: Lead, tieneCita: boolean, totalMensajes: number): Le
 
 // ── Main Component ────────────────────────────────────────────
 export default function LeadsPage() {
+  const { currentSede } = useSedeStore();
+  const router = useRouter();
+
+  React.useEffect(() => {
+    if (!currentSede) return;
+    const sedeName = currentSede.nombre?.toLowerCase() || '';
+    if (!sedeName.includes('san antonio')) {
+      router.replace('/dashboard');
+    }
+  }, [currentSede, router]);
+
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');

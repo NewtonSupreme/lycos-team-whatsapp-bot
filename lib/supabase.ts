@@ -51,6 +51,7 @@ export async function syncClientData(clientId: string, nombre: string, apellido:
   const fullName = `${nombre} ${apellido}`.trim();
   try {
     await withSedeFilter(supabase.from('citas')).update({ nombre_cliente: fullName }).eq('cliente_id', clientId);
+    await withSedeFilter(supabase.from('servicios')).update({ nombre_cliente: fullName }).eq('cliente_id', clientId);
     const { data: conv } = await withSedeFilter(supabase.from('conversaciones')).select('datos_cliente, memoria').eq('telefono', telefono).single();
     if (conv) {
       await withSedeFilter(supabase.from('conversaciones')).update({

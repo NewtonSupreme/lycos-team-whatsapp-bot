@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
+import { useSedeStore } from '@/lib/store/useSedeStore';
 
 // Primary items shown in the bottom bar (max 4 + "more")
 const PRIMARY_NAV = [
@@ -34,9 +35,18 @@ const MORE_NAV = [
 export default function MobileBottomNav() {
   const pathname = usePathname();
   const { unreadCount } = useAppStore();
+  const { currentSede } = useSedeStore();
   const [showMore, setShowMore] = useState(false);
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => { setMounted(true); }, []);
+
+  const visibleMoreNav = MORE_NAV.filter(item => {
+    if (item.label === 'Leads') {
+      const sedeName = currentSede?.nombre?.toLowerCase() || '';
+      return sedeName.includes('san antonio');
+    }
+    return true;
+  });
 
   const isActive = (href: string) => {
     if (href === '/dashboard') return pathname === '/dashboard';
@@ -71,7 +81,7 @@ export default function MobileBottomNav() {
             </button>
           </div>
           <div className="grid grid-cols-3 gap-3 px-4 pb-6 pt-2" style={{ paddingBottom: 'max(24px, env(safe-area-inset-bottom))' }}>
-            {MORE_NAV.map((item) => {
+            {visibleMoreNav.map((item) => {
               const active = isActive(item.href);
               return (
                 <Link

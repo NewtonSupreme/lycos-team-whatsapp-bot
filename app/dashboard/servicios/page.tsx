@@ -23,7 +23,7 @@ interface CitaServicio {
   id: string;
   fecha: string;
   hora: string;
-  tipo_servicio: string;
+  tipo: string;
   descripcion: string | null;
   estado: string;
   nombre_cliente: string | null;
@@ -36,8 +36,7 @@ interface CitaServicio {
   sede_id?: string | null;
   costo_estimado?: number | null;
   seguimiento?: any[] | null;
-  clientes?: { nombre: string; apellido: string; telefono: string } | null;
-  vehiculos?: { marca: string; modelo: string; placa: string; anio?: number } | null;
+  vehiculos?: { marca: string; modelo: string; placa: string; anio?: number; clientes?: { nombre: string; apellido: string; telefono: string } | null } | null;
 }
 
 const ESTADOS = ['pendiente', 'confirmada', 'en_proceso', 'completada', 'cancelada'];
@@ -62,7 +61,7 @@ export default function ServiciosPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<'kanban' | 'list'>('kanban');
-  const [dateFilter, setDateFilter] = useState<'hoy' | 'semana' | 'mes' | 'todos'>('semana');
+  const [dateFilter, setDateFilter] = useState<'hoy' | 'semana' | 'mes' | 'todos'>('hoy');
   
   // Modals
   const [showNewModal, setShowNewModal] = useState(false);
@@ -80,13 +79,12 @@ export default function ServiciosPage() {
       const { data: invData } = await supabase.from('inventario').select('nombre, precio_usd').eq('activo', true);
       setInventory(invData || []);
 
-      const { data, error } = await withSedeFilter(supabase.from('citas'))
+      const { data, error } = await withSedeFilter(supabase.from('servicios'))
         .select(`
-          id, fecha, hora, tipo_servicio, descripcion, estado,
+          id, fecha, hora, tipo, descripcion, estado,
           nombre_cliente, vehiculo_info, placa, telefono, created_at,
           cliente_id, vehiculo_id, seguimiento, costo_estimado,
-          clientes (nombre, apellido, telefono),
-          vehiculos (marca, modelo, placa, anio)
+          vehiculos (marca, modelo, placa, anio, clientes (nombre, apellido, telefono))
         `)
         .order('fecha', { ascending: false });
 
@@ -104,7 +102,7 @@ export default function ServiciosPage() {
   const handleDelete = async (id: string) => {
     if (!confirm('¿Estás seguro de eliminar este ticket de servicio? Esta acción no se puede deshacer.')) return;
     try {
-      const { error } = await withSedeFilter(supabase!.from('citas')).delete().eq('id', id);
+      const { error } = await withSedeFilter(supabase!.from('servicios')).delete().eq('id', id);
       if (error) throw error;
       setCitas(prev => prev.filter(c => c.id !== id));
       logActivity({
@@ -116,20 +114,47 @@ export default function ServiciosPage() {
     } catch (err: any) { alert('Error: ' + err.message); }
   };
 
+  const getEstadoLabel = (estado: string) => {
+    const labels: Record<string, string> = {
+      pendiente: 'Pendiente', confirmada: 'Confirmada',
+      en_proceso: 'En Proceso', completada: 'Completada',
+      finalizado: 'Finalizado', cancelada: 'Cancelada', cancelado: 'Cancelado'
+    };
+    return labels[estado] || estado;
+  };
+
+  const getTransicionInfo = (viejo: string, nuevo: string) => {
+    const trans: Record<string, { accion: string; fmt: string }> = {
+      'pendiente->confirmada': { accion: 'Confirmó servicio', fmt: 'Servicio confirmado' },
+      'pendiente->en_proceso': { accion: 'Inició servicio', fmt: 'Servicio iniciado' },
+      'pendiente->completada': { accion: 'Completó servicio', fmt: 'Servicio completado' },
+      'pendiente->cancelada': { accion: 'Canceló servicio', fmt: 'Servicio cancelado' },
+      'confirmada->en_proceso': { accion: 'Inició trabajo', fmt: 'Trabajo iniciado' },
+      'confirmada->completada': { accion: 'Completó servicio', fmt: 'Servicio completado' },
+      'confirmada->cancelada': { accion: 'Canceló servicio', fmt: 'Servicio cancelado' },
+      'en_proceso->completada': { accion: 'Finalizó servicio', fmt: 'Servicio finalizado' },
+      'en_proceso->cancelada': { accion: 'Canceló servicio', fmt: 'Servicio cancelado' },
+    };
+    const key = `${viejo}->${nuevo}`;
+    if (trans[key]) return trans[key];
+    return { accion: `Cambió estado (${getEstadoLabel(viejo)} → ${getEstadoLabel(nuevo)})`, fmt: `Estado cambiado: ${getEstadoLabel(viejo)} → ${getEstadoLabel(nuevo)}` };
+  };
+
   const updateEstado = async (id: string, nuevoEstado: string) => {
     const cita = citas.find(c => c.id === id);
     if (!cita || cita.estado === nuevoEstado) return;
 
     try {
+      const info = getTransicionInfo(cita.estado, nuevoEstado);
       const newEntry = {
         fecha: new Date().toISOString(),
-        accion: `Cambio de estado: ${cita.estado} -> ${nuevoEstado}`,
+        accion: info.fmt,
         usuario: user?.nombre || 'Admin',
         tipo: 'sistema'
       };
       const newSeguimiento = [...(cita.seguimiento || []), newEntry];
 
-      const { error } = await withSedeFilter(supabase!.from('citas'))
+      const { error } = await withSedeFilter(supabase!.from('servicios'))
         .update({ 
           estado: nuevoEstado, 
           updated_at: new Date().toISOString(),
@@ -141,25 +166,23 @@ export default function ServiciosPage() {
       
       setCitas(prev => prev.map(c => c.id === id ? { ...c, estado: nuevoEstado, seguimiento: newSeguimiento } : c));
       
-      const clienteObj = cita.clientes ? `${cita.clientes.nombre} ${cita.clientes.apellido}` : (cita.nombre_cliente || 'Cliente');
-      const sedeName = 'Carrizal (Principal)'; // O detectar según la lógica de sedes
+      const clienteObj = cita.vehiculos?.clientes ? `${cita.vehiculos?.clientes.nombre} ${cita.vehiculos?.clientes.apellido}` : (cita.nombre_cliente || 'Cliente');
+      const sedeName = 'Carrizal (Principal)';
       
       logActivity({
         usuario: user?.nombre || 'Admin',
         modulo: 'Servicios',
-        accion: nuevoEstado === 'confirmada' ? 'Confirmó cita' : 'Cambió estado',
-        detalles: nuevoEstado === 'confirmada' 
-          ? `Cita confirmada: ${clienteObj} en la sede de ${sedeName}`
-          : `Ticket #${id.slice(0,5)}: ${cita.estado} -> ${nuevoEstado}`,
+        accion: info.accion,
+        detalles: `${info.fmt}: ${clienteObj} en la sede de ${sedeName}`,
         referencia_id: id,
-        referencia_tabla: 'citas'
+        referencia_tabla: 'servicios'
       });
     } catch (err: any) { alert('Error: ' + err.message); }
   };
 
   const filtered = citas.filter(c => {
     // 1. Filtro de Texto
-    const cliente = c.clientes ? `${c.clientes.nombre} ${c.clientes.apellido}` : c.nombre_cliente || '';
+    const cliente = c.vehiculos?.clientes ? `${c.vehiculos?.clientes.nombre} ${c.vehiculos?.clientes.apellido}` : c.nombre_cliente || '';
     const vehiculo = c.vehiculos ? `${c.vehiculos.marca} ${c.vehiculos.modelo}` : c.vehiculo_info || '';
     const txt = `${cliente} ${vehiculo} ${c.placa} ${c.descripcion}`.toLowerCase();
     const matchText = search === '' || txt.includes(search.toLowerCase());
@@ -195,7 +218,7 @@ export default function ServiciosPage() {
     
     const selectedCitas = citas.filter(c => selectedForDual.includes(c.id));
     const dataList = selectedCitas.map(cita => {
-      const clientName = cita.clientes ? `${cita.clientes.nombre} ${cita.clientes.apellido}` : cita.nombre_cliente || 'CONSUMIDOR FINAL';
+      const clientName = cita.vehiculos?.clientes ? `${cita.vehiculos?.clientes.nombre} ${cita.vehiculos?.clientes.apellido}` : cita.nombre_cliente || 'CONSUMIDOR FINAL';
       const vehicleStr = cita.vehiculos ? `${cita.vehiculos.marca} ${cita.vehiculos.modelo}` : cita.vehiculo_info || '---';
       
       return {
@@ -204,7 +227,7 @@ export default function ServiciosPage() {
         cliente: clientName,
         vehiculo: vehicleStr,
         items: [{
-          descripcion: (cita.tipo_servicio === 'otro' ? 'Servicio General' : `Servicio de ${cita.tipo_servicio}`).toUpperCase(),
+          descripcion: (cita.tipo === 'otro' ? 'Servicio General' : `Servicio de ${cita.tipo}`).toUpperCase(),
           cantidad: 1,
           precio_unitario: cita.costo_estimado || 0,
           total: cita.costo_estimado || 0
@@ -556,7 +579,7 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onMove, is
       <div className="flex justify-between items-start mb-4 pl-8">
         <div>
           <h4 className="text-sm font-bold text-foreground group-hover:text-primary transition-colors uppercase tracking-tight">
-            {cita.clientes ? `${cita.clientes.nombre} ${cita.clientes.apellido}` : cita.nombre_cliente}
+            {cita.vehiculos?.clientes ? `${cita.vehiculos?.clientes.nombre} ${cita.vehiculos?.clientes.apellido}` : cita.nombre_cliente}
           </h4>
           <p className="text-[10px] text-muted-foreground font-medium mt-0.5 flex items-center gap-1 uppercase tracking-widest">
             <Car className="w-3 h-3" /> {cita.vehiculos ? `${cita.vehiculos.marca} ${cita.vehiculos.modelo}` : cita.vehiculo_info}
@@ -576,7 +599,7 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onMove, is
         <div className="flex items-center justify-between">
           <div className="flex flex-col">
             <span className="inline-flex items-center px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-tighter bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/20 w-fit italic">
-              {SERVICIO_LABELS[cita.tipo_servicio] || cita.tipo_servicio}
+              {SERVICIO_LABELS[cita.tipo] || cita.tipo}
             </span>
             <span className="text-[9px] text-muted-foreground font-bold mt-1 flex items-center gap-1">
               <Calendar className="w-2.5 h-2.5" /> {cita.fecha} · {cita.hora}
@@ -656,9 +679,9 @@ function ListView({ items, onEdit, onDelete, onTracking, onInvoice }: any) {
                     </div>
                     <div>
                       <p className="text-sm font-bold text-foreground">
-                        {cita.clientes ? `${cita.clientes.nombre} ${cita.clientes.apellido}` : cita.nombre_cliente}
+                        {cita.vehiculos?.clientes ? `${cita.vehiculos?.clientes.nombre} ${cita.vehiculos?.clientes.apellido}` : cita.nombre_cliente}
                       </p>
-                      <p className="text-[10px] text-muted-foreground">{SERVICIO_LABELS[cita.tipo_servicio] || cita.tipo_servicio}</p>
+                      <p className="text-[10px] text-muted-foreground">{SERVICIO_LABELS[cita.tipo] || cita.tipo}</p>
                     </div>
                   </div>
                 </td>
@@ -702,11 +725,11 @@ function ListView({ items, onEdit, onDelete, onTracking, onInvoice }: any) {
 // ── Service Form Modal (Create/Edit) ──────────────────────────
 function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () => void }) {
   const [formData, setFormData] = useState({
-    nombre_cliente: cita?.nombre_cliente || cita?.clientes?.nombre || '',
-    telefono: cita?.telefono || cita?.clientes?.telefono || '',
+    nombre_cliente: cita?.nombre_cliente || cita?.vehiculos?.clientes?.nombre || '',
+    telefono: cita?.telefono || cita?.vehiculos?.clientes?.telefono || '',
     vehiculo_info: cita?.vehiculo_info || (cita?.vehiculos ? `${cita?.vehiculos.marca} ${cita?.vehiculos.modelo}` : ''),
     placa: cita?.placa || cita?.vehiculos?.placa || '',
-    tipo_servicio: cita?.tipo_servicio || 'otro',
+    tipo: cita?.tipo || 'otro',
     descripcion: cita?.descripcion || '',
     costo_estimado: cita?.costo_estimado?.toString() || '',
   });
@@ -840,34 +863,44 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           finalClienteId = newClient.id;
         }
 
-        // 2. Manage Vehicle
-        if (!finalVehiculoId && finalClienteId) {
-          const names = formData.vehiculo_info.trim().split(' ');
-          const marca = names[0];
-          const modelo = names.slice(1).join(' ') || '—';
-          const yearMatch = formData.vehiculo_info.match(/\b(19\d\d|20\d\d)\b/);
-          const anio = yearMatch ? parseInt(yearMatch[0]) : 2025;
+        // 2. Manage Vehicle - check if exists by placa first
+        if (!finalVehiculoId && formData.placa) {
+          const { data: existingVeh } = await supabase.from('vehiculos')
+            .select('id, cliente_id')
+            .eq('placa', formData.placa)
+            .maybeSingle();
 
-          const { data: newVehiculo, error: vehErr } = await withSedeFilter(supabase.from('vehiculos'))
-            .insert(withSedeInsert({
-              cliente_id: finalClienteId,
-              marca,
-              modelo,
-              placa: formData.placa,
-              anio,
-              estado: 'en_servicio'
-            }))
-            .select()
-            .single();
-          
-          if (vehErr) throw vehErr;
-          finalVehiculoId = newVehiculo.id;
+          if (existingVeh) {
+            finalVehiculoId = existingVeh.id;
+            if (!finalClienteId) finalClienteId = existingVeh.cliente_id;
+          } else if (finalClienteId) {
+            const names = formData.vehiculo_info.trim().split(' ');
+            const marca = names[0];
+            const modelo = names.slice(1).join(' ') || '—';
+            const yearMatch = formData.vehiculo_info.match(/\b(19\d\d|20\d\d)\b/);
+            const anio = yearMatch ? parseInt(yearMatch[0]) : 2025;
+
+            const { data: newVehiculo, error: vehErr } = await withSedeFilter(supabase.from('vehiculos'))
+              .insert(withSedeInsert({
+                cliente_id: finalClienteId,
+                marca,
+                modelo,
+                placa: formData.placa,
+                anio,
+                estado: 'en_servicio'
+              }))
+              .select()
+              .single();
+            
+            if (vehErr) throw vehErr;
+            finalVehiculoId = newVehiculo.id;
+          }
         }
       }
 
       if (cita?.id) {
         // UPDATE
-        const { error } = await withSedeFilter(supabase!.from('citas'))
+        const { error } = await withSedeFilter(supabase!.from('servicios'))
           .update({
             ...formData,
             cliente_id: finalClienteId,
@@ -887,12 +920,12 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
       } else {
         // CREATE
         const now = new Date();
-        const finalTipoServicio = isCustomServicio ? customServicio : formData.tipo_servicio;
+        const finalTipoServicio = isCustomServicio ? 'otro' : formData.tipo;
         const payload = {
           ...formData,
           cliente_id: finalClienteId,
           vehiculo_id: finalVehiculoId,
-          tipo_servicio: finalTipoServicio,
+          tipo: finalTipoServicio,
           fecha: now.toISOString().split('T')[0],
           hora: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
           estado: 'pendiente',
@@ -916,7 +949,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
             }))
           ]
         };
-        const { error } = await withSedeFilter(supabase!.from('citas')).insert(withSedeInsert(payload));
+        const { error } = await withSedeFilter(supabase!.from('servicios')).insert(withSedeInsert(payload));
         if (error) throw error;
 
         logActivity({
@@ -932,21 +965,21 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
   };
 
   return (
-    <div className="fixed inset-0 z-[110] flex justify-center items-start sm:items-center bg-black/80 backdrop-blur-xl p-4 overflow-y-auto">
-      <div className="bg-[#0a0a0a] border border-white/10 w-full max-w-xl shadow-2xl flex flex-col my-auto sm:my-0 rounded-[24px] sm:rounded-[32px] overflow-hidden sm:max-h-[90vh]">
-        <div className="p-4 sm:p-6 border-b border-white/5 flex items-center justify-between bg-gradient-to-br from-primary/10 to-transparent shrink-0">
+    <div className="fixed inset-0 z-[110] flex justify-center items-start sm:items-center bg-black/60 backdrop-blur-xl p-4 overflow-y-auto">
+      <div className="bg-card border border-border w-full max-w-xl shadow-2xl flex flex-col my-auto sm:my-0 rounded-[24px] sm:rounded-[32px] overflow-hidden sm:max-h-[90vh]">
+        <div className="p-4 sm:p-6 border-b border-border flex items-center justify-between bg-gradient-to-br from-primary/5 to-transparent shrink-0">
           <div className="flex items-center gap-3 sm:gap-4">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-primary/20 flex items-center justify-center border border-primary/30 shrink-0">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-primary/10 flex items-center justify-center border border-primary/20 shrink-0">
               {cita ? <Edit3 className="w-5 h-5 sm:w-6 sm:h-6 text-primary" /> : <Plus className="w-5 h-5 sm:w-6 sm:h-6 text-primary" />}
             </div>
             <div>
-              <h3 className="text-lg sm:text-xl font-black text-white tracking-tight" style={{ fontFamily: 'Syne, sans-serif' }}>
+              <h3 className="text-lg sm:text-xl font-black text-foreground tracking-tight" style={{ fontFamily: 'Syne, sans-serif' }}>
                 {cita ? 'Editar Orden de Servicio' : 'Nueva Orden de Servicio'}
               </h3>
-              <p className="text-[9px] sm:text-[10px] text-muted-foreground font-bold uppercase tracking-widest mt-0.5">Gestión de Taller Lycos Team</p>
+              <p className="text-[9px] sm:text-[10px] text-muted-foreground font-bold uppercase tracking-widest mt-0.5">Gesti&oacute;n de Taller Lycos Team</p>
             </div>
           </div>
-          <button onClick={onClose} className="w-10 h-10 rounded-2xl hover:bg-white/5 flex items-center justify-center transition-all shrink-0"><X className="w-5 h-5 text-muted-foreground" /></button>
+          <button onClick={onClose} className="w-10 h-10 rounded-2xl hover:bg-muted/50 flex items-center justify-center transition-all shrink-0"><X className="w-5 h-5 text-muted-foreground" /></button>
         </div>
 
         <div className="p-4 sm:p-8 flex-1 overflow-y-auto">
@@ -954,26 +987,26 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
             <div className="col-span-2 sm:col-span-1 space-y-2 relative">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Cliente Principal</label>
               <input 
-                className="w-full bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
                 placeholder="Nombre y Apellido"
                 value={formData.nombre_cliente}
                 onChange={e => {
                   setFormData({...formData, nombre_cliente: e.target.value});
-                  setSelectedClienteId(null); // Reset if typed manually
+                  setSelectedClienteId(null);
                   setSelectedVehiculoId(null);
                 }}
                 onBlur={() => setTimeout(() => setShowClientResults(false), 200)}
                 onFocus={() => formData.nombre_cliente.length > 1 && setShowClientResults(true)}
               />
               {showClientResults && (
-                <div className="absolute top-full left-0 right-0 z-[150] mt-1 bg-[#0a0a0a] border border-white/10 rounded-xl sm:rounded-2xl shadow-2xl max-h-40 overflow-y-auto no-scrollbar py-1">
+                <div className="absolute top-full left-0 right-0 z-[150] mt-1 bg-popover border border-border rounded-xl sm:rounded-2xl shadow-2xl max-h-40 overflow-y-auto no-scrollbar py-1">
                   {filteredClientes.map((c, idx) => (
                     <button
                       key={c.id || idx}
                       onClick={() => selectCliente(c)}
-                      className="w-full text-left px-4 py-2 hover:bg-white/5 transition-colors group"
+                      className="w-full text-left px-4 py-2 hover:bg-muted transition-colors group"
                     >
-                      <p className="text-sm font-bold text-white group-hover:text-primary transition-colors">{c.nombre} {c.apellido}</p>
+                      <p className="text-sm font-bold text-foreground group-hover:text-primary transition-colors">{c.nombre} {c.apellido}</p>
                       <p className="text-[10px] text-muted-foreground">{c.telefono}</p>
                     </button>
                   ))}
@@ -981,30 +1014,30 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
               )}
             </div>
             <div className="col-span-2 sm:col-span-1 space-y-2">
-              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Teléfono Contacto</label>
+              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Tel&eacute;fono Contacto</label>
               <input 
-                className="w-full bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
                 placeholder="0424 123 4567"
                 value={formData.telefono}
                 onChange={e => setFormData({...formData, telefono: e.target.value})}
               />
             </div>
             <div className="col-span-2 sm:col-span-1 space-y-2">
-              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Vehículo / Modelo</label>
+              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Veh&iacute;culo / Modelo</label>
               <input 
-                className="w-full bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
                 placeholder="Ej: Toyota Corolla 2015"
                 value={formData.vehiculo_info}
                 onChange={e => {
                   setFormData({...formData, vehiculo_info: e.target.value});
-                  setSelectedVehiculoId(null); // Reset if typed manually
+                  setSelectedVehiculoId(null);
                 }}
               />
             </div>
             <div className="col-span-2 sm:col-span-1 space-y-2">
-              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Número de Placa</label>
+              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">N&uacute;mero de Placa</label>
               <input 
-                className="w-full bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-white font-mono uppercase focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground font-mono uppercase focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
                 placeholder="ABC-123"
                 value={formData.placa}
                 onChange={e => setFormData({...formData, placa: e.target.value.toUpperCase()})}
@@ -1014,26 +1047,26 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Tipo de Servicio</label>
               <div className="flex gap-2">
                 <select 
-                  className="flex-1 bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all appearance-none"
-                  value={isCustomServicio ? 'custom' : formData.tipo_servicio}
+                  className="flex-1 bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all appearance-none"
+                  value={isCustomServicio ? 'custom' : formData.tipo}
                   onChange={e => {
                     if (e.target.value === 'custom') {
                       setIsCustomServicio(true);
                     } else {
                       setIsCustomServicio(false);
-                      setFormData({...formData, tipo_servicio: e.target.value});
+                      setFormData({...formData, tipo: e.target.value});
                     }
                   }}
                 >
-                  {Object.entries(SERVICIO_LABELS).map(([k,v]) => <option key={k} value={k} className="bg-[#0a0a0a]">{v}</option>)}
-                  <option value="custom" className="bg-[#0a0a0a] font-bold text-primary">+ Personalizado...</option>
+                  {Object.entries(SERVICIO_LABELS).map(([k,v]) => <option key={k} value={k} className="bg-card">{v}</option>)}
+                  <option value="custom" className="bg-card font-bold text-primary">+ Personalizado...</option>
                 </select>
               </div>
               {isCustomServicio && (
                 <motion.input 
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="w-full mt-2 bg-white/5 border border-primary/30 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                  className="w-full mt-2 bg-muted/50 border border-primary/30 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
                   placeholder="Escribe el tipo de servicio..."
                   value={customServicio}
                   onChange={e => setCustomServicio(e.target.value)}
@@ -1044,7 +1077,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Costo Estimado ($)</label>
               <input 
                 type="number"
-                className="w-full bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
                 placeholder="0.00"
                 value={formData.costo_estimado}
                 onChange={e => setFormData({...formData, costo_estimado: e.target.value})}
@@ -1052,13 +1085,12 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
             </div>
 
             <div className="col-span-2 space-y-3">
-              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Personal a Cargo (Jefe / Mecánicos)</label>
+              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Personal a Cargo (Jefe / Mec&aacute;nicos)</label>
               
-              {/* Tag List */}
               <div className="flex flex-wrap gap-2 mb-2">
                 {encargados.map((e, idx) => (
-                  <div key={idx} className="flex items-center gap-2 bg-white/5 border border-white/10 pl-3 pr-1 py-1 rounded-xl group animate-in zoom-in-95 duration-200">
-                    <span className="text-[11px] font-bold text-white">{e.nombre}</span>
+                  <div key={idx} className="flex items-center gap-2 bg-muted/30 border border-border pl-3 pr-1 py-1 rounded-xl group animate-in zoom-in-95 duration-200">
+                    <span className="text-[11px] font-bold text-foreground">{e.nombre}</span>
                     <button 
                       type="button"
                       onClick={() => {
@@ -1068,15 +1100,15 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
                       }}
                       className={cn(
                         "px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-tighter transition-all",
-                        e.rol === 'jefe_taller' ? "bg-primary text-primary-foreground" : "bg-blue-500/20 text-blue-400"
+                        e.rol === 'jefe_taller' ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"
                       )}
                     >
-                      {e.rol === 'jefe_taller' ? 'Jefe' : 'Mecánico'}
+                      {e.rol === 'jefe_taller' ? 'Jefe' : 'Mec&aacute;nico'}
                     </button>
                     <button 
                       type="button"
                       onClick={() => setEncargados(encargados.filter((_, i) => i !== idx))}
-                      className="w-6 h-6 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-400 flex items-center justify-center"
+                      className="w-6 h-6 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive flex items-center justify-center"
                     >
                       <X className="w-3 h-3" />
                     </button>
@@ -1087,7 +1119,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
               <div className="relative">
                 <Search className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 w-3.5 h-3.5 sm:w-4 sm:h-4 text-muted-foreground" />
                 <input 
-                  className="w-full bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl pl-10 pr-3 py-2.5 sm:pl-12 sm:pr-4 sm:py-3 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                  className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl pl-10 pr-3 py-2.5 sm:pl-12 sm:pr-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
                   placeholder="Buscar o agregar encargado..."
                   value={staffSearch}
                   onChange={e => {
@@ -1107,7 +1139,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
                   }}
                 />
                 {showStaffResults && (
-                  <div className="absolute top-full left-0 right-0 z-[150] mt-2 bg-[#0a0a0a] border border-white/10 rounded-2xl shadow-2xl max-h-48 overflow-y-auto no-scrollbar py-2">
+                  <div className="absolute top-full left-0 right-0 z-[150] mt-2 bg-popover border border-border rounded-2xl shadow-2xl max-h-48 overflow-y-auto no-scrollbar py-2">
                     {staffSearch && !staffSuggestions.some(s => s.nombre.toLowerCase().includes(staffSearch.toLowerCase())) && (
                       <button
                         type="button"
@@ -1115,13 +1147,13 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
                           setEncargados([...encargados, { nombre: staffSearch, rol: 'mecanico' }]);
                           setStaffSearch('');
                         }}
-                        className="w-full text-left px-4 py-3 hover:bg-white/5 transition-colors group flex items-center gap-3"
+                        className="w-full text-left px-4 py-3 hover:bg-muted transition-colors group flex items-center gap-3"
                       >
                         <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
                           <Plus className="w-4 h-4" />
                         </div>
                         <div>
-                          <p className="text-xs font-bold text-white uppercase italic">Agregar "{staffSearch}"</p>
+                          <p className="text-xs font-bold text-foreground uppercase italic">Agregar &quot;{staffSearch}&quot;</p>
                           <p className="text-[10px] text-muted-foreground">Nuevo personal de taller</p>
                         </div>
                       </button>
@@ -1136,10 +1168,10 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
                             setEncargados([...encargados, { nombre: s.nombre, rol: (s.rol === 'jefe_taller' ? 'jefe_taller' : 'mecanico') }]);
                             setStaffSearch('');
                           }}
-                          className="w-full text-left px-4 py-2 hover:bg-white/5 transition-colors group flex items-center justify-between"
+                          className="w-full text-left px-4 py-2 hover:bg-muted transition-colors group flex items-center justify-between"
                         >
                           <div>
-                            <p className="text-sm font-bold text-white group-hover:text-primary transition-colors">{s.nombre}</p>
+                            <p className="text-sm font-bold text-foreground group-hover:text-primary transition-colors">{s.nombre}</p>
                             <p className="text-[10px] text-muted-foreground uppercase">{s.rol}</p>
                           </div>
                           <Plus className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -1150,10 +1182,10 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
               </div>
             </div>
             <div className="col-span-2 space-y-2">
-              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Descripción de la Falla / Trabajo</label>
+              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Descripci&oacute;n de la Falla / Trabajo</label>
               <textarea 
-                className="w-full bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all min-h-[80px] sm:min-h-[100px] resize-none"
-                placeholder="Escribe aquí los detalles técnicos..."
+                className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all min-h-[80px] sm:min-h-[100px] resize-none"
+                placeholder="Escribe aqu&iacute; los detalles t&eacute;cnicos..."
                 value={formData.descripcion}
                 onChange={e => setFormData({...formData, descripcion: e.target.value})}
               />
@@ -1161,8 +1193,8 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           </div>
         </div>
 
-        <div className="p-4 sm:p-6 border-t border-white/5 bg-white/[0.01] flex flex-col-reverse sm:flex-row justify-end gap-3 shrink-0">
-          <button onClick={onClose} className="w-full sm:w-auto px-5 py-2.5 sm:px-6 sm:py-3 rounded-2xl text-xs sm:text-sm font-bold text-muted-foreground hover:bg-white/5 transition-all text-center">Cancelar</button>
+        <div className="p-4 sm:p-6 border-t border-border bg-muted/10 flex flex-col-reverse sm:flex-row justify-end gap-3 shrink-0">
+          <button onClick={onClose} className="w-full sm:w-auto px-5 py-2.5 sm:px-6 sm:py-3 rounded-2xl text-xs sm:text-sm font-bold text-muted-foreground hover:bg-muted/50 transition-all text-center">Cancelar</button>
           <Button 
             onClick={handleSave} 
             disabled={isSaving} 
@@ -1217,7 +1249,7 @@ function TrackingModal({ cita, onClose }: { cita: CitaServicio; onClose: () => v
       
       const newSeguimiento = [...(cita.seguimiento || []), newEntry];
       
-      const { error } = await withSedeFilter(supabase!.from('citas'))
+      const { error } = await withSedeFilter(supabase!.from('servicios'))
         .update({ 
           seguimiento: newSeguimiento,
           ...(actionText.toLowerCase().includes('entrega') ? { estado: 'completada' } : {})
@@ -1383,8 +1415,8 @@ function TrackingModal({ cita, onClose }: { cita: CitaServicio; onClose: () => v
 
 // ── Invoice Modal (Keep as is but polish colors) ───────────────
 function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio; citas: CitaServicio[]; inventory: any[]; onClose: () => void }) {
-  const [clientName, setClientName] = useState(cita.clientes
-    ? `${cita.clientes.nombre} ${cita.clientes.apellido}`
+  const [clientName, setClientName] = useState(cita.vehiculos?.clientes
+    ? `${cita.vehiculos?.clientes.nombre} ${cita.vehiculos?.clientes.apellido}`
     : cita.nombre_cliente || 'Consumidor Final');
 
   const [vehicleStr, setVehicleStr] = useState(cita.vehiculos
@@ -1398,11 +1430,11 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
     const match = inventory.find((i: any) => 
       (cita.descripcion || '').toLowerCase().includes(i.nombre.toLowerCase().trim()) ||
       i.nombre.toLowerCase().trim().includes((cita.descripcion || '').toLowerCase().trim()) ||
-      (SERVICIO_LABELS[cita.tipo_servicio] || '').toLowerCase().includes(i.nombre.toLowerCase().trim())
+      (SERVICIO_LABELS[cita.tipo] || '').toLowerCase().includes(i.nombre.toLowerCase().trim())
     );
     const price = match?.precio_usd || cita.costo_estimado || 0;
     return [{
-      descripcion: cita.descripcion || SERVICIO_LABELS[cita.tipo_servicio] || 'Servicio General',
+      descripcion: cita.descripcion || SERVICIO_LABELS[cita.tipo] || 'Servicio General',
       cantidad: 1,
       precio_unitario: price,
       total: price
@@ -1419,16 +1451,16 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
       const match = inventory.find((i: any) => 
         (secondCita.descripcion || '').toLowerCase().includes(i.nombre.toLowerCase().trim()) ||
         i.nombre.toLowerCase().trim().includes((secondCita.descripcion || '').toLowerCase().trim()) ||
-        (SERVICIO_LABELS[secondCita.tipo_servicio] || '').toLowerCase().includes(i.nombre.toLowerCase().trim())
+        (SERVICIO_LABELS[secondCita.tipo] || '').toLowerCase().includes(i.nombre.toLowerCase().trim())
       );
       const price = match?.precio_usd || secondCita.costo_estimado || 0;
       setSecondItems([{
-        descripcion: secondCita.descripcion || SERVICIO_LABELS[secondCita.tipo_servicio] || 'Servicio General',
+        descripcion: secondCita.descripcion || SERVICIO_LABELS[secondCita.tipo] || 'Servicio General',
         cantidad: 1,
         precio_unitario: price,
         total: price
       }]);
-      setSecondClientName(secondCita.clientes ? `${secondCita.clientes.nombre} ${secondCita.clientes.apellido}` : secondCita.nombre_cliente || 'Consumidor Final');
+      setSecondClientName(secondCita.vehiculos?.clientes ? `${secondCita.vehiculos?.clientes.nombre} ${secondCita.vehiculos?.clientes.apellido}` : secondCita.nombre_cliente || 'Consumidor Final');
       setSecondVehicleStr(secondCita.vehiculos ? `${secondCita.vehiculos.marca} ${secondCita.vehiculos.modelo}` : secondCita.vehiculo_info || '---');
       setSecondWithIva(false);
     } else {
@@ -1554,7 +1586,7 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
       }));
       if (ventaError) throw ventaError;
 
-      const { error: citaError } = await withSedeFilter(supabase.from('citas')).update({ estado: 'completada' }).eq('id', cita.id);
+      const { error: citaError } = await withSedeFilter(supabase.from('servicios')).update({ estado: 'completada' }).eq('id', cita.id);
       if (citaError) throw citaError;
 
       logActivity({ usuario: useAppStore.getState().user?.nombre || 'Admin', modulo: 'Servicios', accion: 'Venta Finalizada', detalles: `Venta para ${clientName} por $${total.toFixed(2)}` });
@@ -1708,7 +1740,7 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
                     {citas.filter(c => c.id !== cita.id && (searchTerm === '' || `${c.nombre_cliente} ${c.vehiculo_info}`.toLowerCase().includes(searchTerm.toLowerCase()))).map((c, idx) => (
                       <button key={c.id || idx} onClick={() => { setSecondCita(c); setShowSelector(false); }} className="w-full flex items-center justify-between p-4 rounded-2xl bg-slate-50/50 border-2 border-transparent hover:border-slate-100 transition-all">
                         <div className="text-left">
-                          <p className="text-xs font-black text-slate-900 uppercase italic">{c.nombre_cliente || c.clientes?.nombre}</p>
+                          <p className="text-xs font-black text-slate-900 uppercase italic">{c.nombre_cliente || c.vehiculos?.clientes?.nombre}</p>
                           <p className="text-[9px] text-slate-400 font-bold mt-1 uppercase">{c.vehiculo_info || `${c.vehiculos?.marca} ${c.vehiculos?.modelo}`}</p>
                         </div>
                         <p className="text-[10px] font-black text-orange-500 italic">${c.costo_estimado || 0}</p>

@@ -37,6 +37,10 @@ interface RecentServicio {
   estado: string | null;
   costo_estimado: number | null;
   created_at: string;
+  nombre_cliente?: string | null;
+  placa?: string | null;
+  vehiculo_info?: string | null;
+  vehiculos?: { marca: string; modelo: string; placa: string; clientes?: { nombre: string; apellido: string } | null } | null;
 }
 
 interface RecentConv {
@@ -148,7 +152,7 @@ export default function DashboardPage() {
         withSedeFilter(supabase.from('citas')).select('*', { count: 'exact', head: true }).eq('fecha', today),
         withSedeFilter(supabase.from('servicios')).select('*', { count: 'exact', head: true }).eq('estado', 'completado'),
         withSedeFilter(supabase.from('mensajes_whatsapp')).select('*', { count: 'exact', head: true }).eq('es_ia', true),
-        withSedeFilter(supabase.from('servicios')).select('id, descripcion, tipo, estado, costo_estimado, created_at').order('created_at', { ascending: false }).limit(5),
+        withSedeFilter(supabase.from('servicios')).select('id, descripcion, tipo, estado, costo_estimado, created_at, nombre_cliente, placa, vehiculo_info, vehiculos (marca, modelo, placa, clientes (nombre, apellido))').order('created_at', { ascending: false }).limit(5),
         withSedeFilter(supabase.from('conversaciones')).select('id, telefono, ultimo_mensaje, ultimo_mensaje_at, mensajes_sin_leer, estado, datos_cliente').order('ultimo_mensaje_at', { ascending: false }).limit(6),
         withSedeFilter(supabase.from('mensajes_whatsapp')).select('created_at').gte('created_at', `${today}T00:00:00`).lt('created_at', `${today}T23:59:59`).eq('tipo', 'entrante'),
       ]);
@@ -480,23 +484,31 @@ export default function DashboardPage() {
               {recentServicios.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-4 text-center">Sin servicios registrados</p>
               ) : (
-                recentServicios.map((s) => (
-                  <div key={s.id} className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-white/3 transition-colors">
-                    <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                      <Wrench className="w-3.5 h-3.5 text-primary" />
+                recentServicios.map((s) => {
+                  const clientName = s.nombre_cliente || s.vehiculos?.clientes ? `${s.vehiculos?.clientes?.nombre} ${s.vehiculos?.clientes?.apellido}` : '';
+                  const vehicleStr = s.vehiculo_info || (s.vehiculos ? `${s.vehiculos.marca} ${s.vehiculos.modelo}` : '');
+                  const plate = s.placa || s.vehiculos?.placa || '';
+                  return (
+                    <div key={s.id} className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-muted/30 transition-colors">
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                        <Wrench className="w-3.5 h-3.5 text-primary" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium truncate">{clientName || s.descripcion || 'Sin cliente'}</p>
+                        <p className="text-[10px] text-muted-foreground truncate">
+                          {vehicleStr}{plate ? ` · ${plate}` : ''}{s.descripcion ? ` · "${s.descripcion}"` : ''}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">{s.tipo ? tipoServicioLabel[s.tipo] || s.tipo : 'Sin tipo'}</p>
+                      </div>
+                      <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                        <StatusBadge status={s.estado || 'pendiente'} />
+                        {s.costo_estimado ? (
+                          <span className="text-[10px] font-bold text-foreground">{formatCurrency(s.costo_estimado)}</span>
+                        ) : null}
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium truncate">{s.descripcion || 'Sin descripción'}</p>
-                      <p className="text-[10px] text-muted-foreground">{s.tipo ? tipoServicioLabel[s.tipo] || s.tipo : 'Sin tipo'}</p>
-                    </div>
-                    <div className="flex flex-col items-end gap-1">
-                      <StatusBadge status={s.estado || 'pendiente'} />
-                      {s.costo_estimado && (
-                        <span className="text-[10px] text-muted-foreground">{formatCurrency(s.costo_estimado)}</span>
-                      )}
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </CardContent>

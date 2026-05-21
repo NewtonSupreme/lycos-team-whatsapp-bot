@@ -7,10 +7,10 @@ import {
   Bot, FileText, Settings, ChevronLeft, ChevronRight,
   Activity, LogOut, TrendingUp, UserCircle, Package, Calculator, ShoppingCart, Trash2
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, getInitials } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
+import { useSedeStore } from '@/lib/store/useSedeStore';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { getInitials } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 
 const navItemsConfig = [
@@ -75,6 +75,11 @@ export default function Sidebar() {
       if (item.label === 'Actividad' && !isAdmin) return false;
       if (item.label === 'Papelera' && !isAdmin) return false;
       if (item.label === 'Gestión Empleados' && !isAdmin) return false;
+      if (item.label === 'Leads') {
+        const { currentSede } = useSedeStore.getState();
+        const sedeName = currentSede?.nombre?.toLowerCase() || '';
+        if (!sedeName.includes('san antonio')) return false;
+      }
       return true;
     })
     .map(item => {
