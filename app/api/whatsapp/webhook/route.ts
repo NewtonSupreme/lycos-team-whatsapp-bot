@@ -531,10 +531,38 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
 13. GESTIÓN DE INVENTARIO:
     - [INVENTARIO GENERAL] contiene todos los productos activos.
     - Puedes consultar stock, precios y categorías.
+
+14. RESPUESTA SOBRE "SERVICIOS / QUÉ HAY HOY" vs FECHA ESPECÍFICA (CRÍTICO):
+    Dependiendo de lo que pregunte el admin, actúa así:
+
+    A) Si pregunta "qué hay hoy", "qué hay en el taller", "cómo vamos", "servicios activos":
+       - USA la sección [⌛ ACTIVIDAD DE HOY] exclusivamente:
+         1. 📅 CITAS PROGRAMADAS PARA HOY
+         2. 🔧 SERVICIOS ACTIVOS EN TALLER — estos son TODOS los servicios con estado pendiente/en_proceso/en_progreso/confirmada, SIN importar cuándo se registraron. Son los vehículos que están físicamente en el taller ahora.
+         3. 💰 VENTAS DE HOY
+       - Si una categoría dice "No hay", responde que no hay registros, NO inventes.
+
+    B) Si pregunta por un DÍA ESPECÍFICO (ej. "qué pasó el 15 de mayo", "servicios del lunes"):
+       - NO uses [⌛ ACTIVIDAD DE HOY].
+       - Filtra TÚ MISMO los datos de [HISTORIAL DE CITAS (ULTIMOS 30 DIAS)] y [SERVICIOS RECIENTES (ULTIMOS 30 DIAS)] buscando los que tengan esa fecha en su campo Fecha.
+       - Responde solo con los registros que coincidan con la fecha solicitada.
+
+    C) Si pregunta por UN RANGO (ej. "esta semana", "del lunes al miércoles"):
+       - Filtra los registros de [HISTORIAL DE CITAS] y [SERVICIOS RECIENTES] cuyo campo Fecha esté dentro del rango.
+       - Agrupa por día para una respuesta clara.
+
+    - PROHIBIDO: Inventar vehículos, placas, clientes o relaciones que no estén explícitamente en los datos.
+    - PROHIBIDO: Confundir modelos de silenciadores (CL30, CL40, CL60, etc.) con placas de vehículos.
+    - REGLA DE ORO: Usa SIEMPRE la fecha de Venezuela indicada en "HOY ES:" del prompt como referencia de "hoy".
+
+15. NO INVENTES DATOS (REGLA DE ORO):
+    - NUNCA inventes vehículos, clientes, placas, fechas o relaciones que no aparezcan explícitamente en la data proporcionada.
+    - Si no hay datos para lo que te piden, responde: "No tengo registros de [lo que pide] en el sistema."
+    - Los modelos de silenciadores (CL27, CL30, CL40, CLH40, CL60, CLK60, CLC60, CLCP60) son códigos de productos, NO placas de vehículos.
     - Para actualizar stock usa [STOCK_UPSERT], para eliminar usa [STOCK_DELETE].
     - Si el admin pregunta por productos bajos en stock, resáltalos.
 
-14. CIERRES DE CAJA Y REPORTES:
+16. CIERRES DE CAJA Y REPORTES:
     - Si el admin pregunta por cierres de caja, reportes del día o resúmenes financieros, usa los KPIs y datos de [ESTADÍSTICAS POR SEDE].
     - Puedes mostrar: ingresos del día, ventas por método de pago, comparativa vs ayer, servicios activos, citas del día.
     - Si necesitas más detalle, sugiere al admin revisar el panel de reportes en el dashboard.
@@ -1345,6 +1373,60 @@ async function loadConversationContext(
         }
       });
 
+      // ─── BUILD "HOY" SECTION ─────────────────────────────────────────────
+      const hoyCitas = allCitas?.filter(c => c.fecha === today) || [];
+      const STATUS_ACTIVOS = ['pendiente', 'en_proceso', 'en_progreso', 'confirmada'];
+      const serviciosActivos = allServs?.filter(s => STATUS_ACTIVOS.includes(s.estado)) || [];
+      // Fetch vehicles for ALL active services (not just today-created ones)
+      const vehIdsActivos = [...new Set(serviciosActivos.filter(s => s.vehiculo_id).map(s => s.vehiculo_id))];
+      let vehMapActivos: Record<string, any> = {};
+      if (vehIdsActivos.length > 0) {
+        const { data: vh } = await db.from('vehiculos').select('id, marca, modelo, placa, clientes(nombre, apellido)').in('id', vehIdsActivos);
+        if (vh) vh.forEach(v => { vehMapActivos[v.id] = v; });
+      }
+
+      let hoyInfo = `\n━━━ ⌛ ACTIVIDAD DE HOY (${today}) ━━━\n`;
+      
+      // Citas de hoy
+      hoyInfo += `\n📅 CITAS PROGRAMADAS PARA HOY:\n`;
+      if (hoyCitas.length > 0) {
+        hoyInfo += hoyCitas.map(c =>
+          `  • ${c.hora ? c.hora.substring(0, 5) : 'Hora: N/A'} | Cliente: ${c.nombre_cliente || '—'} | Servicio: ${c.descripcion || c.tipo_servicio || '—'} | Vehículo: ${c.vehiculo_info || '—'}${c.placa ? ` (${c.placa})` : ''} | Estado: ${c.estado} | Sede: ${c.sede?.nombre || 'General'}`
+        ).join('\n');
+      } else {
+        hoyInfo += `  No hay citas programadas para hoy.\n`;
+      }
+
+      // Servicios ACTIVOS (en taller ahora, sin importar cuándo se registraron)
+      hoyInfo += `\n🔧 SERVICIOS ACTIVOS EN TALLER:\n`;
+      if (serviciosActivos.length > 0) {
+        hoyInfo += serviciosActivos.map(s => {
+          const veh = s.vehiculo_id ? vehMapActivos[s.vehiculo_id] : null;
+          const clienteNombre = s.nombre_cliente || veh?.clientes?.nombre || '—';
+          const clienteApellido = veh?.clientes?.apellido || '';
+          const vehStr = veh ? `${veh.marca} ${veh.modelo} (${veh.placa || 'S/P'})` : (s.vehiculo_info || '—');
+          const fechaReg = s.fecha || s.created_at?.split('T')[0] || '—';
+          return `  • ${clienteNombre} ${clienteApellido} | Veh: ${vehStr} | Servicio: ${s.descripcion || s.tipo || '—'} | Estado: ${s.estado || '—'} | Costo: $${s.costo_estimado ?? s.costo_final ?? 0} | Registrado: ${fechaReg} | Sede: ${s.sede?.nombre || 'General'}`;
+        }).join('\n');
+      } else {
+        hoyInfo += `  No hay servicios activos en el taller.\n`;
+      }
+
+      // Ventas de hoy (inline filtered from already-loaded data)
+      const hoyVentasDia = allVentasDia?.filter(v => toVzlaDateStr(v.fecha || v.created_at) === today) || [];
+      const hoyVentasSil = allVentasSil?.filter(v => toVzlaDateStr(v.fecha || v.created_at) === today) || [];
+      if (hoyVentasDia.length > 0 || hoyVentasSil.length > 0) {
+        hoyInfo += `\n💰 VENTAS DE HOY:\n`;
+        hoyVentasDia.forEach(v => {
+          hoyInfo += `  • Venta POS | ${v.cliente || 'Consumidor Final'} | Total: $${v.total_ingresos} | Sede: ${v.sede?.nombre || 'General'}\n`;
+        });
+        hoyVentasSil.forEach(v => {
+          if (!/Venta POS #/i.test(v.notas || '')) {
+            hoyInfo += `  • Venta IA | ${v.modelo || 'Producto'} | ${v.cliente || '—'} | Total: $${v.precio_registrado || v.total_ingresos || 0} | Sede: ${v.sede?.nombre || 'General'}\n`;
+          }
+        });
+      }
+
       citasInfo = `\n--- [MODO DIOS] INFO DEL SISTEMA EN TIEMPO REAL ---\n`;
       citasInfo += `Hola Admin ${adminName}.\n`;
       citasInfo += `\n[KPIs GENERALES]\n`;
@@ -1363,6 +1445,8 @@ async function loadConversationContext(
         citasInfo += `- ${sName}: $${rev} hoy | ${cit} citas hoy | ${added} productos nuevos este mes.\n`;
         citasInfo += `  * Estados de servicios: ${statsStr}\n`;
       });
+
+      citasInfo += hoyInfo;
       
       if (allCitas && allCitas.length > 0) {
         citasInfo += `\n[HISTORIAL DE CITAS (ULTIMOS 30 DIAS)]\n` + allCitas.map(c => 
@@ -1371,7 +1455,6 @@ async function loadConversationContext(
       }
       
       if (allServs && allServs.length > 0) {
-        // Fetch vehicles and clients for services
         const vehIds = [...new Set(allServs.filter(s => s.vehiculo_id).map(s => s.vehiculo_id))];
         let vehMap: Record<string, any> = {};
         if (vehIds.length > 0) {
