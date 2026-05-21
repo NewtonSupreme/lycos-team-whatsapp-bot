@@ -9,38 +9,54 @@ import {
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from '@/lib/store/useSedeStore';
+import { getPermisos, type Permisos } from '@/types';
 
-// Primary items shown in the bottom bar (max 4 + "more")
-const PRIMARY_NAV = [
-  { href: '/dashboard', icon: LayoutDashboard, label: 'Inicio' },
-  { href: '/dashboard/whatsapp', icon: MessageSquare, label: 'WhatsApp' },
-  { href: '/dashboard/agenda', icon: Calendar, label: 'Agenda' },
-  { href: '/dashboard/servicios', icon: Wrench, label: 'Servicios' },
+interface NavItem {
+  href: string;
+  icon: any;
+  label: string;
+  permKey?: keyof Permisos;
+}
+
+const PRIMARY_NAV: NavItem[] = [
+  { href: '/dashboard', icon: LayoutDashboard, label: 'Inicio', permKey: 'dashboard' },
+  { href: '/dashboard/whatsapp', icon: MessageSquare, label: 'WhatsApp', permKey: 'whatsapp' },
+  { href: '/dashboard/agenda', icon: Calendar, label: 'Agenda', permKey: 'agenda' },
+  { href: '/dashboard/servicios', icon: Wrench, label: 'Servicios', permKey: 'servicios' },
 ];
 
-// Extra items shown in the "more" sheet
-const MORE_NAV = [
-  { href: '/dashboard/clientes', icon: Users, label: 'Clientes' },
-  { href: '/dashboard/vehiculos', icon: Car, label: 'Vehículos' },
-  { href: '/dashboard/leads', icon: TrendingUp, label: 'Leads' },
-  { href: '/dashboard/taller', icon: Wrench, label: 'Taller' },
-  { href: '/dashboard/silenciadores', icon: ShoppingCart, label: 'Ventas' },
-  { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente' },
-  { href: '/dashboard/reportes', icon: FileText, label: 'Reportes' },
-  { href: '/dashboard/actividad', icon: Activity, label: 'Actividad' },
-  { href: '/dashboard/calculadora', icon: Calculator, label: 'Calculadora' },
-  { href: '/dashboard/configuracion', icon: Settings, label: 'Configuración' },
+const MORE_NAV: NavItem[] = [
+  { href: '/dashboard/clientes', icon: Users, label: 'Clientes', permKey: 'clientes' },
+  { href: '/dashboard/vehiculos', icon: Car, label: 'Vehículos', permKey: 'vehiculos' },
+  { href: '/dashboard/leads', icon: TrendingUp, label: 'Leads', permKey: 'leads' },
+  { href: '/dashboard/taller', icon: Wrench, label: 'Taller', permKey: 'taller' },
+  { href: '/dashboard/silenciadores', icon: ShoppingCart, label: 'Ventas', permKey: 'ventas' },
+  { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente', permKey: 'ia_asistente' },
+  { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', permKey: 'reportes' },
+  { href: '/dashboard/actividad', icon: Activity, label: 'Actividad', permKey: 'actividad' },
+  { href: '/dashboard/calculadora', icon: Calculator, label: 'Calculadora', permKey: 'calculadora' },
+  { href: '/dashboard/configuracion', icon: Settings, label: 'Configuración', permKey: 'configuracion' },
 ];
 
 export default function MobileBottomNav() {
   const pathname = usePathname();
-  const { unreadCount } = useAppStore();
+  const { unreadCount, user } = useAppStore();
   const { currentSede } = useSedeStore();
   const [showMore, setShowMore] = useState(false);
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => { setMounted(true); }, []);
 
+  const permisos = getPermisos(user?.rol || 'empleado', user?.permisos);
+  const isAdmin = user?.rol === 'admin';
+
+  const canAccess = (permKey?: keyof Permisos): boolean => {
+    if (isAdmin) return true;
+    if (!permKey) return true;
+    return permisos[permKey] === true;
+  };
+
   const visibleMoreNav = MORE_NAV.filter(item => {
+    if (!canAccess(item.permKey)) return false;
     if (item.label === 'Leads') {
       if (!mounted) return true;
       const sedeName = currentSede?.nombre?.toLowerCase() || '';
@@ -56,7 +72,6 @@ export default function MobileBottomNav() {
 
   return (
     <>
-      {/* More sheet overlay */}
       {showMore && (
         <div
           className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm lg:hidden"
@@ -64,12 +79,10 @@ export default function MobileBottomNav() {
         />
       )}
 
-      {/* More sheet (bottom sheet) */}
       <div className={cn(
         'fixed bottom-0 left-0 right-0 z-50 lg:hidden transition-transform duration-300 ease-out',
         showMore ? 'translate-y-0' : 'translate-y-full'
       )}>
-        {/* Sheet drag handle + header */}
         <div className="bg-card/95 backdrop-blur-2xl border-t border-border/50 rounded-t-3xl shadow-2xl">
           <div className="flex items-center justify-between px-6 pt-4 pb-2">
             <div className="w-10 h-1 rounded-full bg-border/50 mx-auto absolute left-1/2 -translate-x-1/2 -translate-y-1 top-2" />
@@ -110,12 +123,10 @@ export default function MobileBottomNav() {
               );
             })}
 
-            {/* Logout Button */}
             <button
               onClick={async () => {
                 setShowMore(false);
                 await fetch('/api/auth/logout', { method: 'POST' });
-                // Optional: clear local session cache if any
                 sessionStorage.removeItem('lycos_user');
                 window.location.href = '/login';
               }}
@@ -130,7 +141,6 @@ export default function MobileBottomNav() {
         </div>
       </div>
 
-      {/* Bottom tab bar */}
       <nav
         className="fixed bottom-0 left-0 right-0 z-30 lg:hidden"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
@@ -149,7 +159,6 @@ export default function MobileBottomNav() {
                     active ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
-                  {/* Active indicator pill */}
                   {active && (
                     <span className="absolute -top-1 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full bg-primary" />
                   )}
@@ -159,7 +168,6 @@ export default function MobileBottomNav() {
                       'w-5 h-5 transition-all duration-200',
                       active ? 'scale-110' : 'scale-100'
                     )} />
-                    {/* WhatsApp unread badge */}
                     {isWa && mounted && unreadCount > 0 && (
                       <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 rounded-full bg-primary text-[9px] text-white flex items-center justify-center font-bold px-1">
                         {unreadCount > 99 ? '99+' : unreadCount}
@@ -177,7 +185,6 @@ export default function MobileBottomNav() {
               );
             })}
 
-            {/* More button */}
             <button
               onClick={() => setShowMore(true)}
               className={cn(

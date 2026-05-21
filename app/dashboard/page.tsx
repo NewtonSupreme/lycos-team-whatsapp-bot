@@ -3,7 +3,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Users, Car, Wrench, MessageSquare, Bot,
   Calendar, CheckCircle, ArrowRight, Zap, RefreshCw,
-  Coins, TrendingUp, DollarSign, MapPin, ShieldCheck
+  Coins, TrendingUp, DollarSign, MapPin, ShieldCheck,
+  X, Play, Maximize2, Minimize2
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
@@ -247,10 +248,68 @@ export default function DashboardPage() {
 
   const fmt = (val: number | null) => val === null ? '...' : val.toLocaleString();
 
+  const [showTutorial, setShowTutorial] = useState(false);
+
+  useEffect(() => {
+    if (mounted) {
+      const timer = setTimeout(() => setShowTutorial(true), 500);
+      return () => clearTimeout(timer);
+    }
+  }, [mounted]);
+
   if (!mounted) return null;
 
   return (
     <div className="space-y-6">
+      {/* Tutorial Video Modal */}
+      {showTutorial && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-2 sm:p-4">
+          <div className="relative w-full max-w-3xl bg-card border border-border rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-gradient-to-r from-blue-600/10 to-purple-600/10">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
+                  <Play className="w-4 h-4 text-blue-500" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold">🎬 Tutorial Lycos Team</h2>
+                  <p className="text-[10px] text-muted-foreground">Aprende a usar el sistema paso a paso</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowTutorial(false)}
+                className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {/* Video Player */}
+            <div className="relative bg-black">
+              <video
+                key={Date.now()}
+                className="w-full aspect-video"
+                controls
+                autoPlay
+                playsInline
+                controlsList="nodownload"
+              >
+                <source src="/api/tutorial-video" type="video/mp4" />
+                Tu navegador no soporta el elemento de video.
+              </video>
+            </div>
+            {/* Footer */}
+            <div className="flex items-center justify-between px-4 py-2.5 border-t border-border bg-muted/30">
+              <p className="text-[10px] text-muted-foreground">📌 Puedes volver a verlo recargando la página</p>
+              <button
+                onClick={() => setShowTutorial(false)}
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>

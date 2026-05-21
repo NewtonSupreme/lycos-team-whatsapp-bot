@@ -12,29 +12,38 @@ import { useAppStore } from '@/lib/store';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { supabase } from '@/lib/supabase';
+import { getPermisos, type Permisos } from '@/types';
 
-const navItemsConfig = [
-  { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', badge: null },
-  { href: '/dashboard/clientes', icon: Users, label: 'Clientes', badge: null },
-  { href: '/dashboard/vehiculos', icon: Car, label: 'Vehículos', badge: null },
-  { href: '/dashboard/servicios', icon: Wrench, label: 'Servicios', badge: null },
-  { href: '/dashboard/taller', icon: Wrench, label: 'Taller', badge: null },
-  { href: '/dashboard/agenda', icon: Calendar, label: 'Agenda', badge: null },
-  { href: '/dashboard/whatsapp', icon: MessageSquare, label: 'WhatsApp', badge: null },
-  { href: '/dashboard/leads', icon: TrendingUp, label: 'Leads', badge: null },
-  { href: '/dashboard/inventario', icon: Package, label: 'Inventario', badge: null },
-  { href: '/dashboard/inventario/papelera', icon: Trash2, label: 'Papelera', badge: null },
-  { href: '/dashboard/silenciadores', icon: ShoppingCart, label: 'Ventas', badge: null },
-  { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente', badge: null },
-  { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', badge: null },
-  { href: '/dashboard/actividad', icon: Activity, label: 'Actividad', badge: null },
-  { href: '/dashboard/calculadora', icon: Calculator, label: 'Calculadora', badge: null },
+interface NavItem {
+  href: string;
+  icon: any;
+  label: string;
+  badge: string | null;
+  permKey?: keyof Permisos;
+}
+
+const navItemsConfig: NavItem[] = [
+  { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', badge: null, permKey: 'dashboard' },
+  { href: '/dashboard/clientes', icon: Users, label: 'Clientes', badge: null, permKey: 'clientes' },
+  { href: '/dashboard/vehiculos', icon: Car, label: 'Vehículos', badge: null, permKey: 'vehiculos' },
+  { href: '/dashboard/servicios', icon: Wrench, label: 'Servicios', badge: null, permKey: 'servicios' },
+  { href: '/dashboard/taller', icon: Wrench, label: 'Taller', badge: null, permKey: 'taller' },
+  { href: '/dashboard/agenda', icon: Calendar, label: 'Agenda', badge: null, permKey: 'agenda' },
+  { href: '/dashboard/whatsapp', icon: MessageSquare, label: 'WhatsApp', badge: null, permKey: 'whatsapp' },
+  { href: '/dashboard/leads', icon: TrendingUp, label: 'Leads', badge: null, permKey: 'leads' },
+  { href: '/dashboard/inventario', icon: Package, label: 'Inventario', badge: null, permKey: 'inventario' },
+  { href: '/dashboard/inventario/papelera', icon: Trash2, label: 'Papelera', badge: null, permKey: 'papelera' },
+  { href: '/dashboard/silenciadores', icon: ShoppingCart, label: 'Ventas', badge: null, permKey: 'ventas' },
+  { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente', badge: null, permKey: 'ia_asistente' },
+  { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', badge: null, permKey: 'reportes' },
+  { href: '/dashboard/actividad', icon: Activity, label: 'Actividad', badge: null, permKey: 'actividad' },
+  { href: '/dashboard/calculadora', icon: Calculator, label: 'Calculadora', badge: null, permKey: 'calculadora' },
 ];
 
-const bottomItems = [
-  { href: '/dashboard/configuracion', icon: Settings, label: 'Configuración' },
-  { href: '/dashboard/ajustes/empleados', icon: Users, label: 'Gestión Empleados' },
-  { href: '/dashboard/perfil', icon: UserCircle, label: 'Mi Perfil' },
+const bottomItems: NavItem[] = [
+  { href: '/dashboard/configuracion', icon: Settings, label: 'Configuración', badge: null, permKey: 'configuracion' },
+  { href: '/dashboard/ajustes/empleados', icon: Users, label: 'Gestión Empleados', badge: null, permKey: 'empleados' },
+  { href: '/dashboard/perfil', icon: UserCircle, label: 'Mi Perfil', badge: null },
 ];
 
 export default function Sidebar() {
@@ -46,7 +55,6 @@ export default function Sidebar() {
   React.useEffect(() => {
     setMounted(true);
     
-    // Fetch unread messages
     const fetchUnread = async () => {
       if (!supabase) return;
       const { data } = await supabase.from('conversaciones').select('mensajes_sin_leer');
@@ -68,13 +76,18 @@ export default function Sidebar() {
     };
   }, []);
 
+  const permisos = getPermisos(user?.rol || 'empleado', user?.permisos);
   const isAdmin = user?.rol === 'admin';
+
+  const canAccess = (permKey?: keyof Permisos): boolean => {
+    if (isAdmin) return true;
+    if (!permKey) return true;
+    return permisos[permKey] === true;
+  };
 
   const navItems = navItemsConfig
     .filter(item => {
-      if (item.label === 'Actividad' && !isAdmin) return false;
-      if (item.label === 'Papelera' && !isAdmin) return false;
-      if (item.label === 'Gestión Empleados' && !isAdmin) return false;
+      if (!canAccess(item.permKey)) return false;
       if (item.label === 'Leads' && mounted) {
         const { currentSede } = useSedeStore.getState();
         const sedeName = currentSede?.nombre?.toLowerCase() || '';
@@ -89,10 +102,10 @@ export default function Sidebar() {
       return item;
     });
 
+  const visibleBottomItems = bottomItems.filter(item => canAccess(item.permKey));
 
   return (
     <>
-      {/* Mobile overlay */}
       {mounted && sidebarOpen && (
         <div
           className="fixed inset-0 z-20 bg-black/50 backdrop-blur-sm lg:hidden"
@@ -100,7 +113,6 @@ export default function Sidebar() {
         />
       )}
 
-      {/* Sidebar */}
       <aside
         className={cn(
           'fixed top-0 left-0 z-30 h-full flex flex-col border-r border-border/50 bg-card/80 backdrop-blur-xl transition-all duration-300 ease-in-out',
@@ -132,7 +144,6 @@ export default function Sidebar() {
           )}
         </div>
 
-        {/* Nav items */}
         <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
           {navItems.map(({ href, icon: Icon, label, badge }) => {
             const isActive = pathname === href || (href !== '/dashboard' && pathname.startsWith(href));
@@ -168,9 +179,8 @@ export default function Sidebar() {
           })}
         </nav>
 
-        {/* Bottom section */}
         <div className="p-2 border-t border-border/30 space-y-0.5">
-          {bottomItems.map(({ href, icon: Icon, label }) => (
+          {visibleBottomItems.map(({ href, icon: Icon, label }) => (
             <Link
               key={href}
               href={href}
@@ -182,7 +192,6 @@ export default function Sidebar() {
             </Link>
           ))}
 
-          {/* User info */}
           <div className={cn('flex items-center gap-2 px-2 py-2 mt-1 rounded-lg', !sidebarOpen && 'justify-center')}>
             <Avatar className="w-7 h-7 flex-shrink-0">
               <AvatarImage src={user?.avatar_url} />
@@ -220,7 +229,6 @@ export default function Sidebar() {
           </button>
         </div>
 
-        {/* Toggle button */}
         <button
           onClick={toggleSidebar}
           className="absolute -right-3 top-20 w-6 h-6 rounded-full bg-card border border-border flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors shadow-md hidden lg:flex"

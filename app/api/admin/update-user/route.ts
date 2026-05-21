@@ -17,37 +17,51 @@ export async function POST(req: Request) {
       }
     });
 
-    const { id, email, nombre, sede_id, rol, activo, telefono, username } = await req.json();
+    const { id, email, nombre, sede_id, rol, activo, telefono, username, permisos } = await req.json();
 
     if (!id) {
       return NextResponse.json({ error: 'ID de usuario requerido' }, { status: 400 });
     }
 
-    // 1. Update in custom usuarios table
+    const updates: any = {
+      username,
+      nombre,
+      email,
+      rol,
+      activo: activo !== undefined ? activo : true,
+      sede_id,
+      telefono: telefono || null,
+      updated_at: new Date().toISOString()
+    };
+
+    if (permisos !== undefined) {
+      updates.permisos = permisos;
+    }
+
     const { data: updatedUser, error } = await supabaseAdmin
       .from('usuarios')
-      .update({
-        username,
-        nombre,
-        email,
-        rol,
-        activo: activo !== undefined ? activo : true,
-        sede_id,
-        telefono: telefono || null,
-        updated_at: new Date().toISOString()
-      })
+      .update(updates)
       .eq('id', id)
       .select()
       .single();
 
     if (error) {
-      console.error('Error actualizando usuario:', error);
+      // If column doesn't exist, try update without permisos
+      if (error.message?.includes('column') || error.message?.includes('permisos')) {
+        delete updates.permisos;
+        const { data: retryUser, error: retryError } = await supabaseAdmin
+          .from('usuarios')
+          .update(updates)
+          .eq('id', id)
+          .select()
+          .single();
+        if (retryError) {
+          return NextResponse.json({ error: retryError.message }, { status: 500 });
+        }
+        return NextResponse.json({ message: 'Usuario actualizado (sin permisos — columna no disponible)', user: retryUser });
+      }
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
-
-    // 2. Optional: If email changed, we might want to update Supabase Auth too
-    // but typically we manage auth separately or via this admin client.
-    // For now, updating the table is the priority.
 
     return NextResponse.json({ message: 'Usuario actualizado exitosamente', user: updatedUser });
   } catch (error: any) {

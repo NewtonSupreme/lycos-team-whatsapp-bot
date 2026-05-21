@@ -20,8 +20,8 @@ export async function POST(req: Request) {
 
     const { email, nombre, apellido, sede_id, rol, activo, password_hash, telefono, username: manualUsername } = await req.json();
 
-    if (!email || !nombre || !sede_id || !rol) {
-      return NextResponse.json({ error: 'Faltan datos requeridos' }, { status: 400 });
+    if (!nombre || !rol) {
+      return NextResponse.json({ error: 'Faltan datos requeridos (nombre, rol)' }, { status: 400 });
     }
 
     let username = manualUsername;
@@ -40,6 +40,7 @@ export async function POST(req: Request) {
     } else {
       // Auto-generate if not provided
       const isTechnical = rol === 'mecanico' || rol === 'jefe_taller';
+      const noAccess = isTechnical;
       username = email ? email.split('@')[0].toLowerCase() : nombre.replace(/\s+/g, '_').toLowerCase();
       
       // If it's technical staff or email is missing, ensure uniqueness with a timestamp

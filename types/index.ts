@@ -1,15 +1,75 @@
-export type UserRole = 'admin' | 'empleado' | 'cliente' | 'mecanico' | 'jefe_taller';
+export type UserRole = 'admin' | 'empleado' | 'cliente' | 'mecanico' | 'mecanico_acceso' | 'jefe_taller' | 'jefe_taller_acceso' | 'gerente';
+
+export interface Permisos {
+  dashboard: boolean;
+  clientes: boolean;
+  vehiculos: boolean;
+  servicios: boolean;
+  taller: boolean;
+  agenda: boolean;
+  whatsapp: boolean;
+  leads: boolean;
+  inventario: boolean;
+  papelera: boolean;
+  ventas: boolean;
+  ia_asistente: boolean;
+  reportes: boolean;
+  actividad: boolean;
+  calculadora: boolean;
+  configuracion: boolean;
+  empleados: boolean;
+}
+
+export const PERMISOS_DEFAULT: Record<string, Permisos> = {
+  admin: {
+    dashboard: true, clientes: true, vehiculos: true, servicios: true, taller: true,
+    agenda: true, whatsapp: true, leads: true, inventario: true, papelera: true,
+    ventas: true, ia_asistente: true, reportes: true, actividad: true,
+    calculadora: true, configuracion: true, empleados: true
+  },
+  gerente: {
+    dashboard: true, clientes: true, vehiculos: true, servicios: true, taller: true,
+    agenda: true, whatsapp: true, leads: true, inventario: true, papelera: false,
+    ventas: true, ia_asistente: true, reportes: true, actividad: false,
+    calculadora: true, configuracion: false, empleados: false
+  },
+  empleado: {
+    dashboard: true, clientes: true, vehiculos: true, servicios: true, taller: true,
+    agenda: true, whatsapp: true, leads: false, inventario: true, papelera: false,
+    ventas: true, ia_asistente: false, reportes: false, actividad: false,
+    calculadora: true, configuracion: false, empleados: false
+  },
+  mecanico_acceso: {
+    dashboard: true, clientes: false, vehiculos: false, servicios: true, taller: true,
+    agenda: false, whatsapp: false, leads: false, inventario: false, papelera: false,
+    ventas: false, ia_asistente: false, reportes: false, actividad: false,
+    calculadora: true, configuracion: false, empleados: false
+  },
+  jefe_taller_acceso: {
+    dashboard: true, clientes: true, vehiculos: true, servicios: true, taller: true,
+    agenda: false, whatsapp: false, leads: false, inventario: true, papelera: false,
+    ventas: true, ia_asistente: false, reportes: false, actividad: false,
+    calculadora: true, configuracion: false, empleados: false
+  },
+};
+
+export function getPermisos(rol: string, storedPermisos?: Partial<Permisos>): Permisos {
+  const defaults = PERMISOS_DEFAULT[rol] || PERMISOS_DEFAULT.empleado;
+  if (!storedPermisos) return defaults;
+  return { ...defaults, ...storedPermisos };
+}
 
 export interface User {
   id: string;
   email: string;
   nombre: string;
-  username: string; // Required for WebAuthn/Login
+  username: string;
   rol: UserRole;
   avatar_url?: string;
   telefono?: string;
   created_at: string;
   sede_id?: string;
+  permisos?: Partial<Permisos>;
 }
 
 export interface Cliente {

@@ -743,12 +743,14 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
       // Fetch Staff from Users (Filtered by Sede automatically by withSedeFilter)
       const { data: users } = await withSedeFilter(supabase.from('usuarios'))
         .select('nombre, rol')
-        .in('rol', ['mecanico', 'jefe_taller', 'admin', 'empleado']);
+        .in('rol', ['mecanico', 'mecanico_acceso', 'jefe_taller', 'jefe_taller_acceso', 'admin', 'empleado']);
       
-      const suggestions = (users || []).map((u: any) => ({ 
-        nombre: u.nombre, 
-        rol: (u.rol === 'jefe_taller' || u.rol === 'mecanico' ? u.rol : 'mecanico') 
-      }));
+      const suggestions = (users || []).map((u: any) => {
+        let encargadoRol: 'mecanico' | 'jefe_taller' = 'mecanico';
+        if (u.rol === 'jefe_taller' || u.rol === 'jefe_taller_acceso') encargadoRol = 'jefe_taller';
+        else if (u.rol === 'mecanico' || u.rol === 'mecanico_acceso') encargadoRol = 'mecanico';
+        return { nombre: u.nombre, rol: encargadoRol };
+      });
       
       // Unique by name
       const uniqueSuggestions = suggestions.filter((v: any, i: number, a: any[]) => 
