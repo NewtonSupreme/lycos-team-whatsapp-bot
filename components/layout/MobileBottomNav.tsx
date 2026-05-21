@@ -42,6 +42,7 @@ export default function MobileBottomNav() {
 
   const visibleMoreNav = MORE_NAV.filter(item => {
     if (item.label === 'Leads') {
+      if (!mounted) return true;
       const sedeName = currentSede?.nombre?.toLowerCase() || '';
       return sedeName.includes('san antonio');
     }

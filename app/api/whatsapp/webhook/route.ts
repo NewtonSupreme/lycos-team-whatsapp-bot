@@ -484,6 +484,16 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
 10. DETALLES Y NOTAS EXTRAS:
     - Cualquier dato extra relevante que no tenga una columna específica (como color del carro, cédula del cliente, dirección, o notas administrativas extras) debe ser obligatoriamente colocado en el campo 'descripcion' o concatenado de forma legible en el tag de registro para que nada de información se pierda en el sistema.
 
+11. GESTIÓN DE SERVICIOS (ÓRDENES DE TALLER) [SERVICIO_UPSERT]:
+    - Para REGISTRAR un nuevo servicio/orden de taller, usa el tag [SERVICIO_UPSERT: ...] con los campos correspondientes.
+    - Para ACTUALIZAR un servicio existente (cambiar estado, actualizar costo, etc.), incluye el ID del servicio en el tag.
+    - El tag [SERVICIO_UPSERT] crea/actualiza en la tabla 'servicios' (NO en 'citas'). Usa [CITA_UPSERT] solo para agendar citas.
+    - Mapeo de estados válidos para servicios: 'pendiente', 'confirmada', 'en_proceso', 'completada', 'finalizado', 'cancelada', 'cancelado'.
+    - El tipo de servicio debe ser uno de: 'mecanica', 'electronica', 'cerrajeria', 'diagnostico', 'motor', 'emergencia', 'otro'.
+    - Si es un tipo personalizado, usa 'otro' como tipo y coloca el nombre en 'tipo_personalizado'.
+    - Siempre incluye nombre_cliente, vehiculo_info y descripcion para que el servicio se vea completo en el sistema.
+    - Si el admin pregunta por servicios existentes, muestra el listado completo de [SERVICIOS RECIENTES] con su estado, costo y seguimiento.
+
 FORMATO DE REPORTES (OBLIGATORIO):
 Cuando presents listas de inventario, stock o reportes, es OBLIGATORIO usar este formato ESPACIADO con UNA LÍNEA EN BLANCO REAL entre cada producto. Si no lo haces, el reporte es ilegible.
 
@@ -503,6 +513,7 @@ REGLA DE TAGS (Imprimir SIEMPRE al final de tu respuesta):
    - [STOCK_DELETE: id_o_codigo | sede_id]
    - [VEHICULO_UPSERT: id_opcional | cliente_id | placa | marca | modelo | anio | sede_id]
    - [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion | sede_id | costo_estimado | nombre_cliente | vehiculo_info | placa | telefono]
+   - [SERVICIO_UPSERT: id_opcional | cliente_id | vehiculo_id | nombre_cliente | telefono | vehiculo_info | placa | tipo | descripcion | estado | costo_estimado | sede_id | tipo_personalizado]
    - [CITA_DELETE: id]
    - [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion | sede_id]
    - [ASK_SEDE: motivo] -> Úsalo si falta la sede en una orden administrativa.
@@ -1093,7 +1104,7 @@ async function loadConversationContext(
       if (vehs && vehs.length > 0) {
         const vehIds = vehs.map(v => v.id);
         const [servs, revs] = await Promise.all([
-          db.from('servicios').select('id, vehiculo_id, tipo_servicio, descripcion, fecha, costo, estado').in('vehiculo_id', vehIds).order('fecha', { ascending: false }).limit(10),
+          db.from('servicios').select('id, vehiculo_id, tipo, descripcion, fecha, costo_estimado, costo_final, estado, nombre_cliente').in('vehiculo_id', vehIds).order('created_at', { ascending: false }).limit(10),
           db.from('revisiones').select('id, vehiculo_id, detalles, presupuesto, created_at').in('vehiculo_id', vehIds).order('created_at', { ascending: false }).limit(5)
         ]);
         vehs.forEach(v => {
@@ -1102,7 +1113,7 @@ async function loadConversationContext(
           if (vServs.length > 0 || vRevs.length > 0) {
             historialTecnico += `VEHÍCULO: ${v.marca} ${v.modelo} (Placa: ${v.placa || 'N/A'})\n`;
             vServs.forEach(s => {
-              historialTecnico += `  - SERVICIO [${s.fecha}]: ${s.tipo_servicio} - ${s.descripcion} (${s.estado}) | Costo: $${s.costo}\n`;
+              historialTecnico += `  - SERVICIO [${s.fecha || ''}]: ${s.tipo || ''} - ${s.descripcion || ''} (${s.estado}) | Costo: $${s.costo_estimado ?? s.costo_final ?? 0}\n`;
             });
             vRevs.forEach(r => {
               const date = new Date(r.created_at).toISOString().split('T')[0];
@@ -1309,9 +1320,25 @@ async function loadConversationContext(
       }
       
       if (allServs && allServs.length > 0) {
-        citasInfo += `\n\n[SERVICIOS RECIENTES (ULTIMOS 30 DIAS)]\n` + allServs.map(s => 
-          `ID: ${s.id} | Sede: ${s.sede?.nombre || 'General'} | Fecha: ${s.created_at.split('T')[0]} | Tipo: ${s.tipo_servicio} | Estado: ${s.estado} | Costo: $${s.costo_estimado || s.costo_final || 0}`
-        ).join('\n');
+        // Fetch vehicles and clients for services
+        const vehIds = [...new Set(allServs.filter(s => s.vehiculo_id).map(s => s.vehiculo_id))];
+        let vehMap: Record<string, any> = {};
+        if (vehIds.length > 0) {
+          const { data: vh } = await db.from('vehiculos').select('id, marca, modelo, placa, clientes(nombre, apellido)').in('id', vehIds);
+          if (vh) vh.forEach(v => { vehMap[v.id] = v; });
+        }
+        citasInfo += `\n\n[SERVICIOS RECIENTES (ULTIMOS 30 DIAS)]\n` + allServs.map(s => {
+          const veh = s.vehiculo_id ? vehMap[s.vehiculo_id] : null;
+          const clienteNombre = s.nombre_cliente || veh?.clientes?.nombre || '—';
+          const clienteApellido = veh?.clientes?.apellido || '';
+          const vehStr = veh ? `${veh.marca} ${veh.modelo} (${veh.placa || 'S/P'})` : (s.vehiculo_info || '—');
+          const estadoActual = s.estado || '—';
+          const fechaStr = s.fecha || s.created_at.split('T')[0];
+          const seguimientoStr = s.seguimiento?.length
+            ? s.seguimiento.map((e: any) => `${e.accion}${e.fecha ? ' [' + e.fecha.split('T')[0] + ']' : ''}`).join(' → ')
+            : 'Sin seguimiento';
+          return `ID: ${s.id} | Sede: ${s.sede?.nombre || 'General'} | Fecha: ${fechaStr} ${s.hora || ''} | Cliente: ${clienteNombre} ${clienteApellido}${s.telefono ? ' (Tel:' + s.telefono + ')' : ''} | Vehículo: ${vehStr} | Tipo: ${s.tipo}${s.tipo_personalizado ? ` (${s.tipo_personalizado})` : ''} | Estado: ${estadoActual} | Costo: $${s.costo_estimado ?? s.costo_final ?? 0} | Seguimiento: ${seguimientoStr}`;
+        }).join('\n');
       }
 
       if (allLogs && allLogs.length > 0) {
@@ -2918,6 +2945,95 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             } catch (e) { console.error('Error in CITA_UPSERT:', e); }
           }
 
+          // 3b. [SERVICIO_UPSERT: id_opcional | cliente_id | vehiculo_id | nombre_cliente | telefono | vehiculo_info | placa | tipo | descripcion | estado | costo_estimado | sede_id | tipo_personalizado]
+          const servUpsertMatches = Array.from(cleanedAi.matchAll(/\[SERVICIO_UPSERT:\s*([^\]]+)\]/gi));
+          for (const match of servUpsertMatches) {
+            try {
+              const parts = match[1].split('|').map(s => s.trim());
+              const id = (parts[0] && parts[0] !== 'id_opcional' && parts[0] !== 'null') ? parts[0] : null;
+              const clienteId = (parts[1] && parts[1] !== 'null' && parts[1] !== 'undefined') ? parts[1] : null;
+              const vehId = (parts[2] && parts[2] !== 'null' && parts[2] !== 'undefined') ? parts[2] : null;
+              const nombreCliente = (parts[3] && parts[3] !== 'null') ? parts[3] : null;
+              const telefono = (parts[4] && parts[4] !== 'null') ? parts[4] : null;
+              const vehiculoInfo = (parts[5] && parts[5] !== 'null') ? parts[5] : null;
+              const placa = (parts[6] && parts[6] !== 'null') ? parts[6].toUpperCase().replace(/[-\s]/g, '') : null;
+              const tipo = (parts[7] && parts[7] !== 'null') ? parts[7] : 'otro';
+              const descripcion = (parts[8] && parts[8] !== 'null') ? parts[8] : '';
+              const estado = (parts[9] && parts[9] !== 'null') ? parts[9] : 'pendiente';
+              const costoEstimado = (parts[10] && parts[10] !== 'null') ? parseFloat(parts[10]) : null;
+              const sedeId = (parts[11] && parts[11] !== 'null' && parts[11] !== 'undefined') ? parts[11] : (ctx.sede_id || DEFAULT_SEDE_ID);
+              const tipoPersonalizado = (parts[12] && parts[12] !== 'null') ? parts[12] : null;
+
+              const now = new Date();
+              const defaultName = ctx.adminName || 'Administrador';
+              const nameToUse = nombreCliente || defaultName;
+
+              let finalClientId = clienteId;
+              let finalVehId = vehId;
+
+              // Resolve or create client & vehicle if IDs missing
+              if (!finalClientId && nameToUse) {
+                const { clientId: newCId } = await getOrCreateClientAndVehicle(
+                  db, from, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
+                );
+                finalClientId = newCId || null;
+              }
+              if (finalClientId && !finalVehId && (vehiculoInfo || placa)) {
+                const { vehicleId: newVId } = await getOrCreateClientAndVehicle(
+                  db, from, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
+                );
+                finalVehId = newVId || null;
+              }
+
+              const servObj: any = {
+                cliente_id: finalClientId,
+                vehiculo_id: finalVehId,
+                nombre_cliente: nameToUse,
+                telefono: telefono || '',
+                vehiculo_info: vehiculoInfo || null,
+                placa: placa || null,
+                tipo: tipo,
+                tipo_personalizado: tipoPersonalizado,
+                descripcion: descripcion,
+                estado: estado,
+                costo_estimado: costoEstimado,
+                fecha: now.toISOString().split('T')[0],
+                hora: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+                seguimiento: [{
+                  fecha: now.toISOString(),
+                  accion: estado === 'pendiente' ? 'Registrado vía WhatsApp Admin' : `Estado inicial: ${estado}`,
+                  usuario: ctx.memoria?.nombre || ctx.adminName || 'Admin IA',
+                  tipo: 'sistema',
+                  progreso: 0,
+                }],
+                sede_id: sedeId,
+              };
+
+              if (id && id.length > 5 && db) {
+                // Update existing servicio
+                const { data: existing } = await db.from('servicios').select('seguimiento').eq('id', id).single();
+                const existingSeg = existing?.seguimiento || [];
+                servObj.seguimiento = [...existingSeg, {
+                  fecha: now.toISOString(),
+                  accion: `Actualizado vía WhatsApp Admin — Estado: ${estado}`,
+                  usuario: ctx.memoria?.nombre || ctx.adminName || 'Admin IA',
+                  tipo: 'sistema',
+                }];
+                servObj.updated_at = now.toISOString();
+                delete servObj.fecha;
+                delete servObj.hora;
+                await db.from('servicios').update(servObj).eq('id', id);
+                console.log(`🔧 ADMIN: Servicio actualizado: ${id}`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Actualizó servicio', `Servicio ${id} actualizado vía ChatBot`, sedeId);
+              } else if (db) {
+                const { data: newServ, error: insErr } = await db.from('servicios').insert(servObj).select('id').single();
+                if (insErr) throw insErr;
+                console.log(`🔧 ADMIN: Nuevo servicio creado: ${newServ?.id}`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot`, sedeId);
+              }
+            } catch (e) { console.error('Error in SERVICIO_UPSERT:', e); }
+          }
+
           // 4. [CITA_DELETE: id]
           const citaDeleteMatch = cleanedAi.match(/\[CITA_DELETE:\s*([^\]]+?)\s*\]/i);
           if (citaDeleteMatch && db) {
@@ -3028,6 +3144,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             .replace(/\[VEHICULO_UPSERT:[^\]]+\]/gi, '')
             .replace(/\[CITA_UPSERT:[^\]]+\]/gi, '')
             .replace(/\[CITA_DELETE:[^\]]+\]/gi, '')
+            .replace(/\[SERVICIO_UPSERT:[^\]]+\]/gi, '')
             .replace(/\[CLIENTE_UPSERT:[^\]]+\]/gi, '')
             .replace(/\[ASK_SEDE:[^\]]+\]/gi, '')
             .trim();

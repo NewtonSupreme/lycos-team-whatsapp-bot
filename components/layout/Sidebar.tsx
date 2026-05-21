@@ -75,7 +75,7 @@ export default function Sidebar() {
       if (item.label === 'Actividad' && !isAdmin) return false;
       if (item.label === 'Papelera' && !isAdmin) return false;
       if (item.label === 'Gestión Empleados' && !isAdmin) return false;
-      if (item.label === 'Leads') {
+      if (item.label === 'Leads' && mounted) {
         const { currentSede } = useSedeStore.getState();
         const sedeName = currentSede?.nombre?.toLowerCase() || '';
         if (!sedeName.includes('san antonio')) return false;

@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import StatusBadge from '@/components/ui/status-badge';
-import { fetchCitas, createCita, updateCita, deleteCita, fetchClientes, fetchVehiculos, createCliente, createVehiculo } from '@/lib/supabase';
+import { supabase, fetchCitas, createCita, updateCita, deleteCita, fetchClientes, fetchVehiculos, createCliente, createVehiculo } from '@/lib/supabase';
 import { Cita, TipoServicio, Cliente, Vehiculo } from '@/types';
 import { cn, formatDate } from '@/lib/utils';
 import Link from 'next/link';
@@ -194,12 +194,9 @@ export default function AgendaPage() {
           costo_estimado: form.costo_estimado
         });
         logActivity({
-          usuario: user?.nombre || 'Sistema',
-          modulo: 'Agenda',
-          accion: 'Actualizó cita',
-          detalles: `${form.fecha} ${form.hora}`,
-          referencia_id: editCita.id,
-          referencia_tabla: 'citas'
+          usuario: user?.nombre || 'Admin', modulo: 'Agenda', accion: 'Actualizó cita',
+          detalles: `Actualizó cita de ${editCita.nombre_cliente || 'cliente'} en agenda`,
+          referencia_id: editCita.id, referencia_tabla: 'citas'
         });
       } else if (isBlockedMode) {
         const result = await createCita({
@@ -318,6 +315,50 @@ export default function AgendaPage() {
         console.error('Error deleting appointment');
         alert('Error al eliminar la cita');
       }
+    }
+  };
+
+  const convertToServicio = async (cita: Cita) => {
+    try {
+      setLoading(true);
+      const now = new Date();
+      const payload = {
+        cliente_id: cita.cliente_id,
+        vehiculo_id: cita.vehiculo_id,
+        nombre_cliente: cita.nombre_cliente || '',
+        telefono: '',
+        vehiculo_info: '',
+        placa: '',
+        descripcion: cita.descripcion || '',
+        tipo: cita.tipo_servicio,
+        tipo_personalizado: null,
+        estado: 'pendiente',
+        costo_estimado: cita.costo_estimado || 0,
+        fecha: cita.fecha,
+        hora: cita.hora,
+        seguimiento: [{
+          fecha: now.toISOString(),
+          accion: 'Convertido desde cita en agenda',
+          usuario: user?.nombre || 'Admin',
+          tipo: 'sistema',
+          progreso: 0,
+        }],
+      };
+      const { error } = await withSedeFilter(supabase!.from('servicios')).insert(withSedeInsert(payload));
+      if (error) throw error;
+      await updateCita(cita.id, { estado: 'completada' });
+      logActivity({
+        usuario: user?.nombre || 'Admin', modulo: 'Agenda', accion: 'Convirtió cita a servicio',
+        detalles: `Cita de ${cita.nombre_cliente || cita.cliente_id || ''} convertida a servicio`,
+        referencia_id: cita.id, referencia_tabla: 'citas'
+      });
+      setShowModal(false);
+      loadData();
+    } catch (_err) {
+      console.error('Error converting cita to servicio');
+      alert('Error al convertir la cita a servicio');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -676,7 +717,12 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
 
       {/* Modal */}
       <Dialog open={showModal} onOpenChange={setShowModal}>
-        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogContent className={cn(
+          "max-h-[90vh] overflow-y-auto",
+          editCita && editCita.estado !== 'ocupado' && editCita.estado !== 'completada' && editCita.estado !== 'cancelada'
+            ? "sm:max-w-2xl"
+            : "sm:max-w-lg"
+        )}>
           <DialogHeader>
             <DialogTitle>{editCita ? 'Editar Cita' : 'Nueva Cita'}</DialogTitle>
           </DialogHeader>
@@ -776,7 +822,7 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
                 </div>
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-muted-foreground">Cliente *</label>
                   <Select value={form.cliente_id} onValueChange={v => { setForm(p => ({ ...p, cliente_id: v, vehiculo_id: '' })); }}>
@@ -840,28 +886,46 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
 
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">Descripción / Motivo</label>
-              <Input value={form.descripcion} onChange={e => setForm(p => ({ ...p, descripcion: e.target.value }))} placeholder="¿Qué le hace falta al carro?" />
+              <textarea
+                value={form.descripcion}
+                onChange={e => setForm(p => ({ ...p, descripcion: e.target.value }))}
+                placeholder="¿Qué le hace falta al carro?"
+                rows={3}
+                className="flex w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 resize-none"
+              />
             </div>
           </div>
-          <DialogFooter className="flex flex-col sm:flex-row gap-2 mt-4">
-            {editCita && (
-              <Button variant="ghost" className="gap-2 text-xs mr-auto" asChild>
-                <Link href={`/dashboard/whatsapp?chat=${(editCita.cliente_id ? getCliente(editCita.cliente_id)?.telefono : null) || editCita.telefono || ''}`}>
-                  <UserCheck className="w-4 h-4" /> Ver Perfil / Chat
-                </Link>
+          <DialogFooter className="flex-col gap-2 mt-4">
+            {editCita && editCita.estado !== 'ocupado' && editCita.estado !== 'completada' && editCita.estado !== 'cancelada' && (
+              <Button
+                variant="outline"
+                className="w-full gap-1.5 text-xs border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10"
+                onClick={() => convertToServicio(editCita)}
+                disabled={loading}
+              >
+                <Check className="w-3.5 h-3.5" /> Convertir a Servicio
               </Button>
             )}
-            <div className="flex gap-2 w-full sm:w-auto">
-              <Button variant="outline" className="flex-1 sm:flex-none" onClick={() => setShowModal(false)}>Cancelar</Button>
+            <div className="flex flex-col sm:flex-row gap-2 w-full">
+              <Button variant="outline" className="flex-1" onClick={() => setShowModal(false)}>Cancelar</Button>
               <Button 
                 onClick={handleSave}
                 disabled={loading || (!isBlockedMode && !isTemporalClient && !isNewClient && (!form.cliente_id || !form.vehiculo_id)) || (isNewClient && (!form.nuevo_cliente.nombre || !form.nuevo_cliente.telefono || !form.nuevo_cliente.placa)) || (isTemporalClient && !form.nuevo_cliente.nombre) || !form.fecha}
-                className="flex-1 sm:flex-none gap-2"
+                className="flex-1 gap-2"
               >
                 {loading && <RefreshCw className="w-4 h-4 animate-spin" />}
                 {editCita ? 'Guardar Cambios' : 'Agendar Cita'}
               </Button>
             </div>
+            {editCita && (
+              <div className="flex justify-center pt-1 border-t border-border/20">
+                <Button variant="ghost" className="gap-2 text-xs h-8" asChild>
+                  <Link href={`/dashboard/whatsapp?chat=${(editCita.cliente_id ? getCliente(editCita.cliente_id)?.telefono : null) || editCita.telefono || ''}`}>
+                    <UserCheck className="w-3.5 h-3.5" /> Ver Perfil / Chat
+                  </Link>
+                </Button>
+              </div>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

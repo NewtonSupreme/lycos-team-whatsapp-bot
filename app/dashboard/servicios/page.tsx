@@ -24,6 +24,7 @@ interface CitaServicio {
   fecha: string;
   hora: string;
   tipo: string;
+  tipo_personalizado?: string | null;
   descripcion: string | null;
   estado: string;
   nombre_cliente: string | null;
@@ -81,12 +82,13 @@ export default function ServiciosPage() {
 
       const { data, error } = await withSedeFilter(supabase.from('servicios'))
         .select(`
-          id, fecha, hora, tipo, descripcion, estado,
+          id, fecha, hora, tipo, tipo_personalizado, descripcion, estado,
           nombre_cliente, vehiculo_info, placa, telefono, created_at,
           cliente_id, vehiculo_id, seguimiento, costo_estimado,
           vehiculos (marca, modelo, placa, anio, clientes (nombre, apellido, telefono))
         `)
-        .order('fecha', { ascending: false });
+        .order('fecha', { ascending: false })
+        .limit(200);
 
       if (error) console.error('Error:', error.message);
       setCitas((data as unknown as CitaServicio[]) || []);
@@ -442,10 +444,7 @@ function KanbanColumn({ estado, items, onEdit, onDelete, onTracking, onInvoice, 
         <span className="text-[10px] font-bold bg-white/5 px-2 py-0.5 rounded-full text-muted-foreground">{items.length}</span>
       </div>
 
-      <motion.div 
-        layout
-        className="flex-1 space-y-4"
-      >
+      <div className="flex-1 space-y-4">
         <AnimatePresence mode="popLayout">
           {items.map((cita: CitaServicio, idx: number) => (
             <ServiceCard 
@@ -472,16 +471,11 @@ function KanbanColumn({ estado, items, onEdit, onDelete, onTracking, onInvoice, 
           ))}
         </AnimatePresence>
         {items.length === 0 && (
-          <motion.div 
-            layout
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="h-24 border border-dashed border-white/5 rounded-3xl flex items-center justify-center text-[10px] text-muted-foreground font-medium uppercase tracking-widest"
-          >
+          <div className="h-24 border border-dashed border-white/5 rounded-3xl flex items-center justify-center text-[10px] text-muted-foreground font-medium uppercase tracking-widest">
             Sin {cfg.label}
-          </motion.div>
+          </div>
         )}
-      </motion.div>
+      </div>
     </div>
   );
 }
@@ -492,6 +486,11 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onMove, is
   const currentIndex = ESTADOS.indexOf(cita.estado);
   const prevEstado = currentIndex > 0 ? ESTADOS[currentIndex - 1] : null;
   const nextEstado = currentIndex < ESTADOS.length - 1 ? ESTADOS[currentIndex + 1] : null;
+
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    if (typeof window !== 'undefined') setIsMobile(window.innerWidth < 768);
+  }, []);
 
   const handleDragEnd = (event: any, info: any) => {
     const x = info.point.x;
@@ -513,29 +512,15 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onMove, is
 
   return (
     <motion.div 
-      layout
-      initial={{ opacity: 0, scale: 0.9 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.8 }}
-      transition={{ 
-        type: "spring",
-        stiffness: 400,
-        damping: 35,
-        layout: { duration: 0.3 }
-      }}
-      drag
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      transition={{ duration: 0.2 }}
+      drag={!isMobile}
       dragSnapToOrigin={true}
       dragElastic={0.05}
       onDragEnd={handleDragEnd}
-      whileHover={{ scale: 1.02, zIndex: 10 }}
-      whileDrag={{ 
-        scale: 1.05, 
-        rotate: 1.5, 
-        zIndex: 100, 
-        cursor: 'grabbing',
-        boxShadow: "0 30px 60px rgba(0,0,0,0.6)"
-      }}
-      className="group relative bg-card/50 border border-border/50 rounded-3xl p-5 hover:border-primary/40 hover:bg-card/80 transition-all shadow-xl cursor-grab active:cursor-grabbing select-none"
+      className="group relative bg-card/50 border border-border/50 rounded-3xl p-5 hover:border-primary/40 hover:bg-card/80 transition-colors shadow-xl select-none"
     >
       {/* Botones de traslado rápido (Izquierda/Derecha) */}
       <AnimatePresence>
@@ -599,7 +584,7 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onMove, is
         <div className="flex items-center justify-between">
           <div className="flex flex-col">
             <span className="inline-flex items-center px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-tighter bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/20 w-fit italic">
-              {SERVICIO_LABELS[cita.tipo] || cita.tipo}
+              {cita.tipo_personalizado || SERVICIO_LABELS[cita.tipo] || cita.tipo}
             </span>
             <span className="text-[9px] text-muted-foreground font-bold mt-1 flex items-center gap-1">
               <Calendar className="w-2.5 h-2.5" /> {cita.fecha} · {cita.hora}
@@ -681,7 +666,7 @@ function ListView({ items, onEdit, onDelete, onTracking, onInvoice }: any) {
                       <p className="text-sm font-bold text-foreground">
                         {cita.vehiculos?.clientes ? `${cita.vehiculos?.clientes.nombre} ${cita.vehiculos?.clientes.apellido}` : cita.nombre_cliente}
                       </p>
-                      <p className="text-[10px] text-muted-foreground">{SERVICIO_LABELS[cita.tipo] || cita.tipo}</p>
+                      <p className="text-[10px] text-muted-foreground">{cita.tipo_personalizado || SERVICIO_LABELS[cita.tipo] || cita.tipo}</p>
                     </div>
                   </div>
                 </td>
@@ -739,8 +724,8 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
   const [showStaffResults, setShowStaffResults] = useState(false);
   const [selectedClienteId, setSelectedClienteId] = useState<string | null>(cita?.cliente_id || null);
   const [selectedVehiculoId, setSelectedVehiculoId] = useState<string | null>(cita?.vehiculo_id || null);
-  const [customServicio, setCustomServicio] = useState('');
-  const [isCustomServicio, setIsCustomServicio] = useState(false);
+  const [customServicio, setCustomServicio] = useState(cita?.tipo_personalizado || '');
+  const [isCustomServicio, setIsCustomServicio] = useState(!!cita?.tipo_personalizado);
   const [allClientes, setAllClientes] = useState<any[]>([]);
   const [filteredClientes, setFilteredClientes] = useState<any[]>([]);
   const [showClientResults, setShowClientResults] = useState(false);
@@ -900,11 +885,14 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
 
       if (cita?.id) {
         // UPDATE
+        const finalTipo = isCustomServicio ? 'otro' : formData.tipo;
         const { error } = await withSedeFilter(supabase!.from('servicios'))
           .update({
             ...formData,
             cliente_id: finalClienteId,
             vehiculo_id: finalVehiculoId,
+            tipo: finalTipo,
+            tipo_personalizado: isCustomServicio ? customServicio.trim() : null,
             costo_estimado: parseFloat(formData.costo_estimado) || 0,
             updated_at: new Date().toISOString()
           })
@@ -926,6 +914,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           cliente_id: finalClienteId,
           vehiculo_id: finalVehiculoId,
           tipo: finalTipoServicio,
+          tipo_personalizado: isCustomServicio ? customServicio.trim() : null,
           fecha: now.toISOString().split('T')[0],
           hora: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
           estado: 'pendiente',
@@ -1430,11 +1419,11 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
     const match = inventory.find((i: any) => 
       (cita.descripcion || '').toLowerCase().includes(i.nombre.toLowerCase().trim()) ||
       i.nombre.toLowerCase().trim().includes((cita.descripcion || '').toLowerCase().trim()) ||
-      (SERVICIO_LABELS[cita.tipo] || '').toLowerCase().includes(i.nombre.toLowerCase().trim())
+      (cita.tipo_personalizado || SERVICIO_LABELS[cita.tipo] || '').toLowerCase().includes(i.nombre.toLowerCase().trim())
     );
     const price = match?.precio_usd || cita.costo_estimado || 0;
     return [{
-      descripcion: cita.descripcion || SERVICIO_LABELS[cita.tipo] || 'Servicio General',
+      descripcion: cita.descripcion || cita.tipo_personalizado || SERVICIO_LABELS[cita.tipo] || 'Servicio General',
       cantidad: 1,
       precio_unitario: price,
       total: price
@@ -1451,11 +1440,11 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
       const match = inventory.find((i: any) => 
         (secondCita.descripcion || '').toLowerCase().includes(i.nombre.toLowerCase().trim()) ||
         i.nombre.toLowerCase().trim().includes((secondCita.descripcion || '').toLowerCase().trim()) ||
-        (SERVICIO_LABELS[secondCita.tipo] || '').toLowerCase().includes(i.nombre.toLowerCase().trim())
+        (secondCita.tipo_personalizado || SERVICIO_LABELS[secondCita.tipo] || '').toLowerCase().includes(i.nombre.toLowerCase().trim())
       );
       const price = match?.precio_usd || secondCita.costo_estimado || 0;
       setSecondItems([{
-        descripcion: secondCita.descripcion || SERVICIO_LABELS[secondCita.tipo] || 'Servicio General',
+        descripcion: secondCita.descripcion || secondCita.tipo_personalizado || SERVICIO_LABELS[secondCita.tipo] || 'Servicio General',
         cantidad: 1,
         precio_unitario: price,
         total: price

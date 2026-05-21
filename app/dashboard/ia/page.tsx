@@ -60,6 +60,7 @@ export default function IAPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const skipLoadRef = useRef(false);
   
   const { user } = useAppStore();
   const { currentSede } = useSedeStore();
@@ -76,6 +77,10 @@ export default function IAPage() {
 
   // Load messages when conversation changes
   useEffect(() => {
+    if (skipLoadRef.current) {
+      skipLoadRef.current = false;
+      return;
+    }
     if (activeConversationId) {
       loadMessages(activeConversationId);
     } else {
@@ -120,7 +125,27 @@ export default function IAPage() {
     }
   };
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const isNearBottomRef = useRef(true);
+  const prevMsgCountRef = useRef(0);
+  const isFirstRenderRef = useRef(true);
+  const handleChatScroll = () => {
+    const el = chatContainerRef.current;
+    if (!el) return;
+    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+  };
+  useEffect(() => {
+    if (isFirstRenderRef.current) {
+      isFirstRenderRef.current = false;
+      prevMsgCountRef.current = messages.length;
+      return;
+    }
+    if (messages.length > prevMsgCountRef.current && isNearBottomRef.current) {
+      const el = chatContainerRef.current;
+      if (el) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    }
+    prevMsgCountRef.current = messages.length;
+  }, [messages]);
 
   const createConversation = async (firstMessage: string): Promise<string | null> => {
     if (!supabase) return null;
@@ -134,7 +159,7 @@ export default function IAPage() {
         .single();
       
       if (error) throw error;
-      setConversations([data, ...conversations]);
+      setConversations(prev => [data, ...prev]);
       return data.id;
     } catch (err) {
       console.error('Error creating conversation:', err);
@@ -147,7 +172,7 @@ export default function IAPage() {
     if (!supabase || !confirm('¿Eliminar esta conversación?')) return;
     try {
       await supabase.from('ai_conversations').delete().eq('id', id);
-      setConversations(conversations.filter(c => c.id !== id));
+      setConversations(prev => prev.filter(c => c.id !== id));
       if (activeConversationId === id) setActiveConversationId(null);
     } catch (err) {
       console.error('Error deleting conversation:', err);
@@ -159,12 +184,12 @@ export default function IAPage() {
     if (!userText || loading || !supabase) return;
 
     let convId = activeConversationId;
+    const isNewConversation = !convId;
     
     // If no active conversation, create one first
     if (!convId) {
       convId = await createConversation(userText);
       if (!convId) return;
-      setActiveConversationId(convId);
     }
 
     const userMsg: any = { 
@@ -179,8 +204,12 @@ export default function IAPage() {
     setLoading(true);
 
     try {
-      // 1. Save user message to DB
+      // 1. Save user message to DB (before setting convId so loadMessages finds it)
       await supabase.from('ai_messages').insert(userMsg);
+      if (isNewConversation) {
+        skipLoadRef.current = true;
+        setActiveConversationId(convId);
+      }
 
       // 2. Call IA API
       const response = await fetch('/api/ia/chat', {
@@ -297,6 +326,7 @@ export default function IAPage() {
 
       // 2. Resolve conversation ID
       let convId = activeConversationId;
+      const isNewConversation = !convId;
       if (!convId) {
         const firstMsgText = captionText || 'Foto adjuntada';
         convId = await createConversation(firstMsgText);
@@ -304,7 +334,6 @@ export default function IAPage() {
           setLoading(false);
           return;
         }
-        setActiveConversationId(convId);
       }
 
       // 3. Upload to Supabase Storage
@@ -336,8 +365,12 @@ export default function IAPage() {
       // 5. Update UI with the new message
       setMessages(prev => [...prev, { ...userMsg, id: 'temp-' + Date.now(), created_at: new Date().toISOString() }]);
 
-      // 6. Save message to DB
+      // 6. Save message to DB (before setting convId so loadMessages finds it)
       await supabase.from('ai_messages').insert(userMsg);
+      if (isNewConversation) {
+        skipLoadRef.current = true;
+        setActiveConversationId(convId);
+      }
 
       // 7. Call Multimodal IA API
       const response = await fetch('/api/ia/chat', {
@@ -533,7 +566,7 @@ export default function IAPage() {
           </div>
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-white/10">
+          <div ref={chatContainerRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-white/10">
             {messages.length === 0 && (
               <div className="h-full flex flex-col items-center justify-center text-center p-8">
                 <div className="w-16 h-16 rounded-3xl bg-primary/5 flex items-center justify-center mb-4">
@@ -798,48 +831,48 @@ export default function IAPage() {
       {previewUrl && (
         <div className="fixed inset-0 z-[100] flex flex-col bg-slate-950/95 backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200">
           {/* Top Bar */}
-          <div className="flex items-center justify-between p-4 text-white">
+          <div className="flex items-center justify-between px-3 py-2.5 sm:px-4 sm:py-4 text-white">
             <button 
               onClick={handleCancelPreview}
-              className="p-2 hover:bg-white/10 rounded-full transition-all"
+              className="p-1.5 sm:p-2 hover:bg-white/10 rounded-full transition-all"
             >
-              <X className="w-6 h-6" />
+              <X className="w-5 h-5 sm:w-6 sm:h-6" />
             </button>
-            <span className="text-sm font-semibold tracking-wide uppercase font-bold text-zinc-300">Vista previa de foto</span>
-            <div className="w-10 h-10" />
+            <span className="text-[11px] sm:text-sm font-semibold tracking-wide uppercase text-zinc-300">Vista previa de foto</span>
+            <div className="w-8 h-8 sm:w-10 sm:h-10" />
           </div>
 
           {/* Centered Image Preview */}
-          <div className="flex-1 flex items-center justify-center p-4 min-h-0">
+          <div className="flex-1 flex items-center justify-center px-3 sm:px-4 py-2 sm:py-4 min-h-0">
             <div className="relative max-w-full max-h-full aspect-auto rounded-xl overflow-hidden border border-white/10 shadow-2xl bg-black/40">
               <img 
                 src={previewUrl} 
                 alt="Vista previa" 
-                className="max-h-[60vh] max-w-full md:max-w-2xl object-contain" 
+                className="max-h-[35vh] sm:max-h-[60vh] max-w-full md:max-w-2xl object-contain" 
               />
             </div>
           </div>
 
           {/* Bottom Caption Input Bar */}
-          <div className="p-4 bg-slate-900/60 border-t border-white/5 backdrop-blur-lg">
-            <div className="flex gap-3 items-center max-w-3xl mx-auto w-full">
+          <div className="px-3 py-3 sm:p-4 bg-slate-900/60 border-t border-white/5 backdrop-blur-lg">
+            <div className="flex gap-2 sm:gap-3 items-center max-w-3xl mx-auto w-full">
               <div className="flex-1 relative">
                 <input
                   type="text"
                   value={captionInput}
                   onChange={e => setCaptionInput(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); sendImageMessage(); } }}
-                  placeholder="Añade un comentario sobre esta foto..."
-                  className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3.5 pr-10 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-primary focus:border-transparent transition-all"
+                  placeholder="Comentario de la foto..."
+                  className="w-full rounded-xl sm:rounded-2xl border border-white/10 bg-white/5 px-3 sm:px-4 py-2.5 sm:py-3.5 pr-10 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-primary focus:border-transparent transition-all"
                   autoFocus
                 />
               </div>
               <Button 
                 onClick={sendImageMessage} 
                 disabled={loading}
-                className="rounded-full h-12 w-12 flex-shrink-0 bg-primary hover:bg-primary/95 shadow-lg shadow-primary/30 p-0"
+                className="rounded-full h-10 w-10 sm:h-12 sm:w-12 flex-shrink-0 bg-primary hover:bg-primary/95 shadow-lg shadow-primary/30 p-0"
               >
-                <Send className="w-5 h-5 text-white" />
+                <Send className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
               </Button>
             </div>
           </div>

@@ -27,3 +27,7 @@ ALTER TABLE public.servicios
 ALTER TABLE public.servicios 
   ADD CONSTRAINT servicios_tipo_check 
   CHECK (tipo IN ('mecanica', 'electronica', 'cerrajeria', 'diagnostico', 'motor', 'emergencia', 'otro'));
+
+-- 4. Columna para tipos personalizados (dinámicos)
+ALTER TABLE public.servicios
+  ADD COLUMN IF NOT EXISTS tipo_personalizado TEXT;

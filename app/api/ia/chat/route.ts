@@ -180,8 +180,8 @@ async function loadDbContext(sedeId: string | null): Promise<string> {
     if (servicios && servicios.length > 0) {
       sections.push(
         `=== ÓRDENES DE SERVICIO (${servicios.length}) ===\n` +
-        servicios.slice(0, 30).map((s: any) =>
-          `• ID:${s.id} | Estado: ${s.estado} | Tipo: ${s.tipo} | ${s.descripcion} | Vehículo: ${s.vehiculos?.marca || '-'} ${s.vehiculos?.modelo || ''} (${s.vehiculos?.placa || ''}) | Cliente: ${s.vehiculos?.clientes?.nombre || '-'} | Costo: $${s.costo_final ?? s.costo_estimado ?? '-'}`
+        servicios.map((s: any) =>
+          `• ID:${s.id} | Fecha: ${s.fecha || s.created_at.split('T')[0]} ${s.hora || ''} | Estado: ${s.estado} | Tipo: ${s.tipo}${s.tipo_personalizado ? ` (${s.tipo_personalizado})` : ''} | ${s.descripcion || '—'} | Cliente: ${s.nombre_cliente || s.vehiculos?.clientes?.nombre || '—'} ${s.vehiculos?.clientes?.apellido || ''}${s.telefono ? ' | Tel: ' + s.telefono : ''} | Vehículo: ${s.vehiculos?.marca || ''} ${s.vehiculos?.modelo || ''}${s.vehiculos?.placa ? ' (' + s.vehiculos?.placa + ')' : ''}${s.vehiculo_info ? ' [' + s.vehiculo_info + ']' : ''} | Costo estimado: $${s.costo_estimado ?? '-'}${s.costo_final ? ` | Costo final: $${s.costo_final}` : ''}${s.seguimiento?.length ? ` | Seguimiento: ${s.seguimiento.map((e: any) => `${e.accion} (${e.fecha.split('T')[0]})`).join(', ')}` : ''}`
         ).join('\n')
       );
     } else {
@@ -407,20 +407,45 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
           }
         }
 
-      // ── Services ────────────────────────────────────────────────────────────
+      // ── Services (servicios table) ────────────────────────────────────────
       } else if (tipo === 'actualizar_servicio') {
-        await table('servicios')
-          .update({ estado: p.estado, updated_at: new Date().toISOString() })
-          .eq('id', p.id);
-        results.push(`✅ Servicio actualizado → ${p.estado}`);
+        const now = new Date().toISOString();
+        const updates: any = { estado: p.estado, updated_at: now };
+        const seguimientoEntry = {
+          fecha: now, accion: `Estado actualizado a: ${p.estado}`,
+          usuario: 'Admin IA', tipo: 'sistema',
+        };
+        if (p.nota) seguimientoEntry.accion += ` — ${p.nota}`;
+        const { data: existing } = await table('servicios').select('seguimiento').eq('id', p.id).single();
+        const seguimiento = existing?.seguimiento ? [...existing.seguimiento, seguimientoEntry] : [seguimientoEntry];
+        updates.seguimiento = seguimiento;
+        await table('servicios').update(updates).eq('id', p.id);
+        results.push(`✅ Servicio #${p.id} actualizado → ${p.estado}`);
 
       } else if (tipo === 'registrar_servicio') {
+        const now = new Date();
         const insertData: any = {
-           descripcion: p.descripcion || 'Servicio registrado por IA',
-           tipo: p.tipo || 'general',
-           estado: p.estado || 'en_proceso',
+          descripcion: p.descripcion || 'Servicio registrado por IA',
+          tipo: p.tipo || 'otro',
+          estado: p.estado || 'pendiente',
+          fecha: p.fecha || now.toISOString().split('T')[0],
+          hora: p.hora || now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+          seguimiento: [{
+            fecha: now.toISOString(),
+            accion: 'Registrado por asistente IA',
+            usuario: 'Admin IA',
+            tipo: 'sistema',
+            progreso: 0,
+          }],
         };
+        if (p.cliente_id) insertData.cliente_id = p.cliente_id;
+        if (p.vehiculo_id) insertData.vehiculo_id = p.vehiculo_id;
+        if (p.nombre_cliente) insertData.nombre_cliente = p.nombre_cliente;
+        if (p.telefono) insertData.telefono = p.telefono;
+        if (p.vehiculo_info) insertData.vehiculo_info = p.vehiculo_info;
+        if (p.placa) insertData.placa = p.placa.toUpperCase();
         if (p.costo_estimado) insertData.costo_estimado = parseFloat(p.costo_estimado);
+        if (p.tipo_personalizado) insertData.tipo_personalizado = p.tipo_personalizado;
         await insert('servicios', insertData);
         results.push(`✅ Trabajo en taller creado: ${insertData.descripcion}`);
 
@@ -675,10 +700,8 @@ INSTRUCCIONES CRÍTICAS:
 - Cuando te pregunten por citas → muéstralas TODAS agrupadas por fecha y hora.
 - Cuando te pregunten por inventario → Genera una tabla ESPECTACULAR con formato Markdown estándar.
 - Cuando te pregunten por vehículos → muéstralos por marca, modelo y placa.
-- Cuando te pregunten por servicios → muéstralos con su estado y costo.
-- NUNCA digas que no tienes acceso. TIENES TODOS LOS DATOS ABAJO.
-- Usa los datos exactos que aparecen en la sección BASE DE DATOS al final de este prompt.
-- No inventes datos. Solo usa los reales de la base de datos.
+- Cuando te pregunten por servicios → muéstralos en tabla Markdown con: CLIENTE | VEHÍCULO | TRABAJO | ESTADO | COSTO | FECHA. Desglosa cada servicio por completo, incluyendo su seguimiento histórico (cambios de estado, fechas). Si preguntan por un servicio específico, muestra todo su detalle: cliente, vehículo, placa, tipo, descripción, costo estimado/final, fechas, y el historial completo de seguimiento.
+- Cuando te pregunten cuántos servicios hay por estado → agrupa y cuenta cada estado (pendiente, en_proceso, finalizado, cancelado).
 
 ACCIONES DE ESCRITURA (REGLAS CRÍTICAS):
 
@@ -724,8 +747,8 @@ TRACKING DE TALLER:
 • Eliminar producto: [ACTION: eliminar_producto | id=INV_ID]
 • Crear cliente: [ACTION: crear_cliente | nombre=N | apellido=A | telefono=T | email=E | cedula=CI]
 • Crear vehículo: [ACTION: crear_vehiculo | marca=MARCA | modelo_vehiculo=MODELO | placa=PLACA | anio=ANO | color=COLOR]
-• Actualizar servicio: [ACTION: actualizar_servicio | id=ID | estado=finalizado]
-• Registrar trabajo taller: [ACTION: registrar_servicio | descripcion=Texto | tipo=mecanica | estado=en_proceso | costo_estimado=Numero]
+• Actualizar servicio: [ACTION: actualizar_servicio | id=ID | estado=finalizado | nota=Opcional]
+• Registrar trabajo taller: [ACTION: registrar_servicio | descripcion=Texto | tipo=mecanica|electronica|cerrajeria|diagnostico|motor|emergencia|otro | estado=pendiente|en_proceso | costo_estimado=Numero | nombre_cliente=Nombre | telefono=Numero | vehiculo_info=Marca Modelo | placa=PLACA | cliente_id=UUID | vehiculo_id=UUID | tipo_personalizado=Texto]
 • Registrar venta COMPLETA (TODO EN UNO): [ACTION: registrar_venta_completa | titulo=TITULO_PRINCIPAL | items=Producto1:$precio1,Producto2:$precio2 | total=TOTAL | iva=MONTO_IVA | inicial=INICIAL_CASHEA | metodo_pago=cashea_bcv/divisas/bcv/binance/cashea_bcv | pago_mixto=DESCRIPCION | cliente=NOMBRE | vehiculo=MARCA_PLACA | inv_ids=ID1:qty1,ID2:qty2]
 
 EJEMPLO (William, Cashea, 2 productos):
