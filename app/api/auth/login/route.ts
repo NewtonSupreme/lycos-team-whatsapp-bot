@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
     // Look up user in DB
     const { data: user, error } = await db
       .from('usuarios')
-      .select('id, username, nombre, email, password_hash, rol, activo, sede_id')
+      .select('id, username, nombre, email, password_hash, rol, activo, sede_id, permisos')
       .eq('username', username)
       .eq('activo', true)
       .single();
@@ -114,7 +114,8 @@ export async function POST(request: NextRequest) {
       nombre: user.nombre,
       username: user.username,
       rol: user.rol,
-      sede_id: user.sede_id
+      sede_id: user.sede_id,
+      permisos: user.permisos
     });
   } catch {
     return NextResponse.json({ error: 'Error en el servidor' }, { status: 500 });

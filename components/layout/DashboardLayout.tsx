@@ -42,6 +42,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             rol: u.rol, 
             avatar_url: u.avatar_url,
             sede_id: u.sede_id,
+            permisos: u.permisos,
             created_at: '' 
           });
           return;
@@ -54,7 +55,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       .then(r => r.json())
       .then(({ user }) => {
         if (user) {
-          setUser({ 
+          const userData = { 
             id: user.id || user.username, 
             username: user.username, 
             email: user.email || `${user.username}@lycosteam.com`, 
@@ -62,9 +63,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             rol: user.rol, 
             avatar_url: user.avatar_url,
             sede_id: user.sede_id,
+            permisos: user.permisos,
             created_at: '' 
-          });
-          sessionStorage.setItem('lycos_user', JSON.stringify(user));
+          };
+          setUser(userData);
+          sessionStorage.setItem('lycos_user', JSON.stringify(userData));
         }
       })
       .catch(() => {});

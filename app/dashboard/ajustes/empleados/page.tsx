@@ -22,7 +22,7 @@ export default function EmpleadosPage() {
   const [showPassword, setShowPassword] = useState(false);
 
   const { canViewAll, currentSede } = useSedeStore();
-  const { user } = useAppStore();
+  const { user, setUser } = useAppStore();
   const userRole = user?.rol || 'empleado';
   const isAdmin = userRole === 'admin';
   const canEdit = isAdmin || userRole === 'gerente';
@@ -222,6 +222,28 @@ export default function EmpleadosPage() {
       alert("Usuario actualizado correctamente.");
       setShowEditDialog(false);
       fetchEmpleados();
+
+      // Refresh the current user's store if they edited their own permissions
+      if (isAdmin && editingId === user?.id) {
+        fetch('/api/auth/me')
+          .then(r => r.json())
+          .then(({ user: freshUser }) => {
+            if (freshUser) {
+              setUser({
+                id: freshUser.id || freshUser.username,
+                username: freshUser.username,
+                email: freshUser.email || `${freshUser.username}@lycosteam.com`,
+                nombre: freshUser.nombre,
+                rol: freshUser.rol,
+                avatar_url: freshUser.avatar_url,
+                sede_id: freshUser.sede_id,
+                permisos: freshUser.permisos,
+                created_at: ''
+              });
+            }
+          })
+          .catch(() => {});
+      }
     } catch (error: any) {
       alert("Error actualizando: " + error.message);
     } finally {

@@ -22,6 +22,10 @@ export default function LoginPage() {
         username: data.username,
         nombre: data.nombre,
         rol: data.rol || 'usuario',
+        sede_id: data.sede_id,
+        email: data.email || `${data.username}@lycosteam.com`,
+        avatar_url: data.avatar_url,
+        permisos: data.permisos,
       }));
     }
     const searchParams = new URLSearchParams(window.location.search);
