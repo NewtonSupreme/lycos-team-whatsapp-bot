@@ -277,6 +277,7 @@ export default function WhatsAppPage() {
   const [isConnected, setIsConnected] = useState(false);
   const [showQuickReplies, setShowQuickReplies] = useState(false);
   const [showMobileChat, setShowMobileChat] = useState(false);
+  const [showMobileInfo, setShowMobileInfo] = useState(false);
   const [togglingMode, setTogglingMode] = useState(false);
   const [selectedVehicles, setSelectedVehicles] = useState<Vehiculo[]>([]);
   const [loadingVehicles, setLoadingVehicles] = useState(false);
@@ -1415,7 +1416,7 @@ export default function WhatsAppPage() {
           style={{ background: '#0b141a' }}
         >
           {selected ? (
-            <div className="flex-1 flex overflow-hidden">
+            <div className="flex-1 flex overflow-hidden relative">
               {/* Chat Main Area */}
               <div 
                 className="flex-1 flex flex-col min-w-0 relative" style={{ background: '#0b141a' }}
@@ -1452,6 +1453,9 @@ export default function WhatsAppPage() {
                   <div className="flex items-center gap-3 min-w-0">
                     <button onClick={() => setShowMobileChat(false)} className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/5 transition-colors flex-shrink-0">
                       <X className="w-5 h-5" style={{ color: '#aebac1' }} />
+                    </button>
+                    <button onClick={() => setShowMobileInfo(true)} className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/5 transition-colors flex-shrink-0">
+                      <Info className="w-5 h-5" style={{ color: '#aebac1' }} />
                     </button>
                     <UserAvatar conv={selected} className="w-10 h-10 md:w-11 md:h-11 flex-shrink-0 shadow-xl" />
                     <div className="min-w-0 flex-1">
@@ -1847,11 +1851,17 @@ export default function WhatsAppPage() {
               </div>
 
               {/* ── Right Sidebar: Client Details & Garage ── */}
-              <div className="hidden lg:flex flex-col w-72 border-l border-white/6 overflow-y-auto" style={{ background: '#0b141a' }}>
-                <div className="p-4" style={{ background: '#202c33', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className={cn(
+                showMobileInfo ? 'absolute inset-0 z-30 flex' : 'hidden',
+                'lg:relative lg:flex flex-col w-full lg:w-72 border-l border-white/6 overflow-y-auto'
+              )} style={{ background: '#0b141a' }}>
+                <div className="flex items-center justify-between p-4" style={{ background: '#202c33', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                    <h2 className="text-sm font-semibold flex items-center gap-2" style={{ color: '#e9edef' }}>
                      <Info className="w-4 h-4 text-green-400" /> Información
                    </h2>
+                   <button onClick={() => setShowMobileInfo(false)} className="lg:hidden w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/5 transition-colors flex-shrink-0">
+                     <X className="w-5 h-5" style={{ color: '#aebac1' }} />
+                   </button>
                 </div>
                 
                 <div className="p-4 space-y-6">
