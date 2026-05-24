@@ -15,7 +15,6 @@ async function getDb() {
 
 export async function GET(request: NextRequest) {
   try {
-    // 1. Auth check — validate session cookie
     const cookie = request.cookies.get('lycos_session')?.value;
     if (!cookie) {
       return new NextResponse('No autorizado', { status: 401 });
@@ -36,17 +35,21 @@ export async function GET(request: NextRequest) {
       return new NextResponse('No autorizado', { status: 401 });
     }
 
-    // 2. Generate signed URL from Supabase Storage
     const { data: signedData, error: signedError } = await db.storage
       .from(BUCKET)
-      .createSignedUrl(FILE_NAME, 60 * 60 * 24); // 24 hours
+      .createSignedUrl(FILE_NAME, 60 * 60 * 24);
 
     if (signedError || !signedData?.signedUrl) {
       console.error('Error getting signed URL:', signedError);
       return new NextResponse('Video no disponible', { status: 404 });
     }
 
-    // 3. Redirect to signed URL (browser fetches directly from Supabase CDN)
+    const format = request.nextUrl.searchParams.get('format');
+
+    if (format === 'json') {
+      return NextResponse.json({ signedUrl: signedData.signedUrl });
+    }
+
     return NextResponse.redirect(signedData.signedUrl);
   } catch (e) {
     console.error('Error in tutorial-video API:', e);

@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Users, Car, Wrench, MessageSquare, Bot,
   Calendar, CheckCircle, ArrowRight, Zap, RefreshCw,
@@ -232,11 +232,11 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    if (mounted) loadData();
+    if (mounted && currentSede) loadData();
   }, [mounted, loadData, currentSede]);
 
   useEffect(() => {
-    if (!supabase || !mounted) return;
+    if (!supabase || !mounted || !currentSede) return;
     const tables = ['mensajes_whatsapp', 'conversaciones', 'servicios', 'citas', 'clientes', 'vehiculos', 'ventas_silenciadores'];
     const channels = tables.map(table =>
       supabase!.channel(`dashboard-${table}`)
@@ -249,6 +249,38 @@ export default function DashboardPage() {
   const fmt = (val: number | null) => val === null ? '...' : val.toLocaleString();
 
   const [showTutorial, setShowTutorial] = useState(false);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const videoReady = useRef(false);
+
+  useEffect(() => {
+    if (!mounted) return;
+    let cancelled = false;
+
+    const timeout = setTimeout(() => {
+      if (!cancelled && !videoReady.current) {
+        videoReady.current = true;
+        setVideoUrl('/api/tutorial-video');
+      }
+    }, 2000);
+
+    fetch('/api/tutorial-video?format=json')
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled || videoReady.current || !data.signedUrl) return;
+        clearTimeout(timeout);
+        videoReady.current = true;
+        setVideoUrl(data.signedUrl);
+
+        const link = document.createElement('link');
+        link.rel = 'preload';
+        link.as = 'video';
+        link.href = data.signedUrl;
+        document.head.appendChild(link);
+      })
+      .catch(() => {});
+
+    return () => { clearTimeout(timeout); cancelled = true; };
+  }, [mounted]);
 
   useEffect(() => {
     if (mounted) {
@@ -257,7 +289,36 @@ export default function DashboardPage() {
     }
   }, [mounted]);
 
-  if (!mounted) return null;
+  if (!mounted) {
+    return (
+      <div className="space-y-6 animate-pulse">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-3">
+            <div className="h-8 w-48 bg-muted rounded-lg" />
+            <div className="h-4 w-72 bg-muted rounded-md" />
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="h-8 w-28 bg-muted rounded-lg" />
+            <div className="h-8 w-24 bg-muted rounded-lg" />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="h-24 bg-muted rounded-xl" />
+          <div className="h-24 bg-muted rounded-xl" />
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[...Array(8)].map((_, i) => (
+            <div key={i} className="h-28 bg-muted rounded-xl" />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="h-56 bg-muted rounded-xl" />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -285,17 +346,26 @@ export default function DashboardPage() {
             </div>
             {/* Video Player */}
             <div className="relative bg-black">
-              <video
-                key={Date.now()}
-                className="w-full aspect-video"
-                controls
-                autoPlay
-                playsInline
-                controlsList="nodownload"
-              >
-                <source src="/api/tutorial-video" type="video/mp4" />
-                Tu navegador no soporta el elemento de video.
-              </video>
+              {videoUrl ? (
+                <video
+                  className="w-full aspect-video"
+                  controls
+                  autoPlay
+                  playsInline
+                  controlsList="nodownload"
+                  preload="auto"
+                >
+                  <source src={videoUrl} type="video/mp4" />
+                  Tu navegador no soporta el elemento de video.
+                </video>
+              ) : (
+                <div className="w-full aspect-video flex items-center justify-center bg-muted/10 min-h-[200px]">
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-10 h-10 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
+                    <p className="text-xs text-muted-foreground">Cargando video...</p>
+                  </div>
+                </div>
+              )}
             </div>
             {/* Footer */}
             <div className="flex items-center justify-between px-4 py-2.5 border-t border-border bg-muted/30">
