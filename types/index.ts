@@ -18,6 +18,7 @@ export interface Permisos {
   calculadora: boolean;
   configuracion: boolean;
   empleados: boolean;
+  distribuidor: boolean;
 }
 
 export const PERMISOS_DEFAULT: Record<string, Permisos> = {
@@ -25,31 +26,31 @@ export const PERMISOS_DEFAULT: Record<string, Permisos> = {
     dashboard: true, clientes: true, vehiculos: true, servicios: true, taller: true,
     agenda: true, whatsapp: true, leads: true, inventario: true, papelera: true,
     ventas: true, ia_asistente: true, reportes: true, actividad: true,
-    calculadora: true, configuracion: true, empleados: true
+    calculadora: true, configuracion: true, empleados: true, distribuidor: true
   },
   gerente: {
     dashboard: true, clientes: true, vehiculos: true, servicios: true, taller: true,
     agenda: true, whatsapp: true, leads: true, inventario: true, papelera: false,
     ventas: true, ia_asistente: true, reportes: true, actividad: false,
-    calculadora: true, configuracion: false, empleados: false
+    calculadora: true, configuracion: false, empleados: false, distribuidor: true
   },
   empleado: {
     dashboard: true, clientes: true, vehiculos: true, servicios: true, taller: true,
     agenda: true, whatsapp: true, leads: false, inventario: true, papelera: false,
     ventas: true, ia_asistente: false, reportes: false, actividad: false,
-    calculadora: true, configuracion: false, empleados: false
+    calculadora: true, configuracion: false, empleados: false, distribuidor: false
   },
   mecanico_acceso: {
     dashboard: true, clientes: false, vehiculos: false, servicios: true, taller: true,
     agenda: false, whatsapp: false, leads: false, inventario: false, papelera: false,
     ventas: false, ia_asistente: false, reportes: false, actividad: false,
-    calculadora: true, configuracion: false, empleados: false
+    calculadora: true, configuracion: false, empleados: false, distribuidor: false
   },
   jefe_taller_acceso: {
     dashboard: true, clientes: true, vehiculos: true, servicios: true, taller: true,
     agenda: false, whatsapp: false, leads: false, inventario: true, papelera: false,
     ventas: true, ia_asistente: false, reportes: false, actividad: false,
-    calculadora: true, configuracion: false, empleados: false
+    calculadora: true, configuracion: false, empleados: false, distribuidor: false
   },
 };
 
@@ -231,4 +232,40 @@ export interface InventarioItem {
   orden?: number;
   created_at: string;
   updated_at: string;
+  sede_id?: string;
+}
+
+// ── Distribuciones ───────────────────────────────────────────────────────
+export interface DistribucionItem {
+  inventario_id: string;
+  nombre: string;
+  codigo?: string | null;
+  categoria: string;
+  marca?: string | null;
+  cantidad: number;
+  stock_antes: number;
+  stock_despues: number;
+  precio_usd: number;
+  unidad: string;
+}
+
+export interface Distribucion {
+  id: string;
+  numero_nota: string;
+  fecha: string;
+  sede_origen_id?: string | null;
+  sede_origen_nombre: string;
+  sede_destino_id?: string | null;
+  sede_destino_nombre: string;
+  responsable: string;
+  recibe?: string | null;
+  estado: 'pendiente' | 'en_transito' | 'completado' | 'anulado';
+  observaciones?: string | null;
+  items: DistribucionItem[];
+  total_items: number;
+  total_unidades: number;
+  valor_total_usd: number;
+  sede_id?: string | null;
+  created_at: string;
+  updated_at?: string;
 }

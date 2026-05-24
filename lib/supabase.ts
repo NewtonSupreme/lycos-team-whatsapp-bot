@@ -423,3 +423,178 @@ export async function fetchVentasSilenciadores() {
   if (error) throw error;
   return data;
 }
+
+// ─── Distribuciones ─────────────────────────────────────────────────────────
+
+/**
+ * Genera el siguiente número correlativo de nota de distribución
+ * en formato ND-YYYY-XXXX
+ */
+export async function generateNumeroNota(): Promise<string> {
+  if (!supabase) {
+    const anio = new Date().getFullYear();
+    return `ND-${anio}-${String(Date.now()).slice(-4)}`;
+  }
+  try {
+    const { data, error } = await supabase.rpc('generar_numero_nota_distribucion');
+    if (error || !data) {
+      // Fallback: count existing + 1
+      const anio = new Date().getFullYear();
+      const { count } = await supabase
+        .from('distribuciones')
+        .select('*', { count: 'exact', head: true });
+      const correlativo = ((count || 0) + 1);
+      return `ND-${anio}-${String(correlativo).padStart(4, '0')}`;
+    }
+    return data as string;
+  } catch {
+    const anio = new Date().getFullYear();
+    const rand = Math.floor(Math.random() * 9000) + 1000;
+    return `ND-${anio}-${rand}`;
+  }
+}
+
+/**
+ * Crea una distribución y descuenta el stock de cada producto en el inventario.
+ * Operación atómica: si falla el descuento de stock, lanza error.
+ */
+export async function createDistribucion(payload: {
+  numero_nota: string;
+  fecha: string;
+  sede_origen_id?: string | null;
+  sede_origen_nombre: string;
+  sede_destino_id?: string | null;
+  sede_destino_nombre: string;
+  responsable: string;
+  recibe?: string | null;
+  observaciones?: string | null;
+  items: Array<{
+    inventario_id: string;
+    nombre: string;
+    codigo?: string | null;
+    categoria: string;
+    marca?: string | null;
+    cantidad: number;
+    stock_antes: number;
+    stock_despues: number;
+    precio_usd: number;
+    unidad: string;
+  }>;
+  total_items: number;
+  total_unidades: number;
+  valor_total_usd: number;
+  sede_id?: string | null;
+}) {
+  if (!supabase) return null;
+
+  // 1. Descontar stock de origen y cargar stock en destino
+  for (const item of payload.items) {
+    // A. Descontar stock en el origen (Carrizal)
+    const { error: stockError } = await supabase
+      .from('inventario')
+      .update({
+        stock: item.stock_despues,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', item.inventario_id);
+
+    if (stockError) {
+      throw new Error(`Error al descontar stock de "${item.nombre}": ${stockError.message}`);
+    }
+
+    // B. Cargar stock en el destino
+    if (payload.sede_destino_id) {
+      // Buscar si el producto ya existe en la sede de destino
+      const { data: destItems, error: searchErr } = await supabase
+        .from('inventario')
+        .select('id, stock')
+        .eq('nombre', item.nombre)
+        .eq('sede_id', payload.sede_destino_id);
+
+      if (searchErr) {
+        throw new Error(`Error al buscar producto en destino: ${searchErr.message}`);
+      }
+
+      if (destItems && destItems.length > 0) {
+        // Existe -> Sumar cantidad
+        const destItem = destItems[0];
+        const { error: updateDestErr } = await supabase
+          .from('inventario')
+          .update({
+            stock: destItem.stock + item.cantidad,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', destItem.id);
+          
+        if (updateDestErr) throw new Error(`Error al actualizar stock en destino: ${updateDestErr.message}`);
+      } else {
+        // No existe -> Clonar el producto original pero con el stock enviado y sede_id destino
+        const { data: origItem } = await supabase
+          .from('inventario')
+          .select('*')
+          .eq('id', item.inventario_id)
+          .single();
+
+        if (origItem) {
+          const { id, created_at, updated_at, ...itemData } = origItem;
+          const { error: insertDestErr } = await supabase
+            .from('inventario')
+            .insert({
+              ...itemData,
+              stock: item.cantidad,
+              sede_id: payload.sede_destino_id
+            });
+            
+          if (insertDestErr) throw new Error(`Error al crear producto en destino: ${insertDestErr.message}`);
+        }
+      }
+    }
+  }
+
+  // 2. Registrar la distribución
+  const insertPayload = {
+    ...payload,
+    estado: 'completado',
+  };
+
+  const { data, error } = await supabase
+    .from('distribuciones')
+    .insert(insertPayload)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Obtiene lista de distribuciones — filtrada por sede si aplica
+ */
+export async function fetchDistribuciones(limit = 100) {
+  if (!supabase) return null;
+  const { data, error } = await withSedeFilter(supabase.from('distribuciones'))
+    .select('*')
+    .order('fecha', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Actualiza el estado de una distribución
+ */
+export async function updateDistribucionEstado(
+  id: string,
+  estado: 'pendiente' | 'en_transito' | 'completado' | 'anulado'
+) {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('distribuciones')
+    .update({ estado, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}

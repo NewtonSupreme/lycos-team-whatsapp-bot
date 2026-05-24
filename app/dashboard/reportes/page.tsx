@@ -5,7 +5,8 @@ import {
   Download, TrendingUp, DollarSign, Wrench, Users, Plus, Pencil,
   Trash2, CheckCircle, AlertCircle, Loader2, X, Camera, Eye,
   Calendar, FileText, BarChart2, RefreshCw, Package, ChevronDown, Clock,
-  ArrowDownCircle, TrendingDown, Receipt, ShoppingCart, Bot, ChevronRight
+  ArrowDownCircle, TrendingDown, Receipt, ShoppingCart, Bot, ChevronRight,
+  Truck, MapPin, Boxes, CheckCircle2
 } from 'lucide-react';
 import {
   Card, CardContent, CardHeader, CardTitle, CardDescription
@@ -28,9 +29,11 @@ import { logActivity } from '@/lib/activity';
 import { cn } from '@/lib/utils';
 import { generateInvoicePDF, generateEgresoPDF } from '@/lib/invoice-pdf';
 import { generateCierrePDF, type CierreData } from '@/lib/cierre-pdf';
+import { generateNotaEntregaPDF } from '@/lib/distribucion-pdf';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { useAppStore } from '@/lib/store';
+import { Distribucion } from '@/types';
 
 // ── Types ──────────────────────────────────────────────────────
 interface VentaDia {
@@ -2072,9 +2075,11 @@ export default function ReportesPage() {
   const [serviciosHistory, setServiciosHistory] = useState<any[]>([]);
   const [inventarioHistory, setInventarioHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'graficos' | 'ventas' | 'cierres' | 'egresos' | 'historial' | 'papelera'>('graficos');
+  const [tab, setTab] = useState<'graficos' | 'ventas' | 'cierres' | 'egresos' | 'historial' | 'papelera' | 'distribuciones'>('graficos');
   const [papeleraVentas, setPapeleraVentas] = useState<any[]>([]);
   const [loadingPapelera, setLoadingPapelera] = useState(false);
+  const [distribuciones, setDistribuciones] = useState<Distribucion[]>([]);
+  const [loadingDistribuciones, setLoadingDistribuciones] = useState(false);
   const [actioningId, setActioningId] = useState<string | null>(null);
   const [period, setPeriod] = useState('30d');
   const [chartGranularity, setChartGranularity] = useState<'days' | 'weeks' | 'months'>('weeks');
@@ -2098,6 +2103,27 @@ export default function ReportesPage() {
     setMounted(true);
     fetch('/api/rates').then(r => r.json()).then(d => setCurrentTasa(d.bcv || 0)).catch(() => {});
   }, []);
+
+  // Load distribuciones when tab changes to distribuciones
+  useEffect(() => {
+    if (tab !== 'distribuciones' || !supabase) return;
+    setLoadingDistribuciones(true);
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from('distribuciones')
+          .select('*')
+          .order('fecha', { ascending: false })
+          .order('created_at', { ascending: false })
+          .limit(200);
+        setDistribuciones((data || []) as Distribucion[]);
+      } catch (err) {
+        console.error('Error fetching distribuciones:', err);
+      } finally {
+        setLoadingDistribuciones(false);
+      }
+    })();
+  }, [tab]);
 
   // Calendar State
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
@@ -2723,6 +2749,19 @@ export default function ReportesPage() {
           )}
         >
           <Calendar className="w-4 h-4" /> Historial
+        </button>
+        <button
+          onClick={() => setTab('distribuciones')}
+          className={cn('flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex-shrink-0',
+            tab === 'distribuciones' ? 'bg-card shadow-sm text-indigo-400 font-bold' : 'text-muted-foreground hover:text-foreground'
+          )}
+        >
+          <Truck className="w-4 h-4 text-indigo-400" /> Distribuciones
+          {distribuciones.length > 0 && (
+            <span className="text-[10px] bg-indigo-500/20 text-indigo-400 px-1.5 py-0.5 rounded-full font-semibold">
+              {distribuciones.length}
+            </span>
+          )}
         </button>
         {isAdmin && (
           <button
@@ -3580,6 +3619,154 @@ export default function ReportesPage() {
             )}
           </CardContent>
         </Card>
+      )}
+      {/* ── Tab: Distribuciones ─────────────────────────────────── */}
+      {tab === 'distribuciones' && (
+        <div className="space-y-5">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+                <Truck className="w-4 h-4 text-indigo-400" /> Distribuciones de Inventario
+              </h3>
+              <p className="text-xs text-muted-foreground mt-1">
+                Historial de distribuciones desde Carrizal hacia otras sedes
+              </p>
+            </div>
+          </div>
+
+          {/* Stats */}
+          {distribuciones.length > 0 && (() => {
+            const totalUnids = distribuciones.reduce((s, d) => s + (d.total_unidades || 0), 0);
+            const totalValor = distribuciones.reduce((s, d) => s + (d.valor_total_usd || 0), 0);
+            const sedesUnicas = new Set(distribuciones.map(d => d.sede_destino_nombre)).size;
+            return (
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                {[
+                  { label: 'Total Distribuciones', value: distribuciones.length, color: 'text-indigo-400', bg: 'bg-indigo-500/10', icon: Truck },
+                  { label: 'Unidades Enviadas', value: totalUnids, color: 'text-orange-400', bg: 'bg-orange-500/10', icon: Boxes },
+                  { label: 'Valor Total USD', value: `$${totalValor.toFixed(2)}`, color: 'text-green-400', bg: 'bg-green-500/10', icon: CheckCircle2 },
+                  { label: 'Sedes Abastecidas', value: sedesUnicas, color: 'text-purple-400', bg: 'bg-purple-500/10', icon: MapPin },
+                ].map(s => (
+                  <Card key={s.label} className={cn('border', s.bg.replace('/10', '/20'))}>
+                    <CardContent className="pt-4 pb-3">
+                      <div className="flex items-center gap-3">
+                        <div className={cn('w-9 h-9 rounded-xl flex items-center justify-center', s.bg)}>
+                          <s.icon className={cn('w-4 h-4', s.color)} />
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-muted-foreground uppercase font-bold">{s.label}</p>
+                          <p className={cn('text-xl font-black', s.color)}>{s.value}</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            );
+          })()}
+
+          {/* Table */}
+          <Card className="border-border/40 shadow-xl overflow-hidden bg-card/30 backdrop-blur-sm">
+            <CardContent className="p-0">
+              {loadingDistribuciones ? (
+                <div className="flex items-center justify-center py-12 gap-2">
+                  <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
+                  <span className="text-sm text-muted-foreground">Cargando distribuciones...</span>
+                </div>
+              ) : distribuciones.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-3 opacity-40">
+                  <Truck className="w-12 h-12" />
+                  <p className="text-sm font-medium">Sin distribuciones registradas</p>
+                  <p className="text-xs text-muted-foreground text-center max-w-xs">
+                    Las distribuciones se crean desde el módulo <strong>Distribuidor</strong> (solo accesible en Carrizal)
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border/20 bg-muted/10">
+                        <th className="text-left text-[10px] text-muted-foreground font-bold uppercase px-4 py-3 tracking-wider">N° Nota</th>
+                        <th className="text-left text-[10px] text-muted-foreground font-bold uppercase px-4 py-3 tracking-wider">Fecha</th>
+                        <th className="text-left text-[10px] text-muted-foreground font-bold uppercase px-4 py-3 tracking-wider">Destino</th>
+                        <th className="text-center text-[10px] text-muted-foreground font-bold uppercase px-4 py-3 tracking-wider">Productos</th>
+                        <th className="text-center text-[10px] text-muted-foreground font-bold uppercase px-4 py-3 tracking-wider">Unidades</th>
+                        <th className="text-right text-[10px] text-muted-foreground font-bold uppercase px-4 py-3 tracking-wider">Valor USD</th>
+                        <th className="text-center text-[10px] text-muted-foreground font-bold uppercase px-4 py-3 tracking-wider">Estado</th>
+                        <th className="text-center text-[10px] text-muted-foreground font-bold uppercase px-4 py-3 tracking-wider">Responsable</th>
+                        <th className="text-right text-[10px] text-muted-foreground font-bold uppercase px-4 py-3 tracking-wider">Nota PDF</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {distribuciones.map(dist => {
+                        const estadoColors: Record<string, string> = {
+                          completado: 'text-green-400 bg-green-500/10',
+                          en_transito: 'text-amber-400 bg-amber-500/10',
+                          pendiente: 'text-slate-400 bg-slate-500/10',
+                          anulado: 'text-red-400 bg-red-500/10',
+                        };
+                        const estadoLabels: Record<string, string> = {
+                          completado: 'Completado', en_transito: 'En tránsito',
+                          pendiente: 'Pendiente', anulado: 'Anulado',
+                        };
+                        return (
+                          <tr key={dist.id} className="border-b border-border/10 hover:bg-white/2 transition-colors">
+                            <td className="px-4 py-3">
+                              <span className="font-mono font-black text-sm text-indigo-300">{dist.numero_nota}</span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div>
+                                <p className="text-sm font-medium">
+                                  {new Date(dist.fecha + 'T12:00:00').toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                </p>
+                                <p className="text-[9px] text-muted-foreground">
+                                  {new Date(dist.created_at).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' })}
+                                </p>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-2">
+                                <MapPin className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                                <span className="font-bold">{dist.sede_destino_nombre}</span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <span className="font-black text-indigo-300">{dist.total_items}</span>
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <span className="font-black text-orange-400">{dist.total_unidades}</span>
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <span className="font-black text-green-400">${(dist.valor_total_usd || 0).toFixed(2)}</span>
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <span className={cn('px-2 py-0.5 rounded-full text-[9px] font-black uppercase', estadoColors[dist.estado] || estadoColors.completado)}>
+                                {estadoLabels[dist.estado] || dist.estado}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center text-xs text-muted-foreground">
+                              {dist.responsable}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <button
+                                onClick={() => generateNotaEntregaPDF(dist, currentTasa)}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 border border-indigo-500/20 transition-all text-xs font-bold"
+                                title="Descargar Nota de Entrega"
+                              >
+                                <Download className="w-3 h-3" /> PDF
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {/* Modals con Portals */}

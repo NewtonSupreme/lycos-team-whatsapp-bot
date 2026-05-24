@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Users, Car, Wrench, Calendar, MessageSquare,
   Bot, FileText, Settings, ChevronLeft, ChevronRight,
-  Activity, LogOut, TrendingUp, UserCircle, Package, Calculator, ShoppingCart, Trash2
+  Activity, LogOut, TrendingUp, UserCircle, Package, Calculator, ShoppingCart, Trash2, Truck
 } from 'lucide-react';
 import { cn, getInitials } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -33,6 +33,7 @@ const navItemsConfig: NavItem[] = [
   { href: '/dashboard/leads', icon: TrendingUp, label: 'Leads', badge: null, permKey: 'leads' },
   { href: '/dashboard/inventario', icon: Package, label: 'Inventario', badge: null, permKey: 'inventario' },
   { href: '/dashboard/inventario/papelera', icon: Trash2, label: 'Papelera', badge: null, permKey: 'papelera' },
+  { href: '/dashboard/distribuidor', icon: Truck, label: 'Distribuidor', badge: null, permKey: 'distribuidor' },
   { href: '/dashboard/silenciadores', icon: ShoppingCart, label: 'Ventas', badge: null, permKey: 'ventas' },
   { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente', badge: null, permKey: 'ia_asistente' },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', badge: null, permKey: 'reportes' },
@@ -92,6 +93,14 @@ export default function Sidebar() {
         const { currentSede } = useSedeStore.getState();
         const sedeName = currentSede?.nombre?.toLowerCase() || '';
         if (!sedeName.includes('san antonio')) return false;
+      }
+      // Distribuidor: only visible for Carrizal (principal) sede
+      if (item.label === 'Distribuidor' && mounted) {
+        const { currentSede, availableSedes } = useSedeStore.getState();
+        const sedeName = currentSede?.nombre?.toLowerCase() || '';
+        if (sedeName.includes('carrizal')) return true;
+        const sedeData = availableSedes.find(s => s.id === currentSede?.id);
+        if (!sedeData?.es_principal) return false;
       }
       return true;
     })
