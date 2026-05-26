@@ -203,6 +203,7 @@ export function generateCierrePDF(data: CierreData) {
     ['Cashea', data.desglose_pagos.cashea_usd || 0, '$'],
     ['Binance (USDT)', data.desglose_pagos.binance_usdt || 0, '$'],
     ['Punto de Venta USD', data.desglose_pagos.punto_venta_usd || 0, '$'],
+    ['Euros (€)', data.desglose_pagos.euros || 0, '€'],
     ['Otro', data.desglose_pagos.otro || 0, '$'],
   ].filter(([, v]) => (v as number) > 0) as Array<[string, number, string]>;
 

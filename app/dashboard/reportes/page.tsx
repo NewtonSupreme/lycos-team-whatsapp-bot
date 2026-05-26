@@ -232,6 +232,7 @@ function CierreWizard({ ventas, onClose, onSaved }: {
       binance_usdt: agg.binance,
       punto_venta_usd: agg.punto_de_venta_usd,
       punto_venta_bs: agg.punto_de_venta_ves || agg.punto_de_venta,
+      euros: agg.euros,
       otro: agg.otro,
     };
   }, [ventasFiltradas]);
@@ -462,9 +463,11 @@ function CierreWizard({ ventas, onClose, onSaved }: {
                   <div key={k} className="flex justify-between text-xs">
                     <span className="text-muted-foreground capitalize">{k.replace(/_/g, ' ')}</span>
                     <span className="font-black">
-                      {(k.includes('bs') || k === 'pago_movil_bs')
-                        ? Number(v).toLocaleString('es-VE', {maximumFractionDigits: 0}) + ' Bs'
-                        : '$' + Number(v).toFixed(2)}
+                      {k === 'euros'
+                        ? '€' + Number(v).toFixed(2)
+                        : (k.includes('bs') || k === 'pago_movil_bs')
+                          ? Number(v).toLocaleString('es-VE', {maximumFractionDigits: 0}) + ' Bs'
+                          : '$' + Number(v).toFixed(2)}
                     </span>
                   </div>
                 ))}
@@ -586,6 +589,7 @@ function ManualModal({ onClose, onSave, initial, inventario = [] }: {
       cashea: 0,
       transferencia: 0,
       punto_de_venta: 0,
+      euros: 0,
       otro: 0,
     },
   });
@@ -656,12 +660,13 @@ function ManualModal({ onClose, onSave, initial, inventario = [] }: {
     const tasa = form.tasa_cambio || 1;
     
     let total = 0;
-    // USD fields
+    // USD/EUR fields
     total += Number(mp.efectivo_usd || 0);
     total += Number(mp.zelle || 0);
     total += Number(mp.otro || 0);
     total += Number(mp.punto_de_venta_usd || 0);
     total += Number(mp.cashea_usd || 0);
+    total += Number(mp.euros || 0);
     
     // Compatibility check for old data
     if (!mp.punto_de_venta_usd && !mp.punto_de_venta_ves) total += Number(mp.punto_de_venta || 0);
@@ -812,6 +817,7 @@ function ManualModal({ onClose, onSave, initial, inventario = [] }: {
                 { id: 'pago_movil', label: 'Pago Móvil', color: 'text-blue-500', currency: 'Bs' },
                 { id: 'punto_de_venta', label: 'Punto de Venta', color: 'text-orange-500', mixed: true },
                 { id: 'efectivo_ves', label: 'Efectivo Bs.', color: 'text-slate-500', currency: 'Bs' },
+                { id: 'euros', label: 'Euros (€)', color: 'text-amber-500', currency: '€' },
                 { id: 'cashea', label: 'Cashea', color: 'text-purple-400', mixed: true },
                 { id: 'transferencia', label: 'Transferencia', color: 'text-sky-500', currency: 'Bs' },
                 { id: 'otro', label: 'Otro / Especial', color: 'text-slate-400', currency: '$' },
@@ -1659,7 +1665,8 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
         pago_usd: venta.pago_usd,
         pago_ves: venta.pago_ves,
         tasa_cambio: venta.tasa_cambio,
-        iva_aplicado: venta.con_iva
+        iva_aplicado: venta.con_iva,
+        metodos_pago: venta.metodos_pago
       }];
 
       if (printMode === 'dual') {
@@ -1675,7 +1682,8 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
           pago_usd: secondVenta.pago_usd,
           pago_ves: secondVenta.pago_ves,
           tasa_cambio: secondVenta.tasa_cambio,
-          iva_aplicado: secondVenta.con_iva
+          iva_aplicado: secondVenta.con_iva,
+          metodos_pago: secondVenta.metodos_pago
         });
       }
 
@@ -1779,6 +1787,12 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
                         <span className="font-bold text-slate-900">${Number(venta.metodos_pago.efectivo_usd).toFixed(2)}</span>
                       </div>
                     ) : null}
+                    {venta.metodos_pago?.euros ? (
+                      <div className="flex justify-between text-[9px] text-slate-500 bg-slate-50 p-1 rounded">
+                        <span>EUROS (€)</span>
+                        <span className="font-bold text-slate-900">€{Number(venta.metodos_pago.euros).toFixed(2)}</span>
+                      </div>
+                    ) : null}
                     {venta.metodos_pago?.cashea_usd ? (
                       <div className="flex justify-between text-[9px] text-slate-500 bg-slate-50 p-1 rounded">
                         <span>CASHEA</span>
@@ -1788,10 +1802,16 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
                   </div>
                 )}
                 
-                <div className="flex justify-between text-sm font-black text-slate-900 border-t-2 border-slate-900 pt-2 mt-2">
-                  <span>TOTAL</span>
-                  <span>${Number(venta.total_ingresos).toFixed(2)}</span>
-                </div>
+                {(() => {
+                  const isEuroSale = venta.metodos_pago?.euros > 0 || (venta.notas && /euro/i.test(venta.notas));
+                  const symbol = isEuroSale ? '€' : '$';
+                  return (
+                    <div className="flex justify-between text-sm font-black text-slate-900 border-t-2 border-slate-900 pt-2 mt-2">
+                      <span>TOTAL</span>
+                      <span>{symbol}{Number(venta.total_ingresos).toFixed(2)}</span>
+                    </div>
+                  );
+                })()}
                 {venta.tasa_cambio && (
                   <div className="text-right mt-1">
                     <p className="text-[10px] font-bold text-green-600">

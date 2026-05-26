@@ -41,7 +41,7 @@ const TT_LINK = 'https://www.tiktok.com/@lycos.team?_r=1&_t=ZS-94prPaQnR5E';
 function getDb() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-  
+
   if (!url || !key) {
     console.error('❌ Missing Supabase URL or KEY in process.env');
     return null;
@@ -87,11 +87,11 @@ const RATES_TTL = 5 * 60 * 1000; // 5 minutes
 async function fetchExchangeRates(): Promise<ExchangeRates | null> {
   if (ratesCache && Date.now() - ratesCacheTime < RATES_TTL) return ratesCache;
   console.log('📈 Fetching fresh exchange rates...');
-  
+
   // 1. Try fetching from unified local API first
   try {
     const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000';
-    const ratesResp = await fetch(`${baseUrl}/api/rates?t=${Date.now()}`, { 
+    const ratesResp = await fetch(`${baseUrl}/api/rates?t=${Date.now()}`, {
       signal: AbortSignal.timeout(4000),
       cache: 'no-store'
     });
@@ -124,7 +124,7 @@ async function fetchExchangeRates(): Promise<ExchangeRates | null> {
         const bcvEntry: { promedio?: number; precio?: number } = await respBcv.json();
         if (bcvEntry) bcvRate = bcvEntry.promedio || bcvEntry.precio || 0;
       }
-      
+
       if (!bcvRate) {
         const respPy = await fetch('https://pydolarvenezuela-api.vercel.app/api/v1/dollar?page=bcv', { signal: AbortSignal.timeout(5000) });
         if (respPy.ok) {
@@ -169,8 +169,8 @@ async function fetchExchangeRates(): Promise<ExchangeRates | null> {
         const tempResp = await fetch('https://ve.dolarapi.com/v1/dolares', { cache: 'no-store', signal: AbortSignal.timeout(4000) });
         if (tempResp.ok) {
           const tempData = await tempResp.json();
-          const parEntry = tempData.find((d: any) => 
-            d.nombre?.toLowerCase().includes('paralelo') || 
+          const parEntry = tempData.find((d: any) =>
+            d.nombre?.toLowerCase().includes('paralelo') ||
             d.nombre?.toLowerCase().includes('binance') ||
             d.fuente === 'enparalelovzla'
           );
@@ -186,7 +186,7 @@ async function fetchExchangeRates(): Promise<ExchangeRates | null> {
 
     ratesCache = { bcv: bcvRate, paralelo: binanceRate, fetchedAt: new Date().toISOString() };
     ratesCacheTime = Date.now();
-    console.log(`💱 TASAS ACTUALIZADAS: BCV ${bcvRate} | PARALELO ${binanceRate.toFixed(2)} | RATIO: ${(binanceRate/bcvRate).toFixed(4)}`);
+    console.log(`💱 TASAS ACTUALIZADAS: BCV ${bcvRate} | PARALELO ${binanceRate.toFixed(2)} | RATIO: ${(binanceRate / bcvRate).toFixed(4)}`);
     return ratesCache;
   } catch (e) {
     console.error('Error general fetchExchangeRates:', e);
@@ -324,7 +324,7 @@ SERVICIOS Y PRECIOS:
 SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gruesa. PROMOCIÓN EN DIVISAS con instalación:
 - REGLA DE PRESUPUESTO DE SISTEMA DE ESCAPE: **SOLO SE PROHIBE** dar presupuestos completos de "punta a punta" o tuberías exactas a medida por chat. Para estos casos, **INVÍTALO AL TALLER PARA UNA REVISIÓN GRATUITA**.
 - **REGLA DE PIEZAS INDIVIDUALES**: Para silenciadores, resonadores, colas, flexibles y Flowmaster, **SÍ DEBES DAR EL PRECIO DIRECTAMENTE** usando la lista de abajo. No lo mandes al taller sin antes darle el precio de la pieza que busca.
-- "Intermedio": significa resonador. Da el precio del resonador ($40) y menciona que si requiere tubería adicional, el metro sale en $35 (hierro) o $20 (a partir del segundo metro).
+- "Intermedio": significa resonador. Da el precio del resonador ($40 para pagos en divisas) y si es en Bs es a $55 a tasa BCV,  y menciona que si requiere tubería adicional, el metro sale en $35 (hierro) o $20 (a partir del segundo metro).
 - El Sistema de Escape Completo Incluye: Silenciador, Resonador, Tubería, Flexible, Bajante, gomas y Empacaduras. En este caso específico de sistema completo, debe venir al taller para el precio exacto.
 - Silenciadores PLANOS (Ej. Malibú) y MOFLES: NO TENEMOS DISPONIBILIDAD de planos ni de mofles. Solo vendemos silenciadores Redondos. Si el cliente pide mofles, discúlpate y ofrécele inmediatamente Silenciadores, Flowmaster o cualquier otro servicio del taller (Mecánica, Frenos, Alineación, etc.). PERO, hay carros que originalmente usan planos y sí tienen espacio para adaptar uno redondo, si tiene duda pídele vernos para revisión gratuita.
 - **TRES PRECIOS ÚNICOS PARA SILENCIADORES** (Instalación y revisión incluida, ignora precios de la base de datos):
@@ -340,7 +340,7 @@ SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gr
     * Si el cliente insiste, muestra quejas del precio o solicita específicamente consultar promociones en divisas ("promos divisas"): **DEBES** responder de manera servicial y decir: "Te envío el contacto de nuestro asesor 👇" para que el sistema le comparta automáticamente su tarjeta de contacto del asesor (no intentes convencerlo tú, deja que el asesor humano lo atienda).
 
 
-- Resonador: $40
+- Resonador: $40 promo en divisa y $55 a tasa BCV
 - Flowmaster Serie 40: $140 (instalación incluida). **NOTA**: El flexible NO está incluido, se vende por separado si el vehículo lo requiere.
 - Flexibles doble malla: $40
 - Tubo silenciador/cola: Primer metro $35, metros adicionales $20/metro, soldadura $15, gomas $7
@@ -592,6 +592,7 @@ REGLA DE TAGS (Imprimir SIEMPRE al final de tu respuesta):
    - [CITA_DELETE: id]
    - [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion | sede_id]
    - [ASK_SEDE: motivo] -> Úsalo si falta la sede en una orden administrativa.
+   - [ACTION: registrar_venta_completa | titulo=X | items=Prod1:Pre1,Prod2:Pre2 | total=TOTAL | iva=MONTO | inicial=INICIAL_CASHEA | metodo_pago=cashea_bcv/divisas/bcv/binance/zelle/pago_movil/efectivo_ves/punto_venta/transferencia/otro | pago_mixto=DESC | cliente=NOMBRE | vehiculo=MARCA_PLACA | inv_ids=ID1:qty1,ID2:qty2] -> Úsalo para registrar una venta en el sistema (por ejemplo, tras confirmación de precio o factura).
 
 DATOS DISPONIBLES Y KPIs:
 Se te proporcionan ESTADÍSTICAS REALES por sede (Ingresos, Citas, Cantidad de productos en stock). Úsalas para dar reportes precisos y profesionales.
@@ -625,9 +626,9 @@ export async function GET(request: NextRequest) {
 
   if (!mode || !token) {
     console.warn('⚠️ Webhook attempt missing parameters');
-    return NextResponse.json({ 
-      error: 'Missing parameters', 
-      message: 'To test in browser, use: ?hub.mode=subscribe&hub.verify_token=YOUR_TOKEN&hub.challenge=CHALLENGE' 
+    return NextResponse.json({
+      error: 'Missing parameters',
+      message: 'To test in browser, use: ?hub.mode=subscribe&hub.verify_token=YOUR_TOKEN&hub.challenge=CHALLENGE'
     }, { status: 400 });
   }
 
@@ -641,9 +642,9 @@ export async function GET(request: NextRequest) {
   }
 
   console.error('❌ Webhook verification failed: Token mismatch or invalid mode');
-  return NextResponse.json({ 
-    error: 'Forbidden', 
-    reason: normalizedToken !== normalizedExpected ? 'Token mismatch' : 'Invalid mode' 
+  return NextResponse.json({
+    error: 'Forbidden',
+    reason: normalizedToken !== normalizedExpected ? 'Token mismatch' : 'Invalid mode'
   }, { status: 403 });
 }
 
@@ -667,7 +668,7 @@ export async function POST(request: NextRequest) {
       for (const status of value.statuses) {
         const wa_message_id = status.id;
         const newStatus = status.status; // 'sent', 'delivered', 'read', 'failed', 'deleted'
-        
+
         console.log(`📊 [Status Update] ${wa_message_id}: ${newStatus}`);
 
         if (db) {
@@ -675,7 +676,7 @@ export async function POST(request: NextRequest) {
           if (newStatus === 'delivered') internalStatus = 'entregado';
           if (newStatus === 'read') internalStatus = 'leido';
           if (newStatus === 'failed') internalStatus = 'error';
-          
+
           try {
             await db.from('mensajes_whatsapp')
               .update({ estado: internalStatus })
@@ -760,7 +761,7 @@ export async function POST(request: NextRequest) {
           // Guardar el ID del botón en la memoria para procesarlo después
           const buttonId = interactive.button_reply.id;
           console.log(`🔘 [${from}] Botón presionado: ${messageBody} (${buttonId})`);
-          
+
           // Guardar button_id en memoria temporal para procesarlo en processCoreLogic
           (global as any).__last_button_id = buttonId;
         } else if (interactive.type === 'list_reply') {
@@ -801,7 +802,7 @@ export async function POST(request: NextRequest) {
                         .eq('activo', true)
                         .maybeSingle();
                       if (adminCheck) isSenderAdmin = true;
-                    } catch (e) {}
+                    } catch (e) { }
                   }
 
                   const description = await describeImage(base64Data, mimeType, isSenderAdmin);
@@ -913,7 +914,7 @@ export async function POST(request: NextRequest) {
             media_type: currentMediaType,
             sede_id: effectiveSedeId
           }).select('created_at').single();
-          
+
           if (error) {
             console.error('❌ Error Supabase al insertar mensaje:', error.message, error.details, error.hint);
           }
@@ -936,7 +937,7 @@ export async function POST(request: NextRequest) {
         const isVercel = process.env.VERCEL === '1';
         const delayMs = isVercel ? 0 : 4000;
         console.log(`⏳ [${from}] Waiting ${delayMs}ms for potential grouping...`);
-        await delay(delayMs); 
+        await delay(delayMs);
         try {
           const { data: newer } = await db.from('mensajes_whatsapp')
             .select('id')
@@ -975,7 +976,7 @@ export async function POST(request: NextRequest) {
                 .eq('activo', true)
                 .maybeSingle();
               if (adminCheck) isSenderAdmin = true;
-            } catch (e) {}
+            } catch (e) { }
           }
 
           if (convData?.estado === 'humano' && !isSenderAdmin) {
@@ -1006,26 +1007,26 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-        console.log(`🤖 [${from}] Entering processCoreLogic...`);
-        const phone = from.replace(/[^0-9]/g, ''); // Normalize
-        // Update is_processing to true using the correct sede
-        await db.from('conversaciones').update({ is_processing: true }).eq('telefono', phone).eq('sede_id', effectiveSedeId);
+      console.log(`🤖 [${from}] Entering processCoreLogic...`);
+      const phone = from.replace(/[^0-9]/g, ''); // Normalize
+      // Update is_processing to true using the correct sede
+      await db.from('conversaciones').update({ is_processing: true }).eq('telefono', phone).eq('sede_id', effectiveSedeId);
 
-        // Mark any OLD pending messages from THIS user as superseded
-        try {
-          await db.from('mensajes_pendientes_ia')
-            .update({ status: 'completed', error_log: 'Supersedido por nuevo mensaje.' })
-            .eq('from_number', phone)
-            .eq('status', 'pending');
-        } catch { /* non-critical */ }
+      // Mark any OLD pending messages from THIS user as superseded
+      try {
+        await db.from('mensajes_pendientes_ia')
+          .update({ status: 'completed', error_log: 'Supersedido por nuevo mensaje.' })
+          .eq('from_number', phone)
+          .eq('status', 'pending');
+      } catch { /* non-critical */ }
 
-        try {
-          await processCoreLogic(db, phone, messageBody, wa_message_id, waProfileName);
-        } finally {
-          await db.from('conversaciones').update({ is_processing: false }).eq('telefono', phone).eq('sede_id', effectiveSedeId);
-        }
-        console.log(`✅ [${phone}] processCoreLogic finished.`);
-      } // end for loop
+      try {
+        await processCoreLogic(db, phone, messageBody, wa_message_id, waProfileName);
+      } finally {
+        await db.from('conversaciones').update({ is_processing: false }).eq('telefono', phone).eq('sede_id', effectiveSedeId);
+      }
+      console.log(`✅ [${phone}] processCoreLogic finished.`);
+    } // end for loop
 
     return NextResponse.json({ status: 'ok' });
   } catch (error) {
@@ -1094,11 +1095,11 @@ async function loadConversationContext(
   let agendaOcupada = '';
   let isNewSession = true;
   let estado = 'ia';
-  
+
   let sede_id = DEFAULT_SEDE_ID;
-  
+
   if (!db) return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado, sede_id };
-  
+
   const phone = from.replace(/[^0-9]/g, '');
 
   let adminName = '';
@@ -1139,7 +1140,7 @@ async function loadConversationContext(
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .limit(50);
-      
+
     if (msgs && msgs.length > 0) {
       let filteredMsgs = msgs;
       if (isAdmin) {
@@ -1147,12 +1148,12 @@ async function loadConversationContext(
         const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
         filteredMsgs = msgs.filter(m => new Date(m.created_at) > tenMinutesAgo).slice(0, 4);
       }
-      
+
       const filtered = filteredMsgs
         .filter(m => !(m.body === currentMessage && m.tipo === 'entrante'))
         .slice(0, 48).reverse();
       historia = filtered.map(m => ({ role: m.tipo === 'entrante' ? 'user' : 'model', parts: [{ text: m.body }] }));
-      
+
       if (!isAdmin) {
         const latest = msgs[0];
         if (latest?.created_at) {
@@ -1177,7 +1178,7 @@ async function loadConversationContext(
     if (convRows?.[0]?.memoria) memoria = convRows[0].memoria as Memoria;
     if (convRows?.[0]?.estado) estado = convRows[0].estado;
     if (convRows?.[0]?.sede_id) sede_id = convRows[0].sede_id;
-    
+
     // Technical History (Services & Revisions)
     const clientId = convRows?.[0]?.cliente_id;
     if (clientId) {
@@ -1212,11 +1213,11 @@ async function loadConversationContext(
     const today = getVzlaDateString();
     const endD = new Date(); endD.setDate(endD.getDate() + 7);
     const endStr = endD.toISOString().split('T')[0];
-    
+
     if (isAdmin || from === ASESOR_PHONE) {
       const todayDateStr = today + 'T00:00:00Z';
       const d = getVzlaDate();
-      
+
       // Calculate dates for history
       const monthDate = new Date(d); monthDate.setDate(monthDate.getDate() - 30);
       const monthStr = monthDate.toISOString().split('T')[0];
@@ -1224,14 +1225,14 @@ async function loadConversationContext(
 
       const weekDate = new Date(d); weekDate.setDate(weekDate.getDate() - 7);
       const weekStr = weekDate.toISOString().split('T')[0];
-      
+
       const yesterdayDate = new Date(d); yesterdayDate.setDate(yesterdayDate.getDate() - 1);
       const yesterdayStr = yesterdayDate.toISOString().split('T')[0];
 
       const [
-        { data: allCitas }, 
-        { data: allInv }, 
-        { data: allServs }, 
+        { data: allCitas },
+        { data: allInv },
+        { data: allServs },
         { data: allLogs },
         { data: sedes },
         { count: msgsToday },
@@ -1318,7 +1319,7 @@ async function loadConversationContext(
           s.sede = { nombre: sName };
         });
       }
-      
+
       // Calculate revenue from actual sales (ventas_dia and ventas_silenciadores)
       // We sum all POS sales, and all chatbot/IA sales that are not duplicates.
       const posVentasToday = allVentasDia?.filter(v => {
@@ -1329,7 +1330,7 @@ async function loadConversationContext(
         const vDate = toVzlaDateStr(v.fecha || v.created_at);
         return vDate === yesterdayStr;
       }) || [];
-      
+
       const iaVentasToday = allVentasSil?.filter(v => {
         const isPOSDuplicate = /Venta POS #/i.test(v.notes || v.notas || '');
         const vDate = toVzlaDateStr(v.fecha || v.created_at);
@@ -1342,10 +1343,10 @@ async function loadConversationContext(
       }) || [];
 
       const revenueToday = posVentasToday.reduce((sum, v) => sum + Number(v.total_ingresos || 0), 0) +
-                           iaVentasToday.reduce((sum, v) => sum + Number(v.precio_registrado || v.total_ingresos || 0), 0);
+        iaVentasToday.reduce((sum, v) => sum + Number(v.precio_registrado || v.total_ingresos || 0), 0);
 
       const revenueYesterday = posVentasYesterday.reduce((sum, v) => sum + Number(v.total_ingresos || 0), 0) +
-                               iaVentasYesterday.reduce((sum, v) => sum + Number(v.precio_registrado || v.total_ingresos || 0), 0);
+        iaVentasYesterday.reduce((sum, v) => sum + Number(v.precio_registrado || v.total_ingresos || 0), 0);
 
       const revenueBySede: Record<string, number> = {};
       const statusCounts: Record<string, Record<string, number>> = {}; // Sede -> Status -> Count
@@ -1395,7 +1396,7 @@ async function loadConversationContext(
       }
 
       let hoyInfo = `\n━━━ ⌛ ACTIVIDAD DE HOY (${today}) ━━━\n`;
-      
+
       // Citas de hoy
       hoyInfo += `\n📅 CITAS PROGRAMADAS PARA HOY:\n`;
       if (hoyCitas.length > 0) {
@@ -1441,7 +1442,7 @@ async function loadConversationContext(
       citasInfo += `\n[KPIs GENERALES]\n`;
       citasInfo += `- Mensajes IA enviados: Hoy (${msgsToday || 0}), Semana (${msgsWeek || 0}), Mes (${msgsMonth || 0})\n`;
       citasInfo += `- Ingresos: Hoy ($${revenueToday}), Ayer ($${revenueYesterday})\n`;
-      
+
       citasInfo += `\n[ESTADÍSTICAS POR SEDE (HOY Y RESUMEN)]\n`;
       const allSedeNames = [...new Set([...sedes?.map(s => s.nombre) || [], 'General'])];
       allSedeNames.forEach(sName => {
@@ -1450,19 +1451,19 @@ async function loadConversationContext(
         const added = invAddedBySede[sName] || 0;
         const stats = statusCounts[sName] || {};
         const statsStr = Object.entries(stats).map(([k, v]) => `${k}: ${v}`).join(', ') || 'Sin servicios registrados';
-        
+
         citasInfo += `- ${sName}: $${rev} hoy | ${cit} citas hoy | ${added} productos nuevos este mes.\n`;
         citasInfo += `  * Estados de servicios: ${statsStr}\n`;
       });
 
       citasInfo += hoyInfo;
-      
+
       if (allCitas && allCitas.length > 0) {
-        citasInfo += `\n[HISTORIAL DE CITAS (ULTIMOS 30 DIAS)]\n` + allCitas.map(c => 
+        citasInfo += `\n[HISTORIAL DE CITAS (ULTIMOS 30 DIAS)]\n` + allCitas.map(c =>
           `ID: ${c.id} | Sede: ${c.sede?.nombre || 'General'} | ${c.fecha} ${c.hora} | Cliente: ${c.nombre_cliente} | Estado: ${c.estado}`
         ).join('\n');
       }
-      
+
       if (allServs && allServs.length > 0) {
         const vehIds = [...new Set(allServs.filter(s => s.vehiculo_id).map(s => s.vehiculo_id))];
         let vehMap: Record<string, any> = {};
@@ -1485,11 +1486,11 @@ async function loadConversationContext(
       }
 
       if (allLogs && allLogs.length > 0) {
-        citasInfo += `\n\n[ACTIVIDAD RECIENTE DEL SISTEMA]\n` + allLogs.map(l => 
+        citasInfo += `\n\n[ACTIVIDAD RECIENTE DEL SISTEMA]\n` + allLogs.map(l =>
           `Sede: ${l.sede?.nombre || 'General'} | Fecha: ${l.created_at.split('T')[0]} | ${l.usuario} - ${l.accion}: ${l.detalles || 'N/A'}`
         ).join('\n');
       }
-      
+
       if (allInv && allInv.length > 0) {
         // 1. Group by sede for summary
         const sedeSummary: Record<string, { count: number, lowStock: number }> = {};
@@ -1508,7 +1509,7 @@ async function loadConversationContext(
         // 2. Select representative items from EACH sede
         const sedes = [...new Set(allInv.map(i => i.sede?.nombre || 'General'))];
         const selectedItems: any[] = [];
-        
+
         sedes.forEach(sName => {
           const sedeItems = allInv.filter(i => (i.sede?.nombre || 'General') === sName);
           // Prioritize low stock or expensive items within each sede
@@ -1522,11 +1523,11 @@ async function loadConversationContext(
 
         // Final limit to prevent context bloat (max 50 items total)
         const finalItems = selectedItems.slice(0, 50);
-        
+
         inventarioInfo += `\n[DETALLE DE PRODUCTOS (MUESTRA RELEVANTE)]\n` + finalItems.map(i =>
           `ID: ${i.id} | Sede: ${i.sede?.nombre || 'General'} | ${i.nombre} [${i.codigo || 'S/C'}] | Stock: ${i.stock} | Precio: $${i.precio_usd}`
         ).join('\n');
-        
+
         const remaining = allInv.length - finalItems.length;
         if (remaining > 0) {
           inventarioInfo += `\n... y otros ${remaining} productos. (Pídeme detalles de un código o nombre específico si no lo ves aquí).`;
@@ -1543,7 +1544,7 @@ async function loadConversationContext(
 
       // 3. Build today's sales display with full items detail
       let ventasInfo = `\n[VENTAS Y FACTURACIÓN REGISTRADAS HOY (${today})]\n`;
-      
+
       if (todayVentasDia.length > 0) {
         ventasInfo += `* VENTAS POS MANUALES (ventas_dia):\n`;
         todayVentasDia.forEach((v) => {
@@ -1577,7 +1578,7 @@ async function loadConversationContext(
           // Exclude POS duplicates from display if they are already listed above to keep it clean
           const isPOSDuplicate = /Venta POS #/i.test(v.notas || '');
           const duplicateTag = isPOSDuplicate ? ' [Duplicado POS]' : '';
-          
+
           // Parse client from notes
           const cliMatch = v.notas?.match(/Cliente:\s*([^|\]\n]+)/i) || v.notas?.match(/\| Cliente:\s*([^|]+)/i);
           const cliente = cliMatch ? cliMatch[1].trim() : 'N/A';
@@ -1688,11 +1689,11 @@ async function getAIResponse(
 
   // Un usuario es admin si el contexto lo indica
   const isAdmin = !!ctx.isAdmin;
-  
+
   if (isAdmin) {
     console.log(`👤 MODO ADMIN DETECTADO: ${from} (Nombre en memoria/BD: ${ctx.memoria?.nombre || 'Desconocido'})`);
   }
-  
+
   const knowledge = isAdmin ? ADMIN_KNOWLEDGE : LYCOS_KNOWLEDGE;
 
   const vzlaDateTime = formatVzlaDateTime();
@@ -1708,7 +1709,7 @@ async function getAIResponse(
 
   const ratesCtx = buildRatesContext(rates);
 
-    const rules = isAdmin
+  const rules = isAdmin
     ? `- EXTENSIÓN: Puedes usar las líneas necesarias para reportes de inventario o KPIs.
 - FORMATO: Usa negritas (*texto*) y monospace (\`texto\`) para resaltar nombres y cantidades en los reportes.
 - ESPACIADO: Deja siempre una línea en blanco entre productos en tus listas.`
@@ -1762,12 +1763,12 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
   // Configuración de reintentos ajustada para Vercel (evitar timeout de 10s)
   const ATTEMPTS_DELAYS = [300, 800, 1500, 2000];
   const MAX_ATTEMPTS = ATTEMPTS_DELAYS.length;
-  
+
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     // Alternar entre los modelos disponibles en cada intento para evitar saturación de uno de ellos
     const modelIndex = attempt % GEMINI_MODELS.length;
     const model = GEMINI_MODELS[modelIndex];
-    
+
     console.log(`🧠 [Intento ${attempt + 1}/${MAX_ATTEMPTS}] Usando Modelo: ${model}`);
 
     try {
@@ -1779,11 +1780,11 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
           body: JSON.stringify({
             system_instruction: { parts: [{ text: systemPrompt }] },
             contents,
-            generationConfig: { 
-              temperature: 0.75, 
+            generationConfig: {
+              temperature: 0.75,
               maxOutputTokens: 1000,
-              topK: 40, 
-              topP: 0.95 
+              topK: 40,
+              topP: 0.95
             },
             safetySettings: [
               { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
@@ -1799,7 +1800,7 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
         const errText = await resp.text();
         const status = resp.status;
         console.error(`❌ Error IA [${status}] en Modelo ${model}:`, errText.substring(0, 150));
-        
+
         // Retry on saturation or temporary errors
         if (status === 429 || status === 503 || status === 500) {
           const delayTime = ATTEMPTS_DELAYS[attempt] || 2000;
@@ -1828,7 +1829,7 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
         const lastChar = text.trim().slice(-1);
         const sentenceEnders = ['.', '!', '?', '»', '"', ')'];
         const isLikelyComplete = sentenceEnders.includes(lastChar) || /[\u{1F300}-\u{1F9FF}]/u.test(text.slice(-5));
-        
+
         if (!isLikelyComplete && text.length < 50 && attempt < 2) {
           console.warn(`⚠️ Respuesta parece incompleta. Reintentando por seguridad.`);
           await delay(800);
@@ -1838,7 +1839,7 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
         console.log(`✅ IA respondió con éxito (Modelo ${model}) en intento ${attempt + 1}`);
         return text;
       }
-      
+
       console.warn(`⚠️ Modelo ${model} devolvió respuesta vacía. Reintentando...`);
       await delay(1500);
     } catch (e) {
@@ -1854,7 +1855,7 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
 async function transcribeAudio(base64Data: string, mimeType: string, isAdmin: boolean = false): Promise<string | null> {
   if (!GEMINI_API_KEY) return null;
   const sttModel = GEMINI_MODELS[0];
-  const systemPrompt = isAdmin 
+  const systemPrompt = isAdmin
     ? "Eres un sistema de reconocimiento de voz para el administrador de un taller. Transcribe el audio exactamente. Si el administrador está dictando inventario o stock, asegúrate de ser muy preciso con los nombres y cantidades."
     : "Eres un sistema de reconocimiento de voz. Tu UNICA tarea es transcribir el audio a texto exacto en español. NO agregues explicaciones, respuestas, introducciones ni comentarios. Solo escribe lo que el usuario dice en español tal cual.";
 
@@ -1943,9 +1944,11 @@ IMPORTANTE: Sé extremadamente preciso con números, precios y placas. Si no pue
             role: 'user',
             parts: [
               { inlineData: { mimeType: mimeType.split(';')[0], data: base64Data } },
-              { text: isAdmin
-                ? "Analiza esta imagen como experto en taller automotriz: clasifícala primero ([FACTURA], [VEHÍCULO], [PRODUCTO], [REPORTE], [TICKET], [EXCEL], [OTRO]) y luego extrae TODOS los datos relevantes estructurados. Responde con el formato indicado."
-                : "Describe esta imagen detalladamente pensando como mecánico:" }
+              {
+                text: isAdmin
+                  ? "Analiza esta imagen como experto en taller automotriz: clasifícala primero ([FACTURA], [VEHÍCULO], [PRODUCTO], [REPORTE], [TICKET], [EXCEL], [OTRO]) y luego extrae TODOS los datos relevantes estructurados. Responde con el formato indicado."
+                  : "Describe esta imagen detalladamente pensando como mecánico:"
+              }
             ]
           }],
           generationConfig: { temperature: 0.3, maxOutputTokens: 1024 }
@@ -1971,6 +1974,23 @@ function aiNeedsAsesor(text: string): boolean {
     lower.includes('wa.me/') || lower.includes('584123343519');
 }
 
+// Helper to extract a plate number cleanly, ignoring product codes and common words
+function extractPlate(text: string): string {
+  if (!text) return '';
+  // Match alphanumeric sequences of length 5-8 that contain both letters and digits
+  const placaMatch = text.match(/\b(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*[0-9])[A-Z0-9]{5,8}\b/i);
+  if (!placaMatch) return '';
+  const rawPlaca = placaMatch[0].toUpperCase();
+  const isProductCode = /^(CL\d+|CLK\d+|CLC\d+|CLCP\d+|CLH\d+|RC\d+|GL\d+|GOMAS?|TUBO?|ACEITE|FRENOS?|BUJIA)/i.test(rawPlaca);
+  const COMMON_WORDS_BLACKLIST = ['SOY', 'VENTA', 'SEDE', 'CITA', 'CARRO', 'CEMENTERIO', 'PARAISO', 'CARACAS', 'ALTOS', 'MINAS', 'BOMBA', 'PROMO', 'DIVISAS', 'EUROS'];
+  const isBlacklistedWord = COMMON_WORDS_BLACKLIST.includes(rawPlaca);
+
+  if (!isProductCode && !isBlacklistedWord) {
+    return rawPlaca;
+  }
+  return '';
+}
+
 // ─── Intent Processing → DB writes ────────────────────────────────────────────
 async function processIntents(
   db: ReturnType<typeof getDb>,
@@ -1994,15 +2014,15 @@ async function processIntents(
     'guarenas', 'guatire', 'cua', 'ocumare', 'maracaibo', 'barquisimeto', 'petare',
     'chacao', 'sucre', 'baruta', 'hatillo', 'latillo', 'zulia', 'aragua', 'carabobo',
     'falcon', 'falcón', 'lara', 'merida', 'mérida', 'tachira', 'táchira', 'trujillo',
-    'vargas', 'laguaira', 'guaira', 'apure', 'bolivar', 'bolívar', 'amazonas', 'delta', 
+    'vargas', 'laguaira', 'guaira', 'apure', 'bolivar', 'bolívar', 'amazonas', 'delta',
     'amacuro', 'monagas', 'anzoátegui', 'anzoategui', 'nueva', 'esparta', 'margarita',
-    'yaracuy', 'cojedes', 'portuguesa', 'barinas', 'guarico', 'guárico', 'de', 'del', 
+    'yaracuy', 'cojedes', 'portuguesa', 'barinas', 'guarico', 'guárico', 'de', 'del',
     'en', 'aqui', 'alla', 'allá', 'soy', 'vengo', 'estoy'
   ];
-  
+
   // 1. Pattern with prefix (Soy Juan, Me llamo Pedro...) - Negative lookahead prevents matching locations
   const nameMatch = userMsg.match(/(?:soy|me llamo|mi nombre es|mi nombre|llámame|llamame)\s+(?!de\b|del\b|en\b|de\s+la\b|el\b|la\b)([A-ZÁÉÍÓÚÑa-záéíóúñ]{2,}(?:\s+[A-ZÁÉÍÓÚÑa-záéíóúñ]{2,})?)/i);
-  
+
   // 2. Fallback: if message is very short (1-3 words) and starts with capitalized words, it might be just a name
   // But ONLY if it's not a common command or service
   let extractedName = '';
@@ -2021,13 +2041,13 @@ async function processIntents(
   if (extractedName) {
     const isBlacklisted = NAME_BLACKLIST.some(w => extractedName.toLowerCase().startsWith(w) || extractedName.toLowerCase() === w);
     const isRealName = extractedName.length >= 3 && !isBlacklisted;
-    
+
     // Always overwrite if we get a real name, even if one was stored before
     if (isRealName) {
-      const currentIsGeneric = !newMemoria.nombre || 
+      const currentIsGeneric = !newMemoria.nombre ||
         newMemoria.nombre === from ||
         NAME_BLACKLIST.some(w => newMemoria.nombre!.toLowerCase().includes(w));
-        
+
       if (currentIsGeneric || newMemoria.nombre !== extractedName) {
         newMemoria.nombre = extractedName;
         memChanged = true;
@@ -2048,7 +2068,7 @@ async function processIntents(
     'accent', 'elantra', 'tucson', 'sportage', 'getz', 'rio', 'picanto', 'ara'
   ];
   const brandRegex = new RegExp(`\\b(${brandKeywords.join('|')})\\b`, 'i');
-  
+
   const vehicleMatch = userMsg.match(brandRegex);
   const yearMatch = userMsg.match(/\b(19[8-9]\d|20[0-2]\d)\b/);
   let detectedVeh = '';
@@ -2058,7 +2078,7 @@ async function processIntents(
     const marca = vehicleMatch[1].charAt(0).toUpperCase() + vehicleMatch[1].slice(1).toLowerCase();
     const modelo = fullMatch ? fullMatch[1].trim() : 'Modelo';
     const anio = yearMatch?.[1] || '';
-    
+
     const v = { marca, modelo, anio };
     detectedVeh = `${v.marca} ${v.modelo}`;
     if (!newMemoria.vehiculos) newMemoria.vehiculos = [];
@@ -2067,11 +2087,9 @@ async function processIntents(
   }
 
   // Extract plate number
-  const placaMatch = userMsg.match(/\b([A-Z]{2,3}[-\s]?\d{2,3}[-\s]?[A-Z0-9]{0,3})\b/i);
-  let detectedPlaca = '';
-  if (placaMatch) {
-    detectedPlaca = placaMatch[1].toUpperCase().replace(/[-\s]/g, '');
-    if (detectedPlaca.length >= 4 && detectedPlaca !== newMemoria.placa) {
+  const detectedPlaca = extractPlate(userMsg);
+  if (detectedPlaca) {
+    if (detectedPlaca !== newMemoria.placa) {
       newMemoria.placa = detectedPlaca;
       memChanged = true;
     }
@@ -2236,8 +2254,8 @@ async function getOrCreateClientAndVehicle(
       // Sync names to conversation metadata
       const { data: clientData } = await db.from('clientes').select('nombre, apellido').eq('id', clientId).single();
       const fullName = clientData ? `${clientData.nombre || ''} ${clientData.apellido || ''}`.trim() : name;
-      
-      await db.from('conversaciones').update({ 
+
+      await db.from('conversaciones').update({
         cliente_id: clientId,
         datos_cliente: {
           nombre: fullName || name,
@@ -2257,14 +2275,14 @@ async function getOrCreateClientAndVehicle(
 // ─── Update conversation row ───────────────────────────────────────────────────
 async function updateConversation(db: ReturnType<typeof getDb>, from: string, lastMsg: string, memoria: Memoria, clientId?: string): Promise<void> {
   if (!db) return;
-  
+
   // Link by phone if clientId is missing
   let linkedClientId = clientId;
   if (!linkedClientId) {
     try {
       const { data: client } = await db.from('clientes').select('id').eq('telefono', from).maybeSingle();
       if (client) linkedClientId = client.id;
-    } catch (e) {}
+    } catch (e) { }
   }
 
   void (async () => {
@@ -2275,15 +2293,15 @@ async function updateConversation(db: ReturnType<typeof getDb>, from: string, la
         .select('sede_id')
         .eq('telefono', from)
         .maybeSingle();
-      
+
       if (existing?.sede_id) {
         effectiveSedeId = existing.sede_id;
       }
 
       const updateData: any = {
-        telefono: from, 
+        telefono: from,
         ultimo_mensaje: lastMsg.substring(0, 500),
-        ultimo_mensaje_at: new Date().toISOString(), 
+        ultimo_mensaje_at: new Date().toISOString(),
         memoria,
         sede_id: effectiveSedeId
       };
@@ -2508,7 +2526,7 @@ async function handleCompletedServiceSale(db: any, citaId: string, citaObj: any)
     // Treat 'completada' status as completed/delivered
     const isCompleted = citaObj.estado === 'completada';
     const hasPrice = citaObj.costo_estimado && citaObj.costo_estimado > 0;
-    
+
     if (isCompleted && hasPrice) {
       // 1. Check if a sale for this cita is already registered in ventas_silenciadores
       const citaRefTag = `[CitaID: ${citaId}]`;
@@ -2554,7 +2572,7 @@ async function sendContactCard(to: string, phone: string, displayName: string): 
   if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
   const cleanPhone = phone.replace(/[^0-9]/g, '');
   const cleanTo = to.replace(/[^0-9]/g, '');
-  
+
   try {
     const resp = await fetch(`https://graph.facebook.com/v21.0/${WHATSAPP_PHONE_ID}/messages`, {
       method: 'POST',
@@ -2577,17 +2595,17 @@ async function sendContactCard(to: string, phone: string, displayName: string): 
     const data = await resp.json();
     const waMessageId = data.messages?.[0]?.id;
     console.log(`📇 Card sent to ${to}. ID: ${waMessageId}`);
-    
+
     const db = getDb();
     if (db) {
       // 1. Guardar mensaje en tabla
       await db.from('mensajes_whatsapp').insert({
-        from_number: 'system', 
-        to_number: cleanTo, 
-        body: `[Tarjeta de contacto: ${displayName}]`, 
-        tipo: 'saliente', 
+        from_number: 'system',
+        to_number: cleanTo,
+        body: `[Tarjeta de contacto: ${displayName}]`,
+        tipo: 'saliente',
         wa_message_id: waMessageId,
-        es_ia: true 
+        es_ia: true
       });
 
       // 2. Actualizar último mensaje (sin cambiar modo)
@@ -2605,8 +2623,8 @@ async function sendContactCard(to: string, phone: string, displayName: string): 
 // ─── Intent Detection ──────────────────────────────────────────────────────────
 function isLocationRequest(lower: string): boolean {
   const locKeywords = [
-    'ubicacion', 'ubicación', 'donde est', 'dónde est', 'donde quedan', 'dónde quedan', 
-    'ubica', 'ubican', 'dirección', 'direccion', 'llegar', 'ubicado', 'gps', 'mapa', 
+    'ubicacion', 'ubicación', 'donde est', 'dónde est', 'donde quedan', 'dónde quedan',
+    'ubica', 'ubican', 'dirección', 'direccion', 'llegar', 'ubicado', 'gps', 'mapa',
     'como llegar', 'cómo llegar', 'y la de san antonio', 'y la de carrizal', 'y la de caracas',
     'y la del cementerio', 'donde queda la de', 'donde es la de'
   ];
@@ -2634,7 +2652,7 @@ async function findSedeIdByName(db: any, name: string): Promise<string | null> {
   else if (clean.includes('carrizal') || clean.includes('principal')) query = 'Carrizal';
   else if (clean.includes('caracas') || clean.includes('cementerio')) query = 'Caracas';
   else if (clean.includes('paraiso') || clean.includes('paraíso')) query = 'Paraíso';
-  
+
   if (!query) return null;
   const { data } = await db.from('sedes').select('id').ilike('nombre', `%${query}%`).limit(1).maybeSingle();
   return data?.id || null;
@@ -2650,15 +2668,990 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       fetchExchangeRates(),
     ]);
 
-      const lowerBody = messageBody.toLowerCase();
+    const lowerBody = messageBody.toLowerCase();
 
-      // ─── EARLY PERSISTENCE (Vercel Timeout Safe) ─────────────────────
-      // Guardar el mensaje de inmediato para que si Vercel corta por tiempo (10s), 
-      // el usuario vea el mensaje en el CRM para reintentar.
-      let pendingId: string | null = null;
+    // ─── EARLY PERSISTENCE (Vercel Timeout Safe) ─────────────────────
+    // Guardar el mensaje de inmediato para que si Vercel corta por tiempo (10s), 
+    // el usuario vea el mensaje en el CRM para reintentar.
+    let pendingId: string | null = null;
+    try {
+      if (db) {
+        const { data: pData } = await db.from('mensajes_pendientes_ia').insert({
+          from_number: from,
+          message_body: messageBody,
+          wa_message_id: wa_message_id,
+          wa_profile_name: waProfileName || null,
+          inserted_timestamp: new Date().toISOString(),
+          intentos: 0,
+          status: 'pending',
+          sede_id: DEFAULT_SEDE_ID
+        }).select('id').single();
+        pendingId = pData?.id || null;
+        console.log(`💾 [${from}] Persistencia temprana activada (ID: ${pendingId})`);
+      }
+    } catch (e) {
+      console.error('❌ Error en persistencia temprana:', e);
+    }
+
+    // 🛑 Silenciar bot si está en modo humano (Intervención manual) - unless they are an admin
+    if (ctx.estado === 'humano' && !ctx.isAdmin) {
+      console.log(`👤 [${from}] Modo Humano ACTIVO. El bot permanecerá en silencio.`);
+      // Procesamos intenciones para extraer metadatos (nombre, vehículo) para el CRM
+      const r = await processIntents(db, from, messageBody, ctx, waProfileName);
+      // Actualizamos la conversación en la DB para reflejar el último mensaje en el dashboard
+      await updateConversation(db, from, messageBody, ctx.memoria, r?.clientId);
+      return;
+    }
+
+    // 📍 Location Flow (Multi-sede)
+    const bodyClean = lowerBody.trim();
+    let isLocationChoicePending = ctx.memoria?.awaiting_location_choice === true;
+    let isCaracasChoicePending = ctx.memoria?.awaiting_caracas_choice === true;
+
+    // Verificar si se presionó un botón de sede
+    const lastButtonId = (global as any).__last_button_id;
+    (global as any).__last_button_id = undefined; // Limpiar después de usar
+
+    // Mapear button_ids a sedes
+    let selectedSedeFromButton: string | null = null;
+    if (lastButtonId) {
+      if (lastButtonId === 'sede_1' || lastButtonId === 'admin_sede_1') selectedSedeFromButton = 'san antonio';
+      else if (lastButtonId === 'sede_2' || lastButtonId === 'admin_sede_2') selectedSedeFromButton = 'carrizal';
+      else if (lastButtonId === 'sede_3' || lastButtonId === 'admin_sede_3') selectedSedeFromButton = 'caracas';
+      else if (lastButtonId === 'sede_4' || lastButtonId === 'admin_sede_4') selectedSedeFromButton = 'paraiso';
+      else if (lastButtonId === 'ccs_choice_1') { selectedSedeFromButton = 'caracas'; isCaracasChoicePending = false; isLocationChoicePending = false; }
+      else if (lastButtonId === 'ccs_choice_2') { selectedSedeFromButton = 'paraiso'; isCaracasChoicePending = false; isLocationChoicePending = false; }
+      console.log(`🔘 [${from}] Sede seleccionada por botón: ${selectedSedeFromButton} (button: ${lastButtonId})`);
+    }
+
+    // Detection of specific sedes in the message
+    const mentionsSanAntonio = selectedSedeFromButton === 'san antonio' || bodyClean.includes('san antonio') || (isLocationChoicePending && (bodyClean === '1' || bodyClean === 'san antonio'));
+    const mentionsCarrizal = selectedSedeFromButton === 'carrizal' || bodyClean.includes('carrizal') || (isLocationChoicePending && (bodyClean === '2' || bodyClean === 'carrizal'));
+    const mentionsCaracas = selectedSedeFromButton === 'caracas' || bodyClean.includes('cementerio') || (isLocationChoicePending && (bodyClean === '3' || bodyClean === 'cementerio')) || (isCaracasChoicePending && (bodyClean === '1' || bodyClean === 'cementerio'));
+    const mentionsParaiso = selectedSedeFromButton === 'paraiso' || bodyClean.includes('paraiso') || bodyClean.includes('paraíso') || (isLocationChoicePending && (bodyClean === '4' || bodyClean.includes('paraiso'))) || (isCaracasChoicePending && (bodyClean === '2' || bodyClean.includes('paraiso')));
+    const mentionsCaracasGeneral = bodyClean.includes('caracas') && !bodyClean.includes('cementerio') && !bodyClean.includes('paraiso') && !bodyClean.includes('paraíso');
+
+    if (!ctx.isAdmin && mentionsCaracasGeneral) {
+      console.log(`📍 [${from}] Preguntando por sede de Caracas específica con 2 botones...`);
+      const buttons = [
+        { id: 'ccs_choice_1', title: 'El Cementerio' },
+        { id: 'ccs_choice_2', title: 'El Paraiso' }
+      ];
+      await sendButtonMsg(from, '📍 Contamos con 2 sedes en Caracas. ¿Cuál te queda más cerca? 😊', buttons, 'Selecciona una opción');
+      ctx.memoria.awaiting_caracas_choice = true;
+      if (db) await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+      return;
+    }
+
+    if (!ctx.isAdmin && (mentionsSanAntonio || mentionsCarrizal || mentionsCaracas || mentionsParaiso)) {
+      let locationSent = false;
+      let selectedSedeName = '';
+      const selectedSedePhone = '584123343519';
+
+      if (mentionsSanAntonio) {
+        await sendMsg(from, '📍 *Sede San Antonio de los Altos:*\n\nEn San Antonio de los Altos, distribuidor de las minas al frente del Frescos Market nos encontramos. 😊\n\n*Mapa:* https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
+        await delay(800);
+        await sendMsg(from, '🎥 *Video de cómo llegar:* https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
+        await delay(800);
+        await sendMsg(from, '🎁 *¡Beneficios Exclusivos en San Antonio!* 🎁\n\nSi vienes a nuestra sede de San Antonio, cuentas con beneficios como:\n✅ *Revisión totalmente gratuita.*\n✅ *Instalación de la app del taller GRATIS en Lycos Team.*\n✅ *Servicios y tecnología automotriz profesional.*\n\n¡Te esperamos! 🚗🔧', true);
+        selectedSedeName = 'Sede San Antonio';
+        locationSent = true;
+      } else if (mentionsCarrizal) {
+        await sendMsg(from, '📍 *Sede Carrizal (Principal):*\n\nServicios Jadar Calle Raul Leoni, Municipio Carrizal cerca de eso. 😊\n\n*Mapa:* https://maps.app.goo.gl/cxLGkqWtsf5qogMB6', true);
+        selectedSedeName = 'Sede Carrizal';
+        locationSent = true;
+      } else if (mentionsCaracas) {
+        await sendMsg(from, '📍 *Sede Caracas (El Cementerio):*\n\nE/S PDV Nuevo Prado Av. Roosevelt, Caracas cerca de esa bomba. 😊\n\n*Mapa:* https://maps.app.goo.gl/aeHGdzUumhpBep719', true);
+        selectedSedeName = 'Sede Caracas';
+        locationSent = true;
+      } else if (mentionsParaiso) {
+        await sendMsg(from, '📍 *Sede Caracas (El Paraíso):*\n\nAvenida Los Liberales, Caracas 1020, Distrito Capital, Venezuela, Al frente de Puerkos Restaurant. 😊\n\n*Mapa:* https://maps.app.goo.gl/c3TnUnHYGEJUWodX7', true);
+        selectedSedeName = 'Sede Caracas (El Paraíso)';
+        locationSent = true;
+      }
+
+      if (locationSent) {
+        delete ctx.memoria.awaiting_location_choice;
+        delete ctx.memoria.awaiting_caracas_choice;
+        if (db) {
+          await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+        }
+        await delay(800);
+        await sendMsg(from, `También te comparto el contacto de la ${selectedSedeName} por si necesitas llamar:`);
+        await delay(500);
+        await sendContactCard(from, selectedSedePhone, selectedSedeName);
+        await delay(800);
+
+        // Determinar si el mensaje es SOLO la elección de sede o si hay una pregunta adicional
+        const isSimpleSedeChoice = bodyClean === 'caracas' ||
+          bodyClean === 'el cementerio' ||
+          bodyClean === 'el paraiso' ||
+          bodyClean === 'el paraíso' ||
+          bodyClean === 'san antonio' ||
+          bodyClean === 'carrizal' ||
+          bodyClean === '1' || bodyClean === '2' || bodyClean === '3' || bodyClean === '4' ||
+          bodyClean.length < 15;
+
+        if (isSimpleSedeChoice) {
+          await sendMsg(from, '¿Deseas agendar una cita en esta sede o tienes alguna otra duda? 😊');
+          return;
+        }
+
+        console.log(`📍 [${from}] Sede detectada pero el mensaje es complejo. Continuando procesamiento con IA.`);
+        // Inyectamos un mensaje en la historia para que la IA sepa que ya enviamos la ubicación
+        ctx.historia.push({
+          role: 'model',
+          parts: [{ text: `[SISTEMA: Ya le envié al cliente la ubicación detallada de ${selectedSedeName} con el mapa y el contacto. Responde ahora a sus otras dudas sobre precios o productos de forma directa.]` }]
+        });
+        // Continuamos el flujo para que la IA responda el resto de la pregunta
+      }
+    }
+
+    // If it's a generic location request and we haven't sent a specific one yet
+    if (isLocationRequest(lowerBody) && !ctx.isAdmin) {
+      console.log(`📍 [${from}] Preguntando por sede para ubicación con botones...`);
+      const buttons = [
+        { id: 'sede_1', title: 'San Antonio' },
+        { id: 'sede_2', title: 'Carrizal' },
+        { id: 'sede_3', title: 'Cementerio' },
+        { id: 'sede_4', title: 'El Paraiso' }
+      ];
+
+      await sendButtonMsg(
+        from,
+        '¡Con gusto! 📍 Contamos con 4 sedes disponibles. ¿Cuál te queda más cerca?',
+        buttons,
+        'Selecciona una opción abajo'
+      );
+
+      await delay(800);
+      await sendMsg(from, '💡 *Dato importante:* Si vienes a nuestra sede de San Antonio, cuentas con más beneficios exclusivos y otros servicios adicionales. 🚗🔧');
+
+      ctx.memoria.awaiting_location_choice = true;
+      if (db) {
+        await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+      }
+      return;
+    }
+
+    // If we were waiting for a choice but the message didn't match any sede, clear the flag and let AI handle it
+    if (isLocationChoicePending) {
+      console.log(`📍 [${from}] Respuesta no reconocida en flujo de sede: "${bodyClean}". Liberando para que la IA responda.`);
+      delete ctx.memoria.awaiting_location_choice;
+      if (db) {
+        await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+      }
+      // No return, let the flow continue to AI
+    }
+
+    // ─── ADMIN SEDE CHOICE ──────────────────────────────────────────
+    if (ctx.memoria?.awaiting_admin_sede && db) {
+      const motivo = ctx.memoria.awaiting_admin_sede;
+      const selectedSedeId = await findSedeIdByName(db, bodyClean);
+
+      if (selectedSedeId) {
+        const { data: sData } = await db.from('sedes').select('nombre').eq('id', selectedSedeId).single();
+        const sedeName = sData?.nombre || 'la sede seleccionada';
+
+        delete ctx.memoria.awaiting_admin_sede;
+        await db.from('conversaciones').update({ memoria: ctx.memoria }).eq('telefono', from);
+
+        await sendMsg(from, `✅ Entendido. Procedo con la gestión de *${motivo}* para la sede *${sedeName}*.`);
+
+        // Inject a hidden message so the AI can continue with the correct sede
+        const followUpMsg = `[SISTEMA: El administrador seleccionó la sede ${sedeName} (ID: ${selectedSedeId}) para ${motivo}. Por favor, procede con la información o el tag correspondiente usando este ID].`;
+        const aiResp = await getAIResponse(followUpMsg, ctx, rates, from);
+        if (aiResp) {
+          await sendMsg(from, cleanForWhatsApp(aiResp), true, wa_message_id);
+        }
+        return;
+      }
+    }
+
+    // Medical certificate intent (Handled by AI, but we prevent location trigger)
+    if (isCertRequest(lowerBody)) {
+      // Just let it pass to AI, which has the prices and information.
+      // The separate detection ensures it doesn't enter the location block above.
+    }
+
+    // Social media intent
+    if (isSocialRequest(lowerBody)) {
+      await sendMsg(from, 'Aqui te van nuestras redes sociales 📱 Siguenos para tips, novedades y promos 🔧');
+      await delay(500);
+      await sendMsg(from, IG_LINK, true);
+      await delay(500);
+      await sendMsg(from, TT_LINK, true);
+      await updateConversation(db, from, messageBody, ctx.memoria);
+      // Continue to AI response/intents
+    }
+
+    // Asesor contact intent (explicit)
+    if (isContactRequest(lowerBody)) {
+      await sendMsg(from, 'Con gusto 😊 Te comparto el contacto directo de nuestro asesor:');
+      await delay(600);
+      await sendContactCard(from, ASESOR_PHONE, ASESOR_DISPLAY_NAME);
+      await updateConversation(db, from, messageBody, ctx.memoria);
+      return;
+    }
+
+    // ─── Intent Detection & Data Processing ──────────────────────────
+    // We process intents FIRST so that the AI response can Use the new data (like a newly detected name)
+    const r = await processIntents(db, from, messageBody, ctx, waProfileName);
+
+    // Update ctx.memoria if a name was found so the AI sees it in this same turn
+    if (ctx.memoria.nombre) {
+      // Already updated inside processIntents, but ensuring context for AI is fresh
+    }
+    // AI response
+    const aiResponse = await getAIResponse(messageBody, ctx, rates, from);
+
+    if (aiResponse) {
+      const cleanedAiBody = cleanForWhatsApp(aiResponse);
+      let cleanedAi = cleanedAiBody.replace(/\[IMAGE:[^\]]+\]/gi, '').trim();
+
+      // ── Process Image Tags [IMAGE: slug] ───────────────────────────
+      const imageMatches = Array.from(cleanedAiBody.matchAll(/\[IMAGE:\s*([^\]]+)\]/gi));
+      for (const match of imageMatches) {
+        const slug = match[1].trim().toLowerCase();
+        console.log(`🤖 AI solicitó enviar imagen: ${slug}`);
+        await sendImageMsg(from, slug, undefined, wa_message_id);
+        await delay(500);
+      }
+
+
+      // ── Extract Client Name via AI Tag ────────────────────────────────
+      const nombreMatch = cleanedAi.match(/\[NOMBRE:\s*([^\]]+?)\]/i);
+      if (nombreMatch) {
+        const aiDetectedName = nombreMatch[1].trim();
+        cleanedAi = cleanedAi.replace(/\[NOMBRE:[^\]]+\]/gi, '').trim();
+
+        const AI_NAME_BLACKLIST = ['cliente', 'usuario', 'hola', 'buenas', 'buenos', 'dias', 'noches', 'tardes', 'precio', 'cita', 'servicio', 'taller', 'vehiculo', 'whatsapp'];
+        if (!AI_NAME_BLACKLIST.some(w => aiDetectedName.toLowerCase().includes(w))) {
+          ctx.memoria.nombre = aiDetectedName;
+          try {
+            if (db) {
+              await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+              await getOrCreateClientAndVehicle(db, from, aiDetectedName, '', '', undefined, waProfileName);
+              console.log(`🤖 AI Nombre Extraido y Guardado: ${aiDetectedName}`);
+            }
+          } catch (e) { console.error('Error saving AI detected name:', e); }
+        }
+      }
+
+      // ── Process INTERES Tag [INTERES: servicio | vehiculo | notas] ──
+      const interesMatch = cleanedAi.match(/\[INTERES:\s*([^|\]]+?)(?:\s*\|\s*([^|\]]+?))?(?:\s*\|\s*([^\]]+?))?\s*\]/i);
+      if (interesMatch && db) {
+        const servicio = interesMatch[1]?.trim();
+        const vehiculo = interesMatch[2]?.trim();
+        const notas = interesMatch[3]?.trim();
+        cleanedAi = cleanedAi.replace(/\[INTERES:[^\]]+\]/gi, '').trim();
+
+        try {
+          const userName = ctx.memoria?.nombre || '';
+          const { clientId, vehicleId } = await getOrCreateClientAndVehicle(
+            db, from, userName, vehiculo || '', '', undefined, waProfileName
+          );
+
+          await db.from('citas').insert({
+            fecha: getVzlaDateString(), // Fecha de hoy como placeholder
+            hora: '00:00', // Hora placeholder para prospectos
+            telefono: from,
+            cliente_id: clientId || null,
+            vehiculo_id: vehicleId || null,
+            tipo_servicio: 'otro',
+            descripcion: `PROSPECTO: ${servicio}${notas ? ' (' + notas + ')' : ''}`,
+            estado: 'pendiente', // Usamos pendiente pero con descripción de prospecto
+            sede_id: ctx.sede_id || DEFAULT_SEDE_ID
+          });
+          console.log(`💡 INTERES DETECTADO: ${servicio} para ${from}`);
+        } catch (e) { console.error('Error guardando interes:', e); }
+      }
+
+      // ── ADMIN: Process management tags ────────────────────────────────
+      const isAdmin = !!ctx.isAdmin || ADMIN_PHONES.includes(from || '');
+
+      if (isAdmin && db) {
+        // 1. [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca]
+        // Regex más flexible que captura el interior del tag
+        const stockUpsertMatchesArray = Array.from(cleanedAi.matchAll(/\[STOCK_?UPSERT:\s*([^\]]+)\]/gi));
+        for (const match of stockUpsertMatchesArray) {
+          try {
+            const parts = match[1].split('|').map(s => s.trim());
+            const nombre = parts[0];
+            const categoria = parts[1];
+            const precio = parseFloat(parts[2]);
+            const stock = parseInt(parts[3]);
+            const codigo = parts[4] || null;
+            const marca = parts[5] || null;
+            const sedeId = parts[6] || DEFAULT_SEDE_ID;
+            const ubicacion = parts[7] || 'almacen';
+            const clasificacion = parts[8] || 'repuesto';
+
+            const updateObj: any = {
+              nombre,
+              categoria,
+              precio_usd: isNaN(precio) ? 0 : precio,
+              stock: isNaN(stock) ? 0 : stock,
+              codigo,
+              marca,
+              ubicacion,
+              clasificacion,
+              activo: true,
+              sede_id: sedeId
+            };
+
+            console.log(`📦 ADMIN (${from}): Intento de UPSERT para "${nombre}" en sede ${sedeId} (Stock: ${stock}, Cod: ${codigo})`);
+
+            // Intentar encontrar por CÓDIGO Y SEDE primero (es lo más preciso)
+            let existingId = null;
+            if (codigo) {
+              const { data: byCod } = await db.from('inventario')
+                .select('id')
+                .eq('codigo', codigo)
+                .eq('sede_id', sedeId)
+                .limit(1).maybeSingle();
+              if (byCod) existingId = byCod.id;
+            }
+
+            // Si no hay por código, buscar por NOMBRE Y SEDE exacto
+            if (!existingId) {
+              const { data: byNom } = await db.from('inventario')
+                .select('id')
+                .eq('nombre', nombre)
+                .eq('sede_id', sedeId)
+                .limit(1).maybeSingle();
+              if (byNom) existingId = byNom.id;
+            }
+
+            if (existingId) {
+              // UPDATE existente en ESA sede
+              const { error: updErr } = await db.from('inventario').update(updateObj).eq('id', existingId);
+              if (updErr) {
+                if (updErr.message.includes('marca')) {
+                  delete updateObj.marca;
+                  await db.from('inventario').update(updateObj).eq('id', existingId);
+                } else throw updErr;
+              }
+              console.log(`✅ ADMIN: Stock ACTUALIZADO en sede ${sedeId}: ${nombre}`);
+              await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Actualizó producto', `Actualizó ${nombre} en sede ${sedeId} vía ChatBot`, sedeId);
+            } else {
+              // INSERT nuevo en ESA sede
+              const { error: insErr } = await db.from('inventario').insert(updateObj);
+              if (insErr) {
+                if (insErr.message.includes('marca')) {
+                  delete updateObj.marca;
+                  await db.from('inventario').insert(updateObj);
+                } else throw insErr;
+              }
+              console.log(`✅ ADMIN: Nuevo producto INSERTADO en sede ${sedeId}: ${nombre}`);
+              await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Creó producto', `Agregó ${nombre} en sede ${sedeId} vía ChatBot`, sedeId);
+            }
+          } catch (e) {
+            console.error('❌ Error en STOCK_UPSERT:', e);
+          }
+        }
+
+        // 2. [STOCK_DELETE: id_o_codigo | sede_id]
+        const stockDeleteMatches = Array.from(cleanedAi.matchAll(/\[STOCK_DELETE:\s*([^\]]+)\]/gi));
+        for (const match of stockDeleteMatches) {
+          try {
+            const parts = match[1].split('|').map(s => s.trim());
+            const target = parts[0];
+            const sId = parts[1] || DEFAULT_SEDE_ID;
+
+            console.log(`🗑️ ADMIN (${from}): Intento de DELETE para "${target}" en sede ${sId}`);
+
+            // Soft delete filtering by sede
+            const { error: delErr } = await db.from('inventario')
+              .update({ activo: false })
+              .eq('sede_id', sId)
+              .or(`id.eq.${target},codigo.eq.${target}`);
+
+            if (delErr) throw delErr;
+
+            console.log(`✅ ADMIN: Producto ${target} marcado como inactivo en sede ${sId}`);
+            await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Eliminó producto', `Eliminó ${target} en sede ${sId} vía ChatBot`, sId);
+          } catch (e) {
+            console.error('❌ Error en STOCK_DELETE:', e);
+          }
+        }
+
+        // 3. [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion | sede_id | costo_estimado | nombre_cliente | vehiculo_info | placa | telefono]
+        const citaUpsertMatches = Array.from(cleanedAi.matchAll(/\[CITA_UPSERT:\s*([^\]]+)\]/gi));
+        for (const match of citaUpsertMatches) {
+          try {
+            const parts = match[1].split('|').map(s => s.trim());
+            const id = (parts[0] && parts[0] !== 'id_opcional' && parts[0] !== 'null') ? parts[0] : null;
+            const fecha = parts[1] || getVzlaDateString();
+            const hora = parts[2] || '08:00';
+            const clientId = (parts[3] && parts[3] !== 'null' && parts[3] !== 'undefined') ? parts[3] : null;
+            const vehId = (parts[4] && parts[4] !== 'null' && parts[4] !== 'undefined') ? parts[4] : null;
+            const estado = parts[5] || 'pendiente';
+            const desc = parts[6] || '';
+            const sedeId = (parts[7] && parts[7] !== 'null' && parts[7] !== 'undefined') ? parts[7] : (ctx.sede_id || DEFAULT_SEDE_ID);
+            const costoEstimado = (parts[8] && parts[8] !== 'null') ? parseFloat(parts[8]) : null;
+            const nombreCliente = (parts[9] && parts[9] !== 'null') ? parts[9] : null;
+            const vehiculoInfo = (parts[10] && parts[10] !== 'null') ? parts[10] : null;
+            const placa = (parts[11] && parts[11] !== 'null') ? parts[11].toUpperCase().replace(/[-\s]/g, '') : null;
+            const phoneParam = (parts[12] && parts[12] !== 'null') ? parts[12] : from;
+
+            // Resolve or create Client & Vehicle if IDs are missing but details are present
+            let finalClientId = clientId;
+            let finalVehId = vehId;
+
+            // Default name to admin's name if client name not provided
+            const defaultName = ctx.adminName || 'Administrador';
+            const nameToUse = nombreCliente || defaultName;
+
+            if (!finalClientId && nameToUse) {
+              const { clientId: newCId } = await getOrCreateClientAndVehicle(
+                db, phoneParam, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
+              );
+              finalClientId = newCId || null;
+            }
+
+            if (finalClientId && !finalVehId && (vehiculoInfo || placa)) {
+              const { vehicleId: newVId } = await getOrCreateClientAndVehicle(
+                db, phoneParam, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
+              );
+              finalVehId = newVId || null;
+            }
+
+            const citaObj: any = {
+              fecha,
+              hora,
+              cliente_id: finalClientId,
+              vehiculo_id: finalVehId,
+              estado,
+              descripcion: desc,
+              telefono: phoneParam,
+              sede_id: sedeId,
+              nombre_cliente: nameToUse,
+              vehiculo_info: vehiculoInfo || null,
+              placa: placa || null
+            };
+            if (costoEstimado !== null && !isNaN(costoEstimado)) {
+              citaObj.costo_estimado = costoEstimado;
+            }
+
+            let finalCitaId = id;
+
+            if (id && id.length > 5 && db) {
+              await db.from('citas').update(citaObj).eq('id', id);
+              console.log(`📅 ADMIN: Cita actualizada: ${id}`);
+              await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Actualizó cita', `Cita ${id} actualizada vía ChatBot`, sedeId);
+            } else if (db) {
+              const { data: newCita, error: insErr } = await db.from('citas').insert(citaObj).select('id').single();
+              if (insErr) throw insErr;
+              finalCitaId = newCita?.id || null;
+              console.log(`📅 ADMIN: Nueva cita creada por administrador: ${finalCitaId}`);
+              await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Agendó cita', `Cita para ${fecha} creada vía ChatBot`, sedeId);
+            }
+
+            // Trigger sale auto-registration if completed
+            if (finalCitaId && db) {
+              const fullCitaObj = { ...citaObj, id: finalCitaId };
+              await handleCompletedServiceSale(db, finalCitaId, fullCitaObj);
+            }
+          } catch (e) { console.error('Error in CITA_UPSERT:', e); }
+        }
+
+        // 3b. [SERVICIO_UPSERT: id_opcional | cliente_id | vehiculo_id | nombre_cliente | telefono | vehiculo_info | placa | tipo | descripcion | estado | costo_estimado | sede_id | tipo_personalizado]
+        const servUpsertMatches = Array.from(cleanedAi.matchAll(/\[SERVICIO_UPSERT:\s*([^\]]+)\]/gi));
+        for (const match of servUpsertMatches) {
+          try {
+            const rawTag = match[1].trim();
+            const rawParts = rawTag.split('|').map(s => s.trim());
+
+            // UUID regex to validate ID fields
+            const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            // Known field labels the AI might mistakenly include
+            const FIELD_LABELS = new Set([
+              'id_opcional', 'cliente_id', 'vehiculo_id', 'nombre_cliente', 'telefono',
+              'vehiculo_info', 'placa', 'tipo', 'descripcion', 'estado', 'costo_estimado',
+              'sede_id', 'tipo_personalizado'
+            ]);
+
+            let id: string | null = null;
+            let clienteId: string | null = null;
+            let vehId: string | null = null;
+            let nombreCliente: string | null = null;
+            let telefono: string | null = null;
+            let vehiculoInfo: string | null = null;
+            let placa: string | null = null;
+            let tipo: string = 'otro';
+            let descripcion: string = '';
+            let estado: string = 'pendiente';
+            let costoEstimado: number | null = null;
+            let sedeId: string | null = null;
+            let tipoPersonalizado: string | null = null;
+
+            // Detect labeled format: first part is a known field label (e.g., "nombre_cliente" not a UUID)
+            const isLabeledFormat = rawParts.length > 13 && FIELD_LABELS.has(rawParts[0]?.toLowerCase());
+
+            if (isLabeledFormat) {
+              // Extract values by known field labels
+              const fieldMap: Record<string, string> = {};
+              for (let i = 0; i < rawParts.length - 1; i += 2) {
+                const label = rawParts[i]?.toLowerCase().trim() || '';
+                const value = rawParts[i + 1]?.trim() || '';
+                if (label && value) fieldMap[label] = value;
+              }
+              console.log(`🔧 ADMIN: Tag con formato etiquetado detectado. Extrayendo por nombre de campo.`, Object.keys(fieldMap));
+              id = fieldMap['id_opcional'] && UUID_RE.test(fieldMap['id_opcional']) ? fieldMap['id_opcional'] : null;
+              clienteId = fieldMap['cliente_id'] && UUID_RE.test(fieldMap['cliente_id']) ? fieldMap['cliente_id'] : null;
+              vehId = fieldMap['vehiculo_id'] && UUID_RE.test(fieldMap['vehiculo_id']) ? fieldMap['vehiculo_id'] : null;
+              nombreCliente = fieldMap['nombre_cliente'] || null;
+              telefono = fieldMap['telefono'] || null;
+              vehiculoInfo = fieldMap['vehiculo_info'] || null;
+              const rawPlaca = fieldMap['placa'] || '';
+              placa = rawPlaca ? rawPlaca.toUpperCase().replace(/[-\s]/g, '') : null;
+              tipo = fieldMap['tipo'] || 'otro';
+              descripcion = fieldMap['descripcion'] || '';
+              estado = fieldMap['estado'] || 'pendiente';
+              costoEstimado = fieldMap['costo_estimado'] ? parseFloat(fieldMap['costo_estimado']) : null;
+              sedeId = fieldMap['sede_id'] || ctx.sede_id || DEFAULT_SEDE_ID;
+              tipoPersonalizado = fieldMap['tipo_personalizado'] || null;
+              console.log(`🔧 ADMIN: Tag etiquetado parseado: nombre=${nombreCliente}, placa=${placa}, tipo=${tipo}, sede=${sedeId}`);
+            } else {
+              // Standard positional parsing
+              id = (rawParts[0] && UUID_RE.test(rawParts[0])) ? rawParts[0] : null;
+              clienteId = (rawParts[1] && UUID_RE.test(rawParts[1])) ? rawParts[1] : null;
+              vehId = (rawParts[2] && UUID_RE.test(rawParts[2])) ? rawParts[2] : null;
+              nombreCliente = (rawParts[3] && rawParts[3] !== 'null' && !FIELD_LABELS.has(rawParts[3].toLowerCase())) ? rawParts[3] : null;
+              telefono = (rawParts[4] && rawParts[4] !== 'null' && !FIELD_LABELS.has(rawParts[4].toLowerCase())) ? rawParts[4] : null;
+              vehiculoInfo = (rawParts[5] && rawParts[5] !== 'null' && !FIELD_LABELS.has(rawParts[5].toLowerCase())) ? rawParts[5] : null;
+              const rawPlaca6 = (rawParts[6] && rawParts[6] !== 'null' && !FIELD_LABELS.has(rawParts[6].toLowerCase())) ? rawParts[6] : '';
+              placa = rawPlaca6 ? rawPlaca6.toUpperCase().replace(/[-\s]/g, '') : null;
+              tipo = (rawParts[7] && rawParts[7] !== 'null' && !FIELD_LABELS.has(rawParts[7].toLowerCase())) ? rawParts[7] : 'otro';
+              descripcion = (rawParts[8] && rawParts[8] !== 'null' && !FIELD_LABELS.has(rawParts[8].toLowerCase())) ? rawParts[8] : '';
+              estado = (rawParts[9] && rawParts[9] !== 'null' && !FIELD_LABELS.has(rawParts[9].toLowerCase())) ? rawParts[9] : 'pendiente';
+              costoEstimado = (rawParts[10] && rawParts[10] !== 'null' && !isNaN(parseFloat(rawParts[10]))) ? parseFloat(rawParts[10]) : null;
+              sedeId = (rawParts[11] && rawParts[11] !== 'null' && rawParts[11] !== 'undefined' && UUID_RE.test(rawParts[11])) ? rawParts[11] : (ctx.sede_id || DEFAULT_SEDE_ID);
+              tipoPersonalizado = (rawParts[12] && rawParts[12] !== 'null' && !FIELD_LABELS.has(rawParts[12].toLowerCase())) ? rawParts[12] : null;
+            }
+
+            const now = new Date();
+            const defaultName = ctx.adminName || 'Administrador';
+            const nameToUse = nombreCliente || defaultName;
+
+            let finalClientId = clienteId;
+            let finalVehId = vehId;
+
+            // Resolve or create client & vehicle if IDs missing
+            const clientPhone = telefono || from;
+            if (!finalClientId && nameToUse) {
+              const { clientId: newCId } = await getOrCreateClientAndVehicle(
+                db, clientPhone, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
+              );
+              finalClientId = newCId || null;
+            }
+            if (finalClientId && !finalVehId && (vehiculoInfo || placa)) {
+              const { vehicleId: newVId } = await getOrCreateClientAndVehicle(
+                db, clientPhone, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
+              );
+              finalVehId = newVId || null;
+            }
+
+            const vzlaDateStr = getVzlaDateString();
+            const vzlaTime = new Intl.DateTimeFormat('es-VE', {
+              timeZone: 'America/Caracas', hour: '2-digit', minute: '2-digit', hour12: false,
+            }).format(new Date());
+
+            const servObj: any = {
+              cliente_id: finalClientId,
+              vehiculo_id: finalVehId,
+              nombre_cliente: nameToUse,
+              telefono: telefono || '',
+              vehiculo_info: vehiculoInfo || null,
+              placa: placa || null,
+              tipo: tipo,
+              tipo_personalizado: tipoPersonalizado,
+              descripcion: descripcion,
+              estado: estado,
+              costo_estimado: costoEstimado,
+              fecha: vzlaDateStr,
+              hora: vzlaTime,
+              seguimiento: [{
+                fecha: now.toISOString(),
+                accion: estado === 'pendiente' ? 'Registrado vía WhatsApp Admin' : `Estado inicial: ${estado}`,
+                usuario: ctx.memoria?.nombre || ctx.adminName || 'Admin IA',
+                tipo: 'sistema',
+                progreso: 0,
+              }],
+              sede_id: sedeId,
+            };
+
+            if (id && id.length > 5 && db) {
+              // Update existing servicio
+              const { data: existing } = await db.from('servicios').select('seguimiento').eq('id', id).single();
+              if (existing) {
+                const existingSeg = existing.seguimiento || [];
+                servObj.seguimiento = [...existingSeg, {
+                  fecha: now.toISOString(),
+                  accion: `Actualizado vía WhatsApp Admin — Estado: ${estado}`,
+                  usuario: ctx.memoria?.nombre || ctx.adminName || 'Admin IA',
+                  tipo: 'sistema',
+                }];
+                servObj.updated_at = now.toISOString();
+                delete servObj.fecha;
+                delete servObj.hora;
+                await db.from('servicios').update(servObj).eq('id', id);
+                console.log(`🔧 ADMIN: Servicio actualizado: ${id}`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Actualizó servicio', `Servicio ${id} actualizado vía ChatBot`, sedeId);
+              } else {
+                console.log(`🔧 ADMIN: ID proporcionado pero servicio no encontrado: ${id}. Creando nuevo.`);
+                // Force create new instead
+                delete servObj.updated_at;
+                const { data: newServ, error: insErr } = await db.from('servicios').insert(servObj).select('id').single();
+                if (insErr) throw insErr;
+                console.log(`🔧 ADMIN: Nuevo servicio creado (fallback tras update fallido): ${newServ?.id}`);
+                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot (fallback)`, sedeId);
+              }
+            } else if (db) {
+              const { data: newServ, error: insErr } = await db.from('servicios').insert(servObj).select('id').single();
+              if (insErr) throw insErr;
+              console.log(`🔧 ADMIN: Nuevo servicio creado: ${newServ?.id}`);
+              await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot`, sedeId);
+            }
+          } catch (e) { console.error('Error in SERVICIO_UPSERT:', e); }
+        }
+
+        // 4. [CITA_DELETE: id]
+        const citaDeleteMatch = cleanedAi.match(/\[CITA_DELETE:\s*([^\]]+?)\s*\]/i);
+        if (citaDeleteMatch && db) {
+          try {
+            const target = citaDeleteMatch[1].trim();
+            await db.from('citas').delete().eq('id', target).eq('sede_id', DEFAULT_SEDE_ID);
+            console.log(`📅 ADMIN: Cita eliminada: ${target}`);
+          } catch (e) { console.error('Error in CITA_DELETE:', e); }
+        }
+
+        // 5. [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion | sede_id]
+        const clientUpsertMatches = Array.from(cleanedAi.matchAll(/\[CLIENTE_UPSERT:\s*([^\]]+)\]/gi));
+        for (const match of clientUpsertMatches) {
+          try {
+            const parts = match[1].split('|').map(s => s.trim());
+            const id = (parts[0] && parts[0] !== 'id_opcional' && parts[0] !== 'null') ? parts[0] : null;
+            const name = parts[1];
+            const last = parts[2] || '';
+            const tel = parts[3];
+            const ced = (parts[4] && parts[4] !== 'null') ? parts[4] : null;
+            const dir = (parts[5] && parts[5] !== 'null') ? parts[5] : null;
+            const sedeId = parts[6] || ctx.sede_id || DEFAULT_SEDE_ID;
+
+            const clientObj = {
+              nombre: name,
+              apellido: last,
+              telefono: tel,
+              cedula: ced,
+              direccion: dir,
+              sede_id: sedeId
+            };
+            if (id && id.length > 5 && db) {
+              await db.from('clientes').update(clientObj).eq('id', id);
+              console.log(`👤 ADMIN: Cliente actualizado: ${id}`);
+              await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Actualizó cliente', `Cliente actualizado vía ChatBot`, sedeId);
+            } else if (db) {
+              await db.from('clientes').insert(clientObj);
+              console.log(`👤 ADMIN: Nuevo cliente agregado por administrador`);
+              await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Creó cliente', `Cliente creado vía ChatBot`, sedeId);
+            }
+          } catch (e) { console.error('Error in CLIENTE_UPSERT:', e); }
+        }
+
+        // 6. [VEHICULO_UPSERT: id_opcional | cliente_id | placa | marca | modelo | anio | sede_id]
+        const vehUpsertMatches = Array.from(cleanedAi.matchAll(/\[VEHICULO_UPSERT:\s*([^\]]+)\]/gi));
+        for (const match of vehUpsertMatches) {
+          try {
+            const parts = match[1].split('|').map(s => s.trim());
+            const id = (parts[0] && parts[0] !== 'id_opcional' && parts[0] !== 'null') ? parts[0] : null;
+            const clientId = (parts[1] && parts[1] !== 'null' && parts[1] !== 'undefined') ? parts[1] : null;
+            const placa = parts[2]?.toUpperCase().replace(/[-\s]/g, '') || '';
+            const marca = parts[3] || 'Desconocida';
+            const modelo = parts[4] || 'Modelo';
+            const anio = (parts[5] && parts[5] !== 'null') ? parseInt(parts[5]) : null;
+            const sedeId = parts[6] || ctx.sede_id || DEFAULT_SEDE_ID;
+
+            const vehObj: any = {
+              placa,
+              marca,
+              modelo,
+              anio: isNaN(Number(anio)) ? null : anio,
+              sede_id: sedeId
+            };
+            if (clientId) vehObj.cliente_id = clientId;
+
+            if (id && id.length > 5 && db) {
+              await db.from('vehiculos').update(vehObj).eq('id', id);
+              console.log(`🚗 ADMIN: Vehículo actualizado: ${id}`);
+              await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Actualizó vehículo', `Vehículo ${placa} actualizado vía ChatBot`, sedeId);
+            } else if (db) {
+              const { data: newVeh, error: insErr } = await db.from('vehiculos').insert(vehObj).select('id').single();
+              if (insErr) throw insErr;
+              console.log(`🚗 ADMIN: Nuevo vehículo registrado: ${placa} (ID: ${newVeh?.id})`);
+              await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Registró vehículo', `Vehículo ${placa} (${marca} ${modelo}) registrado vía ChatBot`, sedeId);
+            }
+          } catch (e) { console.error('Error in VEHICULO_UPSERT:', e); }
+        }
+
+        // 7. [ASK_SEDE: motivo]
+        const askSedeMatch = cleanedAi.match(/\[ASK_SEDE:\s*([^\]]+?)\s*\]/i);
+        if (askSedeMatch) {
+          const motivo = askSedeMatch[1].trim();
+          console.log(`📍 [${from}] AI solicitó preguntar sede por motivo: ${motivo}`);
+
+          const buttons = [
+            { id: `admin_sede_1_${motivo}`, title: 'San Antonio' },
+            { id: `admin_sede_2_${motivo}`, title: 'Carrizal' },
+            { id: `admin_sede_3_${motivo}`, title: 'Cementerio' },
+            { id: `admin_sede_4_${motivo}`, title: 'El Paraiso' }
+          ];
+
+          await sendButtonMsg(
+            from,
+            `¿Para qué sede deseas realizar la gestión de ${motivo}? 📍`,
+            buttons,
+            'Selecciona la sede'
+          );
+
+          // Persistir motivo en memoria para saber qué hacer cuando responda
+          ctx.memoria.awaiting_admin_sede = motivo;
+          await db.from('conversaciones').update({ memoria: ctx.memoria }).eq('telefono', from);
+        }
+
+        // 8. [ACTION: registrar_venta_completa | ...]
+        const ventaMatches = Array.from(cleanedAi.matchAll(/\[ACTION:\s*registrar_venta_completa\s*\|\s*([^\]]+)\]/gi));
+        for (const match of ventaMatches) {
+          try {
+            const parts = match[1].split('|').map(s => s.trim());
+            const p: Record<string, string> = {};
+            for (const part of parts) {
+              const idx = part.indexOf('=');
+              if (idx > 0) {
+                p[part.slice(0, idx).trim()] = part.slice(idx + 1).trim();
+              }
+            }
+
+            const totalNum = parseFloat(p.total || '0');
+            const metodo = p.metodo_pago || '';
+            const contextStr = metodo ? ` (${metodo})` : '';
+            const clienteNombre = p.cliente || 'Consumidor Final';
+            const clienteStr = p.cliente ? ` | Cliente: ${p.cliente}` : '';
+            const vehiculoStr = p.vehiculo ? ` | Vehículo: ${p.vehiculo}` : '';
+            const pagoMixtoStr = p.pago_mixto ? ` | Pagos: ${p.pago_mixto}` : '';
+            const itemsDisplay = p.items || p.producto || 'Varios';
+            const totalStr = p.total ? ` | Total: $${p.total}${contextStr}` : '';
+            const ivaStr = p.iva ? ` | IVA 16%: $${p.iva}` : '';
+            const inicialStr = p.inicial ? ` | Inicial Cashea: $${p.inicial}` : '';
+
+            const notasFinales = `Items: ${itemsDisplay}${totalStr}${ivaStr}${inicialStr}${clienteStr}${vehiculoStr}${pagoMixtoStr}`.trim();
+            const targetSedeId = p.sede_id || ctx.sede_id || DEFAULT_SEDE_ID;
+
+            console.log(`💰 ADMIN (${from}): Registrando venta completa de $${totalNum} en sede ${targetSedeId}`);
+
+            // 1. Insert into ventas_dia (Accounting)
+            let desglose = [{
+              descripcion: p.titulo || itemsDisplay.split(',')[0]?.split(':')[0] || 'Varios',
+              cantidad: parseInt(p.cantidad) || 1,
+              precio_unitario: totalNum,
+              total: totalNum
+            }];
+
+            if (p.items && p.items.includes(':')) {
+              desglose = p.items.split(',').map(item => {
+                const parts = item.trim().split(':');
+                const desc = parts[0]?.trim() || item.trim();
+                const priceStr = parts[1]?.replace(/[^\d.]/g, '') || '0';
+                const price = parseFloat(priceStr) || 0;
+                return { descripcion: desc, cantidad: 1, precio_unitario: price, total: price };
+              });
+            }
+
+            const { data: newVentaDia, error: errDia } = await db.from('ventas_dia').insert({
+              fecha: getVzlaDateString(),
+              cliente: clienteNombre,
+              total_ingresos: totalNum,
+              desglose,
+              con_iva: !!p.iva,
+              tasa_cambio: rates?.bcv || 0,
+              notes: notasFinales, // Note: wait, is the column 'notas' or 'notes'? Let's check! It's 'notas' in schema, but wait, the database schema we saw had column 'notas' (text).
+              notas: notasFinales,
+              creado_por: 'Admin IA',
+              sede_id: targetSedeId,
+              metodos_pago: {
+                otro: metodo === 'otro' ? totalNum : 0,
+                zelle: metodo === 'zelle' ? totalNum : 0,
+                cashea: metodo === 'cashea_bcv' ? totalNum : 0,
+                binance: metodo === 'binance' ? totalNum : 0,
+                pago_movil: metodo === 'pago_movil' ? totalNum : 0,
+                efectivo_usd: (metodo === 'divisas' || metodo === 'efectivo_usd') ? totalNum : 0,
+                efectivo_ves: metodo === 'efectivo_ves' ? totalNum : 0,
+                transferencia: metodo === 'transferencia' ? totalNum : 0,
+                punto_de_venta: metodo === 'punto_venta' ? totalNum : 0,
+                euros: (metodo === 'euros' || metodo === 'efectivo_eur') ? totalNum : 0
+              }
+            }).select('id').single();
+
+            if (errDia) throw errDia;
+
+            // 2. Insert into ventas_silenciadores (Compatibility)
+            const { error: errSil } = await db.from('ventas_silenciadores').insert({
+              cantidad: parseInt(p.cantidad) || 1,
+              modelo: p.titulo || itemsDisplay.split(',')[0]?.split(':')[0] || 'Venta múltiple',
+              notas: `Venta POS #${newVentaDia?.id?.slice(0, 8)} | ${notasFinales}`,
+              fecha: new Date().toISOString(),
+              precio_registrado: totalNum,
+              sede_id: targetSedeId
+            });
+
+            if (errSil) throw errSil;
+
+            // 3. Auto-decrement stock for each item if inv_ids provided
+            if (p.inv_ids) {
+              const idList = p.inv_ids.split(',').map(x => x.trim());
+              for (const itemStr of idList) {
+                let invId = itemStr;
+                let qty = 1;
+                if (itemStr.includes(':')) {
+                  const [idPart, qtyPart] = itemStr.split(':');
+                  invId = idPart.trim();
+                  qty = parseInt(qtyPart) || 1;
+                }
+                const { data: invItem } = await db.from('inventario').select('stock').eq('id', invId).single();
+                if (invItem) {
+                  const newStock = Math.max(0, (invItem.stock || 0) - qty);
+                  await db.from('inventario').update({ stock: newStock, updated_at: new Date().toISOString() }).eq('id', invId);
+                }
+              }
+            }
+
+            await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Registró venta POS (Silenciadores)', `Cliente: ${clienteNombre}, Total: $${totalNum.toFixed(2)} (vía ChatBot)`, targetSedeId);
+          } catch (e) {
+            console.error('❌ Error en ACTION: registrar_venta_completa:', e);
+          }
+        }
+
+        // Remove management tags from final message
+        cleanedAi = cleanedAi
+          .replace(/\[STOCK_UPSERT:[^\]]+\]/gi, '')
+          .replace(/\[STOCK_DELETE:[^\]]+\]/gi, '')
+          .replace(/\[VEHICULO_UPSERT:[^\]]+\]/gi, '')
+          .replace(/\[CITA_UPSERT:[^\]]+\]/gi, '')
+          .replace(/\[CITA_DELETE:[^\]]+\]/gi, '')
+          .replace(/\[SERVICIO_UPSERT:[^\]]+\]/gi, '')
+          .replace(/\[CLIENTE_UPSERT:[^\]]+\]/gi, '')
+          .replace(/\[ASK_SEDE:[^\]]+\]/gi, '')
+          .replace(/\[ACTION: registrar_venta_completa[^\]]+\]/gi, '')
+          .trim();
+      }
+
+      // Format: [CITA: AAAA-MM-DD HH:MM | descripcion | marca modelo]
+      // Now time is optional: [CITA: AAAA-MM-DD | descripcion | marca modelo]
+      const citaMatch = cleanedAi.match(/\[CITA:\s*(\d{4}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}))?(?:\s*\|\s*([^|\]]+?))?(?:\s*\|\s*([^\]]+?))?\s*\]/);
+      if (citaMatch) {
+        const fecha = citaMatch[1];
+        const hora = citaMatch[2] || '08:00'; // Default to 8 AM if not provided
+        const servicio = citaMatch[3]?.trim() || '';
+        const vehiculo = citaMatch[4]?.trim() || '';
+        cleanedAi = cleanedAi.replace(/\[CITA:[^\]]+\]/g, '').trim();
+
+        try {
+          if (db) {
+            // ── Extract all available data ──────────────────────────────────
+            const userName = ctx.memoria?.nombre || '';
+            const vehiculoFromTag = vehiculo || '';
+            // Plate: from current message > memoria
+            const placa = extractPlate(messageBody) || ctx.memoria.placa || '';
+            // Year from message or memoria
+            const anioMatch = messageBody.match(/\b(19[8-9]\d|20[0-2]\d)\b/);
+            const anio = anioMatch?.[1] || ctx.memoria?.vehiculos?.[0]?.anio || '';
+            // Best vehicle info: from [CITA] tag > first memoria vehicle
+            const vehiculoFromMem = ctx.memoria?.vehiculos?.map(v =>
+              `${v.marca} ${v.modelo}${v.anio ? ' ' + v.anio : ''}`).join(', ') || '';
+            const vehiculoInfo = vehiculoFromTag || vehiculoFromMem;
+
+            // ── Get or Create Client & Vehicle ─────────────────────────────
+            const { clientId, vehicleId, isNew } = await getOrCreateClientAndVehicle(
+              db, from, userName, vehiculoInfo, placa, anio?.toString(), waProfileName, ctx.sede_id
+            );
+
+            // ── Composed description with client name + (WhatsApp) ──────────
+            const clientLabel = userName
+              ? `${userName}`
+              : `${from}`;
+            const descripcionFinal = [
+              servicio || 'Servicio por WhatsApp',
+              vehiculoInfo ? `- ${vehiculoInfo}` : '',
+              placa ? `[${placa}]` : '',
+            ].filter(Boolean).join(' ');
+
+            // ── Deduplicate ──────────────────────────────────────────────────
+            const { data: existing } = await db.from('citas')
+              .select('id').eq('telefono', from).eq('fecha', fecha).eq('hora', hora)
+              .neq('estado', 'cancelada').limit(1);
+            if (existing && existing.length > 0) {
+              console.log(`⚠️ Cita duplicada ignorada: ${fecha} ${hora} para ${from}`);
+            } else {
+              await db.from('citas').insert({
+                fecha,
+                hora,
+                telefono: from,
+                cliente_id: clientId || null,
+                vehiculo_id: vehicleId || null,
+                tipo_servicio: 'otro',
+                descripcion: descripcionFinal,
+                estado: 'pendiente',
+                duracion_minutos: 60,
+                nombre_cliente: userName || from,
+                vehiculo_info: vehiculoInfo || null,
+                placa: placa || null,
+                sede_id: ctx.sede_id || DEFAULT_SEDE_ID
+              });
+              console.log(`📅 AUTO-CITA IA: ${fecha} ${hora} | ${descripcionFinal} | client_id: ${clientId} | veh_id: ${vehicleId} | isNew: ${isNew}`);
+            }
+          }
+        } catch (e) { console.error('Error insertando cita automatica:', e); }
+      }
+
+      // ── Clean all AI Tags before sending to WhatsApp ──────────────────
+      cleanedAi = cleanedAi
+        .replace(/\[CITA:[^\]]+\]/gi, '')
+        .replace(/\[NOMBRE:[^\]]+\]/gi, '')
+        .replace(/\[ACTION: registrar_venta_completa[^\]]+\]/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      const needsAsesor = aiNeedsAsesor(cleanedAi);
+
+      if (needsAsesor) {
+        const withoutPhone = cleanedAi
+          .replace(/https?:\/\/wa\.me\/\S+/gi, '')
+          .replace(/wa\.me\/\S+/gi, '')
+          .replace(/\+?58\s?412[\s\-]?334[\s\-]?3519/g, '')
+          .trim();
+        if (withoutPhone) { await sendMsg(from, withoutPhone, false, wa_message_id); await delay(700); }
+        await sendContactCard(from, ASESOR_PHONE, ASESOR_DISPLAY_NAME);
+      } else {
+        // TikTok links — send separately with preview
+        const tiktokMatch = cleanedAi.match(/https?:\/\/(?:vt\.tiktok\.com|tiktok\.com)\/\S+/i);
+        if (tiktokMatch) {
+          const textWithout = cleanedAi.replace(tiktokMatch[0], '').trim();
+          if (textWithout) { await sendMsg(from, textWithout, false, wa_message_id); await delay(500); }
+          await sendMsg(from, tiktokMatch[0], true, wa_message_id);
+        } else {
+          const hasUrl = /https?:\/\//.test(cleanedAi);
+          if (cleanedAi.trim()) {
+            await sendMsg(from, cleanedAi, hasUrl, wa_message_id);
+          }
+        }
+      }
+    } else {
+      // ── All immediate attempts failed — persist for cron retry ───────────────
+      console.warn(`🚨 [${from}] Fallo total de IA. Guardando en cola de reintento...`);
       try {
         if (db) {
-          const { data: pData } = await db.from('mensajes_pendientes_ia').insert({
+          await db.from('mensajes_pendientes_ia').insert({
             from_number: from,
             message_body: messageBody,
             wa_message_id: wa_message_id,
@@ -2667,882 +3660,20 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             intentos: 0,
             status: 'pending',
             sede_id: DEFAULT_SEDE_ID
-          }).select('id').single();
-          pendingId = pData?.id || null;
-          console.log(`💾 [${from}] Persistencia temprana activada (ID: ${pendingId})`);
-        }
-      } catch (e) {
-        console.error('❌ Error en persistencia temprana:', e);
-      }
-
-      // 🛑 Silenciar bot si está en modo humano (Intervención manual) - unless they are an admin
-      if (ctx.estado === 'humano' && !ctx.isAdmin) {
-        console.log(`👤 [${from}] Modo Humano ACTIVO. El bot permanecerá en silencio.`);
-        // Procesamos intenciones para extraer metadatos (nombre, vehículo) para el CRM
-        const r = await processIntents(db, from, messageBody, ctx, waProfileName);
-        // Actualizamos la conversación en la DB para reflejar el último mensaje en el dashboard
-        await updateConversation(db, from, messageBody, ctx.memoria, r?.clientId);
-        return;
-      }
-
-      // 📍 Location Flow (Multi-sede)
-      const bodyClean = lowerBody.trim();
-      let isLocationChoicePending = ctx.memoria?.awaiting_location_choice === true;
-      let isCaracasChoicePending = ctx.memoria?.awaiting_caracas_choice === true;
-      
-      // Verificar si se presionó un botón de sede
-      const lastButtonId = (global as any).__last_button_id;
-      (global as any).__last_button_id = undefined; // Limpiar después de usar
-      
-      // Mapear button_ids a sedes
-      let selectedSedeFromButton: string | null = null;
-      if (lastButtonId) {
-        if (lastButtonId === 'sede_1' || lastButtonId === 'admin_sede_1') selectedSedeFromButton = 'san antonio';
-        else if (lastButtonId === 'sede_2' || lastButtonId === 'admin_sede_2') selectedSedeFromButton = 'carrizal';
-        else if (lastButtonId === 'sede_3' || lastButtonId === 'admin_sede_3') selectedSedeFromButton = 'caracas';
-        else if (lastButtonId === 'sede_4' || lastButtonId === 'admin_sede_4') selectedSedeFromButton = 'paraiso';
-        else if (lastButtonId === 'ccs_choice_1') { selectedSedeFromButton = 'caracas'; isCaracasChoicePending = false; isLocationChoicePending = false; }
-        else if (lastButtonId === 'ccs_choice_2') { selectedSedeFromButton = 'paraiso'; isCaracasChoicePending = false; isLocationChoicePending = false; }
-        console.log(`🔘 [${from}] Sede seleccionada por botón: ${selectedSedeFromButton} (button: ${lastButtonId})`);
-      }
-
-      // Detection of specific sedes in the message
-      const mentionsSanAntonio = selectedSedeFromButton === 'san antonio' || bodyClean.includes('san antonio') || (isLocationChoicePending && (bodyClean === '1' || bodyClean === 'san antonio'));
-      const mentionsCarrizal = selectedSedeFromButton === 'carrizal' || bodyClean.includes('carrizal') || (isLocationChoicePending && (bodyClean === '2' || bodyClean === 'carrizal'));
-      const mentionsCaracas = selectedSedeFromButton === 'caracas' || bodyClean.includes('cementerio') || (isLocationChoicePending && (bodyClean === '3' || bodyClean === 'cementerio')) || (isCaracasChoicePending && (bodyClean === '1' || bodyClean === 'cementerio'));
-      const mentionsParaiso = selectedSedeFromButton === 'paraiso' || bodyClean.includes('paraiso') || bodyClean.includes('paraíso') || (isLocationChoicePending && (bodyClean === '4' || bodyClean.includes('paraiso'))) || (isCaracasChoicePending && (bodyClean === '2' || bodyClean.includes('paraiso')));
-      const mentionsCaracasGeneral = bodyClean.includes('caracas') && !bodyClean.includes('cementerio') && !bodyClean.includes('paraiso') && !bodyClean.includes('paraíso');
-
-      if (!ctx.isAdmin && mentionsCaracasGeneral) {
-        console.log(`📍 [${from}] Preguntando por sede de Caracas específica con 2 botones...`);
-        const buttons = [
-          { id: 'ccs_choice_1', title: 'El Cementerio' },
-          { id: 'ccs_choice_2', title: 'El Paraiso' }
-        ];
-        await sendButtonMsg(from, '📍 Contamos con 2 sedes en Caracas. ¿Cuál te queda más cerca? 😊', buttons, 'Selecciona una opción');
-        ctx.memoria.awaiting_caracas_choice = true;
-        if (db) await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
-        return;
-      }
-
-      if (!ctx.isAdmin && (mentionsSanAntonio || mentionsCarrizal || mentionsCaracas || mentionsParaiso)) {
-        let locationSent = false;
-        let selectedSedeName = '';
-        const selectedSedePhone = '584123343519';
-
-        if (mentionsSanAntonio) {
-          await sendMsg(from, '📍 *Sede San Antonio de los Altos:*\n\nEn San Antonio de los Altos, distribuidor de las minas al frente del Frescos Market nos encontramos. 😊\n\n*Mapa:* https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
-          await delay(800);
-          await sendMsg(from, '🎥 *Video de cómo llegar:* https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
-          await delay(800);
-          await sendMsg(from, '🎁 *¡Beneficios Exclusivos en San Antonio!* 🎁\n\nSi vienes a nuestra sede de San Antonio, cuentas con beneficios como:\n✅ *Revisión totalmente gratuita.*\n✅ *Instalación de la app del taller GRATIS en Lycos Team.*\n✅ *Servicios y tecnología automotriz profesional.*\n\n¡Te esperamos! 🚗🔧', true);
-          selectedSedeName = 'Sede San Antonio';
-          locationSent = true;
-        } else if (mentionsCarrizal) {
-          await sendMsg(from, '📍 *Sede Carrizal (Principal):*\n\nServicios Jadar Calle Raul Leoni, Municipio Carrizal cerca de eso. 😊\n\n*Mapa:* https://maps.app.goo.gl/cxLGkqWtsf5qogMB6', true);
-          selectedSedeName = 'Sede Carrizal';
-          locationSent = true;
-        } else if (mentionsCaracas) {
-          await sendMsg(from, '📍 *Sede Caracas (El Cementerio):*\n\nE/S PDV Nuevo Prado Av. Roosevelt, Caracas cerca de esa bomba. 😊\n\n*Mapa:* https://maps.app.goo.gl/aeHGdzUumhpBep719', true);
-          selectedSedeName = 'Sede Caracas';
-          locationSent = true;
-        } else if (mentionsParaiso) {
-          await sendMsg(from, '📍 *Sede Caracas (El Paraíso):*\n\nAvenida Los Liberales, Caracas 1020, Distrito Capital, Venezuela, Al frente de Puerkos Restaurant. 😊\n\n*Mapa:* https://maps.app.goo.gl/c3TnUnHYGEJUWodX7', true);
-          selectedSedeName = 'Sede Caracas (El Paraíso)';
-          locationSent = true;
-        }
-
-        if (locationSent) {
-          delete ctx.memoria.awaiting_location_choice;
-          delete ctx.memoria.awaiting_caracas_choice;
-          if (db) {
-            await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
-          }
-          await delay(800);
-          await sendMsg(from, `También te comparto el contacto de la ${selectedSedeName} por si necesitas llamar:`);
-          await delay(500);
-          await sendContactCard(from, selectedSedePhone, selectedSedeName);
-          await delay(800);
-
-          // Determinar si el mensaje es SOLO la elección de sede o si hay una pregunta adicional
-          const isSimpleSedeChoice = bodyClean === 'caracas' || 
-                                     bodyClean === 'el cementerio' || 
-                                     bodyClean === 'el paraiso' || 
-                                     bodyClean === 'el paraíso' || 
-                                     bodyClean === 'san antonio' || 
-                                     bodyClean === 'carrizal' || 
-                                     bodyClean === '1' || bodyClean === '2' || bodyClean === '3' || bodyClean === '4' ||
-                                     bodyClean.length < 15;
-
-          if (isSimpleSedeChoice) {
-            await sendMsg(from, '¿Deseas agendar una cita en esta sede o tienes alguna otra duda? 😊');
-            return;
-          }
-          
-          console.log(`📍 [${from}] Sede detectada pero el mensaje es complejo. Continuando procesamiento con IA.`);
-          // Inyectamos un mensaje en la historia para que la IA sepa que ya enviamos la ubicación
-          ctx.historia.push({ 
-            role: 'model', 
-            parts: [{ text: `[SISTEMA: Ya le envié al cliente la ubicación detallada de ${selectedSedeName} con el mapa y el contacto. Responde ahora a sus otras dudas sobre precios o productos de forma directa.]` }] 
           });
-          // Continuamos el flujo para que la IA responda el resto de la pregunta
+          console.log(`💾 [${from}] Mensaje guardado en cola pendiente para reintento por cron.`);
         }
+      } catch (dbErr) {
+        console.error('❌ Error guardando mensaje pendiente en DB:', dbErr);
       }
+    }
 
-      // If it's a generic location request and we haven't sent a specific one yet
-      if (isLocationRequest(lowerBody) && !ctx.isAdmin) {
-        console.log(`📍 [${from}] Preguntando por sede para ubicación con botones...`);
-        const buttons = [
-          { id: 'sede_1', title: 'San Antonio' },
-          { id: 'sede_2', title: 'Carrizal' },
-          { id: 'sede_3', title: 'Cementerio' },
-          { id: 'sede_4', title: 'El Paraiso' }
-        ];
+    // Marcar como completado si llegamos hasta aquí con éxito
+    if (db && pendingId) {
+      await db.from('mensajes_pendientes_ia').update({ status: 'completed' }).eq('id', pendingId).eq('sede_id', DEFAULT_SEDE_ID);
+    }
 
-        await sendButtonMsg(
-          from, 
-          '¡Con gusto! 📍 Contamos con 4 sedes disponibles. ¿Cuál te queda más cerca?',
-          buttons,
-          'Selecciona una opción abajo'
-        );
-        
-        await delay(800);
-        await sendMsg(from, '💡 *Dato importante:* Si vienes a nuestra sede de San Antonio, cuentas con más beneficios exclusivos y otros servicios adicionales. 🚗🔧');
-        
-        ctx.memoria.awaiting_location_choice = true;
-        if (db) {
-          await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
-        }
-        return; 
-      }
-
-      // If we were waiting for a choice but the message didn't match any sede, clear the flag and let AI handle it
-      if (isLocationChoicePending) {
-        console.log(`📍 [${from}] Respuesta no reconocida en flujo de sede: "${bodyClean}". Liberando para que la IA responda.`);
-        delete ctx.memoria.awaiting_location_choice;
-        if (db) {
-          await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
-        }
-        // No return, let the flow continue to AI
-      }
-
-      // ─── ADMIN SEDE CHOICE ──────────────────────────────────────────
-      if (ctx.memoria?.awaiting_admin_sede && db) {
-        const motivo = ctx.memoria.awaiting_admin_sede;
-        const selectedSedeId = await findSedeIdByName(db, bodyClean);
-        
-        if (selectedSedeId) {
-          const { data: sData } = await db.from('sedes').select('nombre').eq('id', selectedSedeId).single();
-          const sedeName = sData?.nombre || 'la sede seleccionada';
-          
-          delete ctx.memoria.awaiting_admin_sede;
-          await db.from('conversaciones').update({ memoria: ctx.memoria }).eq('telefono', from);
-          
-          await sendMsg(from, `✅ Entendido. Procedo con la gestión de *${motivo}* para la sede *${sedeName}*.`);
-          
-          // Inject a hidden message so the AI can continue with the correct sede
-          const followUpMsg = `[SISTEMA: El administrador seleccionó la sede ${sedeName} (ID: ${selectedSedeId}) para ${motivo}. Por favor, procede con la información o el tag correspondiente usando este ID].`;
-          const aiResp = await getAIResponse(followUpMsg, ctx, rates, from);
-          if (aiResp) {
-            await sendMsg(from, cleanForWhatsApp(aiResp), true, wa_message_id);
-          }
-          return;
-        }
-      }
-
-      // Medical certificate intent (Handled by AI, but we prevent location trigger)
-      if (isCertRequest(lowerBody)) {
-        // Just let it pass to AI, which has the prices and information.
-        // The separate detection ensures it doesn't enter the location block above.
-      }
-
-      // Social media intent
-      if (isSocialRequest(lowerBody)) {
-        await sendMsg(from, 'Aqui te van nuestras redes sociales 📱 Siguenos para tips, novedades y promos 🔧');
-        await delay(500);
-        await sendMsg(from, IG_LINK, true);
-        await delay(500);
-        await sendMsg(from, TT_LINK, true);
-        await updateConversation(db, from, messageBody, ctx.memoria);
-        // Continue to AI response/intents
-      }
-
-      // Asesor contact intent (explicit)
-      if (isContactRequest(lowerBody)) {
-        await sendMsg(from, 'Con gusto 😊 Te comparto el contacto directo de nuestro asesor:');
-        await delay(600);
-        await sendContactCard(from, ASESOR_PHONE, ASESOR_DISPLAY_NAME);
-        await updateConversation(db, from, messageBody, ctx.memoria);
-        return;
-      }
-
-      // ─── Intent Detection & Data Processing ──────────────────────────
-      // We process intents FIRST so that the AI response can Use the new data (like a newly detected name)
-      const r = await processIntents(db, from, messageBody, ctx, waProfileName);
-      
-      // Update ctx.memoria if a name was found so the AI sees it in this same turn
-      if (ctx.memoria.nombre) {
-        // Already updated inside processIntents, but ensuring context for AI is fresh
-      }
-      // AI response
-      const aiResponse = await getAIResponse(messageBody, ctx, rates, from);
-
-      if (aiResponse) {
-        const cleanedAiBody = cleanForWhatsApp(aiResponse);
-        let cleanedAi = cleanedAiBody.replace(/\[IMAGE:[^\]]+\]/gi, '').trim();
-
-        // ── Process Image Tags [IMAGE: slug] ───────────────────────────
-        const imageMatches = Array.from(cleanedAiBody.matchAll(/\[IMAGE:\s*([^\]]+)\]/gi));
-        for (const match of imageMatches) {
-            const slug = match[1].trim().toLowerCase();
-            console.log(`🤖 AI solicitó enviar imagen: ${slug}`);
-            await sendImageMsg(from, slug, undefined, wa_message_id);
-            await delay(500);
-        }
-
-
-        // ── Extract Client Name via AI Tag ────────────────────────────────
-        const nombreMatch = cleanedAi.match(/\[NOMBRE:\s*([^\]]+?)\]/i);
-        if (nombreMatch) {
-            const aiDetectedName = nombreMatch[1].trim();
-            cleanedAi = cleanedAi.replace(/\[NOMBRE:[^\]]+\]/gi, '').trim();
-            
-            const AI_NAME_BLACKLIST = ['cliente','usuario','hola','buenas','buenos','dias','noches','tardes','precio','cita','servicio','taller','vehiculo', 'whatsapp'];
-            if (!AI_NAME_BLACKLIST.some(w => aiDetectedName.toLowerCase().includes(w))) {
-              ctx.memoria.nombre = aiDetectedName;
-              try {
-                if (db) {
-                  await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
-                  await getOrCreateClientAndVehicle(db, from, aiDetectedName, '', '', undefined, waProfileName);
-                  console.log(`🤖 AI Nombre Extraido y Guardado: ${aiDetectedName}`);
-                }
-              } catch (e) { console.error('Error saving AI detected name:', e); }
-            }
-        }
-
-        // ── Process INTERES Tag [INTERES: servicio | vehiculo | notas] ──
-        const interesMatch = cleanedAi.match(/\[INTERES:\s*([^|\]]+?)(?:\s*\|\s*([^|\]]+?))?(?:\s*\|\s*([^\]]+?))?\s*\]/i);
-        if (interesMatch && db) {
-          const servicio = interesMatch[1]?.trim();
-          const vehiculo = interesMatch[2]?.trim();
-          const notas = interesMatch[3]?.trim();
-          cleanedAi = cleanedAi.replace(/\[INTERES:[^\]]+\]/gi, '').trim();
-
-          try {
-            const userName = ctx.memoria?.nombre || '';
-            const { clientId, vehicleId } = await getOrCreateClientAndVehicle(
-              db, from, userName, vehiculo || '', '', undefined, waProfileName
-            );
-
-            await db.from('citas').insert({
-              fecha: getVzlaDateString(), // Fecha de hoy como placeholder
-              hora: '00:00', // Hora placeholder para prospectos
-              telefono: from,
-              cliente_id: clientId || null,
-              vehiculo_id: vehicleId || null,
-              tipo_servicio: 'otro',
-              descripcion: `PROSPECTO: ${servicio}${notas ? ' (' + notas + ')' : ''}`,
-              estado: 'pendiente', // Usamos pendiente pero con descripción de prospecto
-              sede_id: ctx.sede_id || DEFAULT_SEDE_ID
-            });
-            console.log(`💡 INTERES DETECTADO: ${servicio} para ${from}`);
-          } catch (e) { console.error('Error guardando interes:', e); }
-        }
-
-        // ── ADMIN: Process management tags ────────────────────────────────
-        const isAdmin = !!ctx.isAdmin || ADMIN_PHONES.includes(from || '');
-        
-        if (isAdmin && db) {
-          // 1. [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca]
-          // Regex más flexible que captura el interior del tag
-          const stockUpsertMatchesArray = Array.from(cleanedAi.matchAll(/\[STOCK_?UPSERT:\s*([^\]]+)\]/gi));
-          for (const match of stockUpsertMatchesArray) {
-            try {
-              const parts = match[1].split('|').map(s => s.trim());
-              const nombre = parts[0];
-              const categoria = parts[1];
-              const precio = parseFloat(parts[2]);
-              const stock = parseInt(parts[3]);
-              const codigo = parts[4] || null;
-              const marca = parts[5] || null;
-              const sedeId = parts[6] || DEFAULT_SEDE_ID;
-              const ubicacion = parts[7] || 'almacen';
-              const clasificacion = parts[8] || 'repuesto';
-
-              const updateObj: any = {
-                nombre, 
-                categoria, 
-                precio_usd: isNaN(precio) ? 0 : precio, 
-                stock: isNaN(stock) ? 0 : stock,
-                codigo,
-                marca,
-                ubicacion,
-                clasificacion,
-                activo: true,
-                sede_id: sedeId
-              };
-
-              console.log(`📦 ADMIN (${from}): Intento de UPSERT para "${nombre}" en sede ${sedeId} (Stock: ${stock}, Cod: ${codigo})`);
-
-              // Intentar encontrar por CÓDIGO Y SEDE primero (es lo más preciso)
-              let existingId = null;
-              if (codigo) {
-                const { data: byCod } = await db.from('inventario')
-                  .select('id')
-                  .eq('codigo', codigo)
-                  .eq('sede_id', sedeId)
-                  .limit(1).maybeSingle();
-                if (byCod) existingId = byCod.id;
-              }
-              
-              // Si no hay por código, buscar por NOMBRE Y SEDE exacto
-              if (!existingId) {
-                const { data: byNom } = await db.from('inventario')
-                  .select('id')
-                  .eq('nombre', nombre)
-                  .eq('sede_id', sedeId)
-                  .limit(1).maybeSingle();
-                if (byNom) existingId = byNom.id;
-              }
-              
-              if (existingId) {
-                // UPDATE existente en ESA sede
-                const { error: updErr } = await db.from('inventario').update(updateObj).eq('id', existingId);
-                if (updErr) {
-                  if (updErr.message.includes('marca')) {
-                    delete updateObj.marca;
-                    await db.from('inventario').update(updateObj).eq('id', existingId);
-                  } else throw updErr;
-                }
-                console.log(`✅ ADMIN: Stock ACTUALIZADO en sede ${sedeId}: ${nombre}`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Actualizó producto', `Actualizó ${nombre} en sede ${sedeId} vía ChatBot`, sedeId);
-              } else {
-                // INSERT nuevo en ESA sede
-                const { error: insErr } = await db.from('inventario').insert(updateObj);
-                if (insErr) {
-                  if (insErr.message.includes('marca')) {
-                    delete updateObj.marca;
-                    await db.from('inventario').insert(updateObj);
-                  } else throw insErr;
-                }
-                console.log(`✅ ADMIN: Nuevo producto INSERTADO en sede ${sedeId}: ${nombre}`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Creó producto', `Agregó ${nombre} en sede ${sedeId} vía ChatBot`, sedeId);
-              }
-            } catch (e) { 
-              console.error('❌ Error en STOCK_UPSERT:', e);
-            }
-          }
-
-          // 2. [STOCK_DELETE: id_o_codigo | sede_id]
-          const stockDeleteMatches = Array.from(cleanedAi.matchAll(/\[STOCK_DELETE:\s*([^\]]+)\]/gi));
-          for (const match of stockDeleteMatches) {
-            try {
-              const parts = match[1].split('|').map(s => s.trim());
-              const target = parts[0];
-              const sId = parts[1] || DEFAULT_SEDE_ID;
-              
-              console.log(`🗑️ ADMIN (${from}): Intento de DELETE para "${target}" en sede ${sId}`);
-              
-              // Soft delete filtering by sede
-              const { error: delErr } = await db.from('inventario')
-                .update({ activo: false })
-                .eq('sede_id', sId)
-                .or(`id.eq.${target},codigo.eq.${target}`);
-              
-              if (delErr) throw delErr;
-              
-              console.log(`✅ ADMIN: Producto ${target} marcado como inactivo en sede ${sId}`);
-              await logActivityAdmin(db, ctx.memoria?.nombre || 'Admin IA', 'Eliminó producto', `Eliminó ${target} en sede ${sId} vía ChatBot`, sId);
-            } catch (e) {
-              console.error('❌ Error en STOCK_DELETE:', e);
-            }
-          }
-
-          // 3. [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion | sede_id | costo_estimado | nombre_cliente | vehiculo_info | placa | telefono]
-          const citaUpsertMatches = Array.from(cleanedAi.matchAll(/\[CITA_UPSERT:\s*([^\]]+)\]/gi));
-          for (const match of citaUpsertMatches) {
-            try {
-              const parts = match[1].split('|').map(s => s.trim());
-              const id = (parts[0] && parts[0] !== 'id_opcional' && parts[0] !== 'null') ? parts[0] : null;
-              const fecha = parts[1] || getVzlaDateString();
-              const hora = parts[2] || '08:00';
-              const clientId = (parts[3] && parts[3] !== 'null' && parts[3] !== 'undefined') ? parts[3] : null;
-              const vehId = (parts[4] && parts[4] !== 'null' && parts[4] !== 'undefined') ? parts[4] : null;
-              const estado = parts[5] || 'pendiente';
-              const desc = parts[6] || '';
-              const sedeId = (parts[7] && parts[7] !== 'null' && parts[7] !== 'undefined') ? parts[7] : (ctx.sede_id || DEFAULT_SEDE_ID);
-              const costoEstimado = (parts[8] && parts[8] !== 'null') ? parseFloat(parts[8]) : null;
-              const nombreCliente = (parts[9] && parts[9] !== 'null') ? parts[9] : null;
-              const vehiculoInfo = (parts[10] && parts[10] !== 'null') ? parts[10] : null;
-              const placa = (parts[11] && parts[11] !== 'null') ? parts[11].toUpperCase().replace(/[-\s]/g, '') : null;
-              const phoneParam = (parts[12] && parts[12] !== 'null') ? parts[12] : from;
-
-              // Resolve or create Client & Vehicle if IDs are missing but details are present
-              let finalClientId = clientId;
-              let finalVehId = vehId;
-
-              // Default name to admin's name if client name not provided
-              const defaultName = ctx.adminName || 'Administrador';
-              const nameToUse = nombreCliente || defaultName;
-
-              if (!finalClientId && nameToUse) {
-                const { clientId: newCId } = await getOrCreateClientAndVehicle(
-                  db, phoneParam, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
-                );
-                finalClientId = newCId || null;
-              }
-
-              if (finalClientId && !finalVehId && (vehiculoInfo || placa)) {
-                const { vehicleId: newVId } = await getOrCreateClientAndVehicle(
-                  db, phoneParam, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
-                );
-                finalVehId = newVId || null;
-              }
-
-              const citaObj: any = {
-                fecha, 
-                hora, 
-                cliente_id: finalClientId, 
-                vehiculo_id: finalVehId, 
-                estado, 
-                descripcion: desc, 
-                telefono: phoneParam,
-                sede_id: sedeId,
-                nombre_cliente: nameToUse,
-                vehiculo_info: vehiculoInfo || null,
-                placa: placa || null
-              };
-              if (costoEstimado !== null && !isNaN(costoEstimado)) {
-                citaObj.costo_estimado = costoEstimado;
-              }
-
-              let finalCitaId = id;
-
-              if (id && id.length > 5 && db) {
-                await db.from('citas').update(citaObj).eq('id', id);
-                console.log(`📅 ADMIN: Cita actualizada: ${id}`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Actualizó cita', `Cita ${id} actualizada vía ChatBot`, sedeId);
-              } else if (db) {
-                const { data: newCita, error: insErr } = await db.from('citas').insert(citaObj).select('id').single();
-                if (insErr) throw insErr;
-                finalCitaId = newCita?.id || null;
-                console.log(`📅 ADMIN: Nueva cita creada por administrador: ${finalCitaId}`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Agendó cita', `Cita para ${fecha} creada vía ChatBot`, sedeId);
-              }
-
-              // Trigger sale auto-registration if completed
-              if (finalCitaId && db) {
-                const fullCitaObj = { ...citaObj, id: finalCitaId };
-                await handleCompletedServiceSale(db, finalCitaId, fullCitaObj);
-              }
-            } catch (e) { console.error('Error in CITA_UPSERT:', e); }
-          }
-
-          // 3b. [SERVICIO_UPSERT: id_opcional | cliente_id | vehiculo_id | nombre_cliente | telefono | vehiculo_info | placa | tipo | descripcion | estado | costo_estimado | sede_id | tipo_personalizado]
-          const servUpsertMatches = Array.from(cleanedAi.matchAll(/\[SERVICIO_UPSERT:\s*([^\]]+)\]/gi));
-          for (const match of servUpsertMatches) {
-            try {
-              const rawTag = match[1].trim();
-              const rawParts = rawTag.split('|').map(s => s.trim());
-              
-              // UUID regex to validate ID fields
-              const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-              // Known field labels the AI might mistakenly include
-              const FIELD_LABELS = new Set([
-                'id_opcional', 'cliente_id', 'vehiculo_id', 'nombre_cliente', 'telefono',
-                'vehiculo_info', 'placa', 'tipo', 'descripcion', 'estado', 'costo_estimado',
-                'sede_id', 'tipo_personalizado'
-              ]);
-
-              let id: string | null = null;
-              let clienteId: string | null = null;
-              let vehId: string | null = null;
-              let nombreCliente: string | null = null;
-              let telefono: string | null = null;
-              let vehiculoInfo: string | null = null;
-              let placa: string | null = null;
-              let tipo: string = 'otro';
-              let descripcion: string = '';
-              let estado: string = 'pendiente';
-              let costoEstimado: number | null = null;
-              let sedeId: string | null = null;
-              let tipoPersonalizado: string | null = null;
-
-              // Detect labeled format: first part is a known field label (e.g., "nombre_cliente" not a UUID)
-              const isLabeledFormat = rawParts.length > 13 && FIELD_LABELS.has(rawParts[0]?.toLowerCase());
-
-              if (isLabeledFormat) {
-                // Extract values by known field labels
-                const fieldMap: Record<string, string> = {};
-                for (let i = 0; i < rawParts.length - 1; i += 2) {
-                  const label = rawParts[i]?.toLowerCase().trim() || '';
-                  const value = rawParts[i + 1]?.trim() || '';
-                  if (label && value) fieldMap[label] = value;
-                }
-                console.log(`🔧 ADMIN: Tag con formato etiquetado detectado. Extrayendo por nombre de campo.`, Object.keys(fieldMap));
-                id = fieldMap['id_opcional'] && UUID_RE.test(fieldMap['id_opcional']) ? fieldMap['id_opcional'] : null;
-                clienteId = fieldMap['cliente_id'] && UUID_RE.test(fieldMap['cliente_id']) ? fieldMap['cliente_id'] : null;
-                vehId = fieldMap['vehiculo_id'] && UUID_RE.test(fieldMap['vehiculo_id']) ? fieldMap['vehiculo_id'] : null;
-                nombreCliente = fieldMap['nombre_cliente'] || null;
-                telefono = fieldMap['telefono'] || null;
-                vehiculoInfo = fieldMap['vehiculo_info'] || null;
-                const rawPlaca = fieldMap['placa'] || '';
-                placa = rawPlaca ? rawPlaca.toUpperCase().replace(/[-\s]/g, '') : null;
-                tipo = fieldMap['tipo'] || 'otro';
-                descripcion = fieldMap['descripcion'] || '';
-                estado = fieldMap['estado'] || 'pendiente';
-                costoEstimado = fieldMap['costo_estimado'] ? parseFloat(fieldMap['costo_estimado']) : null;
-                sedeId = fieldMap['sede_id'] || ctx.sede_id || DEFAULT_SEDE_ID;
-                tipoPersonalizado = fieldMap['tipo_personalizado'] || null;
-                console.log(`🔧 ADMIN: Tag etiquetado parseado: nombre=${nombreCliente}, placa=${placa}, tipo=${tipo}, sede=${sedeId}`);
-              } else {
-                // Standard positional parsing
-                id = (rawParts[0] && UUID_RE.test(rawParts[0])) ? rawParts[0] : null;
-                clienteId = (rawParts[1] && UUID_RE.test(rawParts[1])) ? rawParts[1] : null;
-                vehId = (rawParts[2] && UUID_RE.test(rawParts[2])) ? rawParts[2] : null;
-                nombreCliente = (rawParts[3] && rawParts[3] !== 'null' && !FIELD_LABELS.has(rawParts[3].toLowerCase())) ? rawParts[3] : null;
-                telefono = (rawParts[4] && rawParts[4] !== 'null' && !FIELD_LABELS.has(rawParts[4].toLowerCase())) ? rawParts[4] : null;
-                vehiculoInfo = (rawParts[5] && rawParts[5] !== 'null' && !FIELD_LABELS.has(rawParts[5].toLowerCase())) ? rawParts[5] : null;
-                const rawPlaca6 = (rawParts[6] && rawParts[6] !== 'null' && !FIELD_LABELS.has(rawParts[6].toLowerCase())) ? rawParts[6] : '';
-                placa = rawPlaca6 ? rawPlaca6.toUpperCase().replace(/[-\s]/g, '') : null;
-                tipo = (rawParts[7] && rawParts[7] !== 'null' && !FIELD_LABELS.has(rawParts[7].toLowerCase())) ? rawParts[7] : 'otro';
-                descripcion = (rawParts[8] && rawParts[8] !== 'null' && !FIELD_LABELS.has(rawParts[8].toLowerCase())) ? rawParts[8] : '';
-                estado = (rawParts[9] && rawParts[9] !== 'null' && !FIELD_LABELS.has(rawParts[9].toLowerCase())) ? rawParts[9] : 'pendiente';
-                costoEstimado = (rawParts[10] && rawParts[10] !== 'null' && !isNaN(parseFloat(rawParts[10]))) ? parseFloat(rawParts[10]) : null;
-                sedeId = (rawParts[11] && rawParts[11] !== 'null' && rawParts[11] !== 'undefined' && UUID_RE.test(rawParts[11])) ? rawParts[11] : (ctx.sede_id || DEFAULT_SEDE_ID);
-                tipoPersonalizado = (rawParts[12] && rawParts[12] !== 'null' && !FIELD_LABELS.has(rawParts[12].toLowerCase())) ? rawParts[12] : null;
-              }
-
-              const now = new Date();
-              const defaultName = ctx.adminName || 'Administrador';
-              const nameToUse = nombreCliente || defaultName;
-
-              let finalClientId = clienteId;
-              let finalVehId = vehId;
-
-              // Resolve or create client & vehicle if IDs missing
-              const clientPhone = telefono || from;
-              if (!finalClientId && nameToUse) {
-                const { clientId: newCId } = await getOrCreateClientAndVehicle(
-                  db, clientPhone, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
-                );
-                finalClientId = newCId || null;
-              }
-              if (finalClientId && !finalVehId && (vehiculoInfo || placa)) {
-                const { vehicleId: newVId } = await getOrCreateClientAndVehicle(
-                  db, clientPhone, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
-                );
-                finalVehId = newVId || null;
-              }
-
-              const vzlaDateStr = getVzlaDateString();
-              const vzlaTime = new Intl.DateTimeFormat('es-VE', {
-                timeZone: 'America/Caracas', hour: '2-digit', minute: '2-digit', hour12: false,
-              }).format(new Date());
-
-              const servObj: any = {
-                cliente_id: finalClientId,
-                vehiculo_id: finalVehId,
-                nombre_cliente: nameToUse,
-                telefono: telefono || '',
-                vehiculo_info: vehiculoInfo || null,
-                placa: placa || null,
-                tipo: tipo,
-                tipo_personalizado: tipoPersonalizado,
-                descripcion: descripcion,
-                estado: estado,
-                costo_estimado: costoEstimado,
-                fecha: vzlaDateStr,
-                hora: vzlaTime,
-                seguimiento: [{
-                  fecha: now.toISOString(),
-                  accion: estado === 'pendiente' ? 'Registrado vía WhatsApp Admin' : `Estado inicial: ${estado}`,
-                  usuario: ctx.memoria?.nombre || ctx.adminName || 'Admin IA',
-                  tipo: 'sistema',
-                  progreso: 0,
-                }],
-                sede_id: sedeId,
-              };
-
-              if (id && id.length > 5 && db) {
-                // Update existing servicio
-                const { data: existing } = await db.from('servicios').select('seguimiento').eq('id', id).single();
-                if (existing) {
-                  const existingSeg = existing.seguimiento || [];
-                  servObj.seguimiento = [...existingSeg, {
-                    fecha: now.toISOString(),
-                    accion: `Actualizado vía WhatsApp Admin — Estado: ${estado}`,
-                    usuario: ctx.memoria?.nombre || ctx.adminName || 'Admin IA',
-                    tipo: 'sistema',
-                  }];
-                  servObj.updated_at = now.toISOString();
-                  delete servObj.fecha;
-                  delete servObj.hora;
-                  await db.from('servicios').update(servObj).eq('id', id);
-                  console.log(`🔧 ADMIN: Servicio actualizado: ${id}`);
-                  await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Actualizó servicio', `Servicio ${id} actualizado vía ChatBot`, sedeId);
-                } else {
-                  console.log(`🔧 ADMIN: ID proporcionado pero servicio no encontrado: ${id}. Creando nuevo.`);
-                  // Force create new instead
-                  delete servObj.updated_at;
-                  const { data: newServ, error: insErr } = await db.from('servicios').insert(servObj).select('id').single();
-                  if (insErr) throw insErr;
-                  console.log(`🔧 ADMIN: Nuevo servicio creado (fallback tras update fallido): ${newServ?.id}`);
-                  await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot (fallback)`, sedeId);
-                }
-              } else if (db) {
-                const { data: newServ, error: insErr } = await db.from('servicios').insert(servObj).select('id').single();
-                if (insErr) throw insErr;
-                console.log(`🔧 ADMIN: Nuevo servicio creado: ${newServ?.id}`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot`, sedeId);
-              }
-            } catch (e) { console.error('Error in SERVICIO_UPSERT:', e); }
-          }
-
-          // 4. [CITA_DELETE: id]
-          const citaDeleteMatch = cleanedAi.match(/\[CITA_DELETE:\s*([^\]]+?)\s*\]/i);
-          if (citaDeleteMatch && db) {
-            try {
-              const target = citaDeleteMatch[1].trim();
-                await db.from('citas').delete().eq('id', target).eq('sede_id', DEFAULT_SEDE_ID);
-              console.log(`📅 ADMIN: Cita eliminada: ${target}`);
-            } catch (e) { console.error('Error in CITA_DELETE:', e); }
-          }
-
-          // 5. [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion | sede_id]
-          const clientUpsertMatches = Array.from(cleanedAi.matchAll(/\[CLIENTE_UPSERT:\s*([^\]]+)\]/gi));
-          for (const match of clientUpsertMatches) {
-            try {
-              const parts = match[1].split('|').map(s => s.trim());
-              const id = (parts[0] && parts[0] !== 'id_opcional' && parts[0] !== 'null') ? parts[0] : null;
-              const name = parts[1];
-              const last = parts[2] || '';
-              const tel = parts[3];
-              const ced = (parts[4] && parts[4] !== 'null') ? parts[4] : null;
-              const dir = (parts[5] && parts[5] !== 'null') ? parts[5] : null;
-              const sedeId = parts[6] || ctx.sede_id || DEFAULT_SEDE_ID;
-
-              const clientObj = { 
-                nombre: name, 
-                apellido: last, 
-                telefono: tel, 
-                cedula: ced, 
-                direccion: dir,
-                sede_id: sedeId
-              };
-              if (id && id.length > 5 && db) {
-                await db.from('clientes').update(clientObj).eq('id', id);
-                console.log(`👤 ADMIN: Cliente actualizado: ${id}`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Actualizó cliente', `Cliente actualizado vía ChatBot`, sedeId);
-              } else if (db) {
-                await db.from('clientes').insert(clientObj);
-                console.log(`👤 ADMIN: Nuevo cliente agregado por administrador`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Creó cliente', `Cliente creado vía ChatBot`, sedeId);
-              }
-            } catch (e) { console.error('Error in CLIENTE_UPSERT:', e); }
-          }
-
-          // 6. [VEHICULO_UPSERT: id_opcional | cliente_id | placa | marca | modelo | anio | sede_id]
-          const vehUpsertMatches = Array.from(cleanedAi.matchAll(/\[VEHICULO_UPSERT:\s*([^\]]+)\]/gi));
-          for (const match of vehUpsertMatches) {
-            try {
-              const parts = match[1].split('|').map(s => s.trim());
-              const id = (parts[0] && parts[0] !== 'id_opcional' && parts[0] !== 'null') ? parts[0] : null;
-              const clientId = (parts[1] && parts[1] !== 'null' && parts[1] !== 'undefined') ? parts[1] : null;
-              const placa = parts[2]?.toUpperCase().replace(/[-\s]/g, '') || '';
-              const marca = parts[3] || 'Desconocida';
-              const modelo = parts[4] || 'Modelo';
-              const anio = (parts[5] && parts[5] !== 'null') ? parseInt(parts[5]) : null;
-              const sedeId = parts[6] || ctx.sede_id || DEFAULT_SEDE_ID;
-
-              const vehObj: any = { 
-                placa, 
-                marca, 
-                modelo, 
-                anio: isNaN(Number(anio)) ? null : anio,
-                sede_id: sedeId
-              };
-              if (clientId) vehObj.cliente_id = clientId;
-
-              if (id && id.length > 5 && db) {
-                await db.from('vehiculos').update(vehObj).eq('id', id);
-                console.log(`🚗 ADMIN: Vehículo actualizado: ${id}`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Actualizó vehículo', `Vehículo ${placa} actualizado vía ChatBot`, sedeId);
-              } else if (db) {
-                const { data: newVeh, error: insErr } = await db.from('vehiculos').insert(vehObj).select('id').single();
-                if (insErr) throw insErr;
-                console.log(`🚗 ADMIN: Nuevo vehículo registrado: ${placa} (ID: ${newVeh?.id})`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Registró vehículo', `Vehículo ${placa} (${marca} ${modelo}) registrado vía ChatBot`, sedeId);
-              }
-            } catch (e) { console.error('Error in VEHICULO_UPSERT:', e); }
-          }
-
-          // 7. [ASK_SEDE: motivo]
-          const askSedeMatch = cleanedAi.match(/\[ASK_SEDE:\s*([^\]]+?)\s*\]/i);
-          if (askSedeMatch) {
-            const motivo = askSedeMatch[1].trim();
-            console.log(`📍 [${from}] AI solicitó preguntar sede por motivo: ${motivo}`);
-            
-            const buttons = [
-              { id: `admin_sede_1_${motivo}`, title: 'San Antonio' },
-              { id: `admin_sede_2_${motivo}`, title: 'Carrizal' },
-              { id: `admin_sede_3_${motivo}`, title: 'Cementerio' },
-              { id: `admin_sede_4_${motivo}`, title: 'El Paraiso' }
-            ];
-
-            await sendButtonMsg(
-              from, 
-              `¿Para qué sede deseas realizar la gestión de ${motivo}? 📍`,
-              buttons,
-              'Selecciona la sede'
-            );
-            
-            // Persistir motivo en memoria para saber qué hacer cuando responda
-            ctx.memoria.awaiting_admin_sede = motivo;
-            await db.from('conversaciones').update({ memoria: ctx.memoria }).eq('telefono', from);
-          }
-
-          // Remove management tags from final message
-          cleanedAi = cleanedAi
-            .replace(/\[STOCK_UPSERT:[^\]]+\]/gi, '')
-            .replace(/\[STOCK_DELETE:[^\]]+\]/gi, '')
-            .replace(/\[VEHICULO_UPSERT:[^\]]+\]/gi, '')
-            .replace(/\[CITA_UPSERT:[^\]]+\]/gi, '')
-            .replace(/\[CITA_DELETE:[^\]]+\]/gi, '')
-            .replace(/\[SERVICIO_UPSERT:[^\]]+\]/gi, '')
-            .replace(/\[CLIENTE_UPSERT:[^\]]+\]/gi, '')
-            .replace(/\[ASK_SEDE:[^\]]+\]/gi, '')
-            .trim();
-        }
-
-        // Format: [CITA: AAAA-MM-DD HH:MM | descripcion | marca modelo]
-        // Now time is optional: [CITA: AAAA-MM-DD | descripcion | marca modelo]
-        const citaMatch = cleanedAi.match(/\[CITA:\s*(\d{4}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}))?(?:\s*\|\s*([^|\]]+?))?(?:\s*\|\s*([^\]]+?))?\s*\]/);
-        if (citaMatch) {
-          const fecha = citaMatch[1];
-          const hora = citaMatch[2] || '08:00'; // Default to 8 AM if not provided
-          const servicio = citaMatch[3]?.trim() || '';
-          const vehiculo = citaMatch[4]?.trim() || '';
-          cleanedAi = cleanedAi.replace(/\[CITA:[^\]]+\]/g, '').trim();
-
-          try {
-            if (db) {
-              // ── Extract all available data ──────────────────────────────────
-              const userName = ctx.memoria?.nombre || '';
-              const vehiculoFromTag = vehiculo || '';
-              // Plate: from current message > memoria
-              const placaMatch = messageBody.match(/\b([A-Z]{2,3}[-\s]?\d{2,3}[-\s]?[A-Z0-9]{0,3})\b/i);
-              const placa = placaMatch ? placaMatch[1].toUpperCase().replace(/[-\s]/g, '') : ctx.memoria.placa || '';
-              // Year from message or memoria
-              const anioMatch = messageBody.match(/\b(19[8-9]\d|20[0-2]\d)\b/);
-              const anio = anioMatch?.[1] || ctx.memoria?.vehiculos?.[0]?.anio || '';
-              // Best vehicle info: from [CITA] tag > first memoria vehicle
-              const vehiculoFromMem = ctx.memoria?.vehiculos?.map(v =>
-                `${v.marca} ${v.modelo}${v.anio ? ' ' + v.anio : ''}`).join(', ') || '';
-              const vehiculoInfo = vehiculoFromTag || vehiculoFromMem;
-
-              // ── Get or Create Client & Vehicle ─────────────────────────────
-              const { clientId, vehicleId, isNew } = await getOrCreateClientAndVehicle(
-                db, from, userName, vehiculoInfo, placa, anio?.toString(), waProfileName, ctx.sede_id
-              );
-
-              // ── Composed description with client name + (WhatsApp) ──────────
-              const clientLabel = userName
-                ? `${userName}`
-                : `${from}`;
-              const descripcionFinal = [
-                servicio || 'Servicio por WhatsApp',
-                vehiculoInfo ? `- ${vehiculoInfo}` : '',
-                placa ? `[${placa}]` : '',
-              ].filter(Boolean).join(' ');
-
-              // ── Deduplicate ──────────────────────────────────────────────────
-              const { data: existing } = await db.from('citas')
-                .select('id').eq('telefono', from).eq('fecha', fecha).eq('hora', hora)
-                .neq('estado', 'cancelada').limit(1);
-              if (existing && existing.length > 0) {
-                console.log(`⚠️ Cita duplicada ignorada: ${fecha} ${hora} para ${from}`);
-              } else {
-                await db.from('citas').insert({
-                  fecha,
-                  hora,
-                  telefono: from,
-                  cliente_id: clientId || null,
-                  vehiculo_id: vehicleId || null,
-                  tipo_servicio: 'otro',
-                  descripcion: descripcionFinal,
-                  estado: 'pendiente',
-                  duracion_minutos: 60,
-                  nombre_cliente: userName || from,
-                  vehiculo_info: vehiculoInfo || null,
-                  placa: placa || null,
-                  sede_id: ctx.sede_id || DEFAULT_SEDE_ID
-                });
-                console.log(`📅 AUTO-CITA IA: ${fecha} ${hora} | ${descripcionFinal} | client_id: ${clientId} | veh_id: ${vehicleId} | isNew: ${isNew}`);
-              }
-            }
-          } catch (e) { console.error('Error insertando cita automatica:', e); }
-        }
-
-        // ── Clean all AI Tags before sending to WhatsApp ──────────────────
-        cleanedAi = cleanedAi
-          .replace(/\[CITA:[^\]]+\]/gi, '')
-          .replace(/\[NOMBRE:[^\]]+\]/gi, '')
-          .replace(/\s+/g, ' ')
-          .trim();
-
-        const needsAsesor = aiNeedsAsesor(cleanedAi);
-
-        if (needsAsesor) {
-          const withoutPhone = cleanedAi
-            .replace(/https?:\/\/wa\.me\/\S+/gi, '')
-            .replace(/wa\.me\/\S+/gi, '')
-            .replace(/\+?58\s?412[\s\-]?334[\s\-]?3519/g, '')
-            .trim();
-          if (withoutPhone) { await sendMsg(from, withoutPhone, false, wa_message_id); await delay(700); }
-          await sendContactCard(from, ASESOR_PHONE, ASESOR_DISPLAY_NAME);
-        } else {
-          // TikTok links — send separately with preview
-          const tiktokMatch = cleanedAi.match(/https?:\/\/(?:vt\.tiktok\.com|tiktok\.com)\/\S+/i);
-          if (tiktokMatch) {
-            const textWithout = cleanedAi.replace(tiktokMatch[0], '').trim();
-            if (textWithout) { await sendMsg(from, textWithout, false, wa_message_id); await delay(500); }
-            await sendMsg(from, tiktokMatch[0], true, wa_message_id);
-          } else {
-            const hasUrl = /https?:\/\//.test(cleanedAi);
-            if (cleanedAi.trim()) {
-              await sendMsg(from, cleanedAi, hasUrl, wa_message_id);
-            }
-          }
-        }
-      } else {
-        // ── All immediate attempts failed — persist for cron retry ───────────────
-        console.warn(`🚨 [${from}] Fallo total de IA. Guardando en cola de reintento...`);
-        try {
-          if (db) {
-            await db.from('mensajes_pendientes_ia').insert({
-              from_number: from,
-              message_body: messageBody,
-              wa_message_id: wa_message_id,
-              wa_profile_name: waProfileName || null,
-              inserted_timestamp: new Date().toISOString(),
-              intentos: 0,
-              status: 'pending',
-              sede_id: DEFAULT_SEDE_ID
-            });
-            console.log(`💾 [${from}] Mensaje guardado en cola pendiente para reintento por cron.`);
-          }
-        } catch (dbErr) {
-          console.error('❌ Error guardando mensaje pendiente en DB:', dbErr);
-        }
-      }
-
-      // Marcar como completado si llegamos hasta aquí con éxito
-      if (db && pendingId) {
-        await db.from('mensajes_pendientes_ia').update({ status: 'completed' }).eq('id', pendingId).eq('sede_id', DEFAULT_SEDE_ID);
-      }
-
-      await updateConversation(db, from, messageBody, ctx.memoria, r?.clientId);
+    await updateConversation(db, from, messageBody, ctx.memoria, r?.clientId);
   } catch (e: any) {
     console.error('❌ Webhook error in processCoreLogic:', e);
   }

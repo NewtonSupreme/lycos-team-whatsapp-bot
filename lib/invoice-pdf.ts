@@ -20,6 +20,8 @@ interface InvoiceData {
   tasa_cambio?: number;
   total_ves?: number;
   iva_aplicado?: boolean;
+  metodos_pago?: any;
+  currency?: string;
 }
 
 export interface PrintOptions {
@@ -103,21 +105,26 @@ export const generateInvoicePDF = (
     const bcvRateUsed = data.tasa_bcv || data.tasa_cambio || 518.0;
     const isDual = options.currencyMode === 'dual';
 
+    const isEuro = data.currency === 'eur' || data.metodos_pago?.euros > 0 || /euro/i.test(data.notas || '');
+    const sym = isEuro ? '€' : '$';
+    const primaryLabel = isEuro ? 'TOTAL EUR' : 'TOTAL USD';
+    const totalBoxLabel = isEuro ? 'MONTO TOTAL EUR' : 'MONTO TOTAL USD';
+
     const tableHead = isDual 
-      ? [['DESCRIPCIÓN DEL SERVICIO', 'CANT', 'TOTAL BS', 'TOTAL USD']]
-      : [['DESCRIPCIÓN DEL SERVICIO', 'CANT', 'TOTAL USD']];
+      ? [['DESCRIPCIÓN DEL SERVICIO', 'CANT', 'TOTAL BS', primaryLabel]]
+      : [['DESCRIPCIÓN DEL SERVICIO', 'CANT', primaryLabel]];
 
     const tableRows = data.items.map((item: any) => isDual 
       ? [
           item.descripcion.toUpperCase(),
           item.cantidad,
           `${(Number(item.total) * bcvRateUsed).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`,
-          `$${Number(item.total).toFixed(2)}`
+          `${sym}${Number(item.total).toFixed(2)}`
         ]
       : [
           item.descripcion.toUpperCase(),
           item.cantidad,
-          `$${Number(item.total).toFixed(2)}`
+          `${sym}${Number(item.total).toFixed(2)}`
         ]
     );
 
@@ -168,13 +175,13 @@ export const generateInvoicePDF = (
     doc.setFont('helvetica', 'bold');
     doc.text('SUBTOTAL GENERAL', boxX, finalY + 5);
     doc.setTextColor(...grayDark);
-    doc.text(`$${Number(data.total / (data.iva_aplicado ? 1.16 : 1)).toFixed(2)}`, rightAlign, finalY + 5, { align: 'right' });
+    doc.text(`${sym}${Number(data.total / (data.iva_aplicado ? 1.16 : 1)).toFixed(2)}`, rightAlign, finalY + 5, { align: 'right' });
 
     if (data.iva_aplicado) {
       doc.setTextColor(...grayLight);
       doc.text('IVA (16%)', boxX, finalY + 10);
       doc.setTextColor(...orange);
-      doc.text(`+$${Number(data.total - (data.total / 1.16)).toFixed(2)}`, rightAlign, finalY + 10, { align: 'right' });
+      doc.text(`+${sym}${Number(data.total - (data.total / 1.16)).toFixed(2)}`, rightAlign, finalY + 10, { align: 'right' });
     }
 
     // BLACK BOX
@@ -184,12 +191,12 @@ export const generateInvoicePDF = (
     // Total USD
     doc.setTextColor(180, 180, 180);
     doc.setFontSize(8);
-    doc.text('MONTO TOTAL USD', boxX + 4, boxY + 8);
+    doc.text(totalBoxLabel, boxX + 4, boxY + 8);
     
     doc.setTextColor(...orange);
     doc.setFontSize(14);
     doc.setFont('helvetica', 'bolditalic');
-    doc.text(`$${Number(data.total).toFixed(2)}`, rightAlign - 4, boxY + 9, { align: 'right' });
+    doc.text(`${sym}${Number(data.total).toFixed(2)}`, rightAlign - 4, boxY + 9, { align: 'right' });
 
     // Total VES
     if (isDual) {

@@ -97,6 +97,14 @@ function getVzlaDateTime(): string {
   }).format(new Date());
 }
 
+function getVzlaDateString(): string {
+  const now = new Date();
+  const options = { timeZone: 'America/Caracas', year: 'numeric', month: '2-digit', day: '2-digit' } as const;
+  const formatter = new Intl.DateTimeFormat('en-US', options);
+  const [{ value: month },,{ value: day },,{ value: year }] = formatter.formatToParts(now);
+  return `${year}-${month}-${day}`;
+}
+
 // ─── Load Full DB Context using proven lib functions ───────────────────────────
 async function loadDbContext(sedeId: string | null): Promise<string> {
   const sections: string[] = [];
@@ -556,14 +564,65 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
         const notasFinales = `Items: ${itemsDisplay}${totalStr}${ivaStr}${inicialStr}${clienteStr}${vehiculoStr}${pagoMixtoStr}`.trim();
 
         const totalNum = parseFloat(p.total || '0');
+        const rates = await fetchExchangeRates().catch(() => ({ bcv: 36.5, binance: 42 }));
+        const bcvRate = rates?.bcv || 36.5;
 
-        await insert('ventas_silenciadores', {
+        // 1. Insert into ventas_dia (Accounting)
+        const clienteNombre = p.cliente || 'Consumidor Final';
+        let desglose = [{
+          descripcion: p.titulo || itemsDisplay.split(',')[0]?.split(':')[0] || 'Varios',
+          highlight: false,
+          cantidad: parseInt(p.cantidad) || 1,
+          precio_unitario: totalNum,
+          total: totalNum
+        }];
+
+        if (p.items && p.items.includes(':')) {
+          desglose = p.items.split(',').map((item: string) => {
+            const parts = item.trim().split(':');
+            const desc = parts[0]?.trim() || item.trim();
+            const priceStr = parts[1]?.replace(/[^\d.]/g, '') || '0';
+            const price = parseFloat(priceStr) || 0;
+            return { descripcion: desc, highlight: false, cantidad: 1, precio_unitario: price, total: price };
+          });
+        }
+
+        const { data: newVentaDia, error: errDia } = await db.from('ventas_dia').insert(withSedeInsertServer({
+          fecha: getVzlaDateString(),
+          cliente: clienteNombre,
+          total_ingresos: totalNum,
+          desglose,
+          con_iva: !!p.iva,
+          tasa_cambio: bcvRate,
+          notes: notasFinales,
+          notas: notasFinales,
+          creado_por: 'Admin IA',
+          metodos_pago: {
+            otro: metodo === 'otro' ? totalNum : 0,
+            zelle: metodo === 'zelle' ? totalNum : 0,
+            cashea: metodo === 'cashea_bcv' ? totalNum : 0,
+            binance: metodo === 'binance' ? totalNum : 0,
+            pago_movil: metodo === 'pago_movil' ? totalNum : 0,
+            efectivo_usd: (metodo === 'divisas' || metodo === 'efectivo_usd') ? totalNum : 0,
+            efectivo_ves: metodo === 'efectivo_ves' ? totalNum : 0,
+            transferencia: metodo === 'transferencia' ? totalNum : 0,
+            punto_de_venta: metodo === 'punto_venta' ? totalNum : 0,
+            euros: (metodo === 'euros' || metodo === 'efectivo_eur') ? totalNum : 0
+          }
+        }, sedeId)).select('id').single();
+
+        if (errDia) {
+          console.error('Error inserting ventas_dia in IA Chat:', errDia);
+        }
+
+        // 2. Insert into ventas_silenciadores (Compatibility)
+        await db.from('ventas_silenciadores').insert(withSedeInsertServer({
           cantidad: parseInt(p.cantidad) || 1,
           modelo: p.titulo || itemsDisplay.split(',')[0]?.split(':')[0] || 'Venta múltiple',
-          notas: notasFinales,
+          notas: newVentaDia?.id ? `Venta POS #${newVentaDia.id.slice(0, 8)} | ${notasFinales}` : notasFinales,
           fecha: new Date().toISOString(),
           precio_registrado: totalNum,
-        });
+        }, sedeId));
 
         // Auto-decrement stock for each item if inv_ids provided (comma-separated, optional ID:qty format)
         if (p.inv_ids) {
@@ -864,7 +923,7 @@ TAGS DE ACCIÓN DISPONIBLES:
 • Crear vehículo: [ACTION: crear_vehiculo | marca=MARCA | modelo_vehiculo=MODELO | placa=PLACA | anio=ANO | color=COLOR | cliente_id=UUID]
 • Actualizar servicio: [ACTION: actualizar_servicio | id=ID | estado=finalizado|cancelado | nota=Texto]
 • Registrar servicio taller: [ACTION: registrar_servicio | descripcion=Texto | tipo=mecanica|electronica|cerrajeria|diagnostico|motor|emergencia|otro | estado=pendiente|en_proceso | costo_estimado=Numero | nombre_cliente=Nombre | telefono=Numero | vehiculo_info=Marca Modelo | placa=PLACA | cliente_id=UUID | vehiculo_id=UUID | tipo_personalizado=Texto]
-• Registrar venta COMPLETA: [ACTION: registrar_venta_completa | titulo=X | items=Prod1:Pre1,Prod2:Pre2 | total=TOTAL | iva=MONTO | inicial=INICIAL_CASHEA | metodo_pago=cashea_bcv/divisas/bcv/binance/zelle/pago_movil/efectivo_ves/punto_venta/transferencia/otro | pago_mixto=DESC | cliente=NOMBRE | vehiculo=MARCA_PLACA | inv_ids=ID1:qty1,ID2:qty2]
+• Registrar venta COMPLETA: [ACTION: registrar_venta_completa | titulo=X | items=Prod1:Pre1,Prod2:Pre2 | total=TOTAL | iva=MONTO | inicial=INICIAL_CASHEA | metodo_pago=cashea_bcv/divisas/euros/bcv/binance/zelle/pago_movil/efectivo_ves/punto_venta/transferencia/otro | pago_mixto=DESC | cliente=NOMBRE | vehiculo=MARCA_PLACA | inv_ids=ID1:qty1,ID2:qty2]
 
 TONO: Profesional, ejecutivo y eficiente. Español venezolano amable.
 HORARIO: L–Sáb 8AM–5PM | Dom: Cerrado | +58 412-334-3519 | lycosteam7@gmail.com

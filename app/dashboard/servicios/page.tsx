@@ -1528,10 +1528,11 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
       iva_aplicado: withIva,
       tasa_bcv: rates.bcv,
       total_ves: totalVes,
-      notas: cita.descripcion || undefined
+      notas: cita.descripcion || undefined,
+      metodos_pago: payments
     };
 
-    const dataList = [data1];
+    const dataList: any[] = [data1];
 
     if (printMode === 'dual') {
       // Duplicado de la misma factura
@@ -1595,6 +1596,7 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
     { id: 'zelle', label: 'Zelle' },
     { id: 'pago_movil', label: 'Pago Móvil' },
     { id: 'punto_de_venta', label: 'Punto de Venta' },
+    { id: 'euros', label: 'Euros (€)' },
     { id: 'otro', label: 'Personalizado' },
   ];
 

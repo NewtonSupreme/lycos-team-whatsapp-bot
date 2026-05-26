@@ -75,7 +75,9 @@ export default function VentasPage() {
   const [selectedSale, setSelectedSale] = useState<any>(null);
   const [showSaleDetail, setShowSaleDetail] = useState(false);
 
-  // Payment methods (Stored in USD)
+  const symbol = (selectedSale?.metodos_pago?.euros > 0 || /euro/i.test(selectedSale?.notes || '') || /euro/i.test(selectedSale?.notas || '')) ? '€' : '$';
+
+  // Payment methods (Stored in USD/Euros)
   const [metodosPago, setMetodosPago] = useState({
     efectivo_usd: 0,
     zelle: 0,
@@ -85,6 +87,7 @@ export default function VentasPage() {
     transferencia: 0,
     cashea: 0,
     binance: 0,
+    euros: 0,
     otro: 0
   });
 
@@ -507,7 +510,8 @@ export default function VentasPage() {
         total: total,
         tasa_bcv: activeRate,
         total_ves: bcvTotal * activeRate,
-        iva_aplicado: conIva
+        iva_aplicado: conIva,
+        metodos_pago: metodosPago
       };
 
       const dataList: any[] = [data1];
@@ -532,7 +536,7 @@ export default function VentasPage() {
       setClienteNombre('');
       setVehiculoInfo('');
       setNotas('');
-      setMetodosPago({ efectivo_usd: 0, zelle: 0, pago_movil: 0, efectivo_ves: 0, punto_de_venta: 0, transferencia: 0, cashea: 0, binance: 0, otro: 0 });
+      setMetodosPago({ efectivo_usd: 0, zelle: 0, pago_movil: 0, efectivo_ves: 0, punto_de_venta: 0, transferencia: 0, cashea: 0, binance: 0, euros: 0, otro: 0 });
       setShowPreview(false);
       fetchData();
       alert('¡Venta realizada con éxito!');
@@ -1255,6 +1259,20 @@ export default function VentasPage() {
                       />
                    </div>
 
+                   {/* Euros Cash */}
+                   <div className="space-y-1.5 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/10">
+                      <div className="flex items-center justify-between">
+                         <Label className="text-[9px] font-black uppercase text-muted-foreground flex items-center gap-1">Euros (€)</Label>
+                         <button onClick={() => autoFillMethod('euros')} className="text-[8px] font-black text-amber-500">AUTO</button>
+                      </div>
+                      <Input 
+                        placeholder="Monto €"
+                        className="h-9 bg-background/50 text-xs font-black border-none"
+                        value={metodosPago.euros || ''}
+                        onChange={e => handlePaymentChange('euros', e.target.value)}
+                      />
+                   </div>
+
                    {/* Zelle */}
                    <div className="space-y-1.5 p-3 rounded-2xl bg-purple-500/5 border border-purple-500/10">
                       <div className="flex items-center justify-between">
@@ -1551,7 +1569,7 @@ export default function VentasPage() {
                   </div>
                   <div className="text-right space-y-1">
                     <p className="text-[10px] font-black text-muted-foreground uppercase">MONTO TOTAL</p>
-                    <p className="text-2xl font-black text-primary italic">${selectedSale.total_ingresos?.toFixed(2)}</p>
+                    <p className="text-2xl font-black text-primary italic">{symbol}{selectedSale.total_ingresos?.toFixed(2)}</p>
                     <p className="text-xs font-bold text-muted-foreground">
                       {((selectedSale.total_ingresos || 0) * (selectedSale.tasa_cambio || rates.bcv)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.
                     </p>
@@ -1564,7 +1582,7 @@ export default function VentasPage() {
                      </thead>
                      <tbody className="divide-y divide-border/20">
                        {selectedSale.desglose?.map((item: any, idx: number) => (
-                         <tr key={idx}><td className="px-4 py-3 uppercase font-bold">{item.descripcion}</td><td className="px-4 py-3 text-center font-black">{item.cantidad}</td><td className="px-4 py-3 text-right font-black">${item.total?.toFixed(2)}</td></tr>
+                         <tr key={idx}><td className="px-4 py-3 uppercase font-bold">{item.descripcion}</td><td className="px-4 py-3 text-center font-black">{item.cantidad}</td><td className="px-4 py-3 text-right font-black">{symbol}{item.total?.toFixed(2)}</td></tr>
                        ))}
                      </tbody>
                    </table>
@@ -1648,7 +1666,8 @@ export default function VentasPage() {
                             notas: selectedSale.notas,
                             tasa_bcv: bcvRate,
                             total_ves: selectedSale.total_ingresos * bcvRate,
-                            iva_aplicado: selectedSale.con_iva
+                            iva_aplicado: selectedSale.con_iva,
+                            metodos_pago: mp
                           }], { mode: printMode, side: printSide, currencyMode: resolvedCurrencyMode as any });
                        }}>
                        <Download className="w-4 h-4" /> DESCARGAR
