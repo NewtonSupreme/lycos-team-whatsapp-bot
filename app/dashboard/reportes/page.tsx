@@ -2378,7 +2378,59 @@ export default function ReportesPage() {
     if (!supabase) return;
     const payload = { ...data, updated_at: new Date().toISOString() };
     if (editando) {
-      await withSedeFilter(supabase.from('ventas_dia')).update(payload).eq('id', editando.id);
+      // Intentar actualizar en ambas tablas — una de ellas tendrá el id real
+      const descLines = (data.desglose || [])
+        .filter(i => i.descripcion?.trim())
+        .map(i => `${i.descripcion}:$${Number(i.total).toFixed(2)}`)
+        .join(', ');
+
+      const notasSil = [
+        `[Editado desde Reportes]`,
+        `Cliente: ${data.cliente || 'Consumidor Final'}`,
+        `Total: $${Number(data.total_ingresos).toFixed(2)}`,
+        descLines ? `Items: ${descLines}` : '',
+        `Datos: ${JSON.stringify({
+          cliente: data.cliente,
+          total: Number(data.total_ingresos),
+          servicios: Number(data.total_servicios),
+          clientes: Number(data.total_clientes),
+          desglose: data.desglose,
+          metodos_pago: data.metodos_pago,
+          notas: data.notas,
+          con_iva: data.con_iva,
+          pago_usd: data.pago_usd,
+          pago_ves: data.pago_ves,
+          tasa_cambio: data.tasa_cambio
+        })}`
+      ].filter(Boolean).join(' | ');
+
+      const [resDia, resSil] = await Promise.all([
+        withSedeFilter(supabase.from('ventas_dia'))
+          .update(payload)
+          .eq('id', editando.id),
+        withSedeFilter(supabase.from('ventas_silenciadores'))
+          .update({
+            cantidad: Number(data.total_servicios) || 1,
+            modelo: data.cliente || 'Venta',
+            notas: notasSil,
+            fecha: data.fecha || new Date().toISOString().split('T')[0],
+            precio_registrado: Number(data.total_ingresos) || 0,
+          })
+          .eq('id', editando.id)
+      ]);
+
+      const errFinal = resDia.error && resSil.error ? resDia.error : null;
+      if (errFinal) throw errFinal;
+
+      // Log Activity
+      await logActivity({
+        usuario: useAppStore.getState().user?.nombre || 'Admin',
+        modulo: 'Reportes',
+        accion: 'Editó venta',
+        detalles: `Cliente: ${data.cliente}, Total: $${Number(data.total_ingresos).toFixed(2)}`,
+        referencia_id: editando.id,
+        referencia_tabla: editando.source === 'ia' ? 'ventas_silenciadores' : 'ventas_dia'
+      });
     } else {
       await withSedeFilter(supabase.from('ventas_dia')).insert(withSedeInsert({ ...payload, creado_por: 'Admin' }));
       
