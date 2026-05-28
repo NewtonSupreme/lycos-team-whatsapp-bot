@@ -584,6 +584,90 @@ export async function fetchDistribuciones(limit = 100) {
 /**
  * Actualiza el estado de una distribución
  */
+// ─── Presupuestos ──────────────────────────────────────────────────────────
+export async function fetchPresupuestos(limit = 50) {
+  if (!supabase) return null;
+  const { data, error } = await withSedeFilter(supabase.from('presupuestos'))
+    .select('*, cliente:clientes(nombre, apellido, telefono), vehiculo:vehiculos(marca, modelo, placa)')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data;
+}
+
+export async function fetchPresupuesto(id: string) {
+  if (!supabase) return null;
+  const { data, error } = await withSedeFilter(supabase.from('presupuestos'))
+    .select('*, cliente:clientes(nombre, apellido, telefono), vehiculo:vehiculos(marca, modelo, placa)')
+    .eq('id', id)
+    .single();
+  if (error && error.code !== 'PGRST116') throw error;
+  return data;
+}
+
+export async function generateNumeroPresupuesto(): Promise<string> {
+  if (!supabase) {
+    const anio = new Date().getFullYear();
+    return `PRE-${anio}-${String(Date.now()).slice(-4)}`;
+  }
+  try {
+    const { data, error } = await supabase.rpc('generar_numero_presupuesto');
+    if (error || !data) {
+      const anio = new Date().getFullYear();
+      const { count } = await supabase
+        .from('presupuestos')
+        .select('*', { count: 'exact', head: true });
+      const correlativo = ((count || 0) + 1);
+      return `PRE-${anio}-${String(correlativo).padStart(4, '0')}`;
+    }
+    return data as string;
+  } catch {
+    const anio = new Date().getFullYear();
+    const rand = Math.floor(Math.random() * 9000) + 1000;
+    return `PRE-${anio}-${rand}`;
+  }
+}
+
+export async function createPresupuesto(presupuesto: Record<string, any>) {
+  if (!supabase) return null;
+  const { data, error } = await withSedeFilter(supabase.from('presupuestos'))
+    .insert(withSedeInsert(presupuesto))
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updatePresupuesto(id: string, updates: Record<string, any>) {
+  if (!supabase) return null;
+  const { data, error } = await withSedeFilter(supabase.from('presupuestos'))
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deletePresupuesto(id: string) {
+  if (!supabase) return null;
+  const { error } = await withSedeFilter(supabase.from('presupuestos'))
+    .delete()
+    .eq('id', id);
+  if (error) throw error;
+}
+
+export async function updatePresupuestoEstado(id: string, estado: string) {
+  if (!supabase) return null;
+  const { data, error } = await withSedeFilter(supabase.from('presupuestos'))
+    .update({ estado, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
 export async function updateDistribucionEstado(
   id: string,
   estado: 'pendiente' | 'en_transito' | 'completado' | 'anulado'

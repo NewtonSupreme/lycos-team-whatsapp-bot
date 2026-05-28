@@ -19,6 +19,7 @@ export interface Permisos {
   configuracion: boolean;
   empleados: boolean;
   distribuidor: boolean;
+  presupuestos: boolean;
 }
 
 export const PERMISOS_DEFAULT: Record<string, Permisos> = {
@@ -26,31 +27,31 @@ export const PERMISOS_DEFAULT: Record<string, Permisos> = {
     dashboard: true, clientes: true, vehiculos: true, servicios: true, taller: true,
     agenda: true, whatsapp: true, leads: true, inventario: true, papelera: true,
     ventas: true, ia_asistente: true, reportes: true, actividad: true,
-    calculadora: true, configuracion: true, empleados: true, distribuidor: true
+    calculadora: true, configuracion: true, empleados: true, distribuidor: true, presupuestos: true
   },
   gerente: {
     dashboard: true, clientes: true, vehiculos: true, servicios: true, taller: true,
     agenda: true, whatsapp: true, leads: true, inventario: true, papelera: false,
     ventas: true, ia_asistente: true, reportes: true, actividad: false,
-    calculadora: true, configuracion: false, empleados: false, distribuidor: true
+    calculadora: true, configuracion: false, empleados: false, distribuidor: true, presupuestos: true
   },
   empleado: {
     dashboard: true, clientes: true, vehiculos: true, servicios: true, taller: true,
     agenda: true, whatsapp: true, leads: false, inventario: true, papelera: false,
     ventas: true, ia_asistente: false, reportes: false, actividad: false,
-    calculadora: true, configuracion: false, empleados: false, distribuidor: false
+    calculadora: true, configuracion: false, empleados: false, distribuidor: false, presupuestos: true
   },
   mecanico_acceso: {
     dashboard: true, clientes: false, vehiculos: false, servicios: true, taller: true,
     agenda: false, whatsapp: false, leads: false, inventario: false, papelera: false,
     ventas: false, ia_asistente: false, reportes: false, actividad: false,
-    calculadora: true, configuracion: false, empleados: false, distribuidor: false
+    calculadora: true, configuracion: false, empleados: false, distribuidor: false, presupuestos: true
   },
   jefe_taller_acceso: {
     dashboard: true, clientes: true, vehiculos: true, servicios: true, taller: true,
     agenda: false, whatsapp: false, leads: false, inventario: true, papelera: false,
     ventas: true, ia_asistente: false, reportes: false, actividad: false,
-    calculadora: true, configuracion: false, empleados: false, distribuidor: false
+    calculadora: true, configuracion: false, empleados: false, distribuidor: false, presupuestos: true
   },
 };
 
@@ -268,4 +269,53 @@ export interface Distribucion {
   sede_id?: string | null;
   created_at: string;
   updated_at?: string;
+}
+
+// ── Presupuestos (Budgets/Quotes) ──────────────────────────────────────
+export type Moneda = 'USD' | 'VES' | 'EUR';
+export type EstadoPresupuesto = 'borrador' | 'enviado' | 'aprobado' | 'rechazado' | 'vencido' | 'convertido';
+export type TipoItemPresupuesto = 'servicio' | 'repuesto' | 'otro';
+
+export interface PresupuestoItem {
+  id: string;
+  tipo: TipoItemPresupuesto;
+  descripcion: string;
+  cantidad: number;
+  precio_unitario: number;
+  moneda: Moneda;
+  total: number;
+  inventario_id?: string;
+  categoria?: string;
+  notas?: string;
+}
+
+export interface Presupuesto {
+  id: string;
+  numero: string;
+  cliente_id?: string | null;
+  cliente_nombre: string;
+  cliente_telefono?: string | null;
+  cliente_cedula?: string | null;
+  cliente_direccion?: string | null;
+  vehiculo_id?: string | null;
+  vehiculo_info?: string | null;
+  moneda: Moneda;
+  tasa_cambio?: number | null;
+  items: PresupuestoItem[];
+  subtotal: number;
+  descuento: number;
+  descuento_tipo: 'porcentaje' | 'monto';
+  iva: number;
+  total: number;
+  notas?: string | null;
+  condiciones?: string | null;
+  estado: EstadoPresupuesto;
+  validez_dias: number;
+  fecha_expiracion?: string | null;
+  creado_por: string;
+  creado_por_id?: string | null;
+  convertido_a?: string | null;
+  created_at: string;
+  updated_at: string;
+  sede_id?: string | null;
 }
