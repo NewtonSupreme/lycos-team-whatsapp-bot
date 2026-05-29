@@ -204,12 +204,9 @@ function calculateBcvPrice(usdPromo: number, rates: ExchangeRates): number {
 
 function buildRatesContext(rates: ExchangeRates | null): string {
   if (!rates) return '\nTASAS DE CAMBIO: No disponibles en este momento.';
-  const multiplier = rates.paralelo / rates.bcv;
   return `
 TASAS DE CAMBIO EN TIEMPO REAL (Usa estos valores exactos):
 - Tasa Oficial BCV: ${rates.bcv.toFixed(2)} Bs/$
-- Tasa Paralela / Binance P2P: ${rates.paralelo.toFixed(2)} Bs/$
-- Multiplicador de Promoción: ${multiplier.toFixed(4)}
 
 REGLA DE CONVERSIÓN MONETARIA (CRÍTICO):
 Sigue ESTRICTAMENTE estas reglas para dar precios al cliente:
@@ -218,35 +215,25 @@ Sigue ESTRICTAMENTE estas reglas para dar precios al cliente:
    - Aplica para: Alineación, Cauchos, Monturas, Autolavado, y Certificado Médico.
    - PRECIO: Di solo el monto en dólares seguido de "a tasa BCV".
    - REGLA DE ORO: ¡PROHIBIDO! No des el precio en bolívares (Bs.) bajo ninguna circunstancia.
-   - AVISO DE PAGO: Cuando des un precio, puedes advertir MUY BREVEMENTE que "se trabaja a tasa BCV al momento de pagar". NUNCA lo repitas en cada uno de tus mensajes para no ser repetitivo, hazlo solo en el momento exacto que dictes el precio de un presupuesto y ya.
+   - AVISO DE PAGO: Cuando des un precio, puedes advertir MUY BREVEMENTE que "se trabaja a tasa BCV al momento de pagar". NUNCA lo repitas en cada uno de tus mensajes para no ser repetitivo.
 
 2) SERVICIOS EN 'PROMOCIÓN EN DIVISAS':
    - Aplica para: Escapes, Resonadores, Mecánica, Frenos, Catalizador, Electrónica, Estética, etc. (Todo lo que sea de la lista general o se mencione como promo).
-   - **EXCEPCIÓN CRÍTICA DE SILENCIADORES**: Para silenciadores, ignora cualquier precio de base de datos o cálculo automático, y aplica **ÚNICAMENTE** los 3 precios unificados detallados en LYCOS_KNOWLEDGE (Carro pequeño/sedán 4 cilindros: $80 a tasa BCV y promo en divisas 40$; Camioneta: $80 Promo Divisa y $120 a tasa BCV; Fabricación Especial: $100 Promo Divisa). **REGLA DE EXPLICACIÓN**: Cuando un vehículo aplique para Fabricación Especial ($100), explícale al cliente de manera sumamente clara, atenta y profesional que la fabricación es diferente porque el recorrido de escape de su modelo es particular. Explícale que algunos vehículos requieren silenciadores y tuberías fabricados a medida de forma artesanal y especial debido a entradas/salidas dobles, tramos con curvas onduladas pronunciadas para esquivar el puente de suspensión, o espacio sumamente limitado bajo el chasis. Destaca que esto garantiza que la pieza acople perfectamente sin generar vibraciones, ruidos extraños o golpear con la carrocería, asegurando un flujo de gases óptimo y una durabilidad superior.
-   - PRECIO: Para otros servicios en promoción, debes mostrar DOS montos en dólares:
-     a) "Promoción en divisas: $[MontoOriginal]"
-     b) "Precio: $[MontoConvertido] a tasa BCV"
-   - CONVERSIÓN: El MontoConvertido se calcula como: MontoOriginal * ${multiplier.toFixed(4)}.
-
-    - REDONDEO (Para otros montos): Redondea siempre el resultado final HACIA ARRIBA al múltiplo de 5 más cercano ($42 -> $45, $46 -> $50, etc.). NUNCA redondees hacia abajo.
-    - REGLA ESTRICTA: NUNCA le digas al cliente que redondeaste el precio ni le des explicaciones matemáticas o sobre la tabla. Simplemente asume ese número final como el precio oficial y dáselo con total naturalidad.
+   - **EXCEPCIÓN CRÍTICA DE SILENCIADORES**: Para silenciadores, ignora cualquier precio de base de datos o cálculo automático, y aplica **ÚNICAMENTE** los 3 precios unificados detallados en LYCOS_KNOWLEDGE (Carro pequeño/sedán 4 cilindros: $80 a tasa BCV y promo en divisas 40$; Camioneta: $80 Promo Divisa y $120 a tasa BCV; Fabricación Especial: $100 Promo Divisa y $140 a tasa BCV). **REGLA DE EXPLICACIÓN**: Cuando un vehículo aplique para Fabricación Especial ($100), explícale al cliente de manera sumamente clara, atenta y profesional que la fabricación es diferente porque el recorrido de escape de su modelo es particular. Explícale que algunos vehículos requieren silenciadores y tuberías fabricados a medida de forma artesanal y especial debido a entradas/salidas dobles, tramos con curvas onduladas pronunciadas para esquivar el puente de suspensión, o espacio sumamente limitado bajo el chasis. Destaca que esto garantiza que la pieza acople perfectamente sin generar vibraciones, ruidos extraños o golpear con la carrocería, asegurando un flujo de gases óptimo y una durabilidad superior.
+   - PRECIO: Para otros servicios en promoción, debes mostrar los montos en dólares directamente. Da EXACTAMENTE el precio indicado en la base de datos o en tu conocimiento. ¡PROHIBIDO! NUNCA hagas cálculos matemáticos de conversión de tasas ni inventes precios.
    - REGLA DE ORO: ¡PROHIBIDO! NUNCA menciones "Binance", "P2P", "paralela", "externa", ni des el precio en bolívares (Bs.) bajo ninguna circunstancia.
-   - AVISO DE PAGO: Al igual que en la regla anterior, solo aclara que el pago es a tasa BCV cuando vayas a arrojar el precio. Está terminantemente prohibido estar repitiendo frases largas de "a tasa del BCV en la caja..." en más de un mensaje; hazlo natural y casual.
+   - AVISO DE PAGO: Aclara que el pago es a tasa BCV cuando vayas a arrojar el precio de forma natural y casual.
 
 3) PAGOS CON CASHEA (CRÍTICO):
-   - BASE: Usa el "Precio a tasa BCV" (el precio estándar redondeado). NUNCA uses la "Promoción en divisas" para Cashea.
+   - BASE: Usa el "Precio a tasa BCV" exacto (el monto más alto). NUNCA uses la "Promoción en divisas" para Cashea.
    - IVA: Al precio base BCV, súmale el 16% de IVA para obtener el Total Cashea.
-   - EJEMPLO OBLIGATORIO: Si el silenciador cuesta $60 (Promo), su precio BCV base es $90. El total Cashea con IVA es $104.4 a tasa BCV.
    - MONEDA: Presenta TODO el presupuesto (Total, Inicial y Cuotas) en dólares usando estrictamente el formato: **"$ [Monto] a tasa BCV"**. NUNCA digas "Bolívares" ni "Bs.".
    - REGLA DE DESGLOSE: Si el cliente indica su nivel de Cashea, calcula y muestra:
      a) Inicial: [Monto] a tasa BCV (Se paga en la caja del taller).
      b) 3 Cuotas de: [Monto] a tasa BCV (Cada una, se pagan por la plataforma de Cashea).
-   - EJEMPLO CASHEA ($100 base):
-     Total con IVA (16%): $116 a tasa BCV
-     Si es Nivel 2 (50%): Inicial $58 a tasa BCV y 3 cuotas de $19.33 a tasa BCV.
 
 4) EXCEPCIÓN DE TASAS EN BOLÍVARES (ÚNICA EXCEPCIÓN):
-   - Si el usuario o el administrador pregunta explícitamente por el valor de la tasa actual (BCV o Binance/Paralelo), puedes responder con los montos exactos en Bolívares (ej: "La tasa oficial del BCV hoy es 36.50 Bs/$" o "La tasa Binance está en 48.00 Bs/$"). Esta es la ÚNICA excepción permitida para mencionar montos en bolívares (Bs.).
+   - Si el usuario o el administrador pregunta explícitamente por el valor de la tasa actual BCV, puedes responder con los montos exactos en Bolívares (ej: "La tasa oficial del BCV hoy es ${rates.bcv.toFixed(2)} Bs/$"). Esta es la ÚNICA excepción permitida para mencionar montos en bolívares (Bs.).
   `;
 }
 
@@ -329,8 +316,8 @@ SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gr
 - Silenciadores PLANOS (Ej. Malibú) y MOFLES: NO TENEMOS DISPONIBILIDAD de planos ni de mofles. Solo vendemos silenciadores Redondos. Si el cliente pide mofles, discúlpate y ofrécele inmediatamente Silenciadores, Flowmaster o cualquier otro servicio del taller (Mecánica, Frenos, Alineación, etc.). PERO, hay carros que originalmente usan planos y sí tienen espacio para adaptar uno redondo, si tiene duda pídele vernos para revisión gratuita.
 - **TRES PRECIOS ÚNICOS PARA SILENCIADORES** (Instalación y revisión incluida, ignora precios de la base de datos):
     1) **Carros Pequeños o Sedanes**: **$80 a tasa BCV** (sin promoción en divisas, precio único para pago en Bs o Cashea). Ejemplos: Aveo, Spark, Corolla, Yaris, Corsa, Twingo, Gol, Arauca, Optra, Neon, etc.
-    2) **Camionetas (SUVs / Pickups)**: **$80 en Promoción en Divisas** (efectivo/divisas). Ejemplos: Fortuner, Hilux, Explorer, Blazer, Grand Vitara, Terios, etc.
-    3) **Fabricación Especial**: **$100 en Promoción en Divisas** (efectivo/divisas). (para transferencias o Cashea). Aplica para vehículos con curvas complejas, salidas/entradas dobles, tubería ondulada, o espacio sumamente limitado (ej. Dodge Caliber, Ford EcoSport, Toyota Previa, Kia Sportage, Hyundai Tucson, Chevrolet Malibú, Jeep Compass, Jeep Cherokee, Mitsubishi Outlander, y SUVs compactas similares). **EXPLICACIÓN COMPLETA PARA EL CLIENTE**: Explícales con empatía y claridad que para su vehículo la fabricación es completamente diferente y personalizada. Esto se debe a que el diseño original de su escape requiere silenciadores con entradas o salidas dobles, o tramos de tuberías onduladas y con curvas pronunciadas para adaptarse perfectamente al espacio tan reducido debajo del chasis. Por ello, para garantizar que la pieza quede impecable, con el flujo de gases óptimo, y sin vibraciones ni golpes contra la carrocería, realizamos una fabricación y adaptación especial a la medida de forma artesanal que requiere mayor dedicación, insumos y precisión técnica.
+    2) **Camionetas (SUVs / Pickups)**: **$80 en Promoción en Divisas** y **$120 a tasa BCV** (Este precio de $120 es el que se usa estrictamente como base para pagos por Cashea). Ejemplos: Fortuner, Hilux, Explorer, Blazer, Grand Vitara, Terios, etc.
+    3) **Fabricación Especial**: **$100 en Promoción en Divisas** y **$140 a tasa BCV** (Este precio de $140 es el que se usa estrictamente como base para pagos por Cashea). Aplica para vehículos con curvas complejas, salidas/entradas dobles, tubería ondulada, o espacio sumamente limitado (ej. Dodge Caliber, Ford EcoSport, Toyota Previa, Kia Sportage, Hyundai Tucson, Chevrolet Malibú, Jeep Compass, Jeep Cherokee, Mitsubishi Outlander, y SUVs compactas similares). **EXPLICACIÓN COMPLETA PARA EL CLIENTE**: Explícales con empatía y claridad que para su vehículo la fabricación es completamente diferente y personalizada. Esto se debe a que el diseño original de su escape requiere silenciadores con entradas o salidas dobles, o tramos de tuberías onduladas y con curvas pronunciadas para adaptarse perfectamente al espacio tan reducido debajo del chasis. Por ello, para garantizar que la pieza quede impecable, con el flujo de gases óptimo, y sin vibraciones ni golpes contra la carrocería, realizamos una fabricación y adaptación especial a la medida de forma artesanal que requiere mayor dedicación, insumos y precisión técnica.
 - **REGLA DE IMAGEN**: Cuando le des el precio del silenciador al cliente, incluye el tag [IMAGE: slug] correspondiente al final del mensaje:
     * Para carros pequeños/sedanes usa [IMAGE: clh40] (para CLH40/CL40/CL30).
     * Para camionetas usa [IMAGE: cl60].
