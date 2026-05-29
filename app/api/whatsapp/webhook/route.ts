@@ -387,7 +387,15 @@ ESTETICA: Pulitura de faros, Latonería y pintura (previa cotización), Papel ah
 
 OTROS: Grúa (consultar asesor), Inventario de repuestos.
 - Certificado Médico: $15 o equivalente directo interbancario BCV.
-- Renovación de RCV: Para renovar el RCV y dar precios exactos, el cliente DEBE comunicar con un asesor directamente (transfiérelo).
+- Renovación y Emisión de RCV:
+  "¡Conducir no es un juego! Adquiere tu póliza de RCV de manera rápida y sencilla". Precios (TCR = Tasa BCV):
+  * MOTOS: $15
+  * PARTICULARES HASTA 800 Kg: $33
+  * PARTICULARES MÁS DE 800 Kg: $39
+  * PICK-UP Y CARGA HASTA 2 Tn: $45
+  * CARGA 2-5 Tn: $84 | CARGA 5-8 Tn: $84 | CARGA 8-12 Tn: $108
+  (Estar Seguros S.A., SUDEASEG código TVP: 2025-0090).
+  Brinda el precio, envía obligatoriamente el tag [IMAGE: rcv] para mostrar la lista de precios oficial en formato imagen, y para tramitarlo di obligatoriamente: "Te envío el contacto de nuestro asesor 👇".
 
 CASHEA:
 - REGLA DE ORO CASHEA: Usa SIEMPRE el "Precio a tasa BCV" (el monto más alto) como base. La "Promoción en divisas" es solo para pagos al contado.
@@ -611,6 +619,16 @@ GUÍA DE RESPUESTA PARA EL ADMIN:
 
 IMÁGENES:
 Analiza la clasificación de la imagen recibida y actúa según la sección 9. La descripción incluirá el tipo entre corchetes: [FACTURA], [VEHÍCULO], [PRODUCTO], [REPORTE], [TICKET], [EXCEL], [OTRO].
+
+17. PRECIOS RCV (Responsabilidad Civil de Vehículo):
+    - Motos: $15
+    - Particulares hasta 800 Kg: $33
+    - Particulares más de 800 Kg: $39
+    - Pick-Up y Carga hasta 2 Tn: $45
+    - Carga 2 a 5 Tn: $84
+    - Carga 5 a 8 Tn: $84
+    - Carga 8 a 12 Tn: $108
+    (Aprobado por SUDEASEG código TVP: 2025-0090, Estar Seguros S.A.).
 `;
 
 export const dynamic = 'force-dynamic';
@@ -2446,15 +2464,23 @@ async function sendImageMsg(to: string, imageSlug: string, caption?: string, rep
     'rc30': 'RC 30.jpg'
   };
 
-  const fileName = imageMap[imageSlug.toLowerCase()];
-  if (!fileName) {
+  let fileName = imageMap[imageSlug.toLowerCase()];
+  const isRcv = imageSlug.toLowerCase() === 'rcv';
+  
+  if (!fileName && !isRcv) {
     console.error(`❌ No se encontró imagen para el slug: ${imageSlug}`);
     return;
   }
 
   // URL base proporcionada por el usuario (Vercel)
   const baseUrl = 'https://lycos-team-whatsapp-bot.vercel.app';
-  const imageUrl = `${baseUrl}/Silenciadores/${encodeURIComponent(fileName)}`;
+  let imageUrl = '';
+  
+  if (isRcv) {
+    imageUrl = `${baseUrl}/Rcv/RCV.jpg`;
+  } else {
+    imageUrl = `${baseUrl}/Silenciadores/${encodeURIComponent(fileName)}`;
+  }
 
   console.log(`🖼️ Intentando enviar imagen: ${imageUrl} a ${to}`);
 

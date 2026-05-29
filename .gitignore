@@ -36,7 +36,6 @@ import_excel.js
 check_excel.js
 get-schema.js
 *.xlsx
-*.jpg
 *.pdf
 db_check.txt
 dolarapi.json
