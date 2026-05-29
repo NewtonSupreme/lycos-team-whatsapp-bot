@@ -409,12 +409,13 @@ Si no tienes estos datos, DEBES pedírselos primero sin excepción.
 Si no da la placa, insiste una vez amablemente, si sigue sin darla procede con nombre y modelo.
 Calcula la fecha exacta desde hoy usando FECHA/HORA VENEZUELA. Nunca agendes domingos.
 VERIFICA estrictamente si tiene citas registradas o si el horario está ocupado globalmente.
-ORDEN DEL SISTEMA #1 (CITAS): Cuando tú y el cliente ya acordaron de forma exitosa los datos (Nombre, Vehículo y Día), DEBES obligatoriamente imprimir la siguiente etiqueta oculta de sistema AL FINAL de tu respuesta (solo UNA vez):
+ORDEN DEL SISTEMA #1 (CITAS): Cuando tú y el cliente ya acordaron de forma exitosa los datos (Nombre, Vehículo y Día), DEBES **OBLIGATORIAMENTE** imprimir la siguiente etiqueta oculta de sistema AL FINAL de tu respuesta (solo UNA vez):
 [CITA: AAAA-MM-DD HH:MM | descripción breve | marca modelo]
 (Si el cliente no dio la hora, usa 08:00 de forma predeterminada en la etiqueta o pones no especificada).
 La descripción debe ser breve. El vehículo toma la forma Marca Modelo.
 Hora en formato 24h (ejemplo: 02:30 PM es 14:30).
 Si el cliente todavía NO ha confirmado el día, NO imprimas la etiqueta.
+⚠️ **ADVERTENCIA CRÍTICA**: Decir "He agendado la cita" o "Cita registrada" SIN incluir la etiqueta [CITA:...] NO registra la cita en el sistema. La etiqueta [CITA:...] es la ÚNICA forma de que la cita quede guardada. Sin ella, el cliente se quedará sin cita agendada.
 
 ORDEN DEL SISTEMA #2 (NOMBRE DEL CLIENTE - CRÍTICO): Si en la conversación el cliente menciona de forma CLARA y DIRECTA su nombre real (ej. "soy Juan", "me llamo María" o responde a tu pregunta "¿con quién tengo el gusto?" con "Arturo"), DEBES obligatoriamente imprimir al final de tu respuesta:
 [NOMBRE: Nombre Del Cliente]
@@ -585,7 +586,9 @@ REGLA DE TAGS (Imprimir SIEMPRE al final de tu respuesta):
    - [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca | sede_id | ubicacion | clasificacion]
    - [STOCK_DELETE: id_o_codigo | sede_id]
    - [VEHICULO_UPSERT: id_opcional | cliente_id | placa | marca | modelo | anio | sede_id]
-   - [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion | sede_id | costo_estimado | nombre_cliente | vehiculo_info | placa | telefono]
+    - [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion | sede_id | costo_estimado | nombre_cliente | vehiculo_info | placa | telefono]
+    - ⚠️ REGLA CRITICA CITA_UPSERT: La fecha y hora deben ir en CAMPOS SEPARADOS. NO pongas "2026-06-02 08:00" en el campo fecha. Debe ser: fecha="2026-06-02" y hora="08:00" en campos separados.
+    - ✅ EJEMPLO CORRECTO: [CITA_UPSERT: | 2026-06-02 | 08:00 | | | pendiente | Cambio de aceite | | 45 | Juan Pérez | Chevrolet D-MAX | | ]
    - ⚠️ FORMATO CORRECTO (SOLO valores separados por |, NUNCA incluyas los nombres de los campos): [SERVICIO_UPSERT: | | | Jorge Muñoz | 584146857440 | Chevrolet D-MAX | A46AZOA | otro | Cambio pastillas freno + Aceite 10W30 | pendiente | 45 | 310595c5-5258-47fa-9b69-5ad9932685a7 | Frenos]
    - ⚠️ EJEMPLO INCORRECTO (NO hagas esto — esto rompe el parser): [SERVICIO_UPSERT: nombre_cliente | Jorge Muñoz | telefono | | ...]
    - ⚠️ REGLA CRITICA: El tag debe contener SOLO los valores separados por |. NUNCA incluyas etiquetas/nombres de campos dentro del tag. El primer campo (id_opcional) se deja vacío para crear un nuevo servicio, o se pone un UUID válido (36 caracteres con guiones) para actualizar uno existente.
@@ -1746,7 +1749,8 @@ ${rules}
 - PROHIBICION DE ENVIAR IMAGENES: **NUNCA** intentes enviar, simular o ofrecer enviar imágenes o fotos. 
 
 AGENDAMIENTO DE CITAS (USO DE TAGS):
-- Si el cliente confirma una fecha y hora, genera AL FINAL de tu respuesta el tag: [CITA: AAAA-MM-DD HH:MM | servicio | vehículo]
+- ⚠️ **REGLAS DE ORO**: Si el cliente confirma una fecha y hora, DEBES generar SIEMPRE AL FINAL de tu respuesta el tag: [CITA: AAAA-MM-DD HH:MM | servicio | vehículo]
+- SI NO GENERAS EL TAG, LA CITA NO QUEDA REGISTRADA. Decir "he agendado" no es suficiente.
 - Ejemplo: [CITA: 2026-04-16 08:00 | Silenciador | Mazda Allegro]
 - En 'servicio', resume lo que se hará. En 'vehículo', pon MARCA y MODELO.
 - CRITICO: NUNCA pongas estados como 'pendiente' o 'confirmada' en VEHÍCULO.
@@ -3081,14 +3085,28 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         for (const match of citaUpsertMatches) {
           try {
             const parts = match[1].split('|').map(s => s.trim());
-            const id = (parts[0] && parts[0] !== 'id_opcional' && parts[0] !== 'null') ? parts[0] : null;
-            const fecha = parts[1] || getVzlaDateString();
-            const hora = parts[2] || '08:00';
-            const clientId = (parts[3] && parts[3] !== 'null' && parts[3] !== 'undefined') ? parts[3] : null;
-            const vehId = (parts[4] && parts[4] !== 'null' && parts[4] !== 'undefined') ? parts[4] : null;
+            const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+            // Parse fecha - handle combined "YYYY-MM-DD HH:MM" format (AI often puts them together)
+            let fecha = parts[1] || getVzlaDateString();
+            let hora = parts[2] || '08:00';
+            if (fecha.includes(' ')) {
+              const [datePart, timePart] = fecha.split(' ');
+              if (/^\d{4}-\d{2}-\d{2}$/.test(datePart.trim())) {
+                fecha = datePart.trim();
+              }
+              if (timePart && /^\d{2}:\d{2}/.test(timePart.trim()) && (!parts[2] || !parts[2].trim())) {
+                hora = timePart.trim();
+              }
+            }
+
+            const id = (parts[0] && parts[0] !== 'id_opcional' && parts[0] !== 'null' && UUID_RE.test(parts[0])) ? parts[0] : null;
+            // Validate UUID fields to prevent AI from placing wrong values (e.g. sede UUID as clientId)
+            const clientId = (parts[3] && UUID_RE.test(parts[3])) ? parts[3] : null;
+            const vehId = (parts[4] && UUID_RE.test(parts[4])) ? parts[4] : null;
             const estado = parts[5] || 'pendiente';
             const desc = parts[6] || '';
-            const sedeId = (parts[7] && parts[7] !== 'null' && parts[7] !== 'undefined') ? parts[7] : (ctx.sede_id || DEFAULT_SEDE_ID);
+            const sedeId = (parts[7] && UUID_RE.test(parts[7])) ? parts[7] : (ctx.sede_id || DEFAULT_SEDE_ID);
             const costoEstimado = (parts[8] && parts[8] !== 'null') ? parseFloat(parts[8]) : null;
             const nombreCliente = (parts[9] && parts[9] !== 'null') ? parts[9] : null;
             const vehiculoInfo = (parts[10] && parts[10] !== 'null') ? parts[10] : null;
@@ -3102,6 +3120,24 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             // Default name to admin's name if client name not provided
             const defaultName = ctx.adminName || 'Administrador';
             const nameToUse = nombreCliente || defaultName;
+
+            // Verify clientId actually exists in DB (AI may put sede UUID in client field)
+            if (finalClientId && db) {
+              const { data: clientExists } = await db.from('clientes').select('id').eq('id', finalClientId).maybeSingle();
+              if (!clientExists) {
+                console.log(`⚠️ CITA_UPSERT: clientId ${finalClientId} no existe en DB, se ignorará`);
+                finalClientId = null;
+              }
+            }
+
+            // Verify vehId actually exists in DB
+            if (finalVehId && db) {
+              const { data: vehExists } = await db.from('vehiculos').select('id').eq('id', finalVehId).maybeSingle();
+              if (!vehExists) {
+                console.log(`⚠️ CITA_UPSERT: vehId ${finalVehId} no existe en DB, se ignorará`);
+                finalVehId = null;
+              }
+            }
 
             if (!finalClientId && nameToUse) {
               const { clientId: newCId } = await getOrCreateClientAndVehicle(
@@ -3612,6 +3648,73 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             }
           }
         } catch (e) { console.error('Error insertando cita automatica:', e); }
+      }
+
+      // ── FALLBACK: Detect if AI said it scheduled but forgot [CITA:] tag ──
+      if (!citaMatch && db && !isAdmin) {
+        const lowerResp = cleanedAi.toLowerCase();
+        const agendadoKeywords = ['agendado', 'agendé', 'cita registrada', 'cita agendada', 'cita confirmada', 'reservado', 'cita creada', 'cita para'];
+        const hasAgendado = agendadoKeywords.some(k => lowerResp.includes(k));
+        if (hasAgendado) {
+          console.log(`⚠️ FALLBACK: AI dice que agendó cita pero no generó [CITA:]. Intentando extraer datos...`);
+          try {
+            const userName = ctx.memoria?.nombre || '';
+            const vehiculoFromMem = ctx.memoria?.vehiculos?.map(v =>
+              `${v.marca} ${v.modelo}${v.anio ? ' ' + v.anio : ''}`).join(', ') || '';
+            // Extract date from AI response: "viernes 29 de mayo", "martes 02 de junio", etc.
+            const dateMatch = lowerResp.match(/(\d{1,2})\s*de\s*(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)/i);
+            // Extract time from AI response: "08:00 AM", "8:00 AM", "08:00"
+            const timeMatch = lowerResp.match(/(\d{1,2}):(\d{2})\s*(?:AM|PM)?/i);
+            // Look for HH:MM AM/PM patterns like "8:00 AM", "08:00 AM"
+            const ampmMatch = lowerResp.match(/(?:a\s+las\s+)?(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+
+            if (userName && vehiculoFromMem) {
+              let horaFallback = '08:00';
+              if (ampmMatch) {
+                let h = parseInt(ampmMatch[1]);
+                if (ampmMatch[3].toUpperCase() === 'PM' && h < 12) h += 12;
+                if (ampmMatch[3].toUpperCase() === 'AM' && h === 12) h = 0;
+                horaFallback = `${String(h).padStart(2, '0')}:${ampmMatch[2]}`;
+              } else if (timeMatch) {
+                horaFallback = `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}`;
+              }
+
+              const fechaFallback = getVzlaDateString();
+              const placaFallback = extractPlate(messageBody) || ctx.memoria.placa || '';
+
+              const { clientId, vehicleId } = await getOrCreateClientAndVehicle(
+                db, from, userName, vehiculoFromMem, placaFallback, undefined, waProfileName, ctx.sede_id
+              );
+
+              const { data: existing } = await db.from('citas')
+                .select('id').eq('telefono', from).eq('fecha', fechaFallback).eq('hora', horaFallback)
+                .neq('estado', 'cancelada').limit(1);
+
+              if (existing && existing.length > 0) {
+                console.log(`⚠️ FALLBACK: Cita duplicada ignorada para ${from}`);
+              } else {
+                await db.from('citas').insert({
+                  fecha: fechaFallback,
+                  hora: horaFallback,
+                  telefono: from,
+                  cliente_id: clientId || null,
+                  vehiculo_id: vehicleId || null,
+                  tipo_servicio: 'otro',
+                  descripcion: `Servicio por WhatsApp - ${vehiculoFromMem}`,
+                  estado: 'pendiente',
+                  duracion_minutos: 60,
+                  nombre_cliente: userName || from,
+                  vehiculo_info: vehiculoFromMem || null,
+                  placa: placaFallback || null,
+                  sede_id: ctx.sede_id || DEFAULT_SEDE_ID
+                });
+                console.log(`📅 FALLBACK CITA: Cita creada automáticamente para ${userName} a las ${horaFallback}`);
+              }
+            } else {
+              console.log(`⚠️ FALLBACK: Datos insuficientes - nombre: "${userName}", vehiculo: "${vehiculoFromMem}"`);
+            }
+          } catch (e) { console.error('Error en fallback de cita:', e); }
+        }
       }
 
       // ── Clean all AI Tags before sending to WhatsApp ──────────────────
