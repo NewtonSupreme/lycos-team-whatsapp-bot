@@ -386,16 +386,31 @@ ELECTRONICA:
 ESTETICA: Pulitura de faros, Latonería y pintura (previa cotización), Papel ahumado, Cámaras 360.
 
 OTROS: Grúa (consultar asesor), Inventario de repuestos.
-- Certificado Médico: $15 o equivalente directo interbancario BCV.
+- Certificado Médico: $15 a tasa BCV.
+  Para procesarlo, pídele al cliente los siguientes datos en un solo mensaje:
+  * Nombres y apellidos
+  * Cédula de identidad
+  * Edad
+  * Tipo de sangre
+  * Uso de lentes ?
+  * Grado (2°, 3°, 4°, 5°)
+  * ¿Alguna patología grave?
 - Renovación y Emisión de RCV:
+  SIEMPRE que el cliente pregunte por RCV, DEBES OBLIGATORIAMENTE dar la lista de precios estructurada con SALTOS DE LÍNEA EXACTOS (un precio por línea, no los agrupes en un solo párrafo) e INCLUIR el tag [IMAGE: rcv] al final de tu respuesta para enviar la imagen oficial.
+  Mensaje a dar:
   "¡Conducir no es un juego! Adquiere tu póliza de RCV de manera rápida y sencilla". Precios (TCR = Tasa BCV):
   * MOTOS: $15
   * PARTICULARES HASTA 800 Kg: $33
   * PARTICULARES MÁS DE 800 Kg: $39
   * PICK-UP Y CARGA HASTA 2 Tn: $45
-  * CARGA 2-5 Tn: $84 | CARGA 5-8 Tn: $84 | CARGA 8-12 Tn: $108
+  * CARGA 2 a 5 Tn: $84
+  * CARGA 5 a 8 Tn: $84
+  * CARGA 8 a 12 Tn: $108
   (Estar Seguros S.A., SUDEASEG código TVP: 2025-0090).
-  Brinda el precio, envía obligatoriamente el tag [IMAGE: rcv] para mostrar la lista de precios oficial en formato imagen, y para tramitarlo di obligatoriamente: "Te envío el contacto de nuestro asesor 👇".
+  Para tramitarlo di: "Te envío el contacto de nuestro asesor 👇".
+  ⚠️ IMPORTANTE: ¡No olvides colocar el tag [IMAGE: rcv]!
+
+⚠️ REGLA DE ALERTA DE TRAMITES: Si el cliente solicita explícitamente tramitar o comprar un Certificado Médico o un RCV, DEBES imprimir obligatoriamente el tag [ALERTA_TRAMITE] al final de tu respuesta. Esto le enviará una notificación masiva al administrador.
 
 CASHEA:
 - REGLA DE ORO CASHEA: Usa SIEMPRE el "Precio a tasa BCV" (el monto más alto) como base. La "Promoción en divisas" es solo para pagos al contado.
@@ -2966,6 +2981,20 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             }
           } catch (e) { console.error('Error saving AI detected name:', e); }
         }
+      }
+
+      // ── Process ALERTA_TRAMITE Tag ────────────────────────────────
+      if (cleanedAi.includes('[ALERTA_TRAMITE]')) {
+        cleanedAi = cleanedAi.replace(/\[ALERTA_TRAMITE\]/gi, '').trim();
+        const userName = ctx.memoria?.nombre || from;
+        console.log(`🚨 [ALERTA TRAMITE] Solicitud de Certificado Medico o RCV de ${userName} (${from})`);
+        
+        await firePushNotification({
+          title: '🚨 Nueva Solicitud de Trámite',
+          body: `El cliente ${userName} (${from}) está solicitando un Certificado Médico o RCV. ¡Atiéndelo pronto!`,
+          type: 'tramite_alert',
+          url: '/chat'
+        });
       }
 
       // ── Process INTERES Tag [INTERES: servicio | vehiculo | notas] ──
