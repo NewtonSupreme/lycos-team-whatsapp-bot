@@ -22,6 +22,11 @@ interface InvoiceData {
   iva_aplicado?: boolean;
   metodos_pago?: any;
   currency?: string;
+  // Abono / Pending fields
+  tiene_abono?: boolean;
+  abono?: number;
+  saldo_pendiente?: number;
+  estado?: 'pagado' | 'pendiente';
 }
 
 export interface PrintOptions {
@@ -100,6 +105,24 @@ export const generateInvoicePDF = (
     doc.setTextColor(...black);
     doc.setFontSize(11);
     doc.text(data.vehiculo?.toUpperCase() || '---', rightAlign, 54, { align: 'right' });
+
+    // ── Pending Status Ribbon ───────────────────────────────────
+    if (data.estado === 'pendiente') {
+      const ribbonY = 40;
+      const ribbonH = 14;
+      const ribbonColor = [245, 158, 11] as [number, number, number]; // amber
+
+      doc.setFillColor(...ribbonColor);
+      doc.roundedRect(margin, ribbonY, 60, ribbonH, 2, 2, 'F');
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+      doc.text('PENDIENTE', margin + 30, ribbonY + 5, { align: 'center' });
+      doc.setFontSize(7);
+      doc.setFont('helvetica', 'normal');
+      doc.text('POR PAGAR', margin + 30, ribbonY + 12, { align: 'center' });
+    }
 
     // ── Table ───────────────────────────────────────────────────
     const bcvRateUsed = data.tasa_bcv || data.tasa_cambio || 518.0;
@@ -224,6 +247,28 @@ export const generateInvoicePDF = (
       doc.setFont('helvetica', 'bold');
       doc.text(`TASA DE CAMBIO BCV: ${data.tasa_bcv || data.tasa_cambio} Bs/$`, margin, infoY);
       infoY += 5;
+    }
+
+    // Abono / Pending info
+    if (data.estado === 'pendiente') {
+      if (data.notas || data.tiene_abono) infoY += 2;
+      doc.setFillColor(245, 158, 11, 0.12);
+      doc.roundedRect(margin, infoY, rightAlign - margin, 18, 2, 2, 'F');
+      
+      doc.setTextColor(245, 158, 11);
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+      doc.text('PENDIENTE POR PAGAR', margin + 3, infoY + 7);
+      
+      doc.setTextColor(...grayDark);
+      doc.setFontSize(7);
+      doc.setFont('helvetica', 'normal');
+      const abonoText = data.abono ? `Abono: $${Number(data.abono).toFixed(2)}` : '';
+      const saldoText = data.saldo_pendiente ? `Saldo pendiente: $${Number(data.saldo_pendiente).toFixed(2)}` : '';
+      const statusText = [abonoText, saldoText].filter(Boolean).join(' | ');
+      if (statusText) doc.text(statusText, rightAlign - 3, infoY + 7, { align: 'right' });
+      
+      infoY += 20;
     }
 
     // Notes if exists

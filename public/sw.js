@@ -27,8 +27,8 @@ self.addEventListener('push', (event) => {
   const title = data.title || 'Lycos Team';
   const options = {
     body: data.body || 'Nueva notificación',
-    icon: '/logo-icon-white.png',
-    badge: '/logo-icon-white.png',
+    icon: '/Nuevo_Lycos_LOGO copy.png',
+    badge: '/Nuevo_Lycos_LOGO copy.png',
     tag: data.tag || data.type || 'general',
     data: {
       url: data.url || '/dashboard',

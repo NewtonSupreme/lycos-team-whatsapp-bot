@@ -119,7 +119,7 @@ export default function LoginPage() {
         <div className="text-center mb-8">
           <div className="inline-flex w-16 h-16 rounded-2xl bg-white/5 border border-white/10 items-center justify-center mb-4 shadow-[0_0_30px_rgba(255,255,255,0.05)] overflow-hidden">
             <img 
-              src="/logo-icon-white.png"
+              src="/Nuevo_Lycos_LOGO copy.png"
               alt="Lycos Team Logo" 
               className="w-12 h-12 object-contain truck-anim"
             />

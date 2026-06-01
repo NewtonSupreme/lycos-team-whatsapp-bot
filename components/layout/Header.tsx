@@ -165,7 +165,7 @@ export default function Header() {
 
         // Notificación nativa del browser
         if (Notification.permission === 'granted') {
-          new Notification(title, { body: mensaje, icon: '/logo-icon-white.png', tag: 'wa-msg' });
+          new Notification(title, { body: mensaje, icon: '/Nuevo_Lycos_LOGO copy.png', tag: 'wa-msg' });
         }
 
         // Push background (para cuando el teléfono no tiene la app abierta)
@@ -195,7 +195,7 @@ export default function Header() {
         addNotification({ tipo: 'success', titulo, mensaje, leida: false });
 
         if (Notification.permission === 'granted') {
-          new Notification(titulo, { body: mensaje, icon: '/logo-icon-white.png', tag: 'cita' });
+          new Notification(titulo, { body: mensaje, icon: '/Nuevo_Lycos_LOGO copy.png', tag: 'cita' });
         }
 
         sendPushNotification({ title: titulo, body: mensaje, type: 'cita', url: '/dashboard/agenda', tag: 'cita' });
@@ -218,7 +218,7 @@ export default function Header() {
         addNotification({ tipo: 'warning', titulo, mensaje, leida: false });
 
         if (Notification.permission === 'granted') {
-          new Notification(titulo, { body: mensaje, icon: '/logo-icon-white.png', tag: 'servicio' });
+          new Notification(titulo, { body: mensaje, icon: '/Nuevo_Lycos_LOGO copy.png', tag: 'servicio' });
         }
 
         sendPushNotification({ title: titulo, body: mensaje, type: 'servicio', url: '/dashboard/servicios', tag: 'servicio' });
@@ -231,7 +231,7 @@ export default function Header() {
         const mensaje = `${srv.nombre || 'Servicio'} cambió a: ${srv.estado}`;
         addNotification({ tipo: 'info', titulo, mensaje, leida: false });
         if (Notification.permission === 'granted') {
-          new Notification(titulo, { body: mensaje, icon: '/logo-icon-white.png', tag: 'servicio-update' });
+          new Notification(titulo, { body: mensaje, icon: '/Nuevo_Lycos_LOGO copy.png', tag: 'servicio-update' });
         }
         sendPushNotification({ title: titulo, body: mensaje, type: 'servicio', url: '/dashboard/servicios', tag: 'servicio' });
       })

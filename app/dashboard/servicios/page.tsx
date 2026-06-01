@@ -885,19 +885,68 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
         }
       }
 
+      // ── Ensure vehicle exists for both CREATE and UPDATE ───────
+      if (!finalVehiculoId && formData.placa) {
+        const { data: existingVeh } = await supabase.from('vehiculos')
+          .select('id, cliente_id')
+          .eq('placa', formData.placa)
+          .maybeSingle();
+
+        if (existingVeh) {
+          finalVehiculoId = existingVeh.id;
+          if (!finalClienteId) finalClienteId = existingVeh.cliente_id;
+        } else if (finalClienteId || cita?.cliente_id) {
+          const ownerId = finalClienteId || cita?.cliente_id;
+          const names = formData.vehiculo_info.trim().split(' ');
+          const marca = names[0] || 'No especificado';
+          const modelo = names.slice(1).join(' ') || '—';
+          const yearMatch = formData.vehiculo_info.match(/\b(19\d\d|20\d\d)\b/);
+          const anio = yearMatch ? parseInt(yearMatch[0]) : 2025;
+
+          const { data: newVehiculo, error: vehErr } = await withSedeFilter(supabase.from('vehiculos'))
+            .insert(withSedeInsert({
+              cliente_id: ownerId,
+              marca,
+              modelo,
+              placa: formData.placa || 'SIN-PLACA',
+              anio,
+              estado: 'en_servicio'
+            }))
+            .select()
+            .single();
+
+          if (vehErr) throw vehErr;
+          finalVehiculoId = newVehiculo.id;
+        }
+      }
+
+      // ── Last-resort fallback: if still null and editing, keep the original ──
+      if (!finalVehiculoId && cita?.vehiculo_id) {
+        finalVehiculoId = cita.vehiculo_id;
+      }
+
       if (cita?.id) {
         // UPDATE
         const finalTipo = isCustomServicio ? 'otro' : formData.tipo;
+        const updatePayload: any = {
+          nombre_cliente: formData.nombre_cliente,
+          telefono: formData.telefono,
+          vehiculo_info: formData.vehiculo_info,
+          placa: formData.placa,
+          cliente_id: finalClienteId,
+          vehiculo_id: finalVehiculoId,
+          tipo: finalTipo,
+          tipo_personalizado: isCustomServicio ? customServicio.trim() : null,
+          costo_estimado: parseFloat(formData.costo_estimado) || 0,
+          updated_at: new Date().toISOString()
+        };
+        // Avoid sending empty strings for optional fields
+        if (!updatePayload.tipo_personalizado) delete updatePayload.tipo_personalizado;
+        if (!updatePayload.placa) delete updatePayload.placa;
+        if (!updatePayload.telefono) delete updatePayload.telefono;
+
         const { error } = await withSedeFilter(supabase!.from('servicios'))
-          .update({
-            ...formData,
-            cliente_id: finalClienteId,
-            vehiculo_id: finalVehiculoId,
-            tipo: finalTipo,
-            tipo_personalizado: isCustomServicio ? customServicio.trim() : null,
-            costo_estimado: parseFloat(formData.costo_estimado) || 0,
-            updated_at: new Date().toISOString()
-          })
+          .update(updatePayload)
           .eq('id', cita.id);
         if (error) throw error;
         
@@ -910,9 +959,15 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
       } else {
         // CREATE
         const now = new Date();
+        if (!finalVehiculoId) {
+          throw new Error('No se pudo determinar el vehículo. Asegúrate de escribir la placa o seleccionar un cliente con vehículo registrado.');
+        }
         const finalTipoServicio = isCustomServicio ? 'otro' : formData.tipo;
-        const payload = {
-          ...formData,
+        const payload: any = {
+          nombre_cliente: formData.nombre_cliente,
+          telefono: formData.telefono,
+          vehiculo_info: formData.vehiculo_info,
+          placa: formData.placa,
           cliente_id: finalClienteId,
           vehiculo_id: finalVehiculoId,
           tipo: finalTipoServicio,
@@ -940,6 +995,9 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
             }))
           ]
         };
+        if (!payload.tipo_personalizado) delete payload.tipo_personalizado;
+        if (!payload.placa) delete payload.placa;
+        if (!payload.telefono) delete payload.telefono;
         const { error } = await withSedeFilter(supabase!.from('servicios')).insert(withSedeInsert(payload));
         if (error) throw error;
 

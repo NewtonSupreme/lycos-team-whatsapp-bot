@@ -138,7 +138,7 @@ export default function Sidebar() {
             (mounted && !sidebarOpen) && "w-9 h-9"
           )}>
             <img 
-              src="/logo-icon-white.png" 
+              src="/Nuevo_Lycos_LOGO copy.png" 
               alt="Logo" 
               className="w-8 h-8 object-contain truck-anim"
             />

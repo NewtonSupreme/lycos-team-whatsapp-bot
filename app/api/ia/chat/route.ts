@@ -105,6 +105,170 @@ function getVzlaDateString(): string {
   return `${year}-${month}-${day}`;
 }
 
+// ─── Duplicate-sale protection ─────────────────────────────────────────────────
+// Window in minutes during which two identical sales are considered the same one.
+// Used both to block accidental duplicates from the AI and to gate the
+// "modificar / eliminar venta reciente" actions.
+const RECENT_SALE_WINDOW_MIN = 10;
+
+function normalizeStr(v: any): string {
+  return (v ?? '').toString().trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function normalizeName(v: any): string {
+  return normalizeStr(v)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, '');
+}
+
+function fingerprintFromDesglose(desglose: any): string {
+  if (!Array.isArray(desglose)) return '';
+  return desglose
+    .map((it: any) => {
+      const desc = normalizeName(it?.descripcion || '');
+      const cant = Number(it?.cantidad || 1);
+      const price = Number(it?.precio_unitario ?? it?.total ?? 0);
+      return `${desc}|${cant}|${price.toFixed(2)}`;
+    })
+    .sort()
+    .join('||');
+}
+
+function fingerprintFromItemsString(itemsStr: string): string {
+  if (!itemsStr || !itemsStr.includes(':')) return '';
+  return itemsStr
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(item => {
+      const [desc, priceStr] = item.split(':');
+      const price = parseFloat((priceStr || '0').replace(/[^\d.]/g, '')) || 0;
+      return `${normalizeName(desc)}|1|${price.toFixed(2)}`;
+    })
+    .sort()
+    .join('||');
+}
+
+function extractMetodoFromMetodosPago(metodos_pago: any): string {
+  if (!metodos_pago) return '';
+  if (typeof metodos_pago === 'string') {
+    try { metodos_pago = JSON.parse(metodos_pago); } catch { return ''; }
+  }
+  for (const [k, v] of Object.entries(metodos_pago)) {
+    if (v && Number(v) > 0) return normalizeStr(k);
+  }
+  return '';
+}
+
+function extractMetodoFromNotas(notas: string): string {
+  if (!notas) return '';
+  // Legacy silenciador format: "... [Total: $XX (metodo)] | Cliente: ..."
+  const m = notas.match(/\(([^)]+)\)/);
+  return m ? normalizeStr(m[1]) : '';
+}
+
+function minutesSince(iso: string | null | undefined): number {
+  if (!iso) return 0;
+  return Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+}
+
+function getRecentWindowIso(): string {
+  return new Date(Date.now() - RECENT_SALE_WINDOW_MIN * 60 * 1000).toISOString();
+}
+
+// Look for an identical sale in ventas_dia within the recent window.
+// Match criteria: same client (normalized), same total (±$0.01), same items
+// (sorted desc|cantidad|precio fingerprint), same payment method.
+async function findDuplicateVentaCompleta(
+  db: any,
+  sedeId: string | null,
+  cliente: string,
+  total: number,
+  itemsStr: string,
+  metodo_pago: string
+): Promise<any | null> {
+  const targetFP = fingerprintFromItemsString(itemsStr);
+  const tCliente = normalizeName(cliente || 'consumidor final');
+  const tMetodo = normalizeStr(metodo_pago || '');
+
+  const q = withSedeFilterServer(db.from('ventas_dia'), sedeId)
+    .select('id, cliente, total_ingresos, desglose, metodos_pago, created_at')
+    .gte('created_at', getRecentWindowIso())
+    .order('created_at', { ascending: false })
+    .limit(30);
+
+  const { data, error } = await q;
+  if (error || !data) return null;
+
+  for (const v of data) {
+    if (normalizeName(v.cliente) !== tCliente) continue;
+    if (Math.abs(Number(v.total_ingresos || 0) - Number(total || 0)) > 0.01) continue;
+    if (fingerprintFromDesglose(v.desglose) !== targetFP) continue;
+    if (extractMetodoFromMetodosPago(v.metodos_pago) !== tMetodo) continue;
+    return v;
+  }
+  return null;
+}
+
+// Look for an identical single-item sale in ventas_silenciadores within the
+// recent window. Match criteria: same product, same qty, same price, same
+// payment method, same client (when provided).
+async function findDuplicateVentaItem(
+  db: any,
+  sedeId: string | null,
+  cliente: string,
+  producto: string,
+  cantidad: number,
+  precio: number,
+  metodo_pago: string
+): Promise<any | null> {
+  const tCliente = normalizeName(cliente || '');
+  const tProducto = normalizeName(producto || '');
+  const tMetodo = normalizeStr(metodo_pago || '');
+
+  const q = withSedeFilterServer(db.from('ventas_silenciadores'), sedeId)
+    .select('id, modelo, cantidad, precio_registrado, notas, created_at, fecha')
+    .gte('created_at', getRecentWindowIso())
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  const { data, error } = await q;
+  if (error || !data) return null;
+
+  for (const v of data) {
+    if (normalizeName(v.modelo) !== tProducto) continue;
+    if (Number(v.cantidad || 0) !== Number(cantidad || 0)) continue;
+    if (Math.abs(Number(v.precio_registrado || 0) - Number(precio || 0)) > 0.01) continue;
+    if (extractMetodoFromNotas(v.notas || '') !== tMetodo) continue;
+    if (tCliente) {
+      // notas contains " | Cliente: X" — make sure it matches.
+      if (!normalizeName(v.notas || '').includes(tCliente)) continue;
+    }
+    return v;
+  }
+  return null;
+}
+
+// Resolve a venta_dia by id, ensuring it belongs to the current sede and is
+// still within the "recent" window (so modify/delete can be safely gated).
+async function getRecentVentaById(
+  db: any,
+  sedeId: string | null,
+  id: string
+): Promise<{ venta: any; ageMin: number } | null> {
+  if (!id) return null;
+  const q = withSedeFilterServer(db.from('ventas_dia'), sedeId)
+    .select('id, cliente, total_ingresos, desglose, metodos_pago, created_at, notas, notes')
+    .eq('id', id)
+    .maybeSingle();
+  const { data, error } = await q;
+  if (error || !data) return null;
+  const ageMin = minutesSince(data.created_at);
+  if (ageMin > RECENT_SALE_WINDOW_MIN) return null;
+  return { venta: data, ageMin };
+}
+
 // ─── Load Full DB Context using proven lib functions ───────────────────────────
 async function loadDbContext(sedeId: string | null): Promise<string> {
   const sections: string[] = [];
@@ -355,6 +519,12 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
   // Track newly created IDs so subsequent actions can reference them
   const createdIds: Record<string, string> = {};
 
+  // Track fingerprints of ventas created earlier in THIS batch, so a
+  // second identical [ACTION: registrar_venta_*] in the same AI response
+  // is also blocked (in addition to the DB-level duplicate check).
+  const justCreatedVentaCompleta = new Set<string>();
+  const justCreatedVentaItem = new Set<string>();
+
   const table = (name: string) => withSedeFilterServer(db!.from(name), sedeId);
   const insert = async (name: string, data: any) => db!.from(name).insert(withSedeInsertServer(data, sedeId)).select();
 
@@ -522,28 +692,50 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
         );
 
         const precioNum = parseFloat(p.precio || '0');
+        const producto = p.producto || p.modelo || '';
+        const cantidad = parseInt(p.cantidad) || 1;
 
-        await insert('ventas_silenciadores', {
-          cantidad: parseInt(p.cantidad) || 1,
-          modelo: p.producto || p.modelo || null,
-          notas: notasFinales,
-          fecha: new Date().toISOString(),
-          precio_registrado: precioNum,
-        });
-
-        // Auto-decrement stock if inventory ID provided
-        if (p.inv_id) {
-          const { data: invItem } = await table('inventario').select('stock, nombre').eq('id', p.inv_id).single();
-          if (invItem) {
-            const qty = parseInt(p.cantidad) || 1;
-            const newStock = Math.max(0, (invItem.stock || 0) - qty);
-            await table('inventario').update({ stock: newStock, updated_at: new Date().toISOString() }).eq('id', p.inv_id);
-            results.push(`✅ Venta: ${qty}x ${p.producto || p.modelo} → $${p.precio || '0'}${contextStr}${clienteStr}. Stock "${invItem.nombre}": ${invItem.stock} → ${newStock}`);
-          } else {
-            results.push(`✅ Venta: ${p.producto || p.modelo} → $${p.precio || '0'}${contextStr}${clienteStr} (stock no actualizado — ID no encontrado)`);
-          }
+        // ── Duplicate protection ────────────────────────────────────────────
+        const fpKey = [
+          normalizeName(clienteNombre || ''),
+          normalizeName(producto),
+          cantidad,
+          precioNum.toFixed(2),
+          normalizeStr(metodo || ''),
+        ].join('::');
+        if (justCreatedVentaItem.has(fpKey)) {
+          results.push(`⚠️ Venta duplicada omitida en este mismo mensaje: ${cantidad}x ${producto} → $${precioNum}${contextStr}${clienteStr} (ya la ibas a registrar).`);
         } else {
-          results.push(`✅ Venta registrada: ${p.cantidad || 1}x ${p.producto || p.modelo} → $${p.precio || '0'}${contextStr}${clienteStr}`);
+          const dup = await findDuplicateVentaItem(db, sedeId, clienteNombre || '', producto, cantidad, precioNum, metodo);
+          if (dup) {
+            const ageMin = minutesSince(dup.created_at || dup.fecha);
+            results.push(`⚠️ Venta duplicada omitida — ya registraste ${cantidad}x ${producto} por $${precioNum}${contextStr}${clienteStr} hace ${ageMin} min. Si fue un error, dime "modifica esa venta" o "elimina esa venta" y lo corrijo (solo es posible dentro de los próximos ${RECENT_SALE_WINDOW_MIN} min).`);
+            justCreatedVentaItem.add(fpKey);
+          } else {
+            justCreatedVentaItem.add(fpKey);
+
+            await insert('ventas_silenciadores', {
+              cantidad,
+              modelo: producto || null,
+              notas: notasFinales,
+              fecha: new Date().toISOString(),
+              precio_registrado: precioNum,
+            });
+
+            // Auto-decrement stock if inventory ID provided
+            if (p.inv_id) {
+              const { data: invItem } = await table('inventario').select('stock, nombre').eq('id', p.inv_id).single();
+              if (invItem) {
+                const newStock = Math.max(0, (invItem.stock || 0) - cantidad);
+                await table('inventario').update({ stock: newStock, updated_at: new Date().toISOString() }).eq('id', p.inv_id);
+                results.push(`✅ Venta: ${cantidad}x ${producto} → $${p.precio || '0'}${contextStr}${clienteStr}. Stock "${invItem.nombre}": ${invItem.stock} → ${newStock}`);
+              } else {
+                results.push(`✅ Venta: ${producto} → $${p.precio || '0'}${contextStr}${clienteStr} (stock no actualizado — ID no encontrado)`);
+              }
+            } else {
+              results.push(`✅ Venta registrada: ${cantidad}x ${producto} → $${p.precio || '0'}${contextStr}${clienteStr}`);
+            }
+          }
         }
 
       } else if (tipo === 'registrar_venta_completa') {
@@ -551,6 +743,7 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
         // items format: "Producto1:precio1,Producto2:precio2"
         const metodo = p.metodo_pago || '';
         const contextStr = metodo ? ` (${metodo})` : '';
+        const clienteNombre = p.cliente || 'Consumidor Final';
         const clienteStr = p.cliente ? ` | Cliente: ${p.cliente}` : '';
         const vehiculoStr = p.vehiculo ? ` | Vehículo: ${p.vehiculo}` : '';
         const pagoMixtoStr = p.pago_mixto ? ` | Pagos: ${p.pago_mixto}` : '';
@@ -564,101 +757,301 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
         const notasFinales = `Items: ${itemsDisplay}${totalStr}${ivaStr}${inicialStr}${clienteStr}${vehiculoStr}${pagoMixtoStr}`.trim();
 
         const totalNum = parseFloat(p.total || '0');
-        const rates = await fetchExchangeRates().catch(() => ({ bcv: 36.5, binance: 42 }));
-        const bcvRate = rates?.bcv || 36.5;
 
-        // 1. Insert into ventas_dia (Accounting)
-        const clienteNombre = p.cliente || 'Consumidor Final';
-        let desglose = [{
-          descripcion: p.titulo || itemsDisplay.split(',')[0]?.split(':')[0] || 'Varios',
-          highlight: false,
-          cantidad: parseInt(p.cantidad) || 1,
-          precio_unitario: totalNum,
-          total: totalNum
-        }];
-
-        if (p.items && p.items.includes(':')) {
-          desglose = p.items.split(',').map((item: string) => {
-            const parts = item.trim().split(':');
-            const desc = parts[0]?.trim() || item.trim();
-            const priceStr = parts[1]?.replace(/[^\d.]/g, '') || '0';
-            const price = parseFloat(priceStr) || 0;
-            return { descripcion: desc, highlight: false, cantidad: 1, precio_unitario: price, total: price };
-          });
-        }
-
-        const { data: newVentaDia, error: errDia } = await db.from('ventas_dia').insert(withSedeInsertServer({
-          fecha: getVzlaDateString(),
-          cliente: clienteNombre,
-          total_ingresos: totalNum,
-          desglose,
-          con_iva: !!p.iva,
-          tasa_cambio: bcvRate,
-          notes: notasFinales,
-          notas: notasFinales,
-          creado_por: 'Admin IA',
-          metodos_pago: {
-            otro: metodo === 'otro' ? totalNum : 0,
-            zelle: metodo === 'zelle' ? totalNum : 0,
-            cashea: metodo === 'cashea_bcv' ? totalNum : 0,
-            binance: metodo === 'binance' ? totalNum : 0,
-            pago_movil: metodo === 'pago_movil' ? totalNum : 0,
-            efectivo_usd: (metodo === 'divisas' || metodo === 'efectivo_usd') ? totalNum : 0,
-            efectivo_ves: metodo === 'efectivo_ves' ? totalNum : 0,
-            transferencia: metodo === 'transferencia' ? totalNum : 0,
-            punto_de_venta: metodo === 'punto_venta' ? totalNum : 0,
-            euros: (metodo === 'euros' || metodo === 'efectivo_eur') ? totalNum : 0
-          }
-        }, sedeId)).select('id').single();
-
-        if (errDia) {
-          console.error('Error inserting ventas_dia in IA Chat:', errDia);
-        }
-
-        // 2. Insert into ventas_silenciadores (Compatibility)
-        await db.from('ventas_silenciadores').insert(withSedeInsertServer({
-          cantidad: parseInt(p.cantidad) || 1,
-          modelo: p.titulo || itemsDisplay.split(',')[0]?.split(':')[0] || 'Venta múltiple',
-          notas: newVentaDia?.id ? `Venta POS #${newVentaDia.id.slice(0, 8)} | ${notasFinales}` : notasFinales,
-          fecha: new Date().toISOString(),
-          precio_registrado: totalNum,
-        }, sedeId));
-
-        // Auto-decrement stock for each item if inv_ids provided (comma-separated, optional ID:qty format)
-        if (p.inv_ids) {
-          const idList = p.inv_ids.split(',').map((x: string) => x.trim());
-          for (const itemStr of idList) {
-            let invId = itemStr;
-            let qty = 1;
-            if (itemStr.includes(':')) {
-              const [idPart, qtyPart] = itemStr.split(':');
-              invId = idPart.trim();
-              qty = parseInt(qtyPart) || 1;
-            }
-            const { data: invItem } = await table('inventario').select('stock, nombre').eq('id', invId).single();
-            if (invItem) {
-              const newStock = Math.max(0, (invItem.stock || 0) - qty);
-              await table('inventario').update({ stock: newStock, updated_at: new Date().toISOString() }).eq('id', invId);
-            }
+        // ── Duplicate protection ────────────────────────────────────────────
+        const fpKey = [
+          fingerprintFromItemsString(p.items || ''),
+          totalNum.toFixed(2),
+          normalizeName(clienteNombre),
+          normalizeStr(metodo),
+        ].join('::');
+        let skipInsertion = false;
+        if (justCreatedVentaCompleta.has(fpKey)) {
+          results.push(`⚠️ Venta duplicada omitida en este mismo mensaje: ${itemsDisplay} → $${p.total || '0'}${contextStr}${clienteStr} (ya la ibas a registrar).`);
+          skipInsertion = true;
+        } else {
+          const dup = await findDuplicateVentaCompleta(db, sedeId, clienteNombre, totalNum, p.items || '', metodo);
+          if (dup) {
+            const ageMin = minutesSince(dup.created_at);
+            results.push(`⚠️ Venta duplicada omitida — ya registraste ${itemsDisplay} por $${totalNum.toFixed(2)}${contextStr}${clienteStr} hace ${ageMin} min. Si fue un error, dime "modifica esa venta" o "elimina esa venta" y lo corrijo (solo es posible dentro de los próximos ${RECENT_SALE_WINDOW_MIN} min).`);
+            skipInsertion = true;
           }
         }
 
-        results.push(`✅ Venta registrada: ${itemsDisplay}${totalStr}${clienteStr}`);
+        if (!skipInsertion) {
+          justCreatedVentaCompleta.add(fpKey);
+
+          const rates = await fetchExchangeRates().catch(() => ({ bcv: 36.5, binance: 42 }));
+          const bcvRate = rates?.bcv || 36.5;
+
+          // 1. Insert into ventas_dia (Accounting)
+          let desglose = [{
+            descripcion: p.titulo || itemsDisplay.split(',')[0]?.split(':')[0] || 'Varios',
+            highlight: false,
+            cantidad: parseInt(p.cantidad) || 1,
+            precio_unitario: totalNum,
+            total: totalNum
+          }];
+
+          if (p.items && p.items.includes(':')) {
+            desglose = p.items.split(',').map((item: string) => {
+              const parts = item.trim().split(':');
+              const desc = parts[0]?.trim() || item.trim();
+              const priceStr = parts[1]?.replace(/[^\d.]/g, '') || '0';
+              const price = parseFloat(priceStr) || 0;
+              return { descripcion: desc, highlight: false, cantidad: 1, precio_unitario: price, total: price };
+            });
+          }
+
+          const { data: newVentaDia, error: errDia } = await db.from('ventas_dia').insert(withSedeInsertServer({
+            fecha: getVzlaDateString(),
+            cliente: clienteNombre,
+            total_ingresos: totalNum,
+            desglose,
+            con_iva: !!p.iva,
+            tasa_cambio: bcvRate,
+            notes: notasFinales,
+            notas: notasFinales,
+            creado_por: 'Admin IA',
+            metodos_pago: {
+              otro: metodo === 'otro' ? totalNum : 0,
+              zelle: metodo === 'zelle' ? totalNum : 0,
+              cashea: metodo === 'cashea_bcv' ? totalNum : 0,
+              binance: metodo === 'binance' ? totalNum : 0,
+              pago_movil: metodo === 'pago_movil' ? totalNum : 0,
+              efectivo_usd: (metodo === 'divisas' || metodo === 'efectivo_usd') ? totalNum : 0,
+              efectivo_ves: metodo === 'efectivo_ves' ? totalNum : 0,
+              transferencia: metodo === 'transferencia' ? totalNum : 0,
+              punto_de_venta: metodo === 'punto_venta' ? totalNum : 0,
+              euros: (metodo === 'euros' || metodo === 'efectivo_eur') ? totalNum : 0
+            }
+          }, sedeId)).select('id').single();
+
+          if (errDia) {
+            console.error('Error inserting ventas_dia in IA Chat:', errDia);
+          }
+
+          // 2. Insert into ventas_silenciadores (Compatibility)
+          await db.from('ventas_silenciadores').insert(withSedeInsertServer({
+            cantidad: parseInt(p.cantidad) || 1,
+            modelo: p.titulo || itemsDisplay.split(',')[0]?.split(':')[0] || 'Venta múltiple',
+            notas: newVentaDia?.id ? `Venta POS #${newVentaDia.id.slice(0, 8)} | ${notasFinales}` : notasFinales,
+            fecha: new Date().toISOString(),
+            precio_registrado: totalNum,
+          }, sedeId));
+
+          // Auto-decrement stock for each item if inv_ids provided (comma-separated, optional ID:qty format)
+          if (p.inv_ids) {
+            const idList = p.inv_ids.split(',').map((x: string) => x.trim());
+            for (const itemStr of idList) {
+              let invId = itemStr;
+              let qty = 1;
+              if (itemStr.includes(':')) {
+                const [idPart, qtyPart] = itemStr.split(':');
+                invId = idPart.trim();
+                qty = parseInt(qtyPart) || 1;
+              }
+              const { data: invItem } = await table('inventario').select('stock, nombre').eq('id', invId).single();
+              if (invItem) {
+                const newStock = Math.max(0, (invItem.stock || 0) - qty);
+                await table('inventario').update({ stock: newStock, updated_at: new Date().toISOString() }).eq('id', invId);
+              }
+            }
+          }
+
+          // Also restore stock that may have been erroneously decremented earlier
+          // in this same batch by a duplicate registrar_venta_item of the same
+          // product: nothing to do here because the duplicate was already blocked
+          // by the check above.
+
+          if (newVentaDia?.id) {
+            createdIds['last_venta_dia_id'] = newVentaDia.id;
+            const ageStr = 'recién';
+            results.push(`✅ Venta registrada: ${itemsDisplay}${totalStr}${clienteStr} (ID: ${newVentaDia.id.slice(0, 8)} · ${ageStr}). Si necesitas ajustar algo, dime "modifica esa venta" o "elimina esa venta" — podré hacerlo durante los próximos ${RECENT_SALE_WINDOW_MIN} min.`);
+          } else {
+            results.push(`✅ Venta registrada: ${itemsDisplay}${totalStr}${clienteStr}. Si necesitas ajustar algo, dime "modifica esa venta" o "elimina esa venta" — podré hacerlo durante los próximos ${RECENT_SALE_WINDOW_MIN} min.`);
+          }
+        }
 
       } else if (tipo === 'registrar_venta_silenciador') {
         // LEGACY: keep for backwards compat
         const metodo = p.metodo_pago || p.context || '';
         const contextStr = metodo ? ` (${metodo})` : '';
+        const clienteNombre = p.cliente || null;
         const clienteStr = p.cliente ? ` | Cliente: ${p.cliente}` : '';
         const notasFinales = p.precio ? `${p.notas || ''} [Total: $${p.precio}${contextStr}]${clienteStr}`.trim() : `${p.notas || ''}${clienteStr}`.trim();
-        
-        await insert('ventas_silenciadores', {
-          cantidad: parseInt(p.cantidad) || 1,
-          modelo: p.modelo || null,
-          notas: notasFinales,
-          fecha: new Date().toISOString()
-        });
-        results.push(`✅ Venta registrada: ${p.cantidad || 1}x ${p.modelo || 'Producto'}${p.precio ? ` → $${p.precio}${contextStr}` : ''}${p.cliente ? ` (${p.cliente})` : ''}.`);
+        const precioNum = parseFloat(p.precio || '0');
+        const cantidad = parseInt(p.cantidad) || 1;
+        const producto = p.modelo || '';
+
+        // ── Duplicate protection ────────────────────────────────────────────
+        const fpKey = [
+          normalizeName(clienteNombre || ''),
+          normalizeName(producto),
+          cantidad,
+          precioNum.toFixed(2),
+          normalizeStr(metodo),
+        ].join('::');
+        if (justCreatedVentaItem.has(fpKey)) {
+          results.push(`⚠️ Venta duplicada omitida en este mismo mensaje: ${cantidad}x ${producto || 'Producto'}${p.precio ? ` → $${p.precio}${contextStr}` : ''}${p.cliente ? ` (${p.cliente})` : ''}.`);
+        } else {
+          const dup = await findDuplicateVentaItem(db, sedeId, clienteNombre || '', producto, cantidad, precioNum, metodo);
+          if (dup) {
+            const ageMin = minutesSince(dup.created_at || dup.fecha);
+            results.push(`⚠️ Venta duplicada omitida — ya registraste ${cantidad}x ${producto || 'Producto'} por $${precioNum}${contextStr}${clienteStr} hace ${ageMin} min. Si fue un error, dime "modifica esa venta" o "elimina esa venta" y lo corrijo (solo posible dentro de los próximos ${RECENT_SALE_WINDOW_MIN} min).`);
+            justCreatedVentaItem.add(fpKey);
+          } else {
+            justCreatedVentaItem.add(fpKey);
+            await insert('ventas_silenciadores', {
+              cantidad,
+              modelo: producto || null,
+              notas: notasFinales,
+              fecha: new Date().toISOString(),
+              precio_registrado: precioNum,
+            });
+            results.push(`✅ Venta registrada: ${cantidad}x ${producto || 'Producto'}${p.precio ? ` → $${p.precio}${contextStr}` : ''}${p.cliente ? ` (${p.cliente})` : ''}. Si necesitas ajustar, dime "modifica esa venta" — podré hacerlo durante los próximos ${RECENT_SALE_WINDOW_MIN} min.`);
+          }
+        }
+
+      // ── Sales — modify or delete a recent venta ────────────────────────────
+      } else if (tipo === 'modificar_venta_reciente') {
+        // Look up by id (preferred) or by client (most recent venta for that client).
+        let targetId = p.id;
+        let target: { venta: any; ageMin: number } | null = null;
+        if (targetId) {
+          target = await getRecentVentaById(db, sedeId, targetId);
+        } else if (p.cliente) {
+          const tCliente = normalizeName(p.cliente);
+          const q = withSedeFilterServer(db.from('ventas_dia'), sedeId)
+            .select('id, cliente, total_ingresos, desglose, metodos_pago, created_at, notas, notes')
+            .gte('created_at', getRecentWindowIso())
+            .order('created_at', { ascending: false })
+            .limit(10);
+          const { data, error } = await q;
+          if (!error && data) {
+            const match = data.find((v: any) => normalizeName(v.cliente) === tCliente) || data[0];
+            if (match) target = { venta: match, ageMin: minutesSince(match.created_at) };
+          }
+        }
+        if (!target) {
+          if (targetId) {
+            // Was a specific id requested? Check if it just expired.
+            const probe = await withSedeFilterServer(db.from('ventas_dia'), sedeId)
+              .select('id, created_at')
+              .eq('id', targetId)
+              .maybeSingle();
+            if (probe?.data) {
+              const age = minutesSince(probe.data.created_at);
+              results.push(`⛔ No puedo modificar esa venta: fue registrada hace ${age} min y la ventana de edición es de ${RECENT_SALE_WINDOW_MIN} min. Para corregirla, hazlo manualmente desde el panel de Ventas.`);
+            } else {
+              results.push(`⚠️ No encontré la venta indicada (id: ${targetId}) en esta sede.`);
+            }
+          } else {
+            results.push(`⚠️ No hay ventas recientes que coincidan con "${p.cliente || 'ese criterio'}" para modificar (ventana de ${RECENT_SALE_WINDOW_MIN} min).`);
+          }
+        } else {
+          const updates: any = { updated_at: new Date().toISOString() };
+          if (p.total) updates.total_ingresos = parseFloat(p.total);
+          if (p.cliente) updates.cliente = p.cliente;
+          if (p.items) {
+            if (p.items.includes(':')) {
+              updates.desglose = p.items.split(',').map((item: string) => {
+                const parts = item.trim().split(':');
+                const desc = parts[0]?.trim() || item.trim();
+                const price = parseFloat((parts[1] || '0').replace(/[^\d.]/g, '')) || 0;
+                return { descripcion: desc, highlight: false, cantidad: 1, precio_unitario: price, total: price };
+              });
+            }
+          }
+          if (p.metodo_pago) {
+            const totalNum = updates.total_ingresos ?? Number(target.venta.total_ingresos || 0);
+            const metodo = p.metodo_pago;
+            updates.metodos_pago = {
+              otro: metodo === 'otro' ? totalNum : 0,
+              zelle: metodo === 'zelle' ? totalNum : 0,
+              cashea: metodo === 'cashea_bcv' ? totalNum : 0,
+              binance: metodo === 'binance' ? totalNum : 0,
+              pago_movil: metodo === 'pago_movil' ? totalNum : 0,
+              efectivo_usd: (metodo === 'divisas' || metodo === 'efectivo_usd') ? totalNum : 0,
+              efectivo_ves: metodo === 'efectivo_ves' ? totalNum : 0,
+              transferencia: metodo === 'transferencia' ? totalNum : 0,
+              punto_de_venta: metodo === 'punto_venta' ? totalNum : 0,
+              euros: (metodo === 'euros' || metodo === 'efectivo_eur') ? totalNum : 0,
+            };
+          }
+
+          const { error: upErr } = await withSedeFilterServer(db.from('ventas_dia'), sedeId)
+            .update(updates)
+            .eq('id', target.venta.id);
+          if (upErr) {
+            results.push(`❌ Error al modificar la venta: ${upErr.message}`);
+          } else {
+            // Also update the linked silenciadores record (if any) for consistency
+            const itemsStr = p.items || '';
+            const titulo = itemsStr.split(',')[0]?.split(':')[0] || target.venta.desglose?.[0]?.descripcion || 'Venta múltiple';
+            const notaUpdate: any = { updated_at: new Date().toISOString() };
+            if (p.items) {
+              notaUpdate.modelo = titulo;
+              if (p.total) notaUpdate.precio_registrado = parseFloat(p.total);
+            }
+            await db.from('ventas_silenciadores')
+              .update(notaUpdate)
+              .ilike('notas', `%Venta POS #${target.venta.id.slice(0, 8)}%`);
+
+            const changed = Object.keys(updates).filter(k => k !== 'updated_at');
+            results.push(`✅ Venta modificada (ID: ${target.venta.id.slice(0, 8)} · hace ${target.ageMin} min). Campos actualizados: ${changed.join(', ')}. Si necesitas más cambios aún estás a tiempo (ventana de ${RECENT_SALE_WINDOW_MIN} min).`);
+          }
+        }
+
+      } else if (tipo === 'eliminar_venta_reciente') {
+        // Delete only if the venta is still within the recent window.
+        let target: { venta: any; ageMin: number } | null = null;
+        if (p.id) {
+          target = await getRecentVentaById(db, sedeId, p.id);
+        } else if (p.cliente) {
+          const tCliente = normalizeName(p.cliente);
+          const q = withSedeFilterServer(db.from('ventas_dia'), sedeId)
+            .select('id, cliente, total_ingresos, created_at')
+            .gte('created_at', getRecentWindowIso())
+            .order('created_at', { ascending: false })
+            .limit(10);
+          const { data, error } = await q;
+          if (!error && data) {
+            const match = data.find((v: any) => normalizeName(v.cliente) === tCliente) || data[0];
+            if (match) target = { venta: match, ageMin: minutesSince(match.created_at) };
+          }
+        }
+        if (!target) {
+          if (p.id) {
+            const probe = await withSedeFilterServer(db.from('ventas_dia'), sedeId)
+              .select('id, created_at')
+              .eq('id', p.id)
+              .maybeSingle();
+            if (probe?.data) {
+              const age = minutesSince(probe.data.created_at);
+              results.push(`⛔ No puedo eliminar esa venta: fue registrada hace ${age} min y la ventana permitida es de ${RECENT_SALE_WINDOW_MIN} min. Para revertirla, hazlo manualmente desde el panel de Ventas (anular / devolver).`);
+            } else {
+              results.push(`⚠️ No encontré la venta indicada (id: ${p.id}) en esta sede.`);
+            }
+          } else {
+            results.push(`⚠️ No hay ventas recientes que coincidan con "${p.cliente || 'ese criterio'}" para eliminar (ventana de ${RECENT_SALE_WINDOW_MIN} min).`);
+          }
+        } else {
+          const ventaId = target.venta.id;
+          const shortId = ventaId.slice(0, 8);
+          // Delete linked silenciadores record first (if any)
+          await db.from('ventas_silenciadores')
+            .delete()
+            .ilike('notas', `%Venta POS #${shortId}%`);
+          const { error: delErr } = await withSedeFilterServer(db.from('ventas_dia'), sedeId)
+            .delete()
+            .eq('id', ventaId);
+          if (delErr) {
+            results.push(`❌ Error al eliminar la venta: ${delErr.message}`);
+          } else {
+            results.push(`🗑️ Venta eliminada (ID: ${shortId} · cliente: ${target.venta.cliente || 'Consumidor Final'} · $${Number(target.venta.total_ingresos || 0).toFixed(2)} · hace ${target.ageMin} min). Stock y totales ya no la incluyen.`);
+          }
+        }
       }
     } catch (e) {
       results.push(`❌ Error en ${tipo}: ${e}`);
@@ -882,13 +1275,6 @@ INSTRUCCIONES CRÍTICAS:
 
 ACCIONES DE ESCRITURA (REGLAS CRÍTICAS):
 
-⚠️ REGLA DE ORO — REGISTRO DE VENTAS CON MÚLTIPLES PRODUCTOS:
-1. Si el cliente NO existe → usa [ACTION: crear_cliente] PRIMERO.
-2. Si se menciona un vehículo → usa [ACTION: crear_vehiculo] DESPUÉS del cliente.
-3. Para múltiples productos de un mismo cliente, usa [ACTION: registrar_venta_completa] con 'items' = "Prod1:Pre1, Prod2:Pre2".
-4. 'inv_ids' debe listar los IDs de inventario separados por comas (ID1:qty1, ID2:qty2).
-5. Suma los precios en 'total'.
-
 ⚠️ REGLA DE PRECIOS PERSONALIZADOS:
 - Si el usuario pide registrar venta con precio DIFERENTE al del inventario:
   1. PREGUNTA para confirmar antes de registrar.
@@ -913,6 +1299,21 @@ TRACKING DE TALLER:
   2. Ventas del día como referencia.
   3. Citas pendientes.
 
+⚠️ PROTECCIÓN ANTIDUPLICADOS (VENTAS):
+- El sistema detecta AUTOMÁTICAMENTE si intentas registrar una venta que ya existe:
+  - Mismo cliente, mismo total, mismos items y mismo método de pago en los últimos 10 minutos.
+  - Si detecta una coincidencia, la rechaza con un mensaje claro y te sugiere usar [ACTION: modificar_venta_reciente] para corregirla.
+- NUNCA generes dos [ACTION: registrar_venta_*] idénticos en la misma respuesta.
+- Si el usuario dice "repite la venta de hace un rato" → PRIMERO consulta si quiere modificarla o si es una nueva venta diferente.
+- Ventana de modificación/eliminación: 10 minutos desde la creación. Después de eso, deben usar el panel de Ventas manualmente.
+
+⚠️ REGLA DE ORO — REGISTRO DE VENTAS CON MÚLTIPLES PRODUCTOS:
+1. Si el cliente NO existe → usa [ACTION: crear_cliente] PRIMERO.
+2. Si se menciona un vehículo → usa [ACTION: crear_vehiculo] DESPUÉS del cliente.
+3. Para múltiples productos de un mismo cliente, usa [ACTION: registrar_venta_completa] con 'items' = "Prod1:Pre1, Prod2:Pre2".
+4. 'inv_ids' debe listar los IDs de inventario separados por comas (ID1:qty1, ID2:qty2).
+5. Suma los precios en 'total'.
+
 TAGS DE ACCIÓN DISPONIBLES:
 • Crear cita: [ACTION: crear_cita | fecha=AAAA-MM-DD | hora=HH:MM | telefono=NUM | descripcion=SERVICIO | tipo_servicio=otro]
 • Actualizar cita: [ACTION: actualizar_cita | id=ID | estado=confirmada|cancelada]
@@ -924,6 +1325,10 @@ TAGS DE ACCIÓN DISPONIBLES:
 • Actualizar servicio: [ACTION: actualizar_servicio | id=ID | estado=finalizado|cancelado | nota=Texto]
 • Registrar servicio taller: [ACTION: registrar_servicio | descripcion=Texto | tipo=mecanica|electronica|cerrajeria|diagnostico|motor|emergencia|otro | estado=pendiente|en_proceso | costo_estimado=Numero | nombre_cliente=Nombre | telefono=Numero | vehiculo_info=Marca Modelo | placa=PLACA | cliente_id=UUID | vehiculo_id=UUID | tipo_personalizado=Texto]
 • Registrar venta COMPLETA: [ACTION: registrar_venta_completa | titulo=X | items=Prod1:Pre1,Prod2:Pre2 | total=TOTAL | iva=MONTO | inicial=INICIAL_CASHEA | metodo_pago=cashea_bcv/divisas/euros/bcv/binance/zelle/pago_movil/efectivo_ves/punto_venta/transferencia/otro | pago_mixto=DESC | cliente=NOMBRE | vehiculo=MARCA_PLACA | inv_ids=ID1:qty1,ID2:qty2]
+• Modificar venta RECIENTE (<10 min): [ACTION: modificar_venta_reciente | id=ID | total=NUEVO_TOTAL | cliente=NUEVO_CLIENTE | items=Prod1:Pre1,Prod2:Pre2 | metodo_pago=...]  — Si no sabes el ID, usa cliente=NOMBRE para buscar la última venta de ese cliente.
+• Eliminar venta RECIENTE (<10 min): [ACTION: eliminar_venta_reciente | id=ID]  — Igual, si no sabes el ID usa cliente=NOMBRE.
+• Registrar venta item individual: [ACTION: registrar_venta_item | producto=PROD | cantidad=N | precio=MONTO | metodo_pago=... | cliente=NOMBRE]
+• Registrar venta silenciador (legacy): [ACTION: registrar_venta_silenciador | modelo=MODELO | cantidad=N | precio=MONTO | cliente=NOMBRE]
 
 TONO: Profesional, ejecutivo y eficiente. Español venezolano amable.
 HORARIO: L–Sáb 8AM–5PM | Dom: Cerrado | +58 412-334-3519 | lycosteam7@gmail.com

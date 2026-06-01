@@ -30,7 +30,7 @@ export default function LoadingScreen() {
       <div className="relative flex flex-col items-center gap-8">
         <div className="w-48 h-48 md:w-64 md:h-64 animate-logo-pulse relative">
           <img 
-            src="/logo-trans.png" 
+            src="/Nuevo_Lycos_LOGO copy.png" 
             alt="Lycos Team" 
             className="w-full h-full object-contain"
             style={{ filter: 'var(--logo-filter)' }}

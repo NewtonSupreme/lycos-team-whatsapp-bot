@@ -4,7 +4,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { 
   ShoppingCart, Plus, Trash2, Receipt, Package, 
   Search, MapPin, CheckCircle, AlertCircle, Loader2,
-  TrendingUp, Calendar, ArrowRight, Printer, UserPlus, X
+  TrendingUp, Calendar, ArrowRight, Printer, UserPlus, X,
+  ChevronDown, DollarSign, CreditCard, Clock, FileText
 } from 'lucide-react';
 import { supabase, updateInventarioStock } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
@@ -43,6 +44,14 @@ export default function VentasPage() {
   const [conIva, setConIva] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   
+  // Collapsible sections
+  const [showAbonoSection, setShowAbonoSection] = useState(false);
+  const [showNotasSection, setShowNotasSection] = useState(false);
+  const [abono, setAbono] = useState(0);
+  const [tabVenta, setTabVenta] = useState<'nueva' | 'pendientes'>('nueva');
+  const [ventasPendientes, setVentasPendientes] = useState<any[]>([]);
+  const [loadingPendientes, setLoadingPendientes] = useState(false);
+
   // Payment methods
   const [metodosPago, setMetodosPago] = useState({
     efectivo_usd: 0,
@@ -92,6 +101,13 @@ export default function VentasPage() {
         .order('created_at', { ascending: false })
         .limit(20);
       setVentasRecientes(vData || []);
+      // Fetch pending sales (con abono / saldo pendiente)
+      const { data: pData } = await withSedeFilter(supabase.from('ventas_dia'))
+        .select('*')
+        .eq('estado', 'pendiente')
+        .order('created_at', { ascending: false })
+        .limit(50);
+      setVentasPendientes(pData || []);
     } catch (err) {
       console.error('Error fetching data:', err);
     } finally {
@@ -144,6 +160,13 @@ export default function VentasPage() {
 
     setProcessing(true);
     try {
+      // Abono / Pending logic
+      const totalConIva = subtotal * (conIva ? 1.16 : 1);
+      const abonoAmount = showAbonoSection ? abono : 0;
+      const saldoRestante = Math.max(0, totalConIva - abonoAmount);
+      const tieneAbono = abonoAmount > 0 && saldoRestante > 0;
+      const estadoVenta = saldoRestante > 0 ? 'pendiente' : 'pagado';
+
       // 1. Register in ventas_dia (Accounting)
       const { data: ventaDia, error: ventaError } = await withSedeFilter(supabase.from('ventas_dia'))
         .insert(withSedeInsert({
@@ -159,8 +182,12 @@ export default function VentasPage() {
           metodos_pago: metodosPago,
           con_iva: conIva,
           tasa_cambio: rates.bcv,
-          notas: `${notas}${vehiculoInfo ? ` | Vehículo: ${vehiculoInfo}` : ''}`,
-          creado_por: 'Admin'
+          notas: `${notas}${vehiculoInfo ? ` | Vehículo: ${vehiculoInfo}` : ''}${tieneAbono ? ` | Abono: $${abonoAmount.toFixed(2)} | Saldo: $${saldoRestante.toFixed(2)}` : ''}`,
+          creado_por: 'Admin',
+          tiene_abono: tieneAbono,
+          abono: abonoAmount,
+          saldo_pendiente: saldoRestante,
+          estado: estadoVenta
         }))
         .select()
         .single();
@@ -201,11 +228,15 @@ export default function VentasPage() {
           precio_unitario: item.precio_unitario,
           total: item.total
         })),
-        total: total,
+        total: totalConIva,
         pago_usd: metodosPago.efectivo_usd + metodosPago.zelle,
         pago_ves: metodosPago.pago_movil + metodosPago.efectivo_ves,
         tasa_bcv: rates.bcv,
-        iva_aplicado: conIva
+        iva_aplicado: conIva,
+        tiene_abono: tieneAbono,
+        abono: abonoAmount,
+        saldo_pendiente: saldoRestante,
+        estado: estadoVenta
       };
 
       const dataList: any[] = [data1];
@@ -226,11 +257,16 @@ export default function VentasPage() {
       generateInvoicePDF(dataList, { mode: printMode, side: printSide });
 
       // 5. Success and Reset
-      alert('¡Venta realizada con éxito! Stock actualizado y comprobante generado.');
+      const abonoMsg = tieneAbono
+        ? ` Abono: $${abonoAmount.toFixed(2)} | Saldo pendiente: $${saldoRestante.toFixed(2)}. La factura quedó en estado PENDIENTE POR PAGAR.`
+        : '';
+      alert(`¡Venta realizada con éxito!${abonoMsg} Stock actualizado y comprobante generado.`);
       setCart([]);
       setClienteNombre('');
       setVehiculoInfo('');
       setNotas('');
+      setAbono(0);
+      setShowAbonoSection(false);
       fetchData();
     } catch (err: any) {
       console.error('Error finalizing sale:', err);
@@ -313,6 +349,110 @@ export default function VentasPage() {
         </div>
       )}
 
+      {/* ── Tabs: Nueva Venta / Pendientes ──────────────── */}
+      <div className="flex items-center gap-1 bg-card/40 backdrop-blur-xl p-1 rounded-2xl border border-border/50 w-fit">
+        <button
+          onClick={() => setTabVenta('nueva')}
+          className={cn(
+            "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all",
+            tabVenta === 'nueva'
+              ? "bg-primary text-white shadow-lg shadow-primary/30"
+              : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+          )}
+        >
+          <ShoppingCart className="w-3.5 h-3.5" />
+          Nueva Venta
+        </button>
+        <button
+          onClick={() => setTabVenta('pendientes')}
+          className={cn(
+            "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all relative",
+            tabVenta === 'pendientes'
+              ? "bg-amber-500 text-white shadow-lg shadow-amber-500/30"
+              : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+          )}
+        >
+          <Clock className="w-3.5 h-3.5" />
+          Pendientes por Pagar
+          {!loading && ventasPendientes.length > 0 && (
+            <span className="bg-destructive text-white text-[8px] font-black px-1.5 py-0.5 rounded-full">
+              {ventasPendientes.length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {tabVenta === 'pendientes' ? (
+        /* ── Sección de Ventas Pendientes ────────────────── */
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-bold flex items-center gap-2">
+                <Clock className="w-5 h-5 text-amber-400" />
+                Ventas Pendientes por Cobrar
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {ventasPendientes.length > 0
+                  ? `Total pendiente: $${ventasPendientes.reduce((s, v) => s + Number(v.saldo_pendiente || 0), 0).toFixed(2)}`
+                  : 'No hay ventas pendientes'}
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => { fetchData(); setLoadingPendientes(true); setTimeout(() => setLoadingPendientes(false), 500); }}
+              className="text-xs gap-1"
+            >
+              <Loader2 className={cn("w-3 h-3", loadingPendientes && "animate-spin")} />
+              Actualizar
+            </Button>
+          </div>
+
+          <Card className="glass-panel border-border/50 bg-card/40">
+            <CardContent className="p-0">
+              {ventasPendientes.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 opacity-40">
+                  <CheckCircle className="w-12 h-12 mb-3 text-green-400" />
+                  <p className="text-sm font-bold uppercase tracking-widest">Todo al día</p>
+                  <p className="text-xs text-muted-foreground mt-1">No hay ventas pendientes de pago</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-border/20">
+                  {ventasPendientes.map((v: any) => (
+                    <div key={v.id} className="p-4 flex items-center gap-4 hover:bg-white/5 transition-colors">
+                      <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center flex-shrink-0">
+                        <CreditCard className="w-5 h-5 text-amber-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-black truncate">{v.cliente || 'Consumidor Final'}</p>
+                          <Badge variant="outline" className="text-amber-400 border-amber-400/30 bg-amber-500/5 text-[8px] font-black px-1.5">
+                            PENDIENTE
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                          <span>{new Date(v.created_at).toLocaleDateString('es-VE')}</span>
+                          <span className="flex items-center gap-1">
+                            <DollarSign className="w-3 h-3" />
+                            Total: ${Number(v.total_ingresos || 0).toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-sm font-black text-amber-400">${Number(v.saldo_pendiente || 0).toFixed(2)}</p>
+                        <p className="text-[9px] font-bold text-muted-foreground">SALDO</p>
+                        {v.abono > 0 && (
+                          <p className="text-[9px] font-bold text-green-400">Abonó: ${Number(v.abono).toFixed(2)}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      ) : (
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Catálogo de Productos */}
         <div className="lg:col-span-7 space-y-4">
@@ -494,6 +634,107 @@ export default function VentasPage() {
                 </div>
               </div>
 
+              {/* ── Abono Accordion ─────────────────────────── */}
+              <div className="bg-background/40 rounded-2xl border border-border/40 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setShowAbonoSection(!showAbonoSection)}
+                  className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+                      <DollarSign className="w-3.5 h-3.5 text-amber-400" />
+                    </div>
+                    <span className="text-xs font-black uppercase tracking-wider">
+                      Abono / Apartado
+                    </span>
+                    {showAbonoSection && abono > 0 && (
+                      <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">
+                        ${abono.toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                  <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform duration-200", showAbonoSection && "rotate-180")} />
+                </button>
+                <div className={cn("overflow-hidden transition-all duration-200", showAbonoSection ? "max-h-96" : "max-h-0")}>
+                  <div className="px-4 pb-4 pt-1 space-y-3">
+                    <p className="text-[10px] text-muted-foreground font-bold leading-tight">
+                      Registra un abono parcial. La venta quedará como <span className="text-amber-400">PENDIENTE POR PAGAR</span> hasta que se liquide el saldo.
+                    </p>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1 relative">
+                          <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                          <Input
+                            type="number"
+                            min={0}
+                            max={total}
+                            step={0.01}
+                            placeholder="0.00"
+                            value={abono || ''}
+                            onChange={e => setAbono(Math.max(0, parseFloat(e.target.value) || 0))}
+                            className="pl-9 h-10 text-sm font-bold bg-background/50"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between text-xs p-3 bg-amber-500/5 rounded-xl border border-amber-500/10">
+                        <span className="font-bold text-muted-foreground">Total venta:</span>
+                        <span className="font-black text-foreground">${Number(total).toFixed(2)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs p-3 bg-amber-500/5 rounded-xl border border-amber-500/10">
+                        <span className="font-bold text-muted-foreground">Abono ahora:</span>
+                        <span className="font-black text-green-400">- $${abono.toFixed(2)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs p-3 bg-amber-500/10 rounded-xl border border-amber-400/20">
+                        <span className="font-bold text-amber-400">Saldo pendiente:</span>
+                        <span className="font-black text-amber-400">${Math.max(0, total - abono).toFixed(2)}</span>
+                      </div>
+                      {abono > 0 && total - abono <= 0 && (
+                        <div className="flex items-center gap-2 p-3 bg-green-500/10 rounded-xl border border-green-500/20">
+                          <CheckCircle className="w-4 h-4 text-green-400" />
+                          <span className="text-xs font-bold text-green-400">El abono cubre el total — la venta quedará como PAGADA.</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Notas Accordion ─────────────────────────── */}
+              <div className="bg-background/40 rounded-2xl border border-border/40 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setShowNotasSection(!showNotasSection)}
+                  className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center">
+                      <FileText className="w-3.5 h-3.5 text-sky-400" />
+                    </div>
+                    <span className="text-xs font-black uppercase tracking-wider">
+                      Nota / Descripción
+                    </span>
+                    {showNotasSection && notas && (
+                      <span className="text-[10px] font-bold text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-full truncate max-w-[100px]">
+                        {notas}
+                      </span>
+                    )}
+                  </div>
+                  <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform duration-200", showNotasSection && "rotate-180")} />
+                </button>
+                <div className={cn("overflow-hidden transition-all duration-200", showNotasSection ? "max-h-96" : "max-h-0")}>
+                  <div className="px-4 pb-4 pt-1">
+                    <textarea
+                      placeholder="Notas adicionales para la factura..."
+                      value={notas}
+                      onChange={e => setNotas(e.target.value)}
+                      rows={3}
+                      className="w-full rounded-xl border border-border/50 bg-background/50 px-3 py-2.5 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none transition-all"
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div className="flex items-end justify-between py-4 border-y border-primary/20">
                 <div>
                   <p className="text-[10px] text-primary font-black uppercase tracking-widest mb-1">Total a Pagar</p>
@@ -562,14 +803,20 @@ export default function VentasPage() {
                   className="flex-1 h-12 rounded-xl border-primary/30 text-primary font-bold gap-2"
                   onClick={() => {
                     if (cart.length === 0) return;
+                    const totalConIvaBorrador = subtotal * (conIva ? 1.16 : 1);
+                    const abonoBorrador = showAbonoSection ? abono : 0;
                     generateInvoicePDF([{
                       fecha: new Date().toLocaleDateString(),
                       cliente: clienteNombre,
                       vehiculo: vehiculoInfo,
                       items: cart.map(i => ({ descripcion: i.nombre, cantidad: i.cantidad, precio_unitario: i.precio_unitario, total: i.total })),
-                      total: total,
+                      total: totalConIvaBorrador,
                       tasa_bcv: rates.bcv,
-                      iva_aplicado: conIva
+                      iva_aplicado: conIva,
+                      tiene_abono: abonoBorrador > 0 && (totalConIvaBorrador - abonoBorrador) > 0,
+                      abono: abonoBorrador,
+                      saldo_pendiente: Math.max(0, totalConIvaBorrador - abonoBorrador),
+                      estado: abonoBorrador > 0 && (totalConIvaBorrador - abonoBorrador) > 0 ? 'pendiente' : 'pagado'
                     }], { mode: printMode, side: printSide });
                   }}
                 >
@@ -602,6 +849,7 @@ export default function VentasPage() {
           </Card>
         </div>
       </div>
+      )}
 
       {/* Selector de Segunda Factura */}
       {showSelector && (
