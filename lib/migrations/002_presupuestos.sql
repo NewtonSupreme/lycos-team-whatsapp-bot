@@ -53,21 +53,9 @@ create trigger trg_presupuestos_updated_at
   before update on presupuestos
   for each row execute function set_updated_at();
 
--- RLS
-alter table presupuestos enable row level security;
-
--- Políticas
-do $$
-begin
-  if not exists (
-    select 1 from pg_policies
-    where tablename = 'presupuestos'
-    and policyname = 'Authenticated users - full access'
-  ) then
-    execute 'create policy "Authenticated users - full access" on presupuestos
-      for all using (auth.role() = ''authenticated'')';
-  end if;
-end $$;
+-- NOTA: La autenticación es por tabla `usuarios` + cookie propia, no por Supabase Auth.
+-- Por lo tanto RLS con auth.role() no funciona. Se desactiva RLS en presupuestos.
+alter table presupuestos disable row level security;
 
 -- ──────────────────────────────────────────────────────────────
 -- FUNCIÓN: Generar número correlativo de presupuesto

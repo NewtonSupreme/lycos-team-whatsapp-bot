@@ -102,7 +102,7 @@ export async function deleteVehiculo(id: string) {
 export async function fetchServicios() {
   if (!supabase) return null;
   const { data, error } = await withSedeFilter(supabase.from('servicios'))
-    .select('*, vehiculos(marca, modelo, placa, clientes(nombre, apellido))')
+    .select('*, registrado_por, vehiculos(marca, modelo, placa, clientes(nombre, apellido))')
     .order('created_at', { ascending: false });
   if (error) throw error;
   return data;

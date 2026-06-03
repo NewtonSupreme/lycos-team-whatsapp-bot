@@ -3160,7 +3160,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             let finalVehId = vehId;
 
             // Default name to admin's name if client name not provided
-            const defaultName = ctx.adminName || 'Administrador';
+            const adminName = ctx.memoria?.nombre || ctx.adminName || 'Administrador';
+            const defaultName = adminName;
             const nameToUse = nombreCliente || defaultName;
 
             // Verify clientId actually exists in DB (AI may put sede UUID in client field)
@@ -3195,6 +3196,15 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               finalVehId = newVId || null;
             }
 
+            // After resolving client, get the actual client name from DB
+            let resolvedClientName = nombreCliente || '';
+            if (finalClientId && !nombreCliente) {
+              const { data: clientData } = await db.from('clientes').select('nombre, apellido').eq('id', finalClientId).maybeSingle();
+              if (clientData) {
+                resolvedClientName = `${clientData.nombre} ${clientData.apellido}`.trim();
+              }
+            }
+
             const citaObj: any = {
               fecha,
               hora,
@@ -3204,7 +3214,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               descripcion: desc,
               telefono: phoneParam,
               sede_id: sedeId,
-              nombre_cliente: nameToUse,
+              nombre_cliente: resolvedClientName || nameToUse,
+              registrado_por: adminName,
               vehiculo_info: vehiculoInfo || null,
               placa: placa || null
             };
@@ -3217,13 +3228,13 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             if (id && id.length > 5 && db) {
               await db.from('citas').update(citaObj).eq('id', id);
               console.log(`📅 ADMIN: Cita actualizada: ${id}`);
-              await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Actualizó cita', `Cita ${id} actualizada vía ChatBot`, sedeId);
+              await logActivityAdmin(db, adminName, 'Actualizó cita', `Cita ${id} actualizada vía ChatBot`, sedeId);
             } else if (db) {
               const { data: newCita, error: insErr } = await db.from('citas').insert(citaObj).select('id').single();
               if (insErr) throw insErr;
               finalCitaId = newCita?.id || null;
               console.log(`📅 ADMIN: Nueva cita creada por administrador: ${finalCitaId}`);
-              await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Agendó cita', `Cita para ${fecha} creada vía ChatBot`, sedeId);
+              await logActivityAdmin(db, adminName, 'Agendó cita', `Cita para ${fecha} creada vía ChatBot`, sedeId);
             }
 
             // Trigger sale auto-registration if completed
@@ -3310,7 +3321,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             }
 
             const now = new Date();
-            const defaultName = ctx.adminName || 'Administrador';
+            const adminName = ctx.memoria?.nombre || ctx.adminName || 'Administrador';
+            const defaultName = adminName;
             const nameToUse = nombreCliente || defaultName;
 
             let finalClientId = clienteId;
@@ -3331,6 +3343,16 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               finalVehId = newVId || null;
             }
 
+            // After resolving client, get the actual client name from DB
+            // so we never store the admin's name as nombre_cliente
+            let resolvedClientName = nombreCliente || '';
+            if (finalClientId && !nombreCliente) {
+              const { data: clientData } = await db.from('clientes').select('nombre, apellido').eq('id', finalClientId).maybeSingle();
+              if (clientData) {
+                resolvedClientName = `${clientData.nombre} ${clientData.apellido}`.trim();
+              }
+            }
+
             const vzlaDateStr = getVzlaDateString();
             const vzlaTime = new Intl.DateTimeFormat('es-VE', {
               timeZone: 'America/Caracas', hour: '2-digit', minute: '2-digit', hour12: false,
@@ -3339,7 +3361,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             const servObj: any = {
               cliente_id: finalClientId,
               vehiculo_id: finalVehId,
-              nombre_cliente: nameToUse,
+              nombre_cliente: resolvedClientName || nameToUse,
               telefono: telefono || '',
               vehiculo_info: vehiculoInfo || null,
               placa: placa || null,
@@ -3348,12 +3370,13 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               descripcion: descripcion,
               estado: estado,
               costo_estimado: costoEstimado,
+              registrado_por: adminName,
               fecha: vzlaDateStr,
               hora: vzlaTime,
               seguimiento: [{
                 fecha: now.toISOString(),
                 accion: estado === 'pendiente' ? 'Registrado vía WhatsApp Admin' : `Estado inicial: ${estado}`,
-                usuario: ctx.memoria?.nombre || ctx.adminName || 'Admin IA',
+                usuario: adminName,
                 tipo: 'sistema',
                 progreso: 0,
               }],
@@ -3368,7 +3391,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 servObj.seguimiento = [...existingSeg, {
                   fecha: now.toISOString(),
                   accion: `Actualizado vía WhatsApp Admin — Estado: ${estado}`,
-                  usuario: ctx.memoria?.nombre || ctx.adminName || 'Admin IA',
+                  usuario: adminName,
                   tipo: 'sistema',
                 }];
                 servObj.updated_at = now.toISOString();
@@ -3376,7 +3399,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 delete servObj.hora;
                 await db.from('servicios').update(servObj).eq('id', id);
                 console.log(`🔧 ADMIN: Servicio actualizado: ${id}`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Actualizó servicio', `Servicio ${id} actualizado vía ChatBot`, sedeId);
+                await logActivityAdmin(db, adminName, 'Actualizó servicio', `Servicio ${id} actualizado vía ChatBot`, sedeId);
               } else {
                 console.log(`🔧 ADMIN: ID proporcionado pero servicio no encontrado: ${id}. Creando nuevo.`);
                 // Force create new instead
@@ -3384,13 +3407,13 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 const { data: newServ, error: insErr } = await db.from('servicios').insert(servObj).select('id').single();
                 if (insErr) throw insErr;
                 console.log(`🔧 ADMIN: Nuevo servicio creado (fallback tras update fallido): ${newServ?.id}`);
-                await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot (fallback)`, sedeId);
+                await logActivityAdmin(db, adminName, 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot (fallback)`, sedeId);
               }
             } else if (db) {
               const { data: newServ, error: insErr } = await db.from('servicios').insert(servObj).select('id').single();
               if (insErr) throw insErr;
               console.log(`🔧 ADMIN: Nuevo servicio creado: ${newServ?.id}`);
-              await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot`, sedeId);
+              await logActivityAdmin(db, adminName, 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot`, sedeId);
             }
           } catch (e) { console.error('Error in SERVICIO_UPSERT:', e); }
         }

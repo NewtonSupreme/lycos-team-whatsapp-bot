@@ -9,7 +9,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from '@/lib/store/useSedeStore';
-import { getPermisos, type Permisos } from '@/types';
+import { getPermisos, hasPermiso, type Permisos } from '@/types';
 
 interface NavItem {
   href: string;
@@ -46,13 +46,14 @@ export default function MobileBottomNav() {
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => { setMounted(true); }, []);
 
-  const permisos = getPermisos(user?.rol || 'empleado', user?.permisos);
+  const roleDefaults = useAppStore(s => s.roleDefaults);
+  const permisos = getPermisos(user?.rol || 'empleado', user?.permisos, roleDefaults);
   const isAdmin = user?.rol === 'admin';
 
   const canAccess = (permKey?: keyof Permisos): boolean => {
     if (isAdmin) return true;
     if (!permKey) return true;
-    return permisos[permKey] === true;
+    return hasPermiso(permisos[permKey]);
   };
 
   const visibleMoreNav = MORE_NAV.filter(item => {

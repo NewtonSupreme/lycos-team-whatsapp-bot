@@ -31,3 +31,10 @@ ALTER TABLE public.servicios
 -- 4. Columna para tipos personalizados (dinámicos)
 ALTER TABLE public.servicios
   ADD COLUMN IF NOT EXISTS tipo_personalizado TEXT;
+
+-- 5. Columna para registrar quién creó/registró el servicio o cita
+ALTER TABLE public.servicios
+  ADD COLUMN IF NOT EXISTS registrado_por TEXT;
+
+ALTER TABLE public.citas
+  ADD COLUMN IF NOT EXISTS registrado_por TEXT;

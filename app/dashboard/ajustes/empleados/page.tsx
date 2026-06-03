@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useSedeStore } from "@/lib/store/useSedeStore";
 import { useAppStore } from "@/lib/store";
 import { Loader2, Plus, Users, Shield, MapPin, Trash2, Mail, User, Wrench, Search, Eye, EyeOff, Settings2, Lock, Unlock } from "lucide-react";
-import { getPermisos, type Permisos, PERMISOS_DEFAULT } from "@/types";
+import { getPermisos, normalizePermiso, type Permisos, type PermisoValue, PERMISOS_DEFAULT } from "@/types";
 
 export default function EmpleadosPage() {
   const [empleados, setEmpleados] = useState<any[]>([]);
@@ -175,7 +175,7 @@ export default function EmpleadosPage() {
     const defaults = PERMISOS_DEFAULT[emp.rol] || PERMISOS_DEFAULT.empleado;
     setEditingId(emp.id);
 
-    let permisos = { ...defaults };
+    let permisos: Permisos = { ...defaults };
     if (isAdmin && supabase) {
       const { data: pData } = await supabase
         .from('usuarios')
@@ -183,7 +183,14 @@ export default function EmpleadosPage() {
         .eq('id', emp.id)
         .single();
       if (pData?.permisos) {
-        permisos = { ...defaults, ...(typeof pData.permisos === 'string' ? JSON.parse(pData.permisos) : pData.permisos) };
+        const raw = typeof pData.permisos === 'string' ? JSON.parse(pData.permisos) : pData.permisos;
+        const merged = { ...defaults };
+        for (const [key, val] of Object.entries(raw)) {
+          if (key in defaults) {
+            (merged as any)[key] = normalizePermiso(val as PermisoValue);
+          }
+        }
+        permisos = merged;
       }
     }
 
@@ -661,47 +668,138 @@ export default function EmpleadosPage() {
                   </div>
 
                   {isAdmin && editFormData.rol !== 'admin' && (
-                    <div className="space-y-3 pt-2 border-t border-border/30">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                          <Shield className="w-3.5 h-3.5 text-blue-500" /> Permisos del Sistema
-                        </Label>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const defaults = PERMISOS_DEFAULT[editFormData.rol] || PERMISOS_DEFAULT.empleado;
-                            setEditFormData({ ...editFormData, permisos: { ...defaults } });
-                          }}
-                          className="text-[10px] text-blue-500 hover:text-blue-600 font-medium"
-                        >
-                          Restaurar por defecto
-                        </button>
+                    <div className="space-y-4 pt-2 border-t border-border/30">
+                      {/* VISTAS DEL SISTEMA - toggle simple por módulo */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                            <Shield className="w-3.5 h-3.5 text-blue-500" /> Vistas del Sistema
+                          </Label>
+                          <span className="text-[10px] text-slate-400">Activar / Desactivar acceso a cada módulo</span>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                          {Object.entries(editFormData.permisos || {}).map(([key, crud]) => {
+                            const p = normalizePermiso(crud as PermisoValue);
+                            const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                            return (
+                              <label
+                                key={key}
+                                className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg border text-xs cursor-pointer transition-all select-none ${
+                                  p.leer
+                                    ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800 shadow-sm'
+                                    : 'bg-slate-50 dark:bg-slate-900/50 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+                                }`}
+                              >
+                                <span className={`font-medium ${p.leer ? 'text-blue-700 dark:text-blue-300' : 'text-slate-500'}`}>
+                                  {label}
+                                </span>
+                                <span
+                                  role="checkbox"
+                                  tabIndex={0}
+                                  aria-checked={p.leer}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    setEditFormData({
+                                      ...editFormData,
+                                      permisos: {
+                                        ...editFormData.permisos,
+                                        [key]: { ...p, leer: !p.leer, crear: !p.leer, editar: !p.leer, eliminar: !p.leer }
+                                      }
+                                    });
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault();
+                                      setEditFormData({
+                                        ...editFormData,
+                                        permisos: {
+                                          ...editFormData.permisos,
+                                          [key]: { ...p, leer: !p.leer, crear: !p.leer, editar: !p.leer, eliminar: !p.leer }
+                                        }
+                                      });
+                                    }
+                                  }}
+                                  className={`w-8 h-4 rounded-full transition-colors duration-200 relative inline-block flex-shrink-0 ${
+                                    p.leer ? 'bg-blue-500' : 'bg-slate-300 dark:bg-slate-600'
+                                  }`}
+                                >
+                                  <span className={`absolute w-3 h-3 bg-white rounded-full top-0.5 shadow-sm transition-transform duration-200 ${
+                                    p.leer ? 'left-[18px]' : 'left-[2px]'
+                                  }`} />
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
                       </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-                        {Object.entries(editFormData.permisos || {}).map(([key, val]) => (
-                          <label
-                            key={key}
-                            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-xs cursor-pointer transition-colors ${
-                              val ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800' : 'bg-slate-50 dark:bg-slate-900/50 border-slate-200 dark:border-slate-700 hover:bg-slate-100'
-                            }`}
+
+                      {/* PERMISOS CRUD - control granular por módulo */}
+                      <div className="space-y-2 border-t border-border/20 pt-3">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                            <Shield className="w-3.5 h-3.5 text-amber-500" /> Permisos CRUD del Sistema
+                          </Label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const defaults = PERMISOS_DEFAULT[editFormData.rol] || PERMISOS_DEFAULT.empleado;
+                              setEditFormData({ ...editFormData, permisos: JSON.parse(JSON.stringify(defaults)) });
+                            }}
+                            className="text-[10px] text-blue-500 hover:text-blue-600 font-medium"
                           >
-                            <input
-                              type="checkbox"
-                              checked={!!val}
-                              onChange={() => {
-                                setEditFormData({
-                                  ...editFormData,
-                                  permisos: { ...editFormData.permisos, [key]: !val }
-                                });
-                              }}
-                              className="w-3.5 h-3.5 accent-blue-600 rounded"
-                            />
-                            <span className={val ? 'text-blue-700 dark:text-blue-300 font-medium' : 'text-slate-500'}>
-                              {key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
-                            </span>
-                          </label>
-                        ))}
+                            Restaurar por defecto
+                          </button>
+                        </div>
+                      <div className="overflow-x-auto max-h-64 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                        <table className="w-full text-xs">
+                          <thead className="bg-slate-50 dark:bg-slate-900/50 sticky top-0">
+                            <tr className="border-b border-slate-200 dark:border-slate-700">
+                              <th className="text-left py-1.5 px-2 font-semibold text-slate-500 uppercase tracking-wider">Módulo</th>
+                              <th className="text-center py-1.5 px-1 font-bold text-green-600 text-[10px] w-8" title="Crear">C</th>
+                              <th className="text-center py-1.5 px-1 font-bold text-blue-600 text-[10px] w-8" title="Leer">R</th>
+                              <th className="text-center py-1.5 px-1 font-bold text-amber-600 text-[10px] w-8" title="Editar">U</th>
+                              <th className="text-center py-1.5 px-1 font-bold text-red-600 text-[10px] w-8" title="Eliminar">D</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {Object.entries(editFormData.permisos || {}).map(([key, crud]) => {
+                              const p = normalizePermiso(crud as PermisoValue);
+                              return (
+                                <tr key={key} className="border-b border-slate-100 dark:border-slate-800/30 hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition-colors">
+                                  <td className="py-1.5 px-2 font-medium text-slate-700 dark:text-slate-300 whitespace-nowrap text-[11px]">
+                                    {key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                                  </td>
+                                  {(['crear', 'leer', 'editar', 'eliminar'] as const).map(action => {
+                                    const isActive = p[action];
+                                    return (
+                                      <td key={action} className="text-center py-1.5 px-1">
+                                        <input
+                                          type="checkbox"
+                                          checked={isActive}
+                                          onChange={() => {
+                                            setEditFormData({
+                                              ...editFormData,
+                                              permisos: {
+                                                ...editFormData.permisos,
+                                                [key]: { ...p, [action]: !isActive }
+                                              }
+                                            });
+                                          }}
+                                          className="w-3.5 h-3.5 accent-blue-600 rounded cursor-pointer"
+                                        />
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       </div>
+                      <p className="text-[10px] text-slate-400 text-center">
+                        C = Crear · R = Leer · U = Editar · D = Eliminar
+                      </p>
+                    </div>
                     </div>
                   )}
                 <div className="flex gap-3 pt-4">

@@ -37,23 +37,13 @@ TO public
 USING ( bucket_id = 'avatars' );
 
 -- 4. Políticas para la tabla de 'usuarios' (para actualizar la URL de la foto)
--- Esto asegura que el frontend pueda guardar la URL después de subir la imagen.
-
-ALTER TABLE public.usuarios ENABLE ROW LEVEL SECURITY;
+-- NOTA: La autenticación es por tabla + cookie propia, no por Supabase Auth.
+-- Se desactiva RLS para evitar bloqueos en gestión de empleados.
 
 DROP POLICY IF EXISTS "Usuarios: Lectura pública" ON public.usuarios;
 DROP POLICY IF EXISTS "Usuarios: Actualización pública" ON public.usuarios;
 
-CREATE POLICY "Usuarios: Lectura pública"
-ON public.usuarios FOR SELECT
-TO public
-USING ( true );
-
-CREATE POLICY "Usuarios: Actualización pública"
-ON public.usuarios FOR UPDATE
-TO public
-USING ( true )
-WITH CHECK ( true );
+ALTER TABLE public.usuarios DISABLE ROW LEVEL SECURITY;
 
 -- 5. Agregar columna faltante a 'citas'
 ALTER TABLE public.citas ADD COLUMN IF NOT EXISTS costo_estimado NUMERIC(10, 2);

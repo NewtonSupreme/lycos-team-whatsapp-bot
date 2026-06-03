@@ -1,64 +1,125 @@
-export type UserRole = 'admin' | 'empleado' | 'cliente' | 'mecanico' | 'mecanico_acceso' | 'jefe_taller' | 'jefe_taller_acceso' | 'gerente';
+export type UserRole = string;
+
+export interface CrudPermiso {
+  crear: boolean;
+  leer: boolean;
+  editar: boolean;
+  eliminar: boolean;
+}
+
+export type PermisoValue = boolean | CrudPermiso;
 
 export interface Permisos {
-  dashboard: boolean;
-  clientes: boolean;
-  vehiculos: boolean;
-  servicios: boolean;
-  taller: boolean;
-  agenda: boolean;
-  whatsapp: boolean;
-  leads: boolean;
-  inventario: boolean;
-  papelera: boolean;
-  ventas: boolean;
-  ia_asistente: boolean;
-  reportes: boolean;
-  actividad: boolean;
-  calculadora: boolean;
-  configuracion: boolean;
-  empleados: boolean;
-  distribuidor: boolean;
-  presupuestos: boolean;
+  dashboard: CrudPermiso;
+  clientes: CrudPermiso;
+  vehiculos: CrudPermiso;
+  servicios: CrudPermiso;
+  taller: CrudPermiso;
+  agenda: CrudPermiso;
+  whatsapp: CrudPermiso;
+  leads: CrudPermiso;
+  inventario: CrudPermiso;
+  papelera: CrudPermiso;
+  ventas: CrudPermiso;
+  ia_asistente: CrudPermiso;
+  reportes: CrudPermiso;
+  actividad: CrudPermiso;
+  calculadora: CrudPermiso;
+  configuracion: CrudPermiso;
+  empleados: CrudPermiso;
+  distribuidor: CrudPermiso;
+  presupuestos: CrudPermiso;
+}
+
+export const MODULES: (keyof Permisos)[] = [
+  'dashboard', 'clientes', 'vehiculos', 'servicios', 'taller',
+  'agenda', 'whatsapp', 'leads', 'inventario', 'papelera',
+  'ventas', 'ia_asistente', 'reportes', 'actividad', 'calculadora',
+  'configuracion', 'empleados', 'distribuidor', 'presupuestos'
+];
+
+export function accesoToCrud(acceso: boolean): CrudPermiso {
+  return { crear: acceso, leer: acceso, editar: acceso, eliminar: acceso };
+}
+
+export function crudToAcceso(crud: CrudPermiso): boolean {
+  return crud.leer || crud.crear || crud.editar || crud.eliminar;
+}
+
+export function normalizePermiso(pv: PermisoValue | undefined): CrudPermiso {
+  if (pv === undefined || pv === null) return { crear: false, leer: false, editar: false, eliminar: false };
+  if (typeof pv === 'boolean') return accesoToCrud(pv);
+  return pv;
+}
+
+export function hasPermiso(pv: PermisoValue | undefined, action: keyof CrudPermiso = 'leer'): boolean {
+  return normalizePermiso(pv)[action] === true;
+}
+
+export interface Role {
+  id: string;
+  nombre: string;
+  label: string;
+  descripcion: string;
+  permisos: Record<string, PermisoValue>;
+  created_at: string;
+}
+
+function perm(crear: boolean, leer: boolean, editar: boolean, eliminar: boolean): CrudPermiso {
+  return { crear, leer, editar, eliminar };
+}
+function full(acceso: boolean): CrudPermiso {
+  return { crear: acceso, leer: acceso, editar: acceso, eliminar: acceso };
 }
 
 export const PERMISOS_DEFAULT: Record<string, Permisos> = {
   admin: {
-    dashboard: true, clientes: true, vehiculos: true, servicios: true, taller: true,
-    agenda: true, whatsapp: true, leads: true, inventario: true, papelera: true,
-    ventas: true, ia_asistente: true, reportes: true, actividad: true,
-    calculadora: true, configuracion: true, empleados: true, distribuidor: true, presupuestos: true
+    dashboard: full(true), clientes: full(true), vehiculos: full(true), servicios: full(true), taller: full(true),
+    agenda: full(true), whatsapp: full(true), leads: full(true), inventario: full(true), papelera: full(true),
+    ventas: full(true), ia_asistente: full(true), reportes: full(true), actividad: full(true),
+    calculadora: full(true), configuracion: full(true), empleados: full(true), distribuidor: full(true), presupuestos: full(true)
   },
   gerente: {
-    dashboard: true, clientes: true, vehiculos: true, servicios: true, taller: true,
-    agenda: true, whatsapp: true, leads: true, inventario: true, papelera: false,
-    ventas: true, ia_asistente: true, reportes: true, actividad: false,
-    calculadora: true, configuracion: false, empleados: false, distribuidor: true, presupuestos: true
+    dashboard: full(true), clientes: full(true), vehiculos: full(true), servicios: full(true), taller: full(true),
+    agenda: full(true), whatsapp: full(true), leads: full(true), inventario: full(true), papelera: full(false),
+    ventas: full(true), ia_asistente: full(true), reportes: full(true), actividad: full(false),
+    calculadora: full(true), configuracion: full(false), empleados: full(false), distribuidor: full(true), presupuestos: full(true)
   },
   empleado: {
-    dashboard: true, clientes: true, vehiculos: true, servicios: true, taller: true,
-    agenda: true, whatsapp: true, leads: false, inventario: true, papelera: false,
-    ventas: true, ia_asistente: false, reportes: false, actividad: false,
-    calculadora: true, configuracion: false, empleados: false, distribuidor: false, presupuestos: true
+    dashboard: full(true), clientes: full(true), vehiculos: full(true), servicios: full(true), taller: full(true),
+    agenda: full(true), whatsapp: full(true), leads: full(false), inventario: full(true), papelera: full(false),
+    ventas: full(true), ia_asistente: full(false), reportes: full(false), actividad: full(false),
+    calculadora: full(true), configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(true)
   },
   mecanico_acceso: {
-    dashboard: true, clientes: false, vehiculos: false, servicios: true, taller: true,
-    agenda: false, whatsapp: false, leads: false, inventario: false, papelera: false,
-    ventas: false, ia_asistente: false, reportes: false, actividad: false,
-    calculadora: true, configuracion: false, empleados: false, distribuidor: false, presupuestos: true
+    dashboard: full(true), clientes: full(false), vehiculos: full(false), servicios: full(true), taller: full(true),
+    agenda: full(false), whatsapp: full(false), leads: full(false), inventario: full(false), papelera: full(false),
+    ventas: full(false), ia_asistente: full(false), reportes: full(false), actividad: full(false),
+    calculadora: full(true), configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(true)
   },
   jefe_taller_acceso: {
-    dashboard: true, clientes: true, vehiculos: true, servicios: true, taller: true,
-    agenda: false, whatsapp: false, leads: false, inventario: true, papelera: false,
-    ventas: true, ia_asistente: false, reportes: false, actividad: false,
-    calculadora: true, configuracion: false, empleados: false, distribuidor: false, presupuestos: true
+    dashboard: full(true), clientes: full(true), vehiculos: full(true), servicios: full(true), taller: full(true),
+    agenda: full(false), whatsapp: full(false), leads: full(false), inventario: full(true), papelera: full(false),
+    ventas: full(true), ia_asistente: full(false), reportes: full(false), actividad: full(false),
+    calculadora: full(true), configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(true)
   },
 };
 
-export function getPermisos(rol: string, storedPermisos?: Partial<Permisos>): Permisos {
-  const defaults = PERMISOS_DEFAULT[rol] || PERMISOS_DEFAULT.empleado;
+export function getPermisos(
+  rol: string,
+  storedPermisos?: Record<string, PermisoValue>,
+  defaultsOverride?: Record<string, Permisos> | null
+): Permisos {
+  const source = defaultsOverride ?? PERMISOS_DEFAULT;
+  const defaults = source[rol] || source['empleado'] || PERMISOS_DEFAULT.empleado;
   if (!storedPermisos) return defaults;
-  return { ...defaults, ...storedPermisos };
+  const merged = { ...defaults };
+  for (const [key, val] of Object.entries(storedPermisos)) {
+    if (key in defaults) {
+      merged[key as keyof Permisos] = normalizePermiso(val);
+    }
+  }
+  return merged;
 }
 
 export interface User {

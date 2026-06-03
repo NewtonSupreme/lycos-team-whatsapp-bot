@@ -1,6 +1,6 @@
 'use client';
 import { create } from 'zustand';
-import { User, Notification } from '@/types';
+import { User, Notification, Permisos } from '@/types';
 
 interface AppStore {
   user: User | null;
@@ -8,12 +8,14 @@ interface AppStore {
   notifications: Notification[];
   unreadCount: number;
   pushRegistered: boolean;
+  roleDefaults: Record<string, Permisos> | null;
   setUser: (user: User | null) => void;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   addNotification: (notif: Omit<Notification, 'id' | 'created_at'>) => void;
   markAllRead: () => void;
   setPushRegistered: (val: boolean) => void;
+  setRoleDefaults: (defaults: Record<string, Permisos>) => void;
 }
 
 export const useAppStore = create<AppStore>((set) => ({
@@ -31,11 +33,13 @@ export const useAppStore = create<AppStore>((set) => ({
   notifications: [],
   unreadCount: 0,
   pushRegistered: false,
+  roleDefaults: null,
 
   setUser: (user) => set({ user }),
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setPushRegistered: (val) => set({ pushRegistered: val }),
+  setRoleDefaults: (defaults) => set({ roleDefaults: defaults }),
 
   addNotification: (notif) =>
     set((state) => ({

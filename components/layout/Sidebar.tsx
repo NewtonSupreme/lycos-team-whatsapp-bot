@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Users, Car, Wrench, Calendar, MessageSquare,
   Bot, FileText, Settings, ChevronLeft, ChevronRight,
-  Activity, LogOut, TrendingUp, UserCircle, Package, Calculator, ShoppingCart, Trash2, Truck,
+  Activity, LogOut, TrendingUp, UserCircle, Package, Calculator, ShoppingCart, Trash2, Truck, Shield,
   FileSpreadsheet
 } from 'lucide-react';
 import { cn, getInitials } from '@/lib/utils';
@@ -13,7 +13,7 @@ import { useAppStore } from '@/lib/store';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { supabase } from '@/lib/supabase';
-import { getPermisos, type Permisos } from '@/types';
+import { getPermisos, hasPermiso, type Permisos } from '@/types';
 
 interface NavItem {
   href: string;
@@ -46,6 +46,7 @@ const navItemsConfig: NavItem[] = [
 const bottomItems: NavItem[] = [
   { href: '/dashboard/configuracion', icon: Settings, label: 'Configuración', badge: null, permKey: 'configuracion' },
   { href: '/dashboard/ajustes/empleados', icon: Users, label: 'Gestión Empleados', badge: null, permKey: 'empleados' },
+  { href: '/dashboard/ajustes/permisos', icon: Shield, label: 'Permisos por Rol', badge: null, permKey: 'empleados' },
   { href: '/dashboard/perfil', icon: UserCircle, label: 'Mi Perfil', badge: null },
 ];
 
@@ -79,13 +80,14 @@ export default function Sidebar() {
     };
   }, []);
 
-  const permisos = getPermisos(user?.rol || 'empleado', user?.permisos);
+  const roleDefaults = useAppStore(s => s.roleDefaults);
+  const permisos = getPermisos(user?.rol || 'empleado', user?.permisos, roleDefaults);
   const isAdmin = user?.rol === 'admin';
 
   const canAccess = (permKey?: keyof Permisos): boolean => {
     if (isAdmin) return true;
     if (!permKey) return true;
-    return permisos[permKey] === true;
+    return hasPermiso(permisos[permKey]);
   };
 
   const navItems = navItemsConfig

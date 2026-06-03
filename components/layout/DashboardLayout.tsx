@@ -9,7 +9,7 @@ import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { sidebarOpen, setSidebarOpen, setUser, user } = useAppStore();
+  const { sidebarOpen, setSidebarOpen, setUser, setRoleDefaults, user } = useAppStore();
   const { setAvailableSedes, setUserRole, setCurrentSede, currentSede } = useSedeStore();
 
   // En móvil (< 1024px), cerrar sidebar automáticamente al montar
@@ -108,6 +108,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const [mounted, setMounted] = React.useState(false);
   useEffect(() => { setMounted(true); }, []);
+
+  // Load role defaults from DB for permission UI
+  useEffect(() => {
+    fetch('/api/roles')
+      .then(r => r.json())
+      .then(({ roles }) => {
+        if (roles) {
+          const map: Record<string, any> = {};
+          for (const role of roles) {
+            if (role.permisos) {
+              map[role.nombre] = role.permisos;
+            }
+          }
+          setRoleDefaults(map);
+        }
+      })
+      .catch(() => {});
+  }, [setRoleDefaults]);
 
   return (
     <div suppressHydrationWarning className="min-h-screen bg-background dot-pattern overflow-x-hidden">

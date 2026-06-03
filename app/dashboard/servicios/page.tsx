@@ -37,6 +37,7 @@ interface CitaServicio {
   sede_id?: string | null;
   costo_estimado?: number | null;
   seguimiento?: any[] | null;
+  registrado_por?: string | null;
   vehiculos?: { marca: string; modelo: string; placa: string; anio?: number; clientes?: { nombre: string; apellido: string; telefono: string } | null } | null;
 }
 
@@ -84,7 +85,7 @@ export default function ServiciosPage() {
         .select(`
           id, fecha, hora, tipo, tipo_personalizado, descripcion, estado,
           nombre_cliente, vehiculo_info, placa, telefono, created_at,
-          cliente_id, vehiculo_id, seguimiento, costo_estimado,
+          cliente_id, vehiculo_id, seguimiento, costo_estimado, registrado_por,
           vehiculos (marca, modelo, placa, anio, clientes (nombre, apellido, telefono))
         `)
         .order('fecha', { ascending: false })
@@ -613,6 +614,15 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onMove, is
             </p>
           </div>
         )}
+
+        {/* Registrado por */}
+        {cita.registrado_por && (
+          <div className="pt-1">
+            <p className="text-[9px] text-muted-foreground/50 font-medium">
+              Registrado por: <span className="text-foreground/60">{cita.registrado_por}</span>
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Footer Actions */}
@@ -972,6 +982,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           vehiculo_id: finalVehiculoId,
           tipo: finalTipoServicio,
           tipo_personalizado: isCustomServicio ? customServicio.trim() : null,
+          registrado_por: user?.nombre || 'Admin',
           fecha: now.toISOString().split('T')[0],
           hora: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
           estado: 'pendiente',
@@ -1630,7 +1641,7 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
         desglose: items,
         metodos_pago: payments,
         tasa_bcv: rates.bcv,
-        iva_aplicado: withIva,
+        con_iva: withIva,
         notas: cita.descripcion || 'Servicio de taller',
         creado_por: 'Admin'
       }));
