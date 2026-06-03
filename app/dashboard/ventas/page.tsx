@@ -162,9 +162,19 @@ export default function VentasPage() {
     try {
       // Abono / Pending logic
       const totalConIva = subtotal * (conIva ? 1.16 : 1);
-      const abonoAmount = showAbonoSection ? abono : 0;
-      const saldoRestante = Math.max(0, totalConIva - abonoAmount);
-      const tieneAbono = abonoAmount > 0 && saldoRestante > 0;
+      
+      let abonoAmount = 0;
+      let saldoRestante = 0;
+      
+      if (showAbonoSection) {
+        abonoAmount = abono;
+        saldoRestante = Math.max(0, totalConIva - abonoAmount);
+      } else {
+        abonoAmount = 0;
+        saldoRestante = 0;
+      }
+
+      const tieneAbono = showAbonoSection && abonoAmount > 0 && saldoRestante > 0;
       const estadoVenta = saldoRestante > 0 ? 'pendiente' : 'pagado';
 
       // 1. Register in ventas_dia (Accounting)

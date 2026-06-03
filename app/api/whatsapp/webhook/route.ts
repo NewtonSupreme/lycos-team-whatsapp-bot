@@ -3569,6 +3569,12 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               });
             }
 
+            const isCashea = metodo === 'cashea_bcv';
+            const inicialCashea = p.inicial ? parseFloat(p.inicial) : (totalNum * 0.5); // Default 50% si no viene
+            const montoPagado = isCashea ? inicialCashea : totalNum;
+            const saldoPendiente = isCashea ? Math.max(0, totalNum - montoPagado) : 0;
+            const estadoVenta = saldoPendiente > 0 ? 'pendiente' : 'pagado';
+            
             const { data: newVentaDia, error: errDia } = await db.from('ventas_dia').insert({
               fecha: getVzlaDateString(),
               cliente: clienteNombre,
@@ -3580,10 +3586,14 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               notas: notasFinales,
               creado_por: 'Admin IA',
               sede_id: targetSedeId,
+              tiene_abono: isCashea,
+              abono: isCashea ? montoPagado : 0,
+              saldo_pendiente: saldoPendiente,
+              estado: estadoVenta,
               metodos_pago: {
                 otro: metodo === 'otro' ? totalNum : 0,
                 zelle: metodo === 'zelle' ? totalNum : 0,
-                cashea: metodo === 'cashea_bcv' ? totalNum : 0,
+                cashea: isCashea ? montoPagado : 0,
                 binance: metodo === 'binance' ? totalNum : 0,
                 pago_movil: metodo === 'pago_movil' ? totalNum : 0,
                 efectivo_usd: (metodo === 'divisas' || metodo === 'efectivo_usd') ? totalNum : 0,

@@ -433,14 +433,24 @@ export default function VentasPage() {
     if (cart.length === 0) return alert("El carrito está vacío");
     if (!supabase) return;
 
-    const abonoAmount = showAbonoSection ? abono : 0;
-    if (abonoAmount > 0) {
-      if (totalPaid < abonoAmount - 0.05) return alert(`El abono registrado es de $${abonoAmount.toFixed(2)}, pero solo hay $${totalPaid.toFixed(2)} en métodos de pago.`);
+    let abonoAmount = showAbonoSection ? abono : 0;
+    let saldoRestante = 0;
+    
+    if (isCasheaActive) {
+      abonoAmount = totalPaid;
+      saldoRestante = Math.max(0, total - totalPaid);
     } else {
-      if (Math.abs(balance) > 0.05 && balance > 0) return alert(`Aún falta pagar $${(balance || 0).toFixed(2)}`);
+      if (showAbonoSection) {
+        if (totalPaid < abonoAmount - 0.05) return alert(`El abono registrado es de $${abonoAmount.toFixed(2)}, pero solo hay $${totalPaid.toFixed(2)} en métodos de pago.`);
+        saldoRestante = Math.max(0, total - abonoAmount);
+      } else {
+        if (Math.abs(balance) > 0.05 && balance > 0) return alert(`Aún falta pagar $${(balance || 0).toFixed(2)}`);
+        abonoAmount = 0;
+        saldoRestante = 0;
+      }
     }
-    const saldoRestante = Math.max(0, total - abonoAmount);
-    const tieneAbono = abonoAmount > 0 && saldoRestante > 0;
+
+    const tieneAbono = isCasheaActive || (showAbonoSection && abonoAmount > 0 && saldoRestante > 0);
     const estadoVenta = saldoRestante > 0 ? 'pendiente' : 'pagado';
 
     setProcessing(true);
@@ -615,11 +625,12 @@ export default function VentasPage() {
         return sum + (item.cantidad * basePrice);
       }, 0);
       const casheaTotal = casheaSubtotal * 1.16;
+      const inicial = casheaTotal * (casheaPct / 100);
       const otherPayments = Object.entries(metodosPago).reduce((acc, [k, v]) => {
         if (k === 'cashea') return acc;
         return acc + v;
       }, 0);
-      const targetVal = Math.max(0, casheaTotal - otherPayments);
+      const targetVal = Math.max(0, inicial - otherPayments);
       setMetodosPago(prev => ({ ...prev, cashea: Number(targetVal.toFixed(2)) }));
       return;
     }

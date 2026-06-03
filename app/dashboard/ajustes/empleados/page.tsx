@@ -602,21 +602,21 @@ export default function EmpleadosPage() {
 
       {/* MODAL DE EDICIÓN */}
       {showEditDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <Card className="w-full max-w-md border-slate-200 dark:border-slate-800 shadow-2xl animate-in zoom-in-95 duration-200">
-            <CardHeader className="bg-slate-50/50 dark:bg-slate-900/50 border-b">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 md:p-6 overflow-hidden">
+          <Card className="w-full max-w-2xl border-slate-200 dark:border-slate-800 shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+            <CardHeader className="bg-slate-50/50 dark:bg-slate-900/50 border-b shrink-0 py-4">
               <CardTitle className="text-xl flex items-center gap-2">
                 <User className="w-5 h-5 text-blue-500" />
                 Editar Usuario
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-6">
-              <form onSubmit={handleUpdate} className="space-y-4">
+            <CardContent className="p-4 sm:p-6 overflow-y-auto custom-scrollbar flex-1">
+              <form onSubmit={handleUpdate} className="space-y-5">
                 <div className="space-y-2">
                   <Label>Nombre Completo <span className="text-red-400">*</span></Label>
                   <Input required value={editFormData.nombre} onChange={e => setEditFormData({ ...editFormData, nombre: e.target.value })} />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Usuario <span className="text-red-400">*</span></Label>
                     <Input required value={editFormData.username} onChange={e => setEditFormData({ ...editFormData, username: e.target.value })} />
@@ -633,71 +633,82 @@ export default function EmpleadosPage() {
                   <Input value={editFormData.telefono} onChange={e => setEditFormData({ ...editFormData, telefono: e.target.value })}
                     placeholder="Opcional — solo para modo dios" />
                 </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Rol</Label>
-                      <Select value={editFormData.rol} onValueChange={v => {
-                        const updated = { ...editFormData, rol: v };
-                        if (isAdmin) {
-                          const defaults = PERMISOS_DEFAULT[v] || PERMISOS_DEFAULT.empleado;
-                          updated.permisos = { ...defaults };
-                        }
-                        setEditFormData(updated);
-                      }}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {isAdmin && <SelectItem value="admin">Admin</SelectItem>}
-                          <SelectItem value="gerente">Gerente</SelectItem>
-                          <SelectItem value="empleado">Empleado</SelectItem>
-                          <SelectItem value="mecanico">Mecánico (Sin Acceso)</SelectItem>
-                          <SelectItem value="mecanico_acceso">Mecánico (Con Acceso)</SelectItem>
-                          <SelectItem value="jefe_taller">Jefe Taller (Sin Acceso)</SelectItem>
-                          <SelectItem value="jefe_taller_acceso">Jefe Taller (Con Acceso)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Sede</Label>
-                      <Select value={editFormData.sede_id} onValueChange={v => setEditFormData({ ...editFormData, sede_id: v })}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {sedes.map(s => <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Rol</Label>
+                    <Select value={editFormData.rol} onValueChange={v => {
+                      const updated = { ...editFormData, rol: v };
+                      if (isAdmin) {
+                        const defaults = PERMISOS_DEFAULT[v] || PERMISOS_DEFAULT.empleado;
+                        updated.permisos = { ...defaults };
+                      }
+                      setEditFormData(updated);
+                    }}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {isAdmin && <SelectItem value="admin">Admin</SelectItem>}
+                        <SelectItem value="gerente">Gerente</SelectItem>
+                        <SelectItem value="empleado">Empleado</SelectItem>
+                        <SelectItem value="mecanico">Mecánico (Sin Acceso)</SelectItem>
+                        <SelectItem value="mecanico_acceso">Mecánico (Con Acceso)</SelectItem>
+                        <SelectItem value="jefe_taller">Jefe Taller (Sin Acceso)</SelectItem>
+                        <SelectItem value="jefe_taller_acceso">Jefe Taller (Con Acceso)</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
+                  <div className="space-y-2">
+                    <Label>Sede</Label>
+                    <Select value={editFormData.sede_id} onValueChange={v => setEditFormData({ ...editFormData, sede_id: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {sedes.map(s => <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
 
-                  {isAdmin && editFormData.rol !== 'admin' && (
-                    <div className="space-y-4 pt-2 border-t border-border/30">
-                      {/* VISTAS DEL SISTEMA - toggle simple por módulo */}
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                            <Shield className="w-3.5 h-3.5 text-blue-500" /> Vistas del Sistema
-                          </Label>
-                          <span className="text-[10px] text-slate-400">Activar / Desactivar acceso a cada módulo</span>
-                        </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-                          {Object.entries(editFormData.permisos || {}).map(([key, crud]) => {
-                            const p = normalizePermiso(crud as PermisoValue);
-                            const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-                            return (
-                              <label
-                                key={key}
-                                className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg border text-xs cursor-pointer transition-all select-none ${
-                                  p.leer
-                                    ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800 shadow-sm'
-                                    : 'bg-slate-50 dark:bg-slate-900/50 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
-                                }`}
-                              >
-                                <span className={`font-medium ${p.leer ? 'text-blue-700 dark:text-blue-300' : 'text-slate-500'}`}>
-                                  {label}
-                                </span>
-                                <span
-                                  role="checkbox"
-                                  tabIndex={0}
-                                  aria-checked={p.leer}
-                                  onClick={(e) => {
+                {isAdmin && editFormData.rol !== 'admin' && (
+                  <div className="space-y-5 pt-4 border-t border-border/30">
+                    {/* VISTAS DEL SISTEMA - toggle simple por módulo */}
+                    <div className="space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                        <Label className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                          <Shield className="w-3.5 h-3.5 text-blue-500" /> Vistas del Sistema
+                        </Label>
+                        <span className="text-[10px] text-slate-400">Activar / Desactivar acceso a cada módulo</span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                        {Object.entries(editFormData.permisos || {}).map(([key, crud]) => {
+                          const p = normalizePermiso(crud as PermisoValue);
+                          const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                          return (
+                            <label
+                              key={key}
+                              className={`flex items-center justify-between px-2.5 py-2 rounded-lg border text-xs cursor-pointer transition-all select-none ${
+                                p.leer
+                                  ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800 shadow-sm'
+                                  : 'bg-slate-50 dark:bg-slate-900/50 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+                              }`}
+                            >
+                              <span className={`font-medium truncate mr-2 ${p.leer ? 'text-blue-700 dark:text-blue-300' : 'text-slate-500'}`}>
+                                {label}
+                              </span>
+                              <span
+                                role="checkbox"
+                                tabIndex={0}
+                                aria-checked={p.leer}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  setEditFormData({
+                                    ...editFormData,
+                                    permisos: {
+                                      ...editFormData.permisos,
+                                      [key]: { ...p, leer: !p.leer, crear: !p.leer, editar: !p.leer, eliminar: !p.leer }
+                                    }
+                                  });
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
                                     e.preventDefault();
                                     setEditFormData({
                                       ...editFormData,
@@ -706,59 +717,48 @@ export default function EmpleadosPage() {
                                         [key]: { ...p, leer: !p.leer, crear: !p.leer, editar: !p.leer, eliminar: !p.leer }
                                       }
                                     });
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter' || e.key === ' ') {
-                                      e.preventDefault();
-                                      setEditFormData({
-                                        ...editFormData,
-                                        permisos: {
-                                          ...editFormData.permisos,
-                                          [key]: { ...p, leer: !p.leer, crear: !p.leer, editar: !p.leer, eliminar: !p.leer }
-                                        }
-                                      });
-                                    }
-                                  }}
-                                  className={`w-8 h-4 rounded-full transition-colors duration-200 relative inline-block flex-shrink-0 ${
-                                    p.leer ? 'bg-blue-500' : 'bg-slate-300 dark:bg-slate-600'
-                                  }`}
-                                >
-                                  <span className={`absolute w-3 h-3 bg-white rounded-full top-0.5 shadow-sm transition-transform duration-200 ${
-                                    p.leer ? 'left-[18px]' : 'left-[2px]'
-                                  }`} />
-                                </span>
-                              </label>
-                            );
-                          })}
-                        </div>
+                                  }
+                                }}
+                                className={`w-8 h-4 rounded-full transition-colors duration-200 relative inline-block flex-shrink-0 ${
+                                  p.leer ? 'bg-blue-500' : 'bg-slate-300 dark:bg-slate-600'
+                                }`}
+                              >
+                                <span className={`absolute w-3 h-3 bg-white rounded-full top-0.5 shadow-sm transition-transform duration-200 ${
+                                  p.leer ? 'left-[18px]' : 'left-[2px]'
+                                }`} />
+                              </span>
+                            </label>
+                          );
+                        })}
                       </div>
+                    </div>
 
-                      {/* PERMISOS CRUD - control granular por módulo */}
-                      <div className="space-y-2 border-t border-border/20 pt-3">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                            <Shield className="w-3.5 h-3.5 text-amber-500" /> Permisos CRUD del Sistema
-                          </Label>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const defaults = PERMISOS_DEFAULT[editFormData.rol] || PERMISOS_DEFAULT.empleado;
-                              setEditFormData({ ...editFormData, permisos: JSON.parse(JSON.stringify(defaults)) });
-                            }}
-                            className="text-[10px] text-blue-500 hover:text-blue-600 font-medium"
-                          >
-                            Restaurar por defecto
-                          </button>
-                        </div>
-                      <div className="overflow-x-auto max-h-64 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700">
-                        <table className="w-full text-xs">
-                          <thead className="bg-slate-50 dark:bg-slate-900/50 sticky top-0">
+                    {/* PERMISOS CRUD - control granular por módulo */}
+                    <div className="space-y-3 border-t border-border/20 pt-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <Label className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                          <Shield className="w-3.5 h-3.5 text-amber-500" /> Permisos CRUD del Sistema
+                        </Label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const defaults = PERMISOS_DEFAULT[editFormData.rol] || PERMISOS_DEFAULT.empleado;
+                            setEditFormData({ ...editFormData, permisos: JSON.parse(JSON.stringify(defaults)) });
+                          }}
+                          className="text-[10px] text-blue-500 hover:text-blue-600 font-medium"
+                        >
+                          Restaurar por defecto
+                        </button>
+                      </div>
+                      <div className="overflow-x-auto max-h-64 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 custom-scrollbar">
+                        <table className="w-full text-xs min-w-[400px]">
+                          <thead className="bg-slate-50 dark:bg-slate-900/50 sticky top-0 z-10 shadow-sm">
                             <tr className="border-b border-slate-200 dark:border-slate-700">
-                              <th className="text-left py-1.5 px-2 font-semibold text-slate-500 uppercase tracking-wider">Módulo</th>
-                              <th className="text-center py-1.5 px-1 font-bold text-green-600 text-[10px] w-8" title="Crear">C</th>
-                              <th className="text-center py-1.5 px-1 font-bold text-blue-600 text-[10px] w-8" title="Leer">R</th>
-                              <th className="text-center py-1.5 px-1 font-bold text-amber-600 text-[10px] w-8" title="Editar">U</th>
-                              <th className="text-center py-1.5 px-1 font-bold text-red-600 text-[10px] w-8" title="Eliminar">D</th>
+                              <th className="text-left py-2 px-3 font-semibold text-slate-500 uppercase tracking-wider">Módulo</th>
+                              <th className="text-center py-2 px-1 font-bold text-green-600 text-[10px] w-10" title="Crear">C</th>
+                              <th className="text-center py-2 px-1 font-bold text-blue-600 text-[10px] w-10" title="Leer">R</th>
+                              <th className="text-center py-2 px-1 font-bold text-amber-600 text-[10px] w-10" title="Editar">U</th>
+                              <th className="text-center py-2 px-1 font-bold text-red-600 text-[10px] w-10" title="Eliminar">D</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -766,13 +766,13 @@ export default function EmpleadosPage() {
                               const p = normalizePermiso(crud as PermisoValue);
                               return (
                                 <tr key={key} className="border-b border-slate-100 dark:border-slate-800/30 hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition-colors">
-                                  <td className="py-1.5 px-2 font-medium text-slate-700 dark:text-slate-300 whitespace-nowrap text-[11px]">
+                                  <td className="py-2 px-3 font-medium text-slate-700 dark:text-slate-300 whitespace-nowrap text-[11px]">
                                     {key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                                   </td>
                                   {(['crear', 'leer', 'editar', 'eliminar'] as const).map(action => {
                                     const isActive = p[action];
                                     return (
-                                      <td key={action} className="text-center py-1.5 px-1">
+                                      <td key={action} className="text-center py-2 px-1">
                                         <input
                                           type="checkbox"
                                           checked={isActive}
@@ -785,7 +785,7 @@ export default function EmpleadosPage() {
                                               }
                                             });
                                           }}
-                                          className="w-3.5 h-3.5 accent-blue-600 rounded cursor-pointer"
+                                          className="w-4 h-4 accent-blue-600 rounded cursor-pointer"
                                         />
                                       </td>
                                     );
@@ -800,9 +800,10 @@ export default function EmpleadosPage() {
                         C = Crear · R = Leer · U = Editar · D = Eliminar
                       </p>
                     </div>
-                    </div>
-                  )}
-                <div className="flex gap-3 pt-4">
+                  </div>
+                )}
+                
+                <div className="flex gap-3 pt-6 mt-4 border-t border-border/10">
                   <Button type="button" variant="outline" className="flex-1" onClick={() => setShowEditDialog(false)}>Cancelar</Button>
                   <Button type="submit" className="flex-1 bg-blue-600 text-white" disabled={saving}>
                     {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Guardar Cambios"}
