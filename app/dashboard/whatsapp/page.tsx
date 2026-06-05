@@ -966,6 +966,37 @@ export default function WhatsAppPage() {
   };
 
 
+  // ── Reprocess any specific message (audio/image/video/text) ──────────────
+  const handleReprocess = async (msg: RawMsg) => {
+    if (retranscribing) return;
+    setRetranscribing(true);
+    setRetryStatus(null);
+    try {
+      const res = await fetch('/api/whatsapp/reprocess', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId: msg.id }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const label = msg.media_type === 'audio' ? 'Audio reprocesado' : msg.media_type === 'image' ? 'Imagen re-analizada' : msg.media_type === 'video' ? 'Video re-analizado' : 'Mensaje reprocesado';
+        setRetryStatus(`✅ ${label} y respondido por IA`);
+        await fetchNewMsgs(selected!.telefono);
+        await loadConvs();
+      } else if (res.status === 207) {
+        setRetryStatus(`⚠️ ${data.warning || 'Procesado pero IA falló al responder'}`);
+        await fetchNewMsgs(selected!.telefono);
+      } else {
+        setRetryStatus(`❌ ${data.error || 'Error al reprocesar'}`);
+      }
+    } catch {
+      setRetryStatus('❌ Error de conexión al reprocesar');
+    } finally {
+      setRetranscribing(false);
+      setTimeout(() => setRetryStatus(null), 6000);
+    }
+  };
+
   // ── Reactions ──────────────────────────────────────────────────
   const handleReact = async (msg: RawMsg, emoji: string) => {
     if (!selected || !msg.wa_message_id || sending) return;
@@ -1648,9 +1679,14 @@ export default function WhatsAppPage() {
                                 <button onClick={() => copyToClipboard(cleanBody)} className="p-1.5 hover:bg-white/10 rounded-full text-white/60 hover:text-white" title="Copiar">
                                   <Copy className="w-3.5 h-3.5" />
                                 </button>
-                                  <button onClick={() => deleteMsg(msg)} className="p-1.5 hover:bg-red-500/20 rounded-full text-red-500/60 hover:text-red-500" title="Eliminar">
-                                    <Trash className="w-3.5 h-3.5" />
+                                {!isOut && (msg.media_type === 'audio' || msg.media_type === 'image' || msg.media_type === 'video' || msg.body.startsWith('[Cliente envió') || msg.body === '[Video]' || msg.body === '[Cliente envió audio]') && (
+                                  <button onClick={() => handleReprocess(msg)} className="p-1.5 hover:bg-blue-500/20 rounded-full text-blue-400/60 hover:text-blue-400" title="Reintentar con Gemini 2.5">
+                                    <RefreshCw className="w-3.5 h-3.5" />
                                   </button>
+                                )}
+                                <button onClick={() => deleteMsg(msg)} className="p-1.5 hover:bg-red-500/20 rounded-full text-red-500/60 hover:text-red-500" title="Eliminar">
+                                  <Trash className="w-3.5 h-3.5" />
+                                </button>
                               </div>
                             )}
                             {msg.es_ia && (
