@@ -71,13 +71,13 @@ export default function VentasPage() {
   const [secondVenta, setSecondVenta] = useState<any | null>(null);
   const [searchTermVenta, setSearchTermVenta] = useState('');
 
-  const { currentSede } = useSedeStore();
+  const { currentSede, sedeRefreshKey } = useSedeStore();
   const [rates, setRates] = useState({ bcv: 0 });
 
   useEffect(() => {
     fetchData();
     fetchRates();
-  }, [currentSede]);
+  }, [currentSede, sedeRefreshKey]);
 
   const fetchRates = async () => {
     try {

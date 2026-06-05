@@ -1,5 +1,6 @@
 'use client';
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
 import MobileBottomNav from '@/components/layout/MobileBottomNav';
@@ -7,10 +8,14 @@ import { useAppStore } from '@/lib/store';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
+import { Loader2 } from 'lucide-react';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
   const { sidebarOpen, setSidebarOpen, setUser, setRoleDefaults, user } = useAppStore();
   const { setAvailableSedes, setUserRole, setCurrentSede, currentSede } = useSedeStore();
+  const [authLoading, setAuthLoading] = React.useState(true);
+  const keepaliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // En móvil (< 1024px), cerrar sidebar automáticamente al montar
   useEffect(() => {
@@ -19,7 +24,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         setSidebarOpen(false);
       }
     };
-    // Set on mount
     handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
@@ -27,51 +31,102 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   // Load real user from session
   useEffect(() => {
-    // First try sessionStorage (set right after login, fastest)
-    try {
-      const cached = sessionStorage.getItem('lycos_user');
-      if (cached) {
-        const u = JSON.parse(cached);
-        // If it's an old cache without sede_id, ignore it and fetch fresh
-        if (u.sede_id) {
-          setUser({ 
-            id: u.id || u.username, 
-            username: u.username, 
-            email: u.email || `${u.username}@lycosteam.com`, 
-            nombre: u.nombre, 
-            rol: u.rol, 
-            avatar_url: u.avatar_url,
-            sede_id: u.sede_id,
-            permisos: u.permisos,
-            created_at: '' 
-          });
-          return;
+    let cancelled = false;
+
+    async function loadUser() {
+      // First try localStorage (set right after login, persists across tabs)
+      try {
+        const cached = localStorage.getItem('lycos_user');
+        if (cached) {
+          const u = JSON.parse(cached);
+          if (u.sede_id) {
+            setUser({ 
+              id: u.id || u.username, 
+              username: u.username, 
+              email: u.email || `${u.username}@lycosteam.com`, 
+              nombre: u.nombre, 
+              rol: u.rol, 
+              avatar_url: u.avatar_url,
+              sede_id: u.sede_id,
+              permisos: u.permisos,
+              created_at: '' 
+            });
+            setAuthLoading(false);
+            return;
+          }
+        }
+      } catch { /* ignore */ }
+
+      // Fallback: fetch from server
+      try {
+        const res = await fetch('/api/auth/me');
+        const { user: serverUser } = await res.json();
+        if (!cancelled) {
+          if (serverUser) {
+            const userData = { 
+              id: serverUser.id || serverUser.username, 
+              username: serverUser.username, 
+              email: serverUser.email || `${serverUser.username}@lycosteam.com`, 
+              nombre: serverUser.nombre, 
+              rol: serverUser.rol, 
+              avatar_url: serverUser.avatar_url,
+              sede_id: serverUser.sede_id,
+              permisos: serverUser.permisos,
+              created_at: '' 
+            };
+            setUser(userData);
+            localStorage.setItem('lycos_user', JSON.stringify(userData));
+            setAuthLoading(false);
+          } else {
+            // No valid session — clear any stale cache and redirect to login
+            localStorage.removeItem('lycos_user');
+            setUser(null);
+            setAuthLoading(false);
+            router.replace('/login');
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          // Network error — if we have cached user, keep it; otherwise redirect
+          const cached = localStorage.getItem('lycos_user');
+          if (cached) {
+            try {
+              const u = JSON.parse(cached);
+              if (u.sede_id) {
+                setUser({ 
+                  id: u.id || u.username, username: u.username,
+                  email: u.email || `${u.username}@lycosteam.com`, nombre: u.nombre,
+                  rol: u.rol, sede_id: u.sede_id, created_at: '' 
+                });
+                setAuthLoading(false);
+                return;
+              }
+            } catch { /* ignore */ }
+          }
+          setUser(null);
+          setAuthLoading(false);
         }
       }
-    } catch { /* ignore */ }
+    }
 
-    // Fallback: fetch from server
-    fetch('/api/auth/me')
-      .then(r => r.json())
-      .then(({ user }) => {
-        if (user) {
-          const userData = { 
-            id: user.id || user.username, 
-            username: user.username, 
-            email: user.email || `${user.username}@lycosteam.com`, 
-            nombre: user.nombre, 
-            rol: user.rol, 
-            avatar_url: user.avatar_url,
-            sede_id: user.sede_id,
-            permisos: user.permisos,
-            created_at: '' 
-          };
-          setUser(userData);
-          sessionStorage.setItem('lycos_user', JSON.stringify(userData));
-        }
-      })
-      .catch(() => {});
-  }, [setUser]);
+    loadUser();
+    return () => { cancelled = true; };
+  }, [setUser, router]);
+
+  // Session keepalive — refresh cookie every 30 min while user is active
+  useEffect(() => {
+    if (!user) return;
+    keepaliveRef.current = setInterval(async () => {
+      try {
+        // Calling /api/auth/me extends the cookie's maxAge via Set-Cookie
+        await fetch('/api/auth/me');
+      } catch { /* silent keepalive */ }
+    }, 30 * 60 * 1000); // 30 minutes
+
+    return () => {
+      if (keepaliveRef.current) clearInterval(keepaliveRef.current);
+    };
+  }, [user]);
 
   // Load Sede Data
   useEffect(() => {
@@ -126,6 +181,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       })
       .catch(() => {});
   }, [setRoleDefaults]);
+
+  if (authLoading) {
+    return (
+      <div suppressHydrationWarning className="min-h-screen bg-background flex items-center justify-center">
+        <div suppressHydrationWarning className="flex flex-col items-center gap-4">
+          <div suppressHydrationWarning className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center border border-primary/20">
+            <Loader2 suppressHydrationWarning className="w-6 h-6 text-primary animate-spin" />
+          </div>
+          <p suppressHydrationWarning className="text-sm font-bold text-muted-foreground animate-pulse">Verificando sesión...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div suppressHydrationWarning className="min-h-screen bg-background dot-pattern overflow-x-hidden">

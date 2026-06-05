@@ -28,7 +28,17 @@ export async function GET() {
       .eq('username', username)
       .single();
 
-    if (!user) return NextResponse.json({ user: null });
+    if (!user) {
+      cookieStore.delete('lycos_session');
+      return NextResponse.json({ user: null });
+    }
+
+    // Refresh cookie maxAge on every request (keepalive)
+    cookieStore.set('lycos_session', username, {
+      httpOnly: true, secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax', maxAge: 60 * 60 * 24 * 7, path: '/',
+    });
+
     return NextResponse.json({ user });
   } catch {
     return NextResponse.json({ user: null });

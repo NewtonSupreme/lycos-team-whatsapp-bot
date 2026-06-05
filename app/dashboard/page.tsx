@@ -97,7 +97,7 @@ function getVzlaFirstDayString() {
 }
 
 export default function DashboardPage() {
-  const { currentSede, userRole } = useSedeStore();
+  const { currentSede, userRole, sedeRefreshKey } = useSedeStore();
   const [mounted, setMounted] = useState(false);
   const [stats, setStats] = useState<DashboardStats>({
     totalClientes: null, totalVehiculos: null, serviciosActivos: null,
@@ -233,7 +233,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (mounted && currentSede) loadData();
-  }, [mounted, loadData, currentSede]);
+  }, [mounted, loadData, currentSede, sedeRefreshKey]);
 
   useEffect(() => {
     if (!supabase || !mounted || !currentSede) return;

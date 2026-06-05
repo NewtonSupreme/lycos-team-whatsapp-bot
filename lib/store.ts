@@ -19,14 +19,7 @@ interface AppStore {
 }
 
 export const useAppStore = create<AppStore>((set) => ({
-  user: {
-    id: '1',
-    username: 'admin',
-    email: 'admin@lycosteam.com',
-    nombre: 'Administrador',
-    rol: 'admin',
-    created_at: new Date().toISOString(),
-  },
+  user: null,
   // Iniciamos en true para coincidir con el renderizado del servidor (SSR)
   // El ajuste por resolución (móvil/desktop) se hace en un useEffect (ver DashboardLayout)
   sidebarOpen: true,

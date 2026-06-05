@@ -11,6 +11,7 @@ interface SedeState {
   currentSede: Sede | null;
   availableSedes: Sede[];
   userRole: 'admin' | 'gerente' | 'empleado' | null;
+  sedeRefreshKey: number;
   setCurrentSede: (sede: Sede) => void;
   setAvailableSedes: (sedes: Sede[]) => void;
   setUserRole: (role: 'admin' | 'gerente' | 'empleado' | null) => void;
@@ -24,7 +25,8 @@ export const useSedeStore = create<SedeState>()(
       currentSede: null,
       availableSedes: [],
       userRole: null,
-      setCurrentSede: (sede) => set({ currentSede: sede }),
+      sedeRefreshKey: 0,
+      setCurrentSede: (sede) => set((state) => ({ currentSede: sede, sedeRefreshKey: state.sedeRefreshKey + 1 })),
       setAvailableSedes: (sedes) => set({ availableSedes: sedes }),
       setUserRole: (role) => set({ userRole: role }),
       canViewAll: () => {

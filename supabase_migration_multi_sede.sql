@@ -6,12 +6,17 @@ CREATE TABLE IF NOT EXISTS sedes (
   es_principal BOOLEAN DEFAULT false
 );
 
--- 2. Insertar sedes iniciales
-INSERT INTO sedes (nombre, es_principal) VALUES 
-('San Antonio de los Altos', false),
-('Principal (Carrizal)', true),
-('El cementerio (Caracas)', false)
-ON CONFLICT DO NOTHING;
+-- Agregar UNIQUE constraint para evitar duplicados por nombre
+-- (se eliminan los duplicados existentes en un paso posterior)
+ALTER TABLE sedes ADD CONSTRAINT IF NOT EXISTS sedes_nombre_unique UNIQUE (nombre);
+
+-- 2. Insertar sedes iniciales con UUIDs FIJOS (usa el valor de WHATSAPP_DEFAULT_SEDE_ID para San Antonio)
+--    IMPORTANTE: Si cambias estos UUIDs, actualiza también WHATSAPP_DEFAULT_SEDE_ID en .env.local
+INSERT INTO sedes (id, nombre, es_principal) VALUES 
+('310595c5-5258-47fa-9b69-5ad9932685a7', 'San Antonio de los Altos', false),
+('b1a2b3c4-d5e6-4789-abc1-234567890def', 'Principal (Carrizal)', true),
+('c2b3c4d5-e6f7-4890-bcd2-345678901abc', 'El cementerio (Caracas)', false)
+ON CONFLICT ON CONSTRAINT sedes_nombre_unique DO NOTHING;
 
 -- 3. FUNCIÓN PARA AGREGAR SEDE_ID A TODAS LAS TABLAS Y A LOS USUARIOS
 DO $$

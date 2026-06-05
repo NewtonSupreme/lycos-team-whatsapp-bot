@@ -74,6 +74,9 @@ export default function VentasPage() {
   const [showPreview, setShowPreview] = useState(false);
   const [selectedSale, setSelectedSale] = useState<any>(null);
   const [showSaleDetail, setShowSaleDetail] = useState(false);
+  const [showAbonoDialog, setShowAbonoDialog] = useState(false);
+  const [selectedPendiente, setSelectedPendiente] = useState<any>(null);
+  const [abonoExtra, setAbonoExtra] = useState(0);
 
   const symbol = (selectedSale?.metodos_pago?.euros > 0 || /euro/i.test(selectedSale?.notes || '') || /euro/i.test(selectedSale?.notas || '')) ? '€' : '$';
 
@@ -95,7 +98,7 @@ export default function VentasPage() {
   const [printSide, setPrintSide] = useState<'left' | 'right'>('left');
   const [printCurrencyMode, setPrintCurrencyMode] = useState<'auto' | 'usd' | 'dual'>('auto');
 
-  const { currentSede } = useSedeStore();
+  const { currentSede, sedeRefreshKey } = useSedeStore();
   const [rates, setRates] = useState({ bcv: 36.5 });
   const [customRate, setCustomRate] = useState<number | null>(null);
 
@@ -121,7 +124,7 @@ export default function VentasPage() {
     setMounted(true);
     fetchData();
     fetchRates();
-  }, [currentSede]);
+  }, [currentSede, sedeRefreshKey]);
 
   const fetchRates = async () => {
     try {
@@ -153,6 +156,7 @@ export default function VentasPage() {
           .limit(10)
       ]);
 
+      const hoyStr = new Date().toISOString().split('T')[0];
 
        const normalizedSil = (salesSil.data || []).map((v: any) => {
         const notes = v.notas || '';
@@ -222,9 +226,14 @@ export default function VentasPage() {
           total: total
         }];
 
+        const ventaFecha = v.fecha?.split('T')[0] || '';
+        const isAtrasado = v.registro_atrasado === true || (ventaFecha && ventaFecha !== hoyStr && v.created_at?.split('T')[0] !== ventaFecha);
+
         return {
           id: v.id,
           created_at: v.created_at || v.fecha,
+          fecha: v.fecha,
+          displayDate: v.fecha || v.created_at,
           cliente: clientFromNotes || 'Consumidor Final',
           total_ingresos: total,
           context: context,
@@ -232,25 +241,34 @@ export default function VentasPage() {
           isBinance: isBinance,
           desglose: desglose,
           notas: v.notas,
-          source: 'ia'
+          source: 'ia',
+          isAtrasado
         };
       });
 
       const normalizedAccounting = (salesDia.data || []).map((v: any) => {
         const isCashea = (v.notas || '').toLowerCase().includes('cashea') || (v.metodos_pago && Number(v.metodos_pago.cashea) > 0);
         const isBinance = (v.notas || '').toLowerCase().includes('binance') || (v.metodos_pago && Number(v.metodos_pago.binance) > 0);
+        const ventaFecha = v.fecha || v.created_at?.split('T')[0] || '';
+        const isAtrasado = v.registro_atrasado === true || (ventaFecha && ventaFecha !== hoyStr && v.created_at?.split('T')[0] !== ventaFecha);
         
         return {
           ...v,
           cliente: v.cliente || 'Consumidor Final',
           isCashea,
           isBinance,
-          source: 'pos'
+          source: 'pos',
+          displayDate: v.fecha || v.created_at,
+          isAtrasado
         };
       });
 
       const mergedSales = [...normalizedAccounting, ...normalizedSil]
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .sort((a, b) => {
+          const dateA = a.displayDate ? new Date(a.displayDate).getTime() : new Date(a.created_at).getTime();
+          const dateB = b.displayDate ? new Date(b.displayDate).getTime() : new Date(b.created_at).getTime();
+          return dateB - dateA;
+        })
         .slice(0, 10);
 
       setVentasRecientes(mergedSales);
@@ -455,9 +473,13 @@ export default function VentasPage() {
 
     setProcessing(true);
     try {
+      const ventaFechaStr = format(selectedDate, 'yyyy-MM-dd');
+      const hoyStr = format(new Date(), 'yyyy-MM-dd');
+      const esRegistroAtrasado = ventaFechaStr !== hoyStr;
+
       const { data: ventaDia, error: ventaError } = await withSedeFilter(supabase.from('ventas_dia'))
         .insert(withSedeInsert({
-          fecha: format(selectedDate, 'yyyy-MM-dd'),
+          fecha: ventaFechaStr,
           cliente: clienteNombre || 'Consumidor Final',
           total_ingresos: total,
           desglose: cart.map(item => {
@@ -484,12 +506,14 @@ export default function VentasPage() {
           tasa_cambio: activeRate,
           total_servicios: cart.reduce((s, i) => s + i.cantidad, 0),
           total_clientes: 1,
-          notas: `${notas}${vehiculoInfo ? ` | Vehículo: ${vehiculoInfo}` : ''}${tieneAbono ? ` | Abono: $${abonoAmount.toFixed(2)} | Saldo: $${saldoRestante.toFixed(2)}` : ''}`,
+          notas: `${notas}${vehiculoInfo ? ` | Vehículo: ${vehiculoInfo}` : ''}${tieneAbono ? ` | Abono: $${abonoAmount.toFixed(2)} | Saldo: $${saldoRestante.toFixed(2)}` : ''}${esRegistroAtrasado ? ' | ⚠️ REGISTRO ATRASADO' : ''}`,
           creado_por: 'Admin',
           tiene_abono: tieneAbono,
           abono: abonoAmount,
           saldo_pendiente: saldoRestante,
-          estado: estadoVenta
+          estado: estadoVenta,
+          fecha_registro: new Date().toISOString(),
+          registro_atrasado: esRegistroAtrasado
         }))
         .select()
         .single();
@@ -637,6 +661,121 @@ export default function VentasPage() {
 
     if (balance <= 0) return;
     setMetodosPago(prev => ({ ...prev, [method]: Number(balance.toFixed(2)) }));
+  };
+
+  // ─── Acciones para Ventas Pendientes ──────────────────────────────────
+  const handleMarcarPagado = async (venta: any) => {
+    if (!supabase) return;
+    if (!confirm(`¿Marcar como PAGADA la venta de ${venta.cliente} por $${Number(venta.total_ingresos || 0).toFixed(2)}?`)) return;
+    try {
+      const { error } = await withSedeFilter(supabase.from('ventas_dia'))
+        .update({
+          estado: 'pagado',
+          saldo_pendiente: 0,
+          notas: `${venta.notas || ''} | Pagado completo el ${new Date().toLocaleDateString('es-VE')}`,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', venta.id);
+      if (error) throw error;
+      await logActivity({
+        usuario: useAppStore.getState().user?.nombre || 'Admin',
+        modulo: 'Ventas',
+        accion: 'Marcó venta pendiente como pagada',
+        detalles: `Cliente: ${venta.cliente}, Total: $${Number(venta.total_ingresos || 0).toFixed(2)}`,
+        referencia_id: venta.id,
+        referencia_tabla: 'ventas_dia'
+      });
+      alert('✅ Venta marcada como PAGADA');
+      fetchData();
+    } catch (err: any) {
+      alert('Error: ' + err.message);
+    }
+  };
+
+  const handleRegistrarAbono = async () => {
+    if (!supabase || !selectedPendiente) return;
+    if (abonoExtra <= 0) return alert('Ingresa un monto de abono válido');
+    const nuevoAbono = (Number(selectedPendiente.abono) || 0) + abonoExtra;
+    const nuevoSaldo = Math.max(0, (Number(selectedPendiente.saldo_pendiente) || 0) - abonoExtra);
+    const nuevoEstado = nuevoSaldo <= 0 ? 'pagado' : 'pendiente';
+
+    try {
+      const { error } = await withSedeFilter(supabase.from('ventas_dia'))
+        .update({
+          abono: nuevoAbono,
+          saldo_pendiente: nuevoSaldo,
+          estado: nuevoEstado,
+          notas: `${selectedPendiente.notas || ''} | Abono extra: $${abonoExtra.toFixed(2)} el ${new Date().toLocaleDateString('es-VE')}`,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', selectedPendiente.id);
+      if (error) throw error;
+      await logActivity({
+        usuario: useAppStore.getState().user?.nombre || 'Admin',
+        modulo: 'Ventas',
+        accion: `Registró abono extra a venta pendiente`,
+        detalles: `Cliente: ${selectedPendiente.cliente}, Abono: $${abonoExtra.toFixed(2)}, Saldo restante: $${nuevoSaldo.toFixed(2)}`,
+        referencia_id: selectedPendiente.id,
+        referencia_tabla: 'ventas_dia'
+      });
+      setShowAbonoDialog(false);
+      setSelectedPendiente(null);
+      setAbonoExtra(0);
+      alert(nuevoEstado === 'pagado' ? '✅ Abono registrado. Venta liquidada completamente.' : `✅ Abono registrado. Saldo pendiente: $${nuevoSaldo.toFixed(2)}`);
+      fetchData();
+    } catch (err: any) {
+      alert('Error: ' + err.message);
+    }
+  };
+
+  const handleReabrirVenta = async (venta: any) => {
+    if (!supabase) return;
+    if (!confirm(`¿Reabrir la venta de ${venta.cliente} por $${Number(venta.total_ingresos || 0).toFixed(2)}? Se cambiará a estado PENDIENTE.`)) return;
+    try {
+      const saldo = Number(venta.total_ingresos || 0) - (Number(venta.abono) || 0);
+      const { error } = await withSedeFilter(supabase.from('ventas_dia'))
+        .update({
+          estado: 'pendiente',
+          saldo_pendiente: Math.max(0, saldo),
+          notas: `${venta.notas || ''} | Reabierto el ${new Date().toLocaleDateString('es-VE')}`,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', venta.id);
+      if (error) throw error;
+      await logActivity({
+        usuario: useAppStore.getState().user?.nombre || 'Admin',
+        modulo: 'Ventas',
+        accion: 'Reabrió venta como pendiente',
+        detalles: `Cliente: ${venta.cliente}, Total: $${Number(venta.total_ingresos || 0).toFixed(2)}`,
+        referencia_id: venta.id,
+        referencia_tabla: 'ventas_dia'
+      });
+      alert('✅ Venta reabierta como PENDIENTE');
+      fetchData();
+    } catch (err: any) {
+      alert('Error: ' + err.message);
+    }
+  };
+
+  const handleReimprimirFactura = async (venta: any) => {
+    const bcvRate = venta.tasa_cambio || rates.bcv;
+    const mp = venta.metodos_pago || {};
+    const resolvedCurrencyMode = printCurrencyMode === 'auto'
+      ? ((mp.pago_movil > 0 || mp.efectivo_ves > 0 || venta.isCashea) ? 'dual' : 'usd')
+      : printCurrencyMode;
+
+    generateInvoicePDF([{
+      id: venta.id,
+      fecha: new Date(venta.fecha || venta.created_at).toLocaleDateString(),
+      cliente: venta.cliente,
+      items: venta.desglose || [{ descripcion: 'Producto', cantidad: 1, total: venta.total_ingresos }],
+      total: venta.total_ingresos,
+      notas: venta.notas,
+      tasa_bcv: bcvRate,
+      total_ves: (venta.total_ingresos || 0) * bcvRate,
+      iva_aplicado: venta.con_iva,
+      metodos_pago: mp
+    }], { mode: 'single', side: 'left', currencyMode: resolvedCurrencyMode as any });
   };
 
   if (!mounted) return null;
@@ -796,7 +935,7 @@ export default function VentasPage() {
 
           <Card className="glass-panel border-border/50 bg-card/40">
             <CardContent className="p-0">
-              {ventasPendientes.length === 0 ? (
+                  {ventasPendientes.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 opacity-40">
                   <CheckCircle className="w-12 h-12 mb-3 text-green-400" />
                   <p className="text-sm font-bold uppercase tracking-widest">Todo al día</p>
@@ -804,37 +943,133 @@ export default function VentasPage() {
                 </div>
               ) : (
                 <div className="divide-y divide-border/20">
-                  {ventasPendientes.map((v: any) => (
-                    <div key={v.id} className="p-4 flex items-center gap-4 hover:bg-white/5 transition-colors">
+                  {ventasPendientes.map((v: any) => {
+                    const vFecha = v.fecha || v.created_at?.split('T')[0] || '';
+                    const isAtrasado = v.registro_atrasado === true || (vFecha && vFecha !== new Date().toISOString().split('T')[0]);
+                    return (
+                    <div key={v.id} className="p-4 flex flex-col sm:flex-row sm:items-center gap-3 hover:bg-white/5 transition-colors">
                       <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center flex-shrink-0">
                         <CreditCard className="w-5 h-5 text-amber-400" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <p className="text-sm font-black truncate">{v.cliente || 'Consumidor Final'}</p>
                           <Badge variant="outline" className="text-amber-400 border-amber-400/30 bg-amber-500/5 text-[8px] font-black px-1.5">
                             PENDIENTE
                           </Badge>
+                          {isAtrasado && (
+                            <Badge className="bg-orange-500 text-white border-none text-[7px] font-black h-3.5 px-1 animate-pulse">
+                              ⚠️ ATRASADO
+                            </Badge>
+                          )}
                         </div>
-                        <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                          <span>{new Date(v.created_at).toLocaleDateString('es-VE')}</span>
+                        <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
+                          <span className="flex items-center gap-1">
+                            <Calendar className="w-3 h-3" />
+                            {vFecha ? new Date(vFecha).toLocaleDateString('es-VE') : new Date(v.created_at).toLocaleDateString('es-VE')}
+                          </span>
                           <span className="flex items-center gap-1">
                             <DollarSign className="w-3 h-3" />
                             Total: ${Number(v.total_ingresos || 0).toFixed(2)}
                           </span>
                         </div>
                       </div>
-                      <div className="text-right flex-shrink-0">
+                      <div className="text-right flex-shrink-0 flex flex-col items-end gap-1">
                         <p className="text-sm font-black text-amber-400">${Number(v.saldo_pendiente || 0).toFixed(2)}</p>
-                        <p className="text-[9px] font-bold text-muted-foreground">SALDO</p>
+                        <p className="text-[9px] font-bold text-muted-foreground leading-none">SALDO</p>
                         {v.abono > 0 && (
-                          <p className="text-[9px] font-bold text-green-400">Abonó: ${Number(v.abono).toFixed(2)}</p>
+                          <p className="text-[9px] font-bold text-green-400 leading-none">Abonó: ${Number(v.abono).toFixed(2)}</p>
                         )}
+                        <div className="flex items-center gap-1 mt-1.5">
+                          <button
+                            onClick={() => handleMarcarPagado(v)}
+                            className="px-2 py-1 rounded-lg bg-green-500/10 border border-green-500/20 text-green-400 text-[8px] font-black hover:bg-green-500/20 transition-all"
+                            title="Marcar como Pagado"
+                          >
+                            PAGADO
+                          </button>
+                          <button
+                            onClick={() => { setSelectedPendiente(v); setAbonoExtra(0); setShowAbonoDialog(true); }}
+                            className="px-2 py-1 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[8px] font-black hover:bg-blue-500/20 transition-all"
+                            title="Registrar Abono"
+                          >
+                            ABONAR
+                          </button>
+                          <button
+                            onClick={() => handleReimprimirFactura(v)}
+                            className="px-2 py-1 rounded-lg bg-muted/30 border border-border/30 text-muted-foreground text-[8px] font-black hover:bg-muted/50 transition-all"
+                            title="Reimprimir Factura"
+                          >
+                            🖨️
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
+              {/* Modal de Abono */}
+              <Dialog open={showAbonoDialog} onOpenChange={setShowAbonoDialog}>
+                <DialogContent className="max-w-md bg-card border-border/50 rounded-[2rem] p-6">
+                  <DialogHeader>
+                    <DialogTitle className="text-lg font-black flex items-center gap-2">
+                      <DollarSign className="w-5 h-5 text-amber-400" />
+                      Registrar Abono
+                    </DialogTitle>
+                    <DialogDescription className="text-xs">
+                      Cliente: <strong>{selectedPendiente?.cliente || 'N/A'}</strong>
+                      {selectedPendiente && (
+                        <span className="block mt-1">
+                          Saldo pendiente: <strong className="text-amber-400">${Number(selectedPendiente.saldo_pendiente || 0).toFixed(2)}</strong>
+                          {Number(selectedPendiente.abono) > 0 && (
+                            <> | Abonado: <strong className="text-green-400">${Number(selectedPendiente.abono).toFixed(2)}</strong></>
+                          )}
+                        </span>
+                      )}
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <Label className="text-[10px] font-black uppercase text-muted-foreground">Monto del Abono ($)</Label>
+                      <Input
+                        type="number" step="0.01" min="0"
+                        max={selectedPendiente?.saldo_pendiente || 0}
+                        placeholder="0.00"
+                        className="h-12 text-lg font-black"
+                        value={abonoExtra || ''}
+                        onChange={e => setAbonoExtra(Math.max(0, parseFloat(e.target.value) || 0))}
+                      />
+                    </div>
+                    {selectedPendiente && abonoExtra > 0 && (
+                      <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 space-y-1">
+                        <div className="flex justify-between text-xs">
+                          <span className="font-bold text-muted-foreground">Abono ahora:</span>
+                          <span className="font-black text-green-400">- ${abonoExtra.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-xs">
+                          <span className="font-bold text-muted-foreground">Nuevo saldo:</span>
+                          <span className="font-black text-amber-400">${Math.max(0, (Number(selectedPendiente.saldo_pendiente) || 0) - abonoExtra).toFixed(2)}</span>
+                        </div>
+                        {abonoExtra >= (Number(selectedPendiente.saldo_pendiente) || 0) && (
+                          <div className="flex items-center gap-2 pt-1 text-green-400">
+                            <CheckCircle className="w-3.5 h-3.5" />
+                            <span className="text-[10px] font-bold">¡La venta quedará liquidada!</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <DialogFooter className="flex gap-2">
+                    <Button variant="outline" className="flex-1 rounded-xl" onClick={() => { setShowAbonoDialog(false); setSelectedPendiente(null); setAbonoExtra(0); }}>
+                      CANCELAR
+                    </Button>
+                    <Button className="flex-1 rounded-xl bg-primary text-white font-black" onClick={handleRegistrarAbono} disabled={abonoExtra <= 0}>
+                      REGISTRAR ABONO
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
             </CardContent>
           </Card>
         </div>
@@ -961,12 +1196,17 @@ export default function VentasPage() {
                     <div className="w-11 h-11 rounded-2xl bg-muted/30 flex items-center justify-center text-muted-foreground group-hover:text-primary group-hover:bg-primary/10 group-hover:rotate-3 transition-all border border-border/10">
                        <Receipt className="w-6 h-6" />
                     </div>
-                    <div className="flex flex-col">
+                      <div className="flex flex-col">
                       <span className="text-sm font-black text-foreground uppercase group-hover:text-primary transition-colors tracking-tight">{v.cliente || 'Consumidor Final'}</span>
                       <div className="flex items-center gap-2 mt-0.5 opacity-60">
                         <span className="text-[10px] font-bold flex items-center gap-1">
-                          <Calendar className="w-3 h-3" /> {new Date(v.created_at).toLocaleDateString()}
+                          <Calendar className="w-3 h-3" /> {v.displayDate ? new Date(v.displayDate).toLocaleDateString() : new Date(v.created_at).toLocaleDateString()}
                         </span>
+                        {v.isAtrasado && (
+                          <Badge className="bg-orange-500 text-white border-none text-[7px] font-black h-3.5 px-1 animate-pulse">
+                            ⚠️ ATRASADO
+                          </Badge>
+                        )}
                         <span className="text-[10px] font-bold">•</span>
                         <span className="text-[10px] font-bold uppercase">{v.desglose?.length || 0} ITEMS</span>
                       </div>
@@ -1815,10 +2055,27 @@ export default function VentasPage() {
                  </DialogTitle>
               </div>
               <div className="p-8 space-y-6">
-                <div className="flex justify-between">
+                <div className="flex justify-between items-start">
                   <div className="space-y-1">
                     <p className="text-[10px] font-black text-muted-foreground uppercase">CLIENTE</p>
                     <p className="text-sm font-black uppercase">{selectedSale.cliente}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      {selectedSale.isAtrasado && (
+                        <Badge className="bg-orange-500 text-white border-none text-[8px] font-black px-1.5 animate-pulse">
+                          ⚠️ REGISTRO ATRASADO
+                        </Badge>
+                      )}
+                      {selectedSale.fecha && (
+                        <p className="text-[9px] font-bold text-muted-foreground">
+                          Venta del: {new Date(selectedSale.fecha).toLocaleDateString('es-VE')}
+                        </p>
+                      )}
+                      {selectedSale.fecha_registro && (
+                        <p className="text-[9px] font-bold text-muted-foreground">
+                          Registrado el: {new Date(selectedSale.fecha_registro).toLocaleString('es-VE')}
+                        </p>
+                      )}
+                    </div>
                   </div>
                   <div className="text-right space-y-1">
                     <p className="text-[10px] font-black text-muted-foreground uppercase">MONTO TOTAL</p>

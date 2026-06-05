@@ -541,12 +541,16 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
     try {
       // ── Appointments ────────────────────────────────────────────────────────
       if (tipo === 'crear_cita') {
-        await insert('citas', {
+        const { data: citaData, error: citaError } = await insert('citas', {
           fecha: p.fecha, hora: p.hora || '09:00', telefono: p.telefono || '',
           descripcion: p.descripcion || 'Cita por asistente IA',
           tipo_servicio: p.tipo_servicio || 'otro', estado: 'pendiente', duracion_minutos: 60,
+          nombre_cliente: p.nombre_cliente || '',
+          vehiculo_info: p.vehiculo || '',
+          placa: p.placa || '',
         });
-        results.push(`✅ Cita creada: ${p.fecha} a las ${p.hora || '09:00'}`);
+        if (citaError) throw citaError;
+        results.push(`✅ Cita creada: ${p.fecha} a las ${p.hora || '09:00'} para ${p.nombre_cliente || 'sin nombre'} (${p.vehiculo || 'sin vehículo'})`);
 
       } else if (tipo === 'actualizar_cita') {
         const updates: Record<string, any> = {};
@@ -714,12 +718,18 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
           } else {
             justCreatedVentaItem.add(fpKey);
 
+            const ventaFechaItem = p.fecha || new Date().toISOString();
+            const hoyStrItem = new Date().toISOString().split('T')[0];
+            const esRegistroAtrasadoItem = ventaFechaItem.split('T')[0] !== hoyStrItem;
+
             await insert('ventas_silenciadores', {
               cantidad,
               modelo: producto || null,
               notas: notasFinales,
-              fecha: new Date().toISOString(),
+              fecha: ventaFechaItem,
               precio_registrado: precioNum,
+              fecha_registro: new Date().toISOString(),
+              registro_atrasado: esRegistroAtrasadoItem,
             });
 
             // Auto-decrement stock if inventory ID provided
@@ -784,6 +794,12 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
           const rates = await fetchExchangeRates().catch(() => ({ bcv: 36.5, binance: 42 }));
           const bcvRate = rates?.bcv || 36.5;
 
+          // Parse fecha — if provided by user, use it; otherwise default to today
+          const ventaFecha = p.fecha || getVzlaDateString();
+          const hoyStr = new Date().toISOString().split('T')[0];
+          const esRegistroAtrasado = ventaFecha !== hoyStr;
+          const nowIso = new Date().toISOString();
+
           // 1. Insert into ventas_dia (Accounting)
           let desglose = [{
             descripcion: p.titulo || itemsDisplay.split(',')[0]?.split(':')[0] || 'Varios',
@@ -804,7 +820,7 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
           }
 
           const { data: newVentaDia, error: errDia } = await db.from('ventas_dia').insert(withSedeInsertServer({
-            fecha: getVzlaDateString(),
+            fecha: ventaFecha,
             cliente: clienteNombre,
             total_ingresos: totalNum,
             desglose,
@@ -813,6 +829,8 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
             notes: notasFinales,
             notas: notasFinales,
             creado_por: 'Admin IA',
+            fecha_registro: nowIso,
+            registro_atrasado: esRegistroAtrasado,
             metodos_pago: {
               otro: metodo === 'otro' ? totalNum : 0,
               zelle: metodo === 'zelle' ? totalNum : 0,
@@ -836,8 +854,10 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
             cantidad: parseInt(p.cantidad) || 1,
             modelo: p.titulo || itemsDisplay.split(',')[0]?.split(':')[0] || 'Venta múltiple',
             notas: newVentaDia?.id ? `Venta POS #${newVentaDia.id.slice(0, 8)} | ${notasFinales}` : notasFinales,
-            fecha: new Date().toISOString(),
+            fecha: ventaFecha,
             precio_registrado: totalNum,
+            fecha_registro: nowIso,
+            registro_atrasado: esRegistroAtrasado,
           }, sedeId));
 
           // Auto-decrement stock for each item if inv_ids provided (comma-separated, optional ID:qty format)
@@ -902,12 +922,18 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
             justCreatedVentaItem.add(fpKey);
           } else {
             justCreatedVentaItem.add(fpKey);
+            const ventaFechaSil = p.fecha || new Date().toISOString();
+            const hoyStrSil = new Date().toISOString().split('T')[0];
+            const esRegistroAtrasadoSil = ventaFechaSil.split('T')[0] !== hoyStrSil;
+
             await insert('ventas_silenciadores', {
               cantidad,
               modelo: producto || null,
               notas: notasFinales,
-              fecha: new Date().toISOString(),
+              fecha: ventaFechaSil,
               precio_registrado: precioNum,
+              fecha_registro: new Date().toISOString(),
+              registro_atrasado: esRegistroAtrasadoSil,
             });
             results.push(`✅ Venta registrada: ${cantidad}x ${producto || 'Producto'}${p.precio ? ` → $${p.precio}${contextStr}` : ''}${p.cliente ? ` (${p.cliente})` : ''}. Si necesitas ajustar, dime "modifica esa venta" — podré hacerlo durante los próximos ${RECENT_SALE_WINDOW_MIN} min.`);
           }
@@ -1050,6 +1076,82 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
             results.push(`❌ Error al eliminar la venta: ${delErr.message}`);
           } else {
             results.push(`🗑️ Venta eliminada (ID: ${shortId} · cliente: ${target.venta.cliente || 'Consumidor Final'} · $${Number(target.venta.total_ingresos || 0).toFixed(2)} · hace ${target.ageMin} min). Stock y totales ya no la incluyen.`);
+          }
+        }
+
+      // ── Pending Sales — mark as paid, register payment, reopen ───────────
+      } else if (tipo === 'modificar_venta_pendiente') {
+        // Actions on pending sales: pagar, abonar, reabrir
+        const targetId = p.id;
+        let targetVenta: any = null;
+        if (targetId) {
+          const { data } = await withSedeFilterServer(db.from('ventas_dia'), sedeId)
+            .select('id, cliente, total_ingresos, desglose, metodos_pago, notas, saldo_pendiente, abono, estado')
+            .eq('id', targetId)
+            .maybeSingle();
+          targetVenta = data;
+        } else if (p.cliente) {
+          const tCliente = normalizeName(p.cliente);
+          const { data } = await withSedeFilterServer(db.from('ventas_dia'), sedeId)
+            .select('id, cliente, total_ingresos, desglose, metodos_pago, notas, saldo_pendiente, abono, estado')
+            .eq('estado', 'pendiente')
+            .order('created_at', { ascending: false })
+            .limit(5);
+          if (data) {
+            targetVenta = data.find((v: any) => normalizeName(v.cliente) === tCliente) || data[0];
+          }
+        }
+        if (!targetVenta) {
+          results.push(`⚠️ No encontré una venta pendiente con ese criterio.`);
+        } else {
+          const updateObj: any = { updated_at: new Date().toISOString() };
+          let actionDesc = '';
+
+          if (p.accion === 'pagar' || p.estado === 'pagado') {
+            updateObj.estado = 'pagado';
+            updateObj.saldo_pendiente = 0;
+            const abonoPrev = Number(targetVenta.abono || 0);
+            const totalVenta = Number(targetVenta.total_ingresos || 0);
+            if (abonoPrev < totalVenta) {
+              updateObj.abono = totalVenta;
+            }
+            updateObj.notas = `${targetVenta.notas || ''} | Pagado por IA el ${new Date().toLocaleDateString('es-VE')}`;
+            actionDesc = `marcada como PAGADA`;
+          } else if (p.accion === 'abonar' && p.monto) {
+            const montoAbono = parseFloat(p.monto);
+            if (montoAbono <= 0) {
+              results.push(`⚠️ El monto del abono debe ser mayor a 0.`);
+              continue;
+            }
+            const nuevoAbono = (Number(targetVenta.abono) || 0) + montoAbono;
+            const nuevoSaldo = Math.max(0, (Number(targetVenta.total_ingresos) || 0) - nuevoAbono);
+            updateObj.abono = nuevoAbono;
+            updateObj.saldo_pendiente = nuevoSaldo;
+            updateObj.estado = nuevoSaldo <= 0 ? 'pagado' : 'pendiente';
+            updateObj.notas = `${targetVenta.notas || ''} | Abono $${montoAbono.toFixed(2)} por IA el ${new Date().toLocaleDateString('es-VE')}`;
+            actionDesc = `abono de $${montoAbono.toFixed(2)} registrado. Saldo: $${nuevoSaldo.toFixed(2)}`;
+          } else if (p.accion === 'reabrir') {
+            if (targetVenta.estado === 'pendiente') {
+              results.push(`ℹ️ La venta ya está en estado pendiente.`);
+              continue;
+            }
+            const saldo = Number(targetVenta.total_ingresos || 0) - (Number(targetVenta.abono) || 0);
+            updateObj.estado = 'pendiente';
+            updateObj.saldo_pendiente = Math.max(0, saldo);
+            updateObj.notas = `${targetVenta.notas || ''} | Reabierto por IA el ${new Date().toLocaleDateString('es-VE')}`;
+            actionDesc = `reabierta como PENDIENTE. Saldo: $${Math.max(0, saldo).toFixed(2)}`;
+          } else {
+            results.push(`⚠️ Acción no reconocida. Usa accion=pagar, accion=abonar|monto=X, o accion=reabrir`);
+            continue;
+          }
+
+          const { error: upErr } = await withSedeFilterServer(db.from('ventas_dia'), sedeId)
+            .update(updateObj)
+            .eq('id', targetVenta.id);
+          if (upErr) {
+            results.push(`❌ Error: ${upErr.message}`);
+          } else {
+            results.push(`✅ Venta de ${targetVenta.cliente} ${actionDesc}.`);
           }
         }
       }
@@ -1271,6 +1373,7 @@ INSTRUCCIONES CRÍTICAS:
 - Cuando te pregunten por servicios → tabla con CLIENTE | VEHÍCULO | TRABAJO | ESTADO | COSTO | FECHA y seguimiento.
 - Cuando te pregunten cuántos servicios hay por estado → agrupa y cuenta cada estado.
 - Cuando te pregunten por ventas → muestra HOY primero, luego últimos 30 días.
+Revisa el campo "registro_atrasado" — si es true, muestra una etiqueta ⚠️ ATRASADO junto a la venta.
 - Cuando te pregunten por reportes o cierres → usa CIERRES DE CAJA y KPIs de ventas.
 
 ACCIONES DE ESCRITURA (REGLAS CRÍTICAS):
@@ -1314,8 +1417,10 @@ TRACKING DE TALLER:
 4. 'inv_ids' debe listar los IDs de inventario separados por comas (ID1:qty1, ID2:qty2).
 5. Suma los precios en 'total'.
 
+⚠️ REGLA CRÍTICA — TAGS DE ACCIÓN: Cuando confirmes, crees o actualices cualquier registro (cita, servicio, venta, cliente, vehículo, inventario), DEBES incluir el [ACTION: ...] correspondiente en tu respuesta. Sin el action tag, NO se guarda nada en la base de datos — solo texto. NUNCA digas "he registrado" o "he creado" si no incluiste el action tag.
+
 TAGS DE ACCIÓN DISPONIBLES:
-• Crear cita: [ACTION: crear_cita | fecha=AAAA-MM-DD | hora=HH:MM | telefono=NUM | descripcion=SERVICIO | tipo_servicio=otro]
+• Crear cita: [ACTION: crear_cita | fecha=AAAA-MM-DD | hora=HH:MM | telefono=NUM | descripcion=SERVICIO | tipo_servicio=otro | nombre_cliente=NOMBRE | vehiculo=MARCA_MODELO | placa=PLACA] — OBLIGATORIO: incluye nombre_cliente y vehiculo si están disponibles. Sin el action tag NO se guarda nada en BD.
 • Actualizar cita: [ACTION: actualizar_cita | id=ID | estado=confirmada|cancelada]
 • Actualizar stock: [ACTION: actualizar_stock | id=INV_ID | stock=NUMERO]
 • Descontar stock: [ACTION: descontar_stock | id=INV_ID | cantidad=N]
@@ -1324,11 +1429,12 @@ TAGS DE ACCIÓN DISPONIBLES:
 • Crear vehículo: [ACTION: crear_vehiculo | marca=MARCA | modelo_vehiculo=MODELO | placa=PLACA | anio=ANO | color=COLOR | cliente_id=UUID]
 • Actualizar servicio: [ACTION: actualizar_servicio | id=ID | estado=finalizado|cancelado | nota=Texto]
 • Registrar servicio taller: [ACTION: registrar_servicio | descripcion=Texto | tipo=mecanica|electronica|cerrajeria|diagnostico|motor|emergencia|otro | estado=pendiente|en_proceso | costo_estimado=Numero | nombre_cliente=Nombre | telefono=Numero | vehiculo_info=Marca Modelo | placa=PLACA | cliente_id=UUID | vehiculo_id=UUID | tipo_personalizado=Texto]
-• Registrar venta COMPLETA: [ACTION: registrar_venta_completa | titulo=X | items=Prod1:Pre1,Prod2:Pre2 | total=TOTAL | iva=MONTO | inicial=INICIAL_CASHEA | metodo_pago=cashea_bcv/divisas/euros/bcv/binance/zelle/pago_movil/efectivo_ves/punto_venta/transferencia/otro | pago_mixto=DESC | cliente=NOMBRE | vehiculo=MARCA_PLACA | inv_ids=ID1:qty1,ID2:qty2]
+• Registrar venta COMPLETA: [ACTION: registrar_venta_completa | titulo=X | items=Prod1:Pre1,Prod2:Pre2 | total=TOTAL | iva=MONTO | inicial=INICIAL_CASHEA | metodo_pago=cashea_bcv/divisas/euros/bcv/binance/zelle/pago_movil/efectivo_ves/punto_venta/transferencia/otro | pago_mixto=DESC | cliente=NOMBRE | vehiculo=MARCA_PLACA | inv_ids=ID1:qty1,ID2:qty2 | fecha=AAAA-MM-DD] — Parámetro OPCIONAL: si la venta fue de un día anterior, usa fecha= para indicar la fecha real. El sistema marcará automáticamente como "⚠️ REGISTRO ATRASADO".
 • Modificar venta RECIENTE (<10 min): [ACTION: modificar_venta_reciente | id=ID | total=NUEVO_TOTAL | cliente=NUEVO_CLIENTE | items=Prod1:Pre1,Prod2:Pre2 | metodo_pago=...]  — Si no sabes el ID, usa cliente=NOMBRE para buscar la última venta de ese cliente.
 • Eliminar venta RECIENTE (<10 min): [ACTION: eliminar_venta_reciente | id=ID]  — Igual, si no sabes el ID usa cliente=NOMBRE.
-• Registrar venta item individual: [ACTION: registrar_venta_item | producto=PROD | cantidad=N | precio=MONTO | metodo_pago=... | cliente=NOMBRE]
-• Registrar venta silenciador (legacy): [ACTION: registrar_venta_silenciador | modelo=MODELO | cantidad=N | precio=MONTO | cliente=NOMBRE]
+• Gestionar venta PENDIENTE: [ACTION: modificar_venta_pendiente | id=ID | accion=pagar|abonar|reabrir | monto=X] — Para marcar como pagada, registrar abono extra, o reabrir una venta que ya estaba pagada. Si no sabes el ID usa cliente=NOMBRE.
+• Registrar venta item individual: [ACTION: registrar_venta_item | producto=PROD | cantidad=N | precio=MONTO | metodo_pago=... | cliente=NOMBRE | fecha=AAAA-MM-DD] — fecha es OPCIONAL, para registrar ventas de días anteriores.
+• Registrar venta silenciador (legacy): [ACTION: registrar_venta_silenciador | modelo=MODELO | cantidad=N | precio=MONTO | cliente=NOMBRE | fecha=AAAA-MM-DD] — fecha es OPCIONAL, para registrar ventas de días anteriores.
 
 TONO: Profesional, ejecutivo y eficiente. Español venezolano amable.
 HORARIO: L–Sáb 8AM–5PM | Dom: Cerrado | +58 412-334-3519 | lycosteam7@gmail.com

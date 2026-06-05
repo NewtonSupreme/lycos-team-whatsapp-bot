@@ -605,7 +605,8 @@ REGLA DE TAGS (Imprimir SIEMPRE al final de tu respuesta):
    - [CITA_DELETE: id]
    - [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion | sede_id]
    - [ASK_SEDE: motivo] -> Úsalo si falta la sede en una orden administrativa.
-   - [ACTION: registrar_venta_completa | titulo=X | items=Prod1:Pre1,Prod2:Pre2 | total=TOTAL | iva=MONTO | inicial=INICIAL_CASHEA | metodo_pago=cashea_bcv/divisas/bcv/binance/zelle/pago_movil/efectivo_ves/punto_venta/transferencia/otro | pago_mixto=DESC | cliente=NOMBRE | vehiculo=MARCA_PLACA | inv_ids=ID1:qty1,ID2:qty2] -> Úsalo para registrar una venta en el sistema (por ejemplo, tras confirmación de precio o factura).
+     - [ACTION: registrar_venta_completa | titulo=X | items=Prod1:Pre1,Prod2:Pre2 | total=TOTAL | iva=MONTO | inicial=INICIAL_CASHEA | metodo_pago=cashea_bcv/divisas/bcv/binance/zelle/pago_movil/efectivo_ves/punto_venta/transferencia/otro | pago_mixto=DESC | cliente=NOMBRE | vehiculo=MARCA_PLACA | inv_ids=ID1:qty1,ID2:qty2 | fecha=AAAA-MM-DD] -> Úsalo para registrar una venta. Parámetro fecha es OPCIONAL: si la venta fue de un día anterior, usa fecha= para la fecha real de la venta. El sistema marcará automáticamente "⚠️ REGISTRO ATRASADO".
+     - [ACTION: modificar_venta_pendiente | id=ID | accion=pagar|abonar|reabrir | monto=X] -> Gestionar ventas pendientes. accion=pagar la marca como pagada. accion=abonar registra un abono (requiere monto=X). accion=reabrir la vuelve a pendiente. Si no sabes el ID usa cliente=NOMBRE.
 
 DATOS DISPONIBLES Y KPIs:
 Se te proporcionan ESTADÍSTICAS REALES por sede (Ingresos, Citas, Cantidad de productos en stock). Úsalas para dar reportes precisos y profesionales.
@@ -862,15 +863,26 @@ export async function POST(request: NextRequest) {
         currentMediaType = 'audio';
         if (audioId && WHATSAPP_TOKEN) {
           try {
+            const mediaCtrl = new AbortController();
+            const mediaTimeout = setTimeout(() => mediaCtrl.abort(), 4000);
+
             const mediaUrlResp = await fetch(`https://graph.facebook.com/v21.0/${audioId}`, {
+              signal: mediaCtrl.signal,
               headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
             });
+            clearTimeout(mediaTimeout);
             if (mediaUrlResp.ok) {
               const mediaData = await mediaUrlResp.json();
               if (mediaData.url) {
+                const dlCtrl = new AbortController();
+                const dlTimeout = setTimeout(() => dlCtrl.abort(), 5000);
+
                 const mediaResp = await fetch(mediaData.url, {
+                  signal: dlCtrl.signal,
                   headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
                 });
+                clearTimeout(dlTimeout);
+
                 if (mediaResp.ok) {
                   const arrayBuffer = await mediaResp.arrayBuffer();
                   const base64Data = Buffer.from(arrayBuffer).toString('base64');
@@ -894,8 +906,12 @@ export async function POST(request: NextRequest) {
               console.error('Error obteniendo URL del audio', await mediaUrlResp.text());
               messageBody = '[Cliente envió audio]';
             }
-          } catch (e) {
-            console.error('Excepción al procesar audio:', e);
+          } catch (e: any) {
+            if (e?.name === 'AbortError') {
+              console.error('⏱️ Timeout descargando audio de WhatsApp');
+            } else {
+              console.error('Excepción al procesar audio:', e);
+            }
             messageBody = '[Cliente envió audio]';
           }
         } else {
@@ -1876,43 +1892,80 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
   return null;
 }
 
+// ─── Audio transcription models ────────────────────────────────────────────
+const STT_MODELS = [...GEMINI_MODELS];
+
 async function transcribeAudio(base64Data: string, mimeType: string, isAdmin: boolean = false): Promise<string | null> {
   if (!GEMINI_API_KEY) return null;
-  const sttModel = GEMINI_MODELS[0];
+
   const systemPrompt = isAdmin
     ? "Eres un sistema de reconocimiento de voz para el administrador de un taller. Transcribe el audio exactamente. Si el administrador está dictando inventario o stock, asegúrate de ser muy preciso con los nombres y cantidades."
     : "Eres un sistema de reconocimiento de voz. Tu UNICA tarea es transcribir el audio a texto exacto en español. NO agregues explicaciones, respuestas, introducciones ni comentarios. Solo escribe lo que el usuario dice en español tal cual.";
 
-  try {
-    const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${sttModel}:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: systemPrompt }] },
-          contents: [{
-            role: 'user',
-            parts: [
-              { inlineData: { mimeType: mimeType.split(';')[0], data: base64Data } },
-              { text: "Transcribe el audio siguiente:" }
-            ]
-          }],
-          generationConfig: { temperature: 0.1 }
-        })
+  for (const model of STT_MODELS) {
+    // Each model gets 2 attempts
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+        const resp = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+          {
+            signal: controller.signal,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              system_instruction: { parts: [{ text: systemPrompt }] },
+              contents: [{
+                role: 'user',
+                parts: [
+                  { inlineData: { mimeType: mimeType.split(';')[0], data: base64Data } },
+                  { text: "Transcribe el audio siguiente:" }
+                ]
+              }],
+              generationConfig: { temperature: 0.1 },
+              safetySettings: [
+                { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+                { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+                { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+                { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+              ],
+            })
+          }
+        );
+        clearTimeout(timeoutId);
+
+        if (!resp.ok) {
+          const errText = await resp.text();
+          console.error(`❌ Gemini STT error ${resp.status} (${model} attempt ${attempt + 1}):`, errText.substring(0, 200));
+          if (resp.status === 429 || resp.status === 503) {
+            await delay(500); // small backoff before retry
+            continue; // retry same model
+          }
+          break; // fatal error, try next model
+        }
+        const data = await resp.json();
+        const parts = data.candidates?.[0]?.content?.parts || [];
+        const text = parts.map((p: any) => p.text).join('').trim() || null;
+        if (text) {
+          console.log(`✅ Transcripción exitosa con ${model} (attempt ${attempt + 1})`);
+          return text;
+        }
+      } catch (e: any) {
+        clearTimeout((e as any)?.timeoutId);
+        if (e?.name === 'AbortError') {
+          console.error(`⏱️ Timeout transcripción con ${model} (attempt ${attempt + 1})`);
+        } else {
+          console.error(`❌ transcribeAudio excepción (${model} attempt ${attempt + 1}):`, e);
+        }
+        await delay(300);
       }
-    );
-    if (!resp.ok) {
-      console.error(`❌ Gemini STT error ${resp.status}:`, (await resp.text()).substring(0, 200));
-      return null;
     }
-    const data = await resp.json();
-    const parts = data.candidates?.[0]?.content?.parts || [];
-    return parts.map((p: any) => p.text).join('').trim() || null;
-  } catch (e) {
-    console.error('❌ transcribeAudio excepcion:', e);
-    return null;
   }
+
+  console.error('🚨 Todos los modelos y reintentos de transcripción fallaron.');
+  return null;
 }
 
 async function describeImage(base64Data: string, mimeType: string, isAdmin: boolean = false): Promise<string | null> {
@@ -2573,13 +2626,17 @@ async function handleCompletedServiceSale(db: any, citaId: string, citaObj: any)
       const vehiculoStr = citaObj.vehiculo_info ? ` | Vehículo: ${citaObj.vehiculo_info}` : '';
       const notesFinal = `${citaObj.descripcion || 'Servicio taller'} [Total: $${citaObj.costo_estimado} (${contextStr})]${clienteStr}${vehiculoStr} ${citaRefTag}`.trim();
 
+      const nowIso = new Date().toISOString();
+      const fechaStr = nowIso.split('T')[0];
       const saleData = {
         cantidad: 1,
         modelo: citaObj.vehiculo_info || 'Servicio',
         notas: notesFinal,
-        fecha: new Date().toISOString(),
+        fecha: nowIso,
         precio_registrado: citaObj.costo_estimado,
-        sede_id: citaObj.sede_id || DEFAULT_SEDE_ID
+        sede_id: citaObj.sede_id || DEFAULT_SEDE_ID,
+        fecha_registro: nowIso,
+        registro_atrasado: false
       };
 
       if (existingSale) {
@@ -3575,14 +3632,19 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             const saldoPendiente = isCashea ? Math.max(0, totalNum - montoPagado) : 0;
             const estadoVenta = saldoPendiente > 0 ? 'pendiente' : 'pagado';
             
+            const ventaFecha = p.fecha || getVzlaDateString();
+            const hoyStr = new Date().toISOString().split('T')[0];
+            const esRegistroAtrasado = ventaFecha !== hoyStr;
+            const nowIso = new Date().toISOString();
+
             const { data: newVentaDia, error: errDia } = await db.from('ventas_dia').insert({
-              fecha: getVzlaDateString(),
+              fecha: ventaFecha,
               cliente: clienteNombre,
               total_ingresos: totalNum,
               desglose,
               con_iva: !!p.iva,
               tasa_cambio: rates?.bcv || 0,
-              notes: notasFinales, // Note: wait, is the column 'notas' or 'notes'? Let's check! It's 'notas' in schema, but wait, the database schema we saw had column 'notas' (text).
+              notes: notasFinales,
               notas: notasFinales,
               creado_por: 'Admin IA',
               sede_id: targetSedeId,
@@ -3590,6 +3652,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               abono: isCashea ? montoPagado : 0,
               saldo_pendiente: saldoPendiente,
               estado: estadoVenta,
+              fecha_registro: nowIso,
+              registro_atrasado: esRegistroAtrasado,
               metodos_pago: {
                 otro: metodo === 'otro' ? totalNum : 0,
                 zelle: metodo === 'zelle' ? totalNum : 0,
@@ -3611,9 +3675,11 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               cantidad: parseInt(p.cantidad) || 1,
               modelo: p.titulo || itemsDisplay.split(',')[0]?.split(':')[0] || 'Venta múltiple',
               notas: `Venta POS #${newVentaDia?.id?.slice(0, 8)} | ${notasFinales}`,
-              fecha: new Date().toISOString(),
+              fecha: ventaFecha,
               precio_registrado: totalNum,
-              sede_id: targetSedeId
+              sede_id: targetSedeId,
+              fecha_registro: nowIso,
+              registro_atrasado: esRegistroAtrasado
             });
 
             if (errSil) throw errSil;
@@ -3643,6 +3709,72 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           }
         }
 
+        // 9. [ACTION: modificar_venta_pendiente | ...]
+        const pendienteMatches = Array.from(cleanedAi.matchAll(/\[ACTION:\s*modificar_venta_pendiente\s*\|\s*([^\]]+)\]/gi));
+        for (const match of pendienteMatches) {
+          try {
+            const parts = match[1].split('|').map(s => s.trim());
+            const p: Record<string, string> = {};
+            for (const part of parts) {
+              const idx = part.indexOf('=');
+              if (idx > 0) p[part.slice(0, idx).trim()] = part.slice(idx + 1).trim();
+            }
+
+            const sedeId = p.sede_id || ctx.sede_id || DEFAULT_SEDE_ID;
+            let targetVenta: any = null;
+            if (p.id) {
+              const { data } = await db.from('ventas_dia').select('id, cliente, total_ingresos, notas, saldo_pendiente, abono, estado').eq('id', p.id).eq('sede_id', sedeId).maybeSingle();
+              targetVenta = data;
+            } else if (p.cliente) {
+              const tCliente = p.cliente.toLowerCase().trim();
+              const { data } = await db.from('ventas_dia').select('id, cliente, total_ingresos, notas, saldo_pendiente, abono, estado').eq('estado', 'pendiente').eq('sede_id', sedeId).order('created_at', { ascending: false }).limit(5);
+              if (data) targetVenta = data.find((v: any) => (v.cliente || '').toLowerCase().trim() === tCliente) || data[0];
+            }
+
+            if (!targetVenta) {
+              cleanedAi = cleanedAi + `\n⚠️ No encontré una venta pendiente con ese criterio.`;
+              continue;
+            }
+
+            const updateObj: any = { updated_at: new Date().toISOString() };
+            let actionDesc = '';
+
+            if (p.accion === 'pagar' || p.estado === 'pagado') {
+              updateObj.estado = 'pagado';
+              updateObj.saldo_pendiente = 0;
+              const abonoPrev = Number(targetVenta.abono || 0);
+              const totalVenta = Number(targetVenta.total_ingresos || 0);
+              if (abonoPrev < totalVenta) updateObj.abono = totalVenta;
+              updateObj.notas = `${targetVenta.notas || ''} | Pagado por IA el ${new Date().toLocaleDateString('es-VE')}`;
+              actionDesc = `marcada como PAGADA`;
+            } else if (p.accion === 'abonar' && p.monto) {
+              const montoAbono = parseFloat(p.monto);
+              if (montoAbono <= 0) continue;
+              const nuevoAbono = (Number(targetVenta.abono) || 0) + montoAbono;
+              const nuevoSaldo = Math.max(0, (Number(targetVenta.total_ingresos) || 0) - nuevoAbono);
+              updateObj.abono = nuevoAbono;
+              updateObj.saldo_pendiente = nuevoSaldo;
+              updateObj.estado = nuevoSaldo <= 0 ? 'pagado' : 'pendiente';
+              updateObj.notas = `${targetVenta.notas || ''} | Abono $${montoAbono.toFixed(2)} por IA el ${new Date().toLocaleDateString('es-VE')}`;
+              actionDesc = `abono de $${montoAbono.toFixed(2)} registrado. Saldo: $${nuevoSaldo.toFixed(2)}`;
+            } else if (p.accion === 'reabrir') {
+              if (targetVenta.estado === 'pendiente') continue;
+              const saldo = Number(targetVenta.total_ingresos || 0) - (Number(targetVenta.abono) || 0);
+              updateObj.estado = 'pendiente';
+              updateObj.saldo_pendiente = Math.max(0, saldo);
+              updateObj.notas = `${targetVenta.notas || ''} | Reabierto por IA el ${new Date().toLocaleDateString('es-VE')}`;
+              actionDesc = `reabierta como PENDIENTE. Saldo: $${Math.max(0, saldo).toFixed(2)}`;
+            }
+
+            if (updateObj.estado) {
+              await db.from('ventas_dia').update(updateObj).eq('id', targetVenta.id);
+              cleanedAi = cleanedAi + `\n✅ Venta de ${targetVenta.cliente} ${actionDesc}.`;
+            }
+          } catch (e) {
+            console.error('❌ Error en ACTION: modificar_venta_pendiente:', e);
+          }
+        }
+
         // Remove management tags from final message
         cleanedAi = cleanedAi
           .replace(/\[STOCK_UPSERT:[^\]]+\]/gi, '')
@@ -3654,6 +3786,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           .replace(/\[CLIENTE_UPSERT:[^\]]+\]/gi, '')
           .replace(/\[ASK_SEDE:[^\]]+\]/gi, '')
           .replace(/\[ACTION: registrar_venta_completa[^\]]+\]/gi, '')
+          .replace(/\[ACTION: modificar_venta_pendiente[^\]]+\]/gi, '')
           .trim();
       }
 
@@ -3797,6 +3930,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         .replace(/\[CITA:[^\]]+\]/gi, '')
         .replace(/\[NOMBRE:[^\]]+\]/gi, '')
         .replace(/\[ACTION: registrar_venta_completa[^\]]+\]/gi, '')
+        .replace(/\[ACTION: modificar_venta_pendiente[^\]]+\]/gi, '')
         .replace(/\s+/g, ' ')
         .trim();
 
