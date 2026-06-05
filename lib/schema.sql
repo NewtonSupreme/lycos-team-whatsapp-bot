@@ -102,7 +102,7 @@ create table if not exists citas (
                   check (tipo_servicio in ('mecanica','electronica','cerrajeria','diagnostico','motor','emergencia','otro')),
   descripcion     text,
   estado          text not null default 'pendiente'
-                  check (estado in ('confirmada','pendiente','cancelada','completada')),
+                  check (estado in ('confirmada','pendiente','cancelada','completada','ocupado','en_proceso')),
   notas           text,
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now()

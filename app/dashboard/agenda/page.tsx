@@ -268,15 +268,15 @@ export default function AgendaPage() {
         });
       } else {
         const result = await createCita({
-          cliente_id: form.cliente_id,
-          vehiculo_id: form.vehiculo_id,
+          cliente_id: form.cliente_id || null,
+          vehiculo_id: form.vehiculo_id || null,
           fecha: form.fecha,
           hora: form.hora,
           tipo_servicio: form.tipo_servicio,
           descripcion: form.descripcion,
           estado: form.estado,
-          notas: form.notas,
-          costo_estimado: form.costo_estimado
+          notas: form.notas || null,
+          costo_estimado: form.costo_estimado || 0
         });
         logActivity({
           usuario: user?.nombre || 'Sistema',
