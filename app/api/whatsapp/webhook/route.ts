@@ -549,8 +549,9 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
     A) Si pregunta "qué hay hoy", "qué hay en el taller", "cómo vamos", "servicios activos":
        - USA la sección [⌛ ACTIVIDAD DE HOY] exclusivamente:
          1. 📅 CITAS PROGRAMADAS PARA HOY
-         2. 🔧 SERVICIOS ACTIVOS EN TALLER — estos son TODOS los servicios con estado pendiente/en_proceso/en_progreso/confirmada, SIN importar cuándo se registraron. Son los vehículos que están físicamente en el taller ahora.
-         3. 💰 VENTAS DE HOY
+         2. 🔧 SERVICIOS ACTIVOS EN TALLER — estos son los servicios con estado 'confirmada', 'en_proceso' o 'en_progreso'. Son los vehículos que están físicamente en el taller ahora siendo trabajados.
+         3. ⏳ VEHÍCULOS PENDIENTES — estos son carros en el taller pero aún no se sabe si van a hacer el servicio o están en revisión.
+         4. 💰 VENTAS DE HOY
        - Si una categoría dice "No hay", responde que no hay registros, NO inventes.
 
     B) Si pregunta por un DÍA ESPECÍFICO (ej. "qué pasó el 15 de mayo", "servicios del lunes"):
@@ -1279,7 +1280,8 @@ async function loadConversationContext(
         { count: msgsMonth },
         { data: allVentasSil },
         { data: allVentasDia },
-        { data: allServiciosActivos }
+        { data: allServiciosActivos },
+        { data: allServiciosPendientes }
       ] = await Promise.all([
         db.from('citas').select('*').gte('fecha', monthStr).order('fecha').limit(100),
         db.from('inventario').select('*').eq('activo', true).order('nombre').limit(200),
@@ -1291,7 +1293,8 @@ async function loadConversationContext(
         db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', monthStartStr),
         db.from('ventas_silenciadores').select('*').gte('created_at', monthDate.toISOString()).order('created_at', { ascending: false }).limit(200),
         db.from('ventas_dia').select('*').gte('created_at', monthDate.toISOString()).order('created_at', { ascending: false }).limit(200),
-        db.from('servicios').select('*').in('estado', ['pendiente', 'en_proceso', 'en_progreso', 'confirmada']).limit(200)
+        db.from('servicios').select('*').in('estado', ['en_proceso', 'en_progreso', 'confirmada']).limit(200),
+        db.from('servicios').select('*').eq('estado', 'pendiente').limit(200)
       ]);
 
       const toVzlaDateStr = (dateInput: any): string => {
@@ -1354,6 +1357,12 @@ async function loadConversationContext(
       }
       if (allServiciosActivos) {
         allServiciosActivos.forEach(s => {
+          const sName = s.sede_id ? (sedeMap.get(s.sede_id) || 'General') : 'General';
+          s.sede = { nombre: sName };
+        });
+      }
+      if (allServiciosPendientes) {
+        allServiciosPendientes.forEach(s => {
           const sName = s.sede_id ? (sedeMap.get(s.sede_id) || 'General') : 'General';
           s.sede = { nombre: sName };
         });
@@ -1426,8 +1435,9 @@ async function loadConversationContext(
       // ─── BUILD "HOY" SECTION ─────────────────────────────────────────────
       const hoyCitas = allCitas?.filter(c => c.fecha === today) || [];
       const serviciosActivos = allServiciosActivos || [];
-      // Fetch vehicles for ALL active services (not just today-created ones)
-      const vehIdsActivos = [...new Set(serviciosActivos.filter(s => s.vehiculo_id).map(s => s.vehiculo_id))];
+      const serviciosPendientes = allServiciosPendientes || [];
+      // Fetch vehicles for ALL active and pending services
+      const vehIdsActivos = [...new Set([...serviciosActivos.filter(s => s.vehiculo_id).map(s => s.vehiculo_id), ...serviciosPendientes.filter(s => s.vehiculo_id).map(s => s.vehiculo_id)])];
       let vehMapActivos: Record<string, any> = {};
       if (vehIdsActivos.length > 0) {
         const { data: vh } = await db.from('vehiculos').select('id, marca, modelo, placa, clientes(nombre, apellido)').in('id', vehIdsActivos);
@@ -1459,6 +1469,21 @@ async function loadConversationContext(
         }).join('\n');
       } else {
         hoyInfo += `  No hay servicios activos en el taller.\n`;
+      }
+
+      // Vehículos PENDIENTES
+      hoyInfo += `\n⏳ VEHÍCULOS PENDIENTES (EN REVISIÓN / POR DEFINIR SERVICIO):\n`;
+      if (serviciosPendientes.length > 0) {
+        hoyInfo += serviciosPendientes.map(s => {
+          const veh = s.vehiculo_id ? vehMapActivos[s.vehiculo_id] : null;
+          const clienteNombre = s.nombre_cliente || veh?.clientes?.nombre || '—';
+          const clienteApellido = veh?.clientes?.apellido || '';
+          const vehStr = veh ? `${veh.marca} ${veh.modelo} (${veh.placa || 'S/P'})` : (s.vehiculo_info || '—');
+          const fechaReg = s.fecha || s.created_at?.split('T')[0] || '—';
+          return `  • ${clienteNombre} ${clienteApellido} | Veh: ${vehStr} | Servicio: ${s.descripcion || s.tipo || '—'} | Estado: ${s.estado || '—'} | Costo: $${s.costo_estimado ?? s.costo_final ?? 0} | Registrado: ${fechaReg} | Sede: ${s.sede?.nombre || 'General'}`;
+        }).join('\n');
+      } else {
+        hoyInfo += `  No hay vehículos pendientes en el taller.\n`;
       }
 
       // Ventas de hoy (inline filtered from already-loaded data)
