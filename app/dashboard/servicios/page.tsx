@@ -73,6 +73,11 @@ export default function ServiciosPage() {
   const [inventory, setInventory] = useState<any[]>([]);
   const [selectedForDual, setSelectedForDual] = useState<string[]>([]);
   const [mounted, setMounted] = useState(false);
+  const [globalBcvRate, setGlobalBcvRate] = useState(0);
+
+  useEffect(() => {
+    fetch('/api/rates').then(res => res.json()).then(data => { if (data.bcv) setGlobalBcvRate(data.bcv); }).catch(console.error);
+  }, []);
 
   const loadCitas = useCallback(async () => {
     if (!supabase) return;
@@ -236,8 +241,8 @@ export default function ServiciosPage() {
           total: cita.costo_estimado || 0
         }],
         total: cita.costo_estimado || 0,
-        tasa_bcv: 36.5, // Default if not in modal
-        total_ves: (cita.costo_estimado || 0) * 36.5
+        tasa_bcv: globalBcvRate || 518.0, 
+        total_ves: (cita.costo_estimado || 0) * (globalBcvRate || 518.0)
       };
     });
 
@@ -422,7 +427,7 @@ export default function ServiciosPage() {
       {showNewModal && <ServiceFormModal onClose={() => { setShowNewModal(false); loadCitas(); }} />}
       {editCita && <ServiceFormModal cita={editCita} onClose={() => { setEditCita(null); loadCitas(); }} />}
       {trackingCita && <TrackingModal cita={trackingCita} onClose={() => { setTrackingCita(null); loadCitas(); }} />}
-      {invoiceCita && <InvoiceModal cita={invoiceCita} citas={citas} inventory={inventory} onClose={() => { setInvoiceCita(null); loadCitas(); }} />}
+      {invoiceCita && <InvoiceModal cita={invoiceCita} citas={citas} inventory={inventory} onClose={() => { setInvoiceCita(null); loadCitas(); }} globalBcvRate={globalBcvRate} />}
     </div>
   );
 }
@@ -1474,7 +1479,7 @@ function TrackingModal({ cita, onClose }: { cita: CitaServicio; onClose: () => v
 }
 
 // ── Invoice Modal (Keep as is but polish colors) ───────────────
-function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio; citas: CitaServicio[]; inventory: any[]; onClose: () => void }) {
+function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita: CitaServicio; citas: CitaServicio[]; inventory: any[]; onClose: () => void; globalBcvRate?: number }) {
   const [clientName, setClientName] = useState(cita.vehiculos?.clientes
     ? `${cita.vehiculos?.clientes.nombre} ${cita.vehiculos?.clientes.apellido}`
     : cita.nombre_cliente || 'Consumidor Final');
@@ -1530,8 +1535,8 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
 
   const [isSaving, setIsSaving] = useState(false);
   const [withIva, setWithIva] = useState(false);
-  const [rates, setRates] = useState({ bcv: 0, binance: 0, fetchedAt: '' });
-  const [loadingRates, setLoadingRates] = useState(true);
+  const [rates, setRates] = useState({ bcv: globalBcvRate || 0, binance: 0, fetchedAt: '' });
+  const [loadingRates, setLoadingRates] = useState(!globalBcvRate);
 
   useEffect(() => {
     const loadRates = async () => {
@@ -1553,7 +1558,7 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
   const subtotal = items.reduce((sum, item) => sum + (item.total || 0), 0);
   const ivaAmount = withIva ? subtotal * 0.16 : 0;
   const total = subtotal + ivaAmount;
-  const totalVes = total * (rates.bcv || 36.5);
+  const totalVes = total * (rates.bcv || globalBcvRate || 518.0);
 
   const addItem = () => setItems([...items, { descripcion: '', cantidad: 1, precio_unitario: 0, total: 0 }]);
   const removeItem = (i: number) => items.length > 1 && setItems(items.filter((_, idx) => idx !== i));
@@ -1595,7 +1600,7 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
       items, 
       total, 
       iva_aplicado: withIva,
-      tasa_bcv: rates.bcv,
+      tasa_bcv: rates.bcv || globalBcvRate || 518.0,
       total_ves: totalVes,
       notas: cita.descripcion || undefined,
       metodos_pago: payments
@@ -1619,8 +1624,8 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
         items: secondItems,
         total: secondTotal,
         iva_aplicado: secondWithIva,
-        tasa_bcv: rates.bcv,
-        total_ves: secondTotal * (rates.bcv || 36.5),
+        tasa_bcv: rates.bcv || globalBcvRate || 518.0,
+        total_ves: secondTotal * (rates.bcv || globalBcvRate || 518.0),
         notas: secondCita.descripcion || undefined
       });
     }
@@ -1640,7 +1645,7 @@ function InvoiceModal({ cita, citas, inventory, onClose }: { cita: CitaServicio;
         total_clientes: 1,
         desglose: items,
         metodos_pago: payments,
-        tasa_bcv: rates.bcv,
+        tasa_bcv: rates.bcv || globalBcvRate || 518.0,
         con_iva: withIva,
         notas: cita.descripcion || 'Servicio de taller',
         creado_por: 'Admin'
