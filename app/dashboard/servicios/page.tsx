@@ -1871,14 +1871,24 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
               <button onClick={onClose} className="w-full sm:w-auto px-8 py-3.5 sm:py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] text-gray-400 hover:text-slate-900 transition-all border border-transparent hover:border-gray-200">
                 Cerrar
               </button>
-              <button 
-                onClick={handleFinalizeSale} 
-                disabled={isSaving} 
-                className="w-full sm:w-auto rounded-2xl bg-black hover:bg-neutral-800 text-white font-black px-8 sm:px-12 py-4 shadow-[0_20px_50px_rgba(0,0,0,0.3)] text-[10px] sm:text-[11px] uppercase tracking-[0.2em] gap-3 flex items-center justify-center transition-all"
-              >
-                {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <BadgeCheck className="w-5 h-5 text-orange-500" />}
-                Finalizar {secondCita ? 'Entregas' : 'Entrega'}
-              </button>
+              {cita.estado === 'completada' ? (
+                <button 
+                  disabled 
+                  className="w-full sm:w-auto rounded-2xl bg-green-500 text-white font-black px-8 sm:px-12 py-4 shadow-[0_20px_50px_rgba(0,0,0,0.2)] text-[10px] sm:text-[11px] uppercase tracking-[0.2em] gap-3 flex items-center justify-center transition-all cursor-not-allowed opacity-90"
+                >
+                  <BadgeCheck className="w-5 h-5 text-white" />
+                  Venta Registrada
+                </button>
+              ) : (
+                <button 
+                  onClick={handleFinalizeSale} 
+                  disabled={isSaving} 
+                  className="w-full sm:w-auto rounded-2xl bg-black hover:bg-neutral-800 text-white font-black px-8 sm:px-12 py-4 shadow-[0_20px_50px_rgba(0,0,0,0.3)] text-[10px] sm:text-[11px] uppercase tracking-[0.2em] gap-3 flex items-center justify-center transition-all"
+                >
+                  {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <BadgeCheck className="w-5 h-5 text-orange-500" />}
+                  Finalizar {secondCita ? 'Entregas' : 'Entrega'}
+                </button>
+              )}
            </div>
         </div>
       </div>
