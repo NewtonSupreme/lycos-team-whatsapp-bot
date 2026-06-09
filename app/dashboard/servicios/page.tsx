@@ -1645,7 +1645,7 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
         total_clientes: 1,
         desglose: items,
         metodos_pago: payments,
-        tasa_bcv: rates.bcv || globalBcvRate || 518.0,
+        tasa_cambio: rates.bcv || globalBcvRate || 518.0,
         con_iva: withIva,
         notas: cita.descripcion || 'Servicio de taller',
         creado_por: 'Admin'
