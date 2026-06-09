@@ -246,7 +246,7 @@ export default function ServiciosPage() {
       };
     });
 
-    generateInvoicePDF(dataList);
+    generateInvoicePDF(dataList, { mode: 'dual', currencyMode: 'dual' });
     setSelectedForDual([]);
   };
 
@@ -1630,7 +1630,7 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
       });
     }
 
-    generateInvoicePDF(dataList, { mode: printMode, side: printSide });
+    generateInvoicePDF(dataList, { mode: printMode, side: printSide, currencyMode: 'dual' });
   };
 
   const handleFinalizeSale = async () => {
