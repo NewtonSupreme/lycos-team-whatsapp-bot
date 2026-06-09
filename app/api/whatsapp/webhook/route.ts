@@ -1145,6 +1145,8 @@ async function loadConversationContext(
   let adminName = '';
   let isAdmin = false;
 
+  let adminSedeId: string | undefined = undefined;
+
   try {
     // Determinar si el usuario es un Administrador o Gerente del Bot IA
     const { data: activeUsers } = await db.from('usuarios')
@@ -1157,14 +1159,12 @@ async function loadConversationContext(
       return uClean.slice(-10) === phone.slice(-10);
     });
 
-    let adminSedeId = undefined;
-
     if (matchedUser && (matchedUser.rol === 'admin' || matchedUser.rol === 'gerente')) {
       isAdmin = true;
       adminName = matchedUser.nombre;
       if (matchedUser.sede_id) {
         adminSedeId = matchedUser.sede_id;
-        sede_id = adminSedeId;
+        sede_id = adminSedeId as string;
       }
       console.log(`👑 [${from}] Admin detectado dinámicamente: ${adminName} (${matchedUser.rol})`);
     } else if (ADMIN_PHONES.includes(phone)) {
