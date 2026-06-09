@@ -84,7 +84,7 @@ async function fetchExchangeRates(): Promise<{ bcv: number; binance: number }> {
   }
 
   // Hard fallbacks if both are 0
-  if (!bcvRate) bcvRate = 36.5; // reasonable fallback
+  if (!bcvRate) bcvRate = 518.0; // reasonable fallback
   if (!binanceRate) binanceRate = bcvRate * 1.15; // standard spread fallback
 
   return { bcv: bcvRate, binance: binanceRate };
@@ -791,8 +791,8 @@ async function executeActions(text: string, sedeId: string | null): Promise<{ cl
         if (!skipInsertion) {
           justCreatedVentaCompleta.add(fpKey);
 
-          const rates = await fetchExchangeRates().catch(() => ({ bcv: 36.5, binance: 42 }));
-          const bcvRate = rates?.bcv || 36.5;
+          const rates = await fetchExchangeRates().catch(() => ({ bcv: 518.0, binance: 595.0 }));
+          const bcvRate = rates?.bcv || 518.0;
 
           // Parse fecha — if provided by user, use it; otherwise default to today
           const ventaFecha = p.fecha || getVzlaDateString();

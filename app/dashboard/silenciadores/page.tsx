@@ -99,7 +99,7 @@ export default function VentasPage() {
   const [printCurrencyMode, setPrintCurrencyMode] = useState<'auto' | 'usd' | 'dual'>('auto');
 
   const { currentSede, sedeRefreshKey } = useSedeStore();
-  const [rates, setRates] = useState({ bcv: 36.5 });
+  const [rates, setRates] = useState({ bcv: 518.0 });
   const [customRate, setCustomRate] = useState<number | null>(null);
 
   // Stats

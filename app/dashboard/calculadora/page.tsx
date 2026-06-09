@@ -20,9 +20,9 @@ import { cn } from '@/lib/utils';
 
 export default function CalculadoraPage() {
   // Currency State
-  const [tasa, setTasa] = useState<number>(36.5);
+  const [tasa, setTasa] = useState<number>(518.0);
   const [activeRate, setActiveRate] = useState<'bcv' | 'binance' | 'custom'>('bcv');
-  const [rates, setRates] = useState<{ bcv: number; binance: number }>({ bcv: 36.5, binance: 40.2 });
+  const [rates, setRates] = useState<{ bcv: number; binance: number }>({ bcv: 518.0, binance: 595.0 });
   const [loadingRates, setLoadingRates] = useState(true);
   const [usdAmount, setUsdAmount] = useState<string>('');
   const [vesAmount, setVesAmount] = useState<string>('');
