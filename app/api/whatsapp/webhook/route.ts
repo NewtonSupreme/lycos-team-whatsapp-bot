@@ -493,16 +493,15 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
           - A continuación, debe preguntar: *"¿Deseas editar/actualizar alguno de estos servicios existentes o prefieres registrar un nuevo servicio para el vehículo de la imagen? 🚗🔧"*
           - Si no hay servicios registrados para hoy, debe indicar: *"No tengo servicios programados para hoy [Fecha]. ¿Deseas registrar un nuevo servicio para este vehículo o editar alguna cita de otro día?"*
         * NUNCA intentes generar tags de UPSERT/DELETE todavía en esta primera respuesta. Espera pacientemente su decisión.
-      - Si el administrador envía una imagen de un vehículo Y TAMBIÉN especifica el servicio, precio o estatus en el texto/caption:
-        * El asistente DEBE registrar el servicio de forma inmediata imprimiendo el tag [CITA_UPSERT: ...] al final.
-        * Nombre del cliente por defecto: Debe registrarse a nombre del administrador que escribe (por ejemplo, Jorge, Juan Pablo o Leandro), a menos que en el mensaje se mencione explícitamente el nombre de otro cliente (ej. "a nombre de Carlos Perez").
-        * Si más adelante el administrador especifica el nombre del cliente real, edita la cita correspondiente usando [CITA_UPSERT: ...] actualizando el nombre_cliente al nuevo nombre.
-        * Estatus de la cita: Mapea estrictamente los estados indicados:
-          - "pendiente" o "por hacer" -> 'pendiente'
-          - "en proceso" -> 'en_proceso'
-          - "terminado", "completado" o "entregado" -> 'completada'
-          - "cancelada" -> 'cancelada'
-        * Costo/Precio: Si indica un precio, inclúyelo en la etiqueta [CITA_UPSERT: ...].
+      - Si el administrador envía una imagen de un vehículo Y TAMBIÉN especifica el servicio, precio o estatus en el texto/caption (ej. "2007 Ricardo chaneton Cambio silenciador intermedio"):
+        * El asistente DEBE registrar el servicio de forma INMEDIATA en la tabla de servicios imprimiendo el tag [SERVICIO_UPSERT: ...] al final.
+        * ¡CRÍTICO! NUNCA pidas confirmación, ni solicites datos adicionales, ni pidas la sede. Registra de una vez.
+        * Nombre del cliente: Usa el nombre que detectes en el mensaje, si no hay, usa el nombre del administrador. No exijas que se cree un cliente primero.
+        * Información del Vehículo: Extrae la marca, modelo y año del texto (ej. "2007 Ricardo chaneton").
+        * Estatus: Mapea a 'completada' por defecto si es un trabajo realizado, o 'en_proceso' si lo especifica.
+        * Descripción: Usa el servicio detallado (ej. "Cambio silenciador intermedio").
+        * Costo/Precio: Si indica un precio, inclúyelo en la etiqueta [SERVICIO_UPSERT: ...].
+        * Sede: Usa la sede asignada por defecto a tu perfil. NUNCA uses [ASK_SEDE].
 
    c) **[PRODUCTO]**:
       - Extrae la información del producto de la descripción.
@@ -1120,6 +1119,7 @@ interface ConversationContext {
   isAdmin?: boolean;
   adminName?: string;
   sede_id?: string;
+  adminSedeId?: string;
 }
 
 async function loadConversationContext(
@@ -1148,7 +1148,7 @@ async function loadConversationContext(
   try {
     // Determinar si el usuario es un Administrador o Gerente del Bot IA
     const { data: activeUsers } = await db.from('usuarios')
-      .select('nombre, telefono, rol')
+      .select('nombre, telefono, rol, sede_id')
       .eq('activo', true);
 
     const matchedUser = activeUsers?.find(u => {
@@ -1157,9 +1157,15 @@ async function loadConversationContext(
       return uClean.slice(-10) === phone.slice(-10);
     });
 
+    let adminSedeId = undefined;
+
     if (matchedUser && (matchedUser.rol === 'admin' || matchedUser.rol === 'gerente')) {
       isAdmin = true;
       adminName = matchedUser.nombre;
+      if (matchedUser.sede_id) {
+        adminSedeId = matchedUser.sede_id;
+        sede_id = adminSedeId;
+      }
       console.log(`👑 [${from}] Admin detectado dinámicamente: ${adminName} (${matchedUser.rol})`);
     } else if (ADMIN_PHONES.includes(phone)) {
       isAdmin = true;
@@ -1730,7 +1736,7 @@ async function loadConversationContext(
     }
   } catch (e) { console.error('Error loading context for admin/client:', e); }
 
-  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado, isAdmin, adminName, sede_id };
+  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado, isAdmin, adminName, sede_id, adminSedeId };
 }
 
 // ─── AI Response ───────────────────────────────────────────────────────────────
@@ -1758,7 +1764,13 @@ async function getAIResponse(
     console.log(`👤 MODO ADMIN DETECTADO: ${from} (Nombre en memoria/BD: ${ctx.memoria?.nombre || 'Desconocido'})`);
   }
 
-  const knowledge = isAdmin ? ADMIN_KNOWLEDGE : LYCOS_KNOWLEDGE;
+  let knowledge = isAdmin ? ADMIN_KNOWLEDGE : LYCOS_KNOWLEDGE;
+  if (isAdmin && ctx.adminSedeId) {
+    knowledge = knowledge.replace(
+      '6. ELECCIÓN DE SEDE (PROACTIVO): Si el administrador pide ver inventario, registrar una venta, o cualquier acción de gestión pero NO especifica la sede, DEBES imprimir el tag [ASK_SEDE: motivo] para que el sistema le muestre los botones de selección.',
+      `6. ELECCIÓN DE SEDE: Como eres administrador de una sede asignada (ID: ${ctx.adminSedeId}), NO preguntes nunca por la sede ni uses [ASK_SEDE]. Usa siempre tu sede_id (${ctx.adminSedeId}) en todos los registros automáticamente.`
+    );
+  }
 
   const vzlaDateTime = formatVzlaDateTime();
   const vzlaDateStr = getVzlaDateString();
