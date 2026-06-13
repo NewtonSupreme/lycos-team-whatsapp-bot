@@ -46,7 +46,7 @@ export default function EmpleadosPage() {
     setMounted(true);
     fetchSedes();
     fetchEmpleados();
-  }, [currentSede, sedeFilter]);
+  }, [currentSede?.id, sedeFilter]);
 
   async function fetchSedes() {
     if (!supabase) return;

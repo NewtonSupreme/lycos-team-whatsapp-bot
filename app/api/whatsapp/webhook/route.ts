@@ -1,5 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { getPermisos } from '@/types';
+
+async function checkIsBotAdmin(phone: string, db: any, adminPhones: string[]): Promise<boolean> {
+  const phoneClean = phone.replace(/[^0-9]/g, '');
+  if (adminPhones.includes(phone) || adminPhones.includes(phoneClean)) return true;
+  if (!db) return false;
+  try {
+    const { data: user } = await db.from('usuarios')
+      .select('rol, permisos')
+      .eq('telefono', phoneClean)
+      .eq('activo', true)
+      .maybeSingle();
+    if (!user) return false;
+    
+    // Evaluate if user role has ia_asistente: leer permissions
+    const parsedPermisos = typeof user.permisos === 'string' ? JSON.parse(user.permisos) : user.permisos;
+    const permissions = getPermisos(user.rol, parsedPermisos);
+    return !!permissions.ia_asistente?.leer;
+  } catch (e) {
+    return false;
+  }
+}
 
 const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'lycos_webhook_token_2026';
 
@@ -820,18 +842,7 @@ export async function POST(request: NextRequest) {
                   const mimeType = mediaData.mime_type || 'image/jpeg';
 
                   const phone = from.replace(/[^0-9]/g, '');
-                  let isSenderAdmin = ADMIN_PHONES.includes(from);
-                  if (!isSenderAdmin && db) {
-                    try {
-                      const { data: adminCheck } = await db.from('usuarios')
-                        .select('id')
-                        .eq('telefono', phone)
-                        .eq('rol', 'admin')
-                        .eq('activo', true)
-                        .maybeSingle();
-                      if (adminCheck) isSenderAdmin = true;
-                    } catch (e) { }
-                  }
+                  let isSenderAdmin = await checkIsBotAdmin(from, db, ADMIN_PHONES);
 
                   const description = await describeImage(base64Data, mimeType, isSenderAdmin);
                   const senderLabel = isSenderAdmin ? 'administrador' : 'cliente';
@@ -1009,18 +1020,7 @@ export async function POST(request: NextRequest) {
 
           // Check if sender is admin to bypass human takeover check
           const phoneClean = from.replace(/[^0-9]/g, '');
-          let isSenderAdmin = ADMIN_PHONES.includes(from) || ADMIN_PHONES.includes(phoneClean);
-          if (!isSenderAdmin && db) {
-            try {
-              const { data: adminCheck } = await db.from('usuarios')
-                .select('id')
-                .eq('telefono', phoneClean)
-                .eq('rol', 'admin')
-                .eq('activo', true)
-                .maybeSingle();
-              if (adminCheck) isSenderAdmin = true;
-            } catch (e) { }
-          }
+          let isSenderAdmin = await checkIsBotAdmin(from, db, ADMIN_PHONES);
 
           if (convData?.estado === 'humano' && !isSenderAdmin) {
             console.log(`👤 [${from}] Conversación en control humano — bot silenciado.`);
@@ -1152,26 +1152,34 @@ async function loadConversationContext(
   let adminSedeId: string | undefined = undefined;
 
   try {
-    // Determinar si el usuario es un Administrador o Gerente del Bot IA
-    const { data: activeUsers } = await db.from('usuarios')
-      .select('nombre, telefono, rol, sede_id')
-      .eq('activo', true);
+    // Determinar si el usuario es Administrador del Bot IA a través del sistema de permisos
+    const phoneClean = phone.replace(/[^0-9]/g, '');
+    let matchedUser = null;
+    if (db) {
+      const { data: userRecord } = await db.from('usuarios')
+        .select('nombre, rol, permisos, sede_id')
+        .eq('telefono', phoneClean)
+        .eq('activo', true)
+        .maybeSingle();
+      if (userRecord) matchedUser = userRecord;
+    }
 
-    const matchedUser = activeUsers?.find(u => {
-      if (!u.telefono) return false;
-      const uClean = u.telefono.replace(/[^0-9]/g, '');
-      return uClean.slice(-10) === phone.slice(-10);
-    });
-
-    if (matchedUser && (matchedUser.rol === 'admin' || matchedUser.rol === 'gerente')) {
-      isAdmin = true;
-      adminName = matchedUser.nombre;
-      if (matchedUser.sede_id) {
-        adminSedeId = matchedUser.sede_id;
-        sede_id = adminSedeId as string;
+    if (matchedUser) {
+      const parsedPermisos = typeof matchedUser.permisos === 'string' ? JSON.parse(matchedUser.permisos) : matchedUser.permisos;
+      const permissions = getPermisos(matchedUser.rol, parsedPermisos);
+      
+      if (permissions.ia_asistente?.leer) {
+        isAdmin = true;
+        adminName = matchedUser.nombre;
+        if (matchedUser.sede_id) {
+          adminSedeId = matchedUser.sede_id;
+          sede_id = adminSedeId as string;
+        }
+        console.log(`👑 [${from}] Admin detectado dinámicamente por permisos: ${adminName} (${matchedUser.rol})`);
       }
-      console.log(`👑 [${from}] Admin detectado dinámicamente: ${adminName} (${matchedUser.rol})`);
-    } else if (ADMIN_PHONES.includes(phone)) {
+    }
+    
+    if (!isAdmin && ADMIN_PHONES.includes(phone)) {
       isAdmin = true;
       if (phone === '584123343519') adminName = 'Juan Pablo';
       else if (phone === '584241648710') adminName = 'Jorge';
@@ -3120,7 +3128,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       }
 
       // ── ADMIN: Process management tags ────────────────────────────────
-      const isAdmin = !!ctx.isAdmin || ADMIN_PHONES.includes(from || '');
+      const isAdmin = !!ctx.isAdmin || (await checkIsBotAdmin(from || '', db, ADMIN_PHONES));
 
       if (isAdmin && db) {
         // 1. [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca]

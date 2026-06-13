@@ -165,7 +165,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       }
     }
     loadSedes();
-  }, [user?.id, user?.sede_id, setAvailableSedes, setUserRole, setCurrentSede]);
+  }, [user?.id, user?.sede_id, user?.rol, user?.username, setAvailableSedes, setUserRole, setCurrentSede]);
 
   const [mounted, setMounted] = React.useState(false);
   useEffect(() => { setMounted(true); }, []);
@@ -200,16 +200,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     else if (pathname.includes('/dashboard/agenda')) requiredModule = 'agenda';
     else if (pathname.includes('/dashboard/whatsapp')) requiredModule = 'whatsapp';
     else if (pathname.includes('/dashboard/inventario')) requiredModule = 'inventario';
-    else if (pathname.includes('/dashboard/ventas')) requiredModule = 'ventas';
-    else if (pathname.includes('/dashboard/ajustes/permisos') || pathname.includes('/dashboard/empleados')) requiredModule = 'empleados';
+    else if (pathname.includes('/dashboard/ventas') || pathname.includes('/dashboard/silenciadores')) requiredModule = 'ventas';
+    else if (pathname.includes('/dashboard/ajustes/permisos') || pathname.includes('/dashboard/ajustes/empleados')) requiredModule = 'empleados';
     else if (pathname.includes('/dashboard/presupuestos')) requiredModule = 'presupuestos';
+    else if (pathname.includes('/dashboard/leads')) requiredModule = 'leads';
+    else if (pathname.includes('/dashboard/ia')) requiredModule = 'ia_asistente';
+    else if (pathname.includes('/dashboard/reportes')) requiredModule = 'reportes';
+    else if (pathname.includes('/dashboard/actividad')) requiredModule = 'actividad';
+    else if (pathname.includes('/dashboard/calculadora')) requiredModule = 'calculadora';
+    else if (pathname.includes('/dashboard/configuracion')) requiredModule = 'configuracion';
+    else if (pathname.includes('/dashboard/distribuidor')) requiredModule = 'distribuidor';
 
     if (requiredModule && !can(requiredModule, 'leer')) {
-      setAccessDenied(true);
+      if (!accessDenied) setAccessDenied(true);
     } else {
-      setAccessDenied(false);
+      if (accessDenied) setAccessDenied(false);
     }
-  }, [pathname, authLoading, can]);
+  }, [pathname, authLoading, can, accessDenied]);
 
   if (authLoading) {
     return (
