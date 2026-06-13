@@ -14,6 +14,7 @@ import Link from 'next/link';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
+import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 
 const HORAS = ['08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00'];
 const TIPOS: { v: TipoServicio; l: string }[] = [
@@ -38,6 +39,7 @@ const estadoColorMap: Record<string, string> = {
 
 export default function AgendaPage() {
   const { user } = useAppStore();
+  const { can } = useRolePermissions();
   const [mounted, setMounted] = React.useState(false);
   const [citas, setCitas] = React.useState<Cita[]>([]);
   const [clientes, setClientes] = React.useState<Cliente[]>([]);
@@ -117,6 +119,7 @@ export default function AgendaPage() {
   const citasDelDia = selectedDate ? getCitasForDate(selectedDate) : [];
 
   const openNew = () => {
+    if (!can('agenda', 'crear')) return alert('No tienes permisos para agendar citas.');
     setEditCita(null);
     setIsNewClient(false);
     setIsBlockedMode(false);
@@ -159,6 +162,7 @@ export default function AgendaPage() {
   };
 
   const openEdit = (c: Cita) => {
+    if (!can('agenda', 'editar')) return alert('No tienes permisos para editar citas.');
     setEditCita(c);
     setIsNewClient(false);
     setIsBlockedMode(c.estado === 'ocupado');
@@ -298,7 +302,8 @@ export default function AgendaPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm('¿Estás seguro de eliminar esta cita?')) {
+    if (!can('agenda', 'eliminar')) return alert('No tienes permisos para cancelar o eliminar citas.');
+    if (confirm('¿Estás seguro de cancelar esta cita?')) {
       try {
         const cita = citas.find(c => c.id === id);
         await deleteCita(id);
@@ -322,18 +327,21 @@ export default function AgendaPage() {
     try {
       setLoading(true);
       const now = new Date();
+      const vehiculo = getVehiculo(cita.vehiculo_id);
+      const cliente = getCliente(cita.cliente_id);
       const payload = {
         cliente_id: cita.cliente_id,
         vehiculo_id: cita.vehiculo_id,
-        nombre_cliente: cita.nombre_cliente || '',
-        telefono: '',
-        vehiculo_info: '',
-        placa: '',
-        descripcion: cita.descripcion || '',
+        nombre_cliente: cita.nombre_cliente || (cliente ? `${cliente.nombre} ${cliente.apellido}` : ''),
+        telefono: cita.telefono || cliente?.telefono || '',
+        vehiculo_info: vehiculo ? `${vehiculo.marca} ${vehiculo.modelo}` : (cita.vehiculo_info || 'SIN-VEHICULO'),
+        placa: vehiculo?.placa || 'SIN-PLACA',
+        descripcion: cita.descripcion || 'Servicio desde agenda',
         tipo: cita.tipo_servicio,
         tipo_personalizado: null,
         estado: 'pendiente',
         costo_estimado: cita.costo_estimado || 0,
+        registrado_por: user?.nombre || 'Admin',
         fecha: cita.fecha,
         hora: cita.hora,
         seguimiento: [{

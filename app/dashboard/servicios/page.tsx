@@ -16,6 +16,7 @@ import { useSedeStore } from "@/lib/store/useSedeStore";
 import { Button } from '@/components/ui/button';
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
+import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 import { cn } from '@/lib/utils';
 
 // ── Types ─────────────────────────────────────────────────────
@@ -59,6 +60,8 @@ const SERVICIO_LABELS: Record<string, string> = {
 // ── Main Component ───────────────────────────────────────────
 export default function ServiciosPage() {
   const { user } = useAppStore();
+  const { currentSede } = useSedeStore();
+  const { can } = useRolePermissions();
   const [citas, setCitas] = useState<CitaServicio[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -108,6 +111,7 @@ export default function ServiciosPage() {
   }, [loadCitas]);
 
   const handleDelete = async (id: string) => {
+    if (!can('servicios', 'eliminar')) return alert('No tienes permisos para eliminar servicios.');
     if (!confirm('¿Estás seguro de eliminar este ticket de servicio? Esta acción no se puede deshacer.')) return;
     try {
       const { error } = await withSedeFilter(supabase!.from('servicios')).delete().eq('id', id);
@@ -149,6 +153,7 @@ export default function ServiciosPage() {
   };
 
   const updateEstado = async (id: string, nuevoEstado: string) => {
+    if (!can('servicios', 'editar')) return alert('No tienes permisos para cambiar el estado de los servicios.');
     const cita = citas.find(c => c.id === id);
     if (!cita || cita.estado === nuevoEstado) return;
 
@@ -952,6 +957,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           vehiculo_id: finalVehiculoId,
           tipo: finalTipo,
           tipo_personalizado: isCustomServicio ? customServicio.trim() : null,
+          descripcion: formData.descripcion || '',
           costo_estimado: parseFloat(formData.costo_estimado) || 0,
           updated_at: new Date().toISOString()
         };
@@ -987,6 +993,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           vehiculo_id: finalVehiculoId,
           tipo: finalTipoServicio,
           tipo_personalizado: isCustomServicio ? customServicio.trim() : null,
+          descripcion: formData.descripcion || '',
           registrado_por: user?.nombre || 'Admin',
           fecha: now.toISOString().split('T')[0],
           hora: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
@@ -1323,7 +1330,17 @@ function TrackingModal({ cita, onClose }: { cita: CitaServicio; onClose: () => v
       
       if (error) throw error;
       setComment('');
+      const newState = actionText.toLowerCase().includes('entrega') ? 'completada' : cita.estado;
+      
+      // Update the local state properly to trigger re-renders
+      // Ignore typescript error locally by using the setCitas from upper scope or a callback
       cita.seguimiento = newSeguimiento;
+      if (newState !== cita.estado) {
+        cita.estado = newState;
+      }
+      
+      // Force a refresh from the loadCitas hook indirectly if needed, 
+      // but modifying cita object works for now in this context since onClose calls loadCitas.
     } catch (err: any) { alert('Error: ' + err.message); }
     finally { setIsSaving(false); }
   };

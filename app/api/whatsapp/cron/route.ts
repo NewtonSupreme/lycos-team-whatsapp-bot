@@ -44,6 +44,63 @@ export async function processPendingMessages(
 
   const MAX_INTENTOS = 10;
 
+  // 1. Deep sweep: Find orphaned incoming messages (last 3 hours)
+  try {
+    const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const { data: orphanedMsgs } = await db.from('mensajes_whatsapp')
+      .select('*')
+      .eq('tipo', 'entrante')
+      .gte('created_at', threeHoursAgo)
+      .order('created_at', { ascending: false })
+      .limit(200);
+
+    if (orphanedMsgs) {
+      const byPhone = new Map<string, any>();
+      for (const m of orphanedMsgs) {
+        if (!byPhone.has(m.from_number)) byPhone.set(m.from_number, m);
+      }
+
+      for (const [phone, latestMsg] of byPhone.entries()) {
+        const { data: sentAfter } = await db.from('mensajes_whatsapp')
+          .select('id')
+          .eq('to_number', phone)
+          .eq('tipo', 'saliente')
+          .gt('created_at', latestMsg.created_at)
+          .limit(1);
+
+        if (!sentAfter || sentAfter.length === 0) {
+          const { data: q } = await db.from('mensajes_pendientes_ia')
+            .select('id, status')
+            .eq('wa_message_id', latestMsg.wa_message_id)
+            .limit(1);
+            
+          if (!q || q.length === 0) {
+            const { data: conv } = await db.from('conversaciones').select('estado').eq('telefono', phone).maybeSingle();
+            if (conv?.estado !== 'humano') {
+              await db.from('mensajes_pendientes_ia').insert({
+                from_number: phone,
+                message_body: latestMsg.body,
+                wa_message_id: latestMsg.wa_message_id,
+                inserted_timestamp: latestMsg.created_at,
+                intentos: 0,
+                status: 'pending',
+                sede_id: latestMsg.sede_id || '310595c5-5258-47fa-9b69-5ad9932685a7'
+              });
+              console.log(`🧹 Escaneo profundo: Agregado a cola mensaje huérfano de ${phone}`);
+            }
+          } else if (q[0].status === 'failed' || q[0].status === 'completed') {
+             // Si el escaneo dice que NO hay salida, pero en la cola dice completado/fallido, lo forzamos a pendiente
+             await db.from('mensajes_pendientes_ia').update({ status: 'pending', intentos: 0 }).eq('id', q[0].id);
+             console.log(`🧹 Escaneo profundo: Re-encolado mensaje fallido/falso-completado de ${phone}`);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Error en escaneo profundo de huérfanos:', e);
+  }
+
+  // 2. Process the queue
   const { data: pendientes } = await db
     .from('mensajes_pendientes_ia')
     .select('*')

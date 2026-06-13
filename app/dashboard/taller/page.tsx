@@ -7,6 +7,7 @@ import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useAppStore } from '@/lib/store';
 import { logActivity } from '@/lib/activity';
 import { cn } from '@/lib/utils';
+import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 
 interface ServicioRow {
   id: string;
@@ -72,6 +73,7 @@ interface ClienteOption {
 
 export default function TallerPage() {
   const { user } = useAppStore();
+  const { can } = useRolePermissions();
   const [servicios, setServicios] = useState<ServicioRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [registering, setRegistering] = useState(false);
@@ -159,7 +161,8 @@ export default function TallerPage() {
   };
 
   const deleteTrabajo = async (id: string) => {
-    if (!confirm('¿Seguro que deseas eliminar este registro?')) return;
+    if (!can('taller', 'eliminar')) return alert('No tienes permisos para eliminar tickets.');
+    if (!confirm('¿Seguro que quieres eliminar este ticket? No se puede deshacer.')) return;
     if (!supabase) return;
     const { error } = await withSedeFilter(supabase.from('servicios')).delete().eq('id', id);
     if (!error) {
@@ -238,6 +241,7 @@ export default function TallerPage() {
   useEffect(() => { fetchCustomTypes(); }, [fetchCustomTypes]);
 
   const updateEstado = async (id: string, nuevoEstado: string) => {
+    if (!can('taller', 'editar')) return alert('No tienes permisos para cambiar el estado de los tickets.');
     const servicio = servicios.find(s => s.id === id);
     if (!servicio || servicio.estado === nuevoEstado) return;
     if (!supabase) return;
@@ -270,6 +274,7 @@ export default function TallerPage() {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!can('taller', 'crear')) return alert('No tienes permisos para crear tickets de taller.');
     if (!supabase) return;
     if (!nombreCliente.trim() || !descripcion.trim()) return;
 
@@ -304,17 +309,19 @@ export default function TallerPage() {
           .maybeSingle();
         if (existingVeh) {
           finalVehiculoId = existingVeh.id;
-        } else if (finalClienteId && vehiculoInfo.trim()) {
-          const vNames = vehiculoInfo.trim().split(' ');
-          const marca = vNames[0];
-          const modelo = vNames.slice(1).join(' ') || '—';
-          const { data: newVeh, error: vehErr } = await withSedeFilter(supabase.from('vehiculos'))
-            .insert(withSedeInsert({ cliente_id: finalClienteId, marca, modelo, placa: placa.trim(), estado: 'en_servicio' }))
-            .select()
-            .single();
-          if (vehErr) throw vehErr;
-          finalVehiculoId = newVeh.id;
         }
+      }
+      
+      if (!finalVehiculoId && finalClienteId && vehiculoInfo.trim()) {
+        const vNames = vehiculoInfo.trim().split(' ');
+        const marca = vNames[0];
+        const modelo = vNames.slice(1).join(' ') || '—';
+        const { data: newVeh, error: vehErr } = await withSedeFilter(supabase.from('vehiculos'))
+          .insert(withSedeInsert({ cliente_id: finalClienteId, marca, modelo, placa: placa.trim().toUpperCase() || 'SIN-PLACA', estado: 'en_servicio' }))
+          .select()
+          .single();
+        if (vehErr) throw vehErr;
+        finalVehiculoId = newVeh.id;
       }
 
       // 3. Create servicio
@@ -328,12 +335,13 @@ export default function TallerPage() {
         nombre_cliente: nombreCliente.trim(),
         telefono: telefono.trim(),
         vehiculo_info: vehiculoInfo.trim(),
-        placa: placa.trim().toUpperCase(),
-        descripcion: descripcion.trim(),
+        placa: placa.trim().toUpperCase() || 'SIN-PLACA',
+        descripcion: descripcion.trim() || 'Servicio de taller',
         tipo: finalTipo,
         tipo_personalizado: finalTipoPersonalizado,
         estado: 'pendiente',
         costo_estimado: parseFloat(costoEstimado) || 0,
+        registrado_por: user?.nombre || 'Admin',
         fecha: now.toISOString().split('T')[0],
         hora: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
         seguimiento: [{
@@ -569,14 +577,16 @@ export default function TallerPage() {
                 />
               </div>
 
-              <button
-                type="submit"
-                disabled={registering}
-                className="w-full mt-1 bg-primary/15 text-primary font-semibold py-2.5 rounded-xl border border-primary/25 hover:bg-primary/25 transition-colors flex justify-center items-center gap-2 text-sm disabled:opacity-50"
-              >
-                {registering ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wrench className="w-4 h-4" />}
-                Registrar Trabajo
-              </button>
+              {can('taller', 'crear') && (
+                <button
+                  type="submit"
+                  disabled={registering}
+                  className="w-full mt-1 bg-primary/15 text-primary font-semibold py-2.5 rounded-xl border border-primary/25 hover:bg-primary/25 transition-colors flex justify-center items-center gap-2 text-sm disabled:opacity-50"
+                >
+                  {registering ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wrench className="w-4 h-4" />}
+                  Registrar Trabajo
+                </button>
+              )}
             </form>
           </CardContent>
         </Card>
@@ -723,13 +733,15 @@ export default function TallerPage() {
                           </div>
                         </td>
                         <td className="px-3 py-3 text-right">
-                          <button
-                            onClick={() => deleteTrabajo(s.id)}
-                            className="p-1.5 hover:bg-red-500/20 hover:text-red-500 text-muted-foreground rounded-lg transition-colors"
-                            title="Eliminar"
-                          >
-                            <Trash className="w-3.5 h-3.5" />
-                          </button>
+                          {can('taller', 'eliminar') && (
+                            <button
+                              onClick={() => deleteTrabajo(s.id)}
+                              className="p-1.5 hover:bg-red-500/20 hover:text-red-500 text-muted-foreground rounded-lg transition-colors"
+                              title="Eliminar"
+                            >
+                              <Trash className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}

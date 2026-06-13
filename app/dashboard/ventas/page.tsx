@@ -22,6 +22,7 @@ import { Calendar as CalendarUI } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 
 interface CartItem {
   id: string;
@@ -33,6 +34,7 @@ interface CartItem {
 }
 
 export default function VentasPage() {
+  const { can } = useRolePermissions();
   const [productos, setProductos] = useState<any[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -153,6 +155,7 @@ export default function VentasPage() {
   const total = subtotal * (conIva ? 1.16 : 1);
 
   const handleFinalize = async () => {
+    if (!can('ventas', 'crear')) return alert('No tienes permisos para registrar ventas.');
     if (cart.length === 0) return alert("El carrito está vacío");
     if (!supabase) return;
 
@@ -843,17 +846,27 @@ export default function VentasPage() {
                   <Search className="w-4 h-4" />
                 </Button>
 
-                <Button 
-                  disabled={processing || cart.length === 0}
-                  className="flex-1 h-12 rounded-xl bg-primary hover:bg-primary/90 text-white font-black uppercase tracking-widest text-xs gap-2 shadow-lg shadow-primary/30"
-                  onClick={handleFinalize}
-                >
-                  {processing ? (
-                    <><Loader2 className="w-4 h-4 animate-spin" /> Procesando</>
-                  ) : (
-                    <><CheckCircle className="w-4 h-4" /> Finalizar</>
-                  )}
-                </Button>
+                {can('ventas', 'crear') ? (
+                  <Button 
+                    disabled={processing || cart.length === 0}
+                    className="flex-1 h-12 rounded-xl bg-primary hover:bg-primary/90 text-white font-black uppercase tracking-widest text-xs gap-2 shadow-lg shadow-primary/30"
+                    onClick={handleFinalize}
+                  >
+                    {processing ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> Procesando</>
+                    ) : (
+                      <><CheckCircle className="w-4 h-4" /> Finalizar</>
+                    )}
+                  </Button>
+                ) : (
+                  <Button 
+                    className="flex-1 h-12 rounded-xl" 
+                    disabled
+                    variant="outline"
+                  >
+                    Sin Permiso
+                  </Button>
+                )}
               </div>
             </div>
           </Card>

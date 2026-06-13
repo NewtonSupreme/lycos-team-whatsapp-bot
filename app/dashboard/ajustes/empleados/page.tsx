@@ -94,6 +94,7 @@ export default function EmpleadosPage() {
       case 'jefe_taller': return 'bg-primary/10 text-primary border-primary/20';
       case 'mecanico_acceso': return 'bg-amber-500/10 text-amber-500 border-amber-500/20';
       case 'mecanico': return 'bg-orange-500/10 text-orange-500 border-orange-500/20';
+      case 'atencion_cliente': return 'bg-pink-500/10 text-pink-500 border-pink-500/20';
       default: return 'bg-slate-500/10 text-slate-500 border-slate-500/20';
     }
   }
@@ -108,6 +109,7 @@ export default function EmpleadosPage() {
       case 'jefe_taller': return 'Jefe Taller (Sin Acceso)';
       case 'mecanico_acceso': return 'Mecánico (Con Acceso)';
       case 'mecanico': return 'Mecánico (Sin Acceso)';
+      case 'atencion_cliente': return 'Atención al Cliente';
       default: return rol.replace(/_/g, ' ');
     }
   }
@@ -482,6 +484,12 @@ export default function EmpleadosPage() {
                         <span>Jefe de Taller (Con Acceso)</span>
                       </div>
                     </SelectItem>
+                    <SelectItem value="atencion_cliente">
+                      <div className="flex items-center gap-2">
+                        <Shield className="w-4 h-4 text-pink-500" />
+                        <span>Atención al Cliente</span>
+                      </div>
+                    </SelectItem>
                     {isAdmin && (
                       <SelectItem value="admin">
                         <div className="flex items-center gap-2">
@@ -560,7 +568,7 @@ export default function EmpleadosPage() {
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              {renderTable(empleados.filter(e => ['admin', 'gerente', 'empleado', 'jefe_taller_acceso', 'mecanico_acceso'].includes(e.rol)), true)}
+              {renderTable(empleados.filter(e => ['admin', 'gerente', 'empleado', 'jefe_taller_acceso', 'mecanico_acceso', 'atencion_cliente'].includes(e.rol)), true)}
             </CardContent>
           </Card>
 
@@ -653,6 +661,7 @@ export default function EmpleadosPage() {
                         <SelectItem value="mecanico_acceso">Mecánico (Con Acceso)</SelectItem>
                         <SelectItem value="jefe_taller">Jefe Taller (Sin Acceso)</SelectItem>
                         <SelectItem value="jefe_taller_acceso">Jefe Taller (Con Acceso)</SelectItem>
+                        <SelectItem value="atencion_cliente">Atención al Cliente</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

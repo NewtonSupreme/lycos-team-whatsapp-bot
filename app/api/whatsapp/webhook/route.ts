@@ -299,7 +299,10 @@ ES MUY IMPORTANTE QUE SEAS EXTREMADAMENTE BREVE Y DIRECTO (MAX 3 LÍNEAS).
 - CLIENTES SEGUIDORES: Si el cliente menciona que ya nos sigue en Instagram o TikTok, agradécele con mucho entusiasmo, dile que nos motiva mucho su apoyo y anímalo a visitarnos o consultar cualquier duda sobre su vehículo.
 - RECORDATORIOS DE CITA: Menciónalos SOLO si el cliente pregunta por su cita o están tratando de agendar, pero no en cada mensaje.
 
-HORARIO: Lunes a Sábado 8:00 AM – 5:00 PM. DOMINGOS: CERRADO sin excepciones.
+HORARIO:
+- San Antonio de los Altos: Lunes a Sábado 8:00 AM – 5:00 PM.
+- Caracas (El Paraíso) y (El Cementerio): Lunes a Viernes 8:00 AM – 4:00 PM. (¡IMPORTANTE! Las citas en estas sedes solo se pueden agendar hasta las 3:00 PM).
+DOMINGOS: CERRADO en todas las sedes sin excepciones.
 UBICACION:
 - San Antonio de los Altos: San Antonio de los Altos, Altos Mirandinos, Miranda. (En San Antonio de los Altos, distribuidor de las minas al frente del Frescos Market nos encontramos). 💡 BENEFICIOS EXCLUSIVOS: Si vienes a esta sede tienes revisión totalmente gratuita, instalación de la app del taller gratis y tecnología automotriz profesional.
 - Carrizal (Principal): Servicios Jadar Calle Raul Leoni, Municipio Carrizal cerca de eso.
@@ -418,6 +421,7 @@ REGLA DE ORO ABSOLUTA DE CITAS: ESTÁ TERMINANTEMENTE PROHIBIDO imprimir la etiq
 Si no tienes estos datos, DEBES pedírselos primero sin excepción.
 Si no da la placa, insiste una vez amablemente, si sigue sin darla procede con nombre y modelo.
 Calcula la fecha exacta desde hoy usando FECHA/HORA VENEZUELA. Nunca agendes domingos.
+⚠️ REGLA DE HORARIO DE CITAS: Para las sedes de Caracas (El Paraíso y El Cementerio), la última hora permitida para agendar es a las 03:00 PM (15:00). NO agendes a las 4:00 PM ni después. Para San Antonio, sí puedes agendar hasta las 5:00 PM.
 VERIFICA estrictamente si tiene citas registradas o si el horario está ocupado globalmente.
 ORDEN DEL SISTEMA #1 (CITAS): Cuando tú y el cliente ya acordaron de forma exitosa los datos (Nombre, Vehículo y Día), DEBES **OBLIGATORIAMENTE** imprimir la siguiente etiqueta oculta de sistema AL FINAL de tu respuesta (solo UNA vez):
 [CITA: AAAA-MM-DD HH:MM | descripción breve | marca modelo]
@@ -1730,9 +1734,10 @@ async function loadConversationContext(
     const { data: globales } = await db.from('citas')
       .select('fecha, hora')
       .gte('fecha', todayStr).lte('fecha', endStrGlobal)
+      .eq('sede_id', sede_id)
       .neq('estado', 'cancelada');
     if (globales && globales.length > 0) {
-      agendaOcupada = `\nHORARIOS OCUPADOS GLOBALMENTE (PROHIBIDO AGENDAR EN ESTAS FECHAS Y HORAS EXACTAS):\n` + globales.map(g => `- ${g.fecha} a las ${g.hora}`).join('\n');
+      agendaOcupada = `\nHORARIOS OCUPADOS EN ESTA SEDE (PROHIBIDO AGENDAR EN ESTAS FECHAS Y HORAS EXACTAS):\n` + globales.map(g => `- ${g.fecha} a las ${g.hora}`).join('\n');
     }
   } catch (e) { console.error('Error loading context for admin/client:', e); }
 
@@ -2865,13 +2870,14 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       ];
       await sendButtonMsg(from, '📍 Contamos con 2 sedes en Caracas. ¿Cuál te queda más cerca? 😊', buttons, 'Selecciona una opción');
       ctx.memoria.awaiting_caracas_choice = true;
-      if (db) await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+      if (db) await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: ctx.sede_id || DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
       return;
     }
 
     if (!ctx.isAdmin && (mentionsSanAntonio || mentionsCarrizal || mentionsCaracas || mentionsParaiso)) {
       let locationSent = false;
       let selectedSedeName = '';
+      let queryNameForDb = '';
       const selectedSedePhone = '584123343519';
 
       if (mentionsSanAntonio) {
@@ -2881,18 +2887,22 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         await delay(800);
         await sendMsg(from, '🎁 *¡Beneficios Exclusivos en San Antonio!* 🎁\n\nSi vienes a nuestra sede de San Antonio, cuentas con beneficios como:\n✅ *Revisión totalmente gratuita.*\n✅ *Instalación de la app del taller GRATIS en Lycos Team.*\n✅ *Servicios y tecnología automotriz profesional.*\n\n¡Te esperamos! 🚗🔧', true);
         selectedSedeName = 'Sede San Antonio';
+        queryNameForDb = 'San Antonio';
         locationSent = true;
       } else if (mentionsCarrizal) {
         await sendMsg(from, '📍 *Sede Carrizal (Principal):*\n\nServicios Jadar Calle Raul Leoni, Municipio Carrizal cerca de eso. 😊\n\n*Mapa:* https://maps.app.goo.gl/cxLGkqWtsf5qogMB6', true);
         selectedSedeName = 'Sede Carrizal';
+        queryNameForDb = 'Carrizal';
         locationSent = true;
       } else if (mentionsCaracas) {
         await sendMsg(from, '📍 *Sede Caracas (El Cementerio):*\n\nE/S PDV Nuevo Prado Av. Roosevelt, Caracas cerca de esa bomba. 😊\n\n*Mapa:* https://maps.app.goo.gl/aeHGdzUumhpBep719', true);
         selectedSedeName = 'Sede Caracas';
+        queryNameForDb = 'Caracas';
         locationSent = true;
       } else if (mentionsParaiso) {
         await sendMsg(from, '📍 *Sede Caracas (El Paraíso):*\n\nAvenida Los Liberales, Caracas 1020, Distrito Capital, Venezuela, Al frente de Puerkos Restaurant. 😊\n\n*Mapa:* https://maps.app.goo.gl/c3TnUnHYGEJUWodX7', true);
         selectedSedeName = 'Sede Caracas (El Paraíso)';
+        queryNameForDb = 'Paraíso';
         locationSent = true;
       }
 
@@ -2900,7 +2910,9 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         delete ctx.memoria.awaiting_location_choice;
         delete ctx.memoria.awaiting_caracas_choice;
         if (db) {
-          await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+          const newSedeId = await findSedeIdByName(db, queryNameForDb) || ctx.sede_id || DEFAULT_SEDE_ID;
+          ctx.sede_id = newSedeId;
+          await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: newSedeId }, { onConflict: 'telefono' });
         }
         await delay(800);
         await sendMsg(from, `También te comparto el contacto de la ${selectedSedeName} por si necesitas llamar:`);
@@ -2955,7 +2967,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
       ctx.memoria.awaiting_location_choice = true;
       if (db) {
-        await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+        await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: ctx.sede_id || DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
       }
       return;
     }
@@ -2965,7 +2977,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       console.log(`📍 [${from}] Respuesta no reconocida en flujo de sede: "${bodyClean}". Liberando para que la IA responda.`);
       delete ctx.memoria.awaiting_location_choice;
       if (db) {
-        await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+        await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: ctx.sede_id || DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
       }
       // No return, let the flow continue to AI
     }
@@ -3056,8 +3068,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           ctx.memoria.nombre = aiDetectedName;
           try {
             if (db) {
-              await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
-              await getOrCreateClientAndVehicle(db, from, aiDetectedName, '', '', undefined, waProfileName);
+              await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: ctx.sede_id || DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+              await getOrCreateClientAndVehicle(db, from, aiDetectedName, '', '', undefined, waProfileName, ctx.sede_id);
               console.log(`🤖 AI Nombre Extraido y Guardado: ${aiDetectedName}`);
             }
           } catch (e) { console.error('Error saving AI detected name:', e); }
@@ -3131,7 +3143,10 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               nombre,
               categoria,
               precio_usd: isNaN(precio) ? 0 : precio,
+              precio_bs: 0,
               stock: isNaN(stock) ? 0 : stock,
+              stock_minimo: 1,
+              unidad: 'unidad',
               codigo,
               marca,
               ubicacion,
@@ -3240,14 +3255,14 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             // Validate UUID fields to prevent AI from placing wrong values (e.g. sede UUID as clientId)
             const clientId = (parts[3] && UUID_RE.test(parts[3])) ? parts[3] : null;
             const vehId = (parts[4] && UUID_RE.test(parts[4])) ? parts[4] : null;
-            const estado = parts[5] || 'pendiente';
-            const desc = parts[6] || '';
+            const estado = (parts[5] && parts[5] !== 'null') ? parts[5] : 'pendiente';
+            const desc = (parts[6] && parts[6] !== 'null' && parts[6].trim() !== '') ? parts[6] : 'Cita agendada por WhatsApp';
             const sedeId = (parts[7] && UUID_RE.test(parts[7])) ? parts[7] : (ctx.sede_id || DEFAULT_SEDE_ID);
             const costoEstimado = (parts[8] && parts[8] !== 'null') ? parseFloat(parts[8]) : null;
             const nombreCliente = (parts[9] && parts[9] !== 'null') ? parts[9] : null;
             const vehiculoInfo = (parts[10] && parts[10] !== 'null') ? parts[10] : null;
             const placa = (parts[11] && parts[11] !== 'null') ? parts[11].toUpperCase().replace(/[-\s]/g, '') : null;
-            const phoneParam = (parts[12] && parts[12] !== 'null') ? parts[12] : from;
+            const phoneParam = (parts[12] && parts[12] !== 'null') ? parts[12] : (from || '00000000000');
 
             // Resolve or create Client & Vehicle if IDs are missing but details are present
             let finalClientId = clientId;
@@ -3456,13 +3471,13 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               cliente_id: finalClientId,
               vehiculo_id: finalVehId,
               nombre_cliente: resolvedClientName || nameToUse,
-              telefono: telefono || '',
-              vehiculo_info: vehiculoInfo || null,
-              placa: placa || null,
-              tipo: tipo,
+              telefono: telefono || '00000000000',
+              vehiculo_info: vehiculoInfo || 'Vehículo desconocido',
+              placa: placa || 'SIN-PLACA',
+              tipo: tipo || 'otro',
               tipo_personalizado: tipoPersonalizado,
-              descripcion: descripcion,
-              estado: estado,
+              descripcion: descripcion || 'Servicio de taller',
+              estado: estado || 'pendiente',
               costo_estimado: costoEstimado,
               registrado_por: adminName,
               fecha: vzlaDateStr,
@@ -3536,9 +3551,9 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             const sedeId = parts[6] || ctx.sede_id || DEFAULT_SEDE_ID;
 
             const clientObj = {
-              nombre: name,
+              nombre: name || 'Desconocido',
               apellido: last,
-              telefono: tel,
+              telefono: tel || '00000000000',
               cedula: ced,
               direccion: dir,
               sede_id: sedeId
@@ -3569,10 +3584,11 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             const sedeId = parts[6] || ctx.sede_id || DEFAULT_SEDE_ID;
 
             const vehObj: any = {
-              placa,
+              placa: placa || 'SIN-PLACA',
               marca,
               modelo,
               anio: isNaN(Number(anio)) ? null : anio,
+              estado: 'en_servicio',
               sede_id: sedeId
             };
             if (clientId) vehObj.cliente_id = clientId;

@@ -103,6 +103,12 @@ export const PERMISOS_DEFAULT: Record<string, Permisos> = {
     ventas: full(true), ia_asistente: full(false), reportes: full(false), actividad: full(false),
     calculadora: full(true), configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(true)
   },
+  atencion_cliente: {
+    dashboard: full(true), clientes: full(true), vehiculos: full(true), servicios: perm(false, true, false, false), taller: perm(false, true, false, false),
+    agenda: full(true), whatsapp: full(true), leads: full(true), inventario: perm(false, true, false, false), papelera: full(false),
+    ventas: full(false), ia_asistente: full(true), reportes: full(false), actividad: full(false),
+    calculadora: full(true), configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(true)
+  },
 };
 
 export function getPermisos(

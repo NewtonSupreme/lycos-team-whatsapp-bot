@@ -22,6 +22,7 @@ import { Label } from '@/components/ui/label';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
+import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 
 const CATEGORIES: { value: InventarioCategoria; label: string }[] = [
   { value: 'silenciador', label: 'Silenciadores' },
@@ -54,6 +55,7 @@ const CLASSIFICATIONS = [
 
 export default function InventarioPage() {
   const { user } = useAppStore();
+  const { can } = useRolePermissions();
   const [items, setItems] = useState<InventarioItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -179,6 +181,7 @@ export default function InventarioPage() {
   }, [items, search, categoryFilter, locationFilter, classificationFilter]);
 
   const handleOpenAdd = () => {
+    if (!can('inventario', 'crear')) return alert('No tienes permisos para crear productos en el inventario.');
     setEditingItem(null);
     setForm({
       nombre: '',
@@ -198,6 +201,7 @@ export default function InventarioPage() {
   };
 
   const handleOpenEdit = (item: InventarioItem) => {
+    if (!can('inventario', 'editar')) return alert('No tienes permisos para editar el inventario.');
     setEditingItem(item);
     setForm({
       nombre: item.nombre,
@@ -285,6 +289,7 @@ export default function InventarioPage() {
   };
 
   const handleQuickStockUpdate = async (id: string, currentStock: number, delta: number) => {
+    if (!can('inventario', 'editar')) return alert('No tienes permisos para ajustar el stock.');
     const newStock = Math.max(0, currentStock + delta);
     try {
       await updateInventarioStock(id, newStock);
@@ -308,6 +313,7 @@ export default function InventarioPage() {
   };
 
   const handleDelete = async (id: string, nombre: string) => {
+    if (!can('inventario', 'eliminar')) return alert('No tienes permisos para eliminar productos del inventario.');
     if (confirm(`¿Estás seguro de eliminar "${nombre}"?\n\nEl producto se enviará a la papelera y podrá ser restaurado por el administrador.`)) {
       try {
         await deleteInventarioItem(id, user?.nombre || 'Sistema');
@@ -345,9 +351,11 @@ export default function InventarioPage() {
           <Button variant="outline" size="sm" onClick={loadData} disabled={loading} className="gap-2">
             <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} /> Actualizar
           </Button>
-          <Button onClick={handleOpenAdd} className="gap-2 bg-primary hover:bg-primary/90 shadow-lg shadow-primary/20">
-            <Plus className="w-4 h-4" /> Nuevo Producto
-          </Button>
+          {can('inventario', 'crear') && (
+            <Button onClick={handleOpenAdd} className="gap-2 bg-primary hover:bg-primary/90 shadow-lg shadow-primary/20">
+              <Plus className="w-4 h-4" /> Nuevo Producto
+            </Button>
+          )}
         </div>
       </div>
 
@@ -623,13 +631,15 @@ export default function InventarioPage() {
                       <td className="px-6 py-4 text-center">
                         <div className="flex flex-col items-center gap-1">
                           <div className="flex items-center gap-2">
-                            <button 
-                              type="button"
-                              onClick={() => handleQuickStockUpdate(item.id, item.stock, -1)}
-                              className="w-6 h-6 rounded-full flex items-center justify-center bg-secondary hover:bg-secondary/80 border border-border/50 text-muted-foreground transition-colors"
-                            >
-                              -
-                            </button>
+                            {can('inventario', 'editar') && (
+                              <button 
+                                type="button"
+                                onClick={() => handleQuickStockUpdate(item.id, item.stock, -1)}
+                                className="w-6 h-6 rounded-full flex items-center justify-center bg-secondary hover:bg-secondary/80 border border-border/50 text-muted-foreground transition-colors"
+                              >
+                                -
+                              </button>
+                            )}
                             <span className={cn(
                               "text-xl font-bold px-3 py-1 rounded-xl shadow-sm min-w-[50px]",
                               item.stock <= 0 ? "bg-red-500/10 text-red-500" : 
@@ -638,13 +648,15 @@ export default function InventarioPage() {
                             )}>
                               {item.stock}
                             </span>
-                            <button 
-                              type="button"
-                              onClick={() => handleQuickStockUpdate(item.id, item.stock, 1)}
-                              className="w-6 h-6 rounded-full flex items-center justify-center bg-primary/10 hover:bg-primary/20 border border-primary/20 text-primary transition-colors"
-                            >
-                              +
-                            </button>
+                            {can('inventario', 'editar') && (
+                              <button 
+                                type="button"
+                                onClick={() => handleQuickStockUpdate(item.id, item.stock, 1)}
+                                className="w-6 h-6 rounded-full flex items-center justify-center bg-primary/10 hover:bg-primary/20 border border-primary/20 text-primary transition-colors"
+                              >
+                                +
+                              </button>
+                            )}
                           </div>
                           <span className="text-[9px] text-muted-foreground uppercase font-bold">Min: {item.stock_minimo} · {item.unidad || 'unidad'}</span>
                         </div>
@@ -682,22 +694,26 @@ export default function InventarioPage() {
                       </td>
                       <td className="px-4 py-4 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10 border border-transparent hover:border-primary/20" 
-                            onClick={() => handleOpenEdit(item)}
-                          >
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-8 w-8 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 border border-transparent hover:border-red-500/20" 
-                            onClick={() => handleDelete(item.id, item.nombre)}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {can('inventario', 'editar') && (
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10 border border-transparent hover:border-primary/20" 
+                              onClick={() => handleOpenEdit(item)}
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {can('inventario', 'eliminar') && (
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-8 w-8 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 border border-transparent hover:border-red-500/20" 
+                              onClick={() => handleDelete(item.id, item.nombre)}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </Reorder.Item>

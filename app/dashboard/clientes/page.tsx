@@ -19,11 +19,13 @@ import { es } from 'date-fns/locale';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
+import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 
 const COLORS = ['bg-blue-500/20 text-blue-400','bg-purple-500/20 text-purple-400','bg-green-500/20 text-green-400','bg-orange-500/20 text-orange-400','bg-pink-500/20 text-pink-400','bg-cyan-500/20 text-cyan-400'];
 
 export default function ClientesPage() {
   const { user } = useAppStore();
+  const { can } = useRolePermissions();
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -107,31 +109,43 @@ export default function ClientesPage() {
 
   const hasActiveFilters = search || dateFilter || monthFilter !== 'all' || sortBy !== 'recent';
 
-  const openNew = () => { setEditCliente(null); setForm({ nombre:'',apellido:'',email:'',telefono:'',cedula:'',direccion:'',notas:'' }); setShowModal(true); };
-  const openEdit = (c: Cliente) => { setEditCliente(c); setForm({ nombre:c.nombre,apellido:c.apellido,email:c.email,telefono:c.telefono,cedula:c.cedula||'',direccion:c.direccion||'',notas:c.notas||'' }); setShowModal(true); };
+  const openNew = () => { 
+    if (!can('clientes', 'crear')) return alert('No tienes permisos para crear clientes.');
+    setEditCliente(null); setForm({ nombre:'',apellido:'',email:'',telefono:'',cedula:'',direccion:'',notas:'' }); setShowModal(true); 
+  };
+  const openEdit = (c: Cliente) => { 
+    if (!can('clientes', 'editar')) return alert('No tienes permisos para editar clientes.');
+    setEditCliente(c); setForm({ nombre:c.nombre,apellido:c.apellido,email:c.email,telefono:c.telefono,cedula:c.cedula||'',direccion:c.direccion||'',notas:c.notas||'' }); setShowModal(true); 
+  };
 
   const handleSave = async () => {
     try {
+      const cleanForm = {
+        ...form,
+        nombre: form.nombre.trim() || 'Desconocido',
+        telefono: form.telefono.trim() || '00000000000',
+      };
+
       if (editCliente) {
-        await updateCliente(editCliente.id, form);
-        await syncClientData(editCliente.id, form.nombre, form.apellido, form.telefono);
+        await updateCliente(editCliente.id, cleanForm);
+        await syncClientData(editCliente.id, cleanForm.nombre, cleanForm.apellido, cleanForm.telefono);
         
         logActivity({
           usuario: user?.nombre || 'Sistema',
           modulo: 'Clientes',
           accion: 'Actualizó cliente',
-          detalles: `${form.nombre} ${form.apellido}`,
+          detalles: `${cleanForm.nombre} ${cleanForm.apellido}`,
           referencia_id: editCliente.id,
           referencia_tabla: 'clientes'
         });
       } else {
-        const result = await createCliente(form);
+        const result = await createCliente(cleanForm);
         if (result) {
           logActivity({
             usuario: user?.nombre || 'Sistema',
             modulo: 'Clientes',
             accion: 'Creó cliente',
-            detalles: `${form.nombre} ${form.apellido}`,
+            detalles: `${cleanForm.nombre} ${cleanForm.apellido}`,
             referencia_id: (result as any).id,
             referencia_tabla: 'clientes'
           });
@@ -145,6 +159,7 @@ export default function ClientesPage() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!can('clientes', 'eliminar')) return alert('No tienes permisos para eliminar clientes.');
     if (confirm('¿Estás seguro de eliminar este cliente? Se eliminarán también sus vehículos.')) {
       try {
         const cliente = clientes.find(c => c.id === id);
@@ -167,6 +182,7 @@ export default function ClientesPage() {
   };
 
   const openVehiculoNew = () => {
+    if (!can('vehiculos', 'crear')) return alert('No tienes permisos para crear vehículos.');
     if (!editCliente) return;
     setEditVehiculo(null);
     setVForm({ marca: '', modelo: '', anio: new Date().getFullYear(), color: '', placa: '' });
@@ -174,6 +190,7 @@ export default function ClientesPage() {
   };
 
   const openVehiculoEdit = (v: Vehiculo) => {
+    if (!can('vehiculos', 'editar')) return alert('No tienes permisos para editar vehículos.');
     setEditVehiculo(v);
     setVForm({ marca: v.marca, modelo: v.modelo, anio: v.anio, color: v.color || '', placa: v.placa });
     setShowVehiculoModal(true);
@@ -183,9 +200,17 @@ export default function ClientesPage() {
     if (!editCliente) return;
     try {
       if (editVehiculo) {
-        await updateVehiculo(editVehiculo.id, vForm);
+        await updateVehiculo(editVehiculo.id, {
+          ...vForm,
+          placa: vForm.placa ? vForm.placa.trim().toUpperCase() : 'SIN-PLACA'
+        });
       } else {
-        await createVehiculo({ ...vForm, cliente_id: editCliente.id });
+        await createVehiculo({ 
+          ...vForm, 
+          cliente_id: editCliente.id,
+          placa: vForm.placa ? vForm.placa.trim().toUpperCase() : 'SIN-PLACA',
+          estado: 'en_servicio' 
+        });
       }
       setShowVehiculoModal(false);
       loadData();
@@ -195,6 +220,7 @@ export default function ClientesPage() {
   };
 
   const handleDeleteVehiculo = async (id: string) => {
+    if (!can('vehiculos', 'eliminar')) return alert('No tienes permisos para eliminar vehículos.');
     if (confirm('¿Estás seguro de eliminar este vehículo?')) {
       try {
         await deleteVehiculo(id);
@@ -218,9 +244,11 @@ export default function ClientesPage() {
           <h1 className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Clientes</h1>
           <p className="text-sm text-muted-foreground mt-0.5">{clientes.length} clientes registrados</p>
         </div>
-        <Button onClick={openNew} className="gap-2 self-start sm:self-auto">
-          <Plus className="w-4 h-4" /> Nuevo Cliente
-        </Button>
+        {can('clientes', 'crear') && (
+          <Button onClick={openNew} className="gap-2 self-start sm:self-auto">
+            <Plus className="w-4 h-4" /> Nuevo Cliente
+          </Button>
+        )}
       </div>
 
       {/* Stats */}
@@ -371,12 +399,16 @@ export default function ClientesPage() {
                         <button onClick={() => setViewCliente(cliente)} className="w-6 h-6 rounded-md hover:bg-white/10 flex items-center justify-center transition-colors">
                           <Eye className="w-3.5 h-3.5 text-muted-foreground" />
                         </button>
-                        <button onClick={() => openEdit(cliente)} className="w-6 h-6 rounded-md hover:bg-white/10 flex items-center justify-center transition-colors">
-                          <Edit className="w-3.5 h-3.5 text-muted-foreground" />
-                        </button>
-                        <button onClick={() => handleDelete(cliente.id)} className="w-6 h-6 rounded-md hover:bg-red-500/10 flex items-center justify-center transition-colors">
-                          <Trash2 className="w-3.5 h-3.5 text-red-400" />
-                        </button>
+                        {can('clientes', 'editar') && (
+                          <button onClick={() => openEdit(cliente)} className="w-6 h-6 rounded-md hover:bg-white/10 flex items-center justify-center transition-colors">
+                            <Edit className="w-3.5 h-3.5 text-muted-foreground" />
+                          </button>
+                        )}
+                        {can('clientes', 'eliminar') && (
+                          <button onClick={() => handleDelete(cliente.id)} className="w-6 h-6 rounded-md hover:bg-red-500/10 flex items-center justify-center transition-colors">
+                            <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                          </button>
+                        )}
                       </div>
                     </div>
                     {cliente.cedula && <p className="text-[10px] text-muted-foreground">{cliente.cedula}</p>}

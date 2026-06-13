@@ -1,6 +1,6 @@
 'use client';
 import React, { useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
 import MobileBottomNav from '@/components/layout/MobileBottomNav';
@@ -8,7 +8,9 @@ import { useAppStore } from '@/lib/store';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ShieldAlert } from 'lucide-react';
+import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
+import { Permisos } from '@/types';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -16,6 +18,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { setAvailableSedes, setUserRole, setCurrentSede, currentSede } = useSedeStore();
   const [authLoading, setAuthLoading] = React.useState(true);
   const keepaliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  
+  const pathname = usePathname();
+  const { can } = useRolePermissions();
+  const [accessDenied, setAccessDenied] = React.useState(false);
 
   // En móvil (< 1024px), cerrar sidebar automáticamente al montar
   useEffect(() => {
@@ -182,6 +188,29 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       .catch(() => {});
   }, [setRoleDefaults]);
 
+  // Route Guard Effect
+  useEffect(() => {
+    if (authLoading) return;
+    
+    let requiredModule: keyof Permisos | null = null;
+    if (pathname.includes('/dashboard/clientes')) requiredModule = 'clientes';
+    else if (pathname.includes('/dashboard/vehiculos')) requiredModule = 'vehiculos';
+    else if (pathname.includes('/dashboard/servicios')) requiredModule = 'servicios';
+    else if (pathname.includes('/dashboard/taller')) requiredModule = 'taller';
+    else if (pathname.includes('/dashboard/agenda')) requiredModule = 'agenda';
+    else if (pathname.includes('/dashboard/whatsapp')) requiredModule = 'whatsapp';
+    else if (pathname.includes('/dashboard/inventario')) requiredModule = 'inventario';
+    else if (pathname.includes('/dashboard/ventas')) requiredModule = 'ventas';
+    else if (pathname.includes('/dashboard/ajustes/permisos') || pathname.includes('/dashboard/empleados')) requiredModule = 'empleados';
+    else if (pathname.includes('/dashboard/presupuestos')) requiredModule = 'presupuestos';
+
+    if (requiredModule && !can(requiredModule, 'leer')) {
+      setAccessDenied(true);
+    } else {
+      setAccessDenied(false);
+    }
+  }, [pathname, authLoading, can]);
+
   if (authLoading) {
     return (
       <div suppressHydrationWarning className="min-h-screen bg-background flex items-center justify-center">
@@ -206,7 +235,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* pb-20 en móvil para que el bottom nav no tape el contenido */}
         <main className="flex-1 p-4 md:p-6 pb-24 lg:pb-6">
           <div className="page-enter">
-            {children}
+            {accessDenied ? (
+              <div className="flex flex-col items-center justify-center min-h-[60vh] text-center space-y-4">
+                <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center border border-red-500/20">
+                  <ShieldAlert className="w-10 h-10 text-red-500" />
+                </div>
+                <h1 className="text-3xl font-bold">Acceso Denegado</h1>
+                <p className="text-muted-foreground max-w-md">
+                  Tu rol actual no tiene los permisos necesarios para visualizar este módulo. Si crees que se trata de un error, contacta con el administrador.
+                </p>
+                <button onClick={() => router.push('/dashboard')} className="mt-4 px-6 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 font-medium transition-colors">
+                  Volver al Inicio
+                </button>
+              </div>
+            ) : (
+              children
+            )}
           </div>
         </main>
         <footer className="hidden lg:flex px-6 py-3 border-t border-border/20 text-[10px] text-muted-foreground items-center justify-between">
