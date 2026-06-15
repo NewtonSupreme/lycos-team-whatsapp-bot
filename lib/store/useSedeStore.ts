@@ -7,15 +7,20 @@ export interface Sede {
   es_principal: boolean;
 }
 
+// Roles allowed to switch between sedes (supervisor-level access).
+// Only administrators and sede managers (gerente) may change the active sede;
+// everyone else is locked to their assigned sede for data isolation.
+const SEDE_SWITCH_ROLES = ['admin', 'gerente'] as const;
+
 interface SedeState {
   currentSede: Sede | null;
   availableSedes: Sede[];
-  userRole: 'admin' | 'gerente' | 'empleado' | null;
+  userRole: string | null;
   sedeRefreshKey: number;
   setCurrentSede: (sede: Sede) => void;
   setAvailableSedes: (sedes: Sede[]) => void;
-  setUserRole: (role: 'admin' | 'gerente' | 'empleado' | null) => void;
-  // Admin and Principal can view all
+  setUserRole: (role: string | null) => void;
+  // Only admin / gerente (supervisor) can view & switch all sedes
   canViewAll: () => boolean;
 }
 
@@ -31,10 +36,9 @@ export const useSedeStore = create<SedeState>()(
       setUserRole: (role) => set({ userRole: role }),
       canViewAll: () => {
         const state = get();
-        if (state.userRole === 'admin') return true;
-        // If they have access to a 'principal' sede, they might view all (optional logic)
-        if (state.availableSedes.some(s => s.es_principal)) return true;
-        return false;
+        // Strictly role-based: only admin and gerente (supervisor) can switch sedes.
+        // A regular employee/técnico stays locked to their assigned sede.
+        return SEDE_SWITCH_ROLES.includes(state.userRole as any);
       }
     }),
     {
