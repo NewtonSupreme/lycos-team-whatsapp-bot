@@ -9,7 +9,7 @@ import {
   TrendingUp
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase } from '@/lib/supabase';
+import { supabase, registrarFactura } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from "@/lib/store/useSedeStore";
@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button';
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
-import { cn } from '@/lib/utils';
+import { cn, getLocalISODate } from '@/lib/utils';
 
 // ── Types ─────────────────────────────────────────────────────
 interface CitaServicio {
@@ -208,7 +208,7 @@ export default function ServiciosPage() {
     const now = new Date();
     
     if (dateFilter === 'hoy') {
-      return citaDate.toISOString().split('T')[0] === now.toISOString().split('T')[0];
+      return citaDate.toISOString().split('T')[0] === getLocalISODate();
     }
     
     if (dateFilter === 'semana') {
@@ -995,7 +995,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           tipo_personalizado: isCustomServicio ? customServicio.trim() : null,
           descripcion: formData.descripcion || '',
           registrado_por: user?.nombre || 'Admin',
-          fecha: now.toISOString().split('T')[0],
+          fecha: getLocalISODate(),
           hora: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
           estado: 'pendiente',
           costo_estimado: parseFloat(formData.costo_estimado) || 0,
@@ -1608,9 +1608,10 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
   const [printMode, setPrintMode] = useState<'single' | 'dual' | 'diferente'>('dual');
   const [printSide, setPrintSide] = useState<'left' | 'right'>('left');
 
-  const handleDownload = () => {
+  const handleDownload = (correlativo?: string) => {
     const data1 = { 
       id: cita.id, 
+      correlativo,
       fecha: cita.fecha, 
       cliente: clientName, 
       vehiculo: vehicleStr, 
@@ -1654,8 +1655,8 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
     if (!supabase) return;
     try {
       setIsSaving(true);
-      const { error: ventaError } = await withSedeFilter(supabase.from('ventas_dia')).insert(withSedeInsert({
-        fecha: new Date().toISOString().split('T')[0],
+      const { data: ventaDia, error: ventaError } = await withSedeFilter(supabase.from('ventas_dia')).insert(withSedeInsert({
+        fecha: getLocalISODate(),
         cliente: clientName,
         total_ingresos: total,
         total_servicios: items.length,
@@ -1666,14 +1667,41 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
         con_iva: withIva,
         notas: cita.descripcion || 'Servicio de taller',
         creado_por: 'Admin'
-      }));
+      })).select().single();
       if (ventaError) throw ventaError;
 
       const { error: citaError } = await withSedeFilter(supabase.from('servicios')).update({ estado: 'completada' }).eq('id', cita.id);
       if (citaError) throw citaError;
 
+      let finalCorrelativo = undefined;
+      try {
+        const facturaRegistro = await registrarFactura({
+          tipo: 'servicio',
+          modulo_origen: 'servicios',
+          referencia_id: ventaDia?.id || cita.id,
+          referencia_tabla: 'ventas_dia',
+          cliente: clientName,
+          vehiculo: vehicleStr,
+          total: total,
+          moneda: 'USD',
+          tasa_cambio: rates.bcv || globalBcvRate || 518.0,
+          total_bs: totalVes,
+          items: items,
+          metodos_pago: payments,
+          con_iva: withIva,
+          estado: 'pagado',
+          notas: cita.descripcion || undefined,
+          emitido_por: useAppStore.getState().user?.nombre || 'Admin',
+          fecha_emision: getLocalISODate(),
+          sede_id: useSedeStore.getState().currentSede?.id || undefined,
+        });
+        if (facturaRegistro?.correlativo) finalCorrelativo = facturaRegistro.correlativo;
+      } catch (e) {
+        console.error('Error registering centralized factura:', e);
+      }
+
       logActivity({ usuario: useAppStore.getState().user?.nombre || 'Admin', modulo: 'Servicios', accion: 'Venta Finalizada', detalles: `Venta para ${clientName} por $${total.toFixed(2)}` });
-      handleDownload();
+      handleDownload(finalCorrelativo);
       alert('¡Entrega procesada con éxito!');
       onClose();
       const btn = document.getElementById('refresh-btn');
@@ -1771,7 +1799,7 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
             )}
 
             <button 
-              onClick={handleDownload}
+              onClick={() => handleDownload()}
               className="p-2 sm:p-3 rounded-xl bg-orange-500 text-white hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20 border border-orange-400/20"
               title="Descargar Nota"
             >

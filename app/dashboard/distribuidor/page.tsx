@@ -7,7 +7,7 @@ import {
   Download, Eye, Clock, CheckCircle2, Loader2, ArrowRight,
   BoxSelect, ShieldAlert, Boxes, BadgeCheck, Filter
 } from 'lucide-react';
-import { supabase, fetchInventario, createDistribucion, fetchDistribuciones, generateNumeroNota, updateDistribucionEstado } from '@/lib/supabase';
+import { supabase, fetchInventario, createDistribucion, fetchDistribuciones, generateNumeroNota, updateDistribucionEstado, registrarFactura } from '@/lib/supabase';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { logActivity } from '@/lib/activity';
@@ -197,6 +197,32 @@ function NuevaDistribucionWizard({
       });
 
       if (!result) throw new Error('No se pudo crear la distribución');
+
+      try {
+        await registrarFactura({
+          tipo: 'nota_entrega',
+          modulo_origen: 'distribuidor',
+          referencia_id: (result as any).id,
+          referencia_tabla: 'distribuciones',
+          cliente: sedeDestino.nombre,
+          total: valorTotal,
+          moneda: 'USD',
+          items: selectedItems.map(i => ({
+            descripcion: i.nombre,
+            cantidad: i.cantidad,
+            precio_unitario: i.precio_usd,
+            total: i.cantidad * i.precio_usd
+          })),
+          con_iva: false,
+          estado: 'pagado',
+          notas: observaciones || undefined,
+          emitido_por: responsable,
+          fecha_emision: fecha,
+          sede_id: currentSede.id,
+        });
+      } catch (err) {
+        console.error('Error registering centralized factura from distribuidor:', err);
+      }
 
       await logActivity({
         usuario: userName,

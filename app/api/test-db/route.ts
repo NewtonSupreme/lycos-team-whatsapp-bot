@@ -6,6 +6,7 @@ export async function GET() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const sb = createClient(url!, serviceKey!);
 
-  const { data, error } = await sb.from('usuarios').select('*').limit(1);
-  return NextResponse.json({ data, error });
+  const { data: v } = await sb.from('ventas_dia').select('*').ilike('cliente', '%rafael%').order('created_at', { ascending: false }).limit(5);
+  const { data: f } = await sb.from('facturas').select('*').ilike('cliente', '%rafael%').order('created_at', { ascending: false }).limit(5);
+  return NextResponse.json({ v, f });
 }

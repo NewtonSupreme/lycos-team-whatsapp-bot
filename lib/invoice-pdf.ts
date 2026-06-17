@@ -3,6 +3,7 @@ import autoTable from 'jspdf-autotable';
 
 interface InvoiceData {
   id?: string;
+  correlativo?: string;
   fecha: string;
   cliente?: string;
   vehiculo?: string;
@@ -75,7 +76,7 @@ export const generateInvoicePDF = (
     
     doc.setTextColor(...black);
     doc.setFontSize(14);
-    doc.text(`${data.id?.slice(0, 8).toUpperCase() || 'TEMP-' + Date.now().toString().slice(-6)}`, rightAlign, 27, { align: 'right' });
+    doc.text(`${data.correlativo || data.id?.slice(0, 8).toUpperCase() || 'BORRADOR'}`, rightAlign, 27, { align: 'right' });
     
     doc.setTextColor(...grayDark);
     doc.setFontSize(9);

@@ -11,7 +11,7 @@ import {
   FileText, Car, User, DollarSign, Info, Calculator, Clock,
   Coins, Smartphone, Repeat, RefreshCw, Bot
 } from 'lucide-react';
-import { supabase, updateInventarioStock } from '@/lib/supabase';
+import { supabase, updateInventarioStock, registrarFactura } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
@@ -544,7 +544,7 @@ export default function VentasPage() {
         return sum + (item.cantidad * base);
       }, 0) * (conIva ? 1.16 : 1);
 
-      const data1 = {
+      const data1: any = {
         id: ventaDia.id,
         fecha: format(selectedDate, 'dd/MM/yyyy'),
         cliente: clienteNombre || 'Consumidor Final',
@@ -596,6 +596,40 @@ export default function VentasPage() {
       }
 
       generateInvoicePDF(dataList, { mode: printMode, side: printSide, currencyMode: resolvedCurrencyMode as any });
+
+      // Register in centralized facturas table
+      try {
+        const facturaRegistro = await registrarFactura({
+          tipo: 'venta',
+          modulo_origen: 'silenciadores',
+          referencia_id: ventaDia.id,
+          referencia_tabla: 'ventas_dia',
+          cliente: clienteNombre || 'Consumidor Final',
+          vehiculo: vehiculoInfo || undefined,
+          total: total,
+          moneda: 'USD',
+          tasa_cambio: activeRate,
+          total_bs: total * activeRate,
+          items: cart.map(item => ({
+            descripcion: item.nombre,
+            cantidad: item.cantidad,
+            precio_unitario: item.precio_unitario,
+            total: item.total
+          })),
+          metodos_pago: metodosPago,
+          con_iva: conIva,
+          estado: estadoVenta as 'pagado' | 'pendiente',
+          notas: notas || undefined,
+          emitido_por: 'Admin',
+          fecha_emision: format(selectedDate, 'yyyy-MM-dd'),
+          sede_id: currentSede?.id || undefined,
+        });
+        if (facturaRegistro?.correlativo) {
+          data1.correlativo = facturaRegistro.correlativo;
+        }
+      } catch (facErr) {
+        console.error('Error registrando factura centralizada:', facErr);
+      }
 
       setCart([]);
       setClienteNombre('');
@@ -966,7 +1000,7 @@ export default function VentasPage() {
                         <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
                           <span className="flex items-center gap-1">
                             <Calendar className="w-3 h-3" />
-                            {vFecha ? new Date(vFecha).toLocaleDateString('es-VE') : new Date(v.created_at).toLocaleDateString('es-VE')}
+                            {vFecha ? new Date(vFecha.includes('T') ? vFecha : vFecha + 'T12:00:00').toLocaleDateString('es-VE') : new Date(v.created_at).toLocaleDateString('es-VE')}
                           </span>
                           <span className="flex items-center gap-1">
                             <DollarSign className="w-3 h-3" />
@@ -1200,7 +1234,7 @@ export default function VentasPage() {
                       <span className="text-sm font-black text-foreground uppercase group-hover:text-primary transition-colors tracking-tight">{v.cliente || 'Consumidor Final'}</span>
                       <div className="flex items-center gap-2 mt-0.5 opacity-60">
                         <span className="text-[10px] font-bold flex items-center gap-1">
-                          <Calendar className="w-3 h-3" /> {v.displayDate ? new Date(v.displayDate).toLocaleDateString() : new Date(v.created_at).toLocaleDateString()}
+                          <Calendar className="w-3 h-3" /> {v.displayDate ? new Date(v.displayDate.includes('T') ? v.displayDate : v.displayDate + 'T12:00:00').toLocaleDateString('es-VE') : new Date(v.created_at).toLocaleDateString('es-VE')}
                         </span>
                         {v.isAtrasado && (
                           <Badge className="bg-orange-500 text-white border-none text-[7px] font-black h-3.5 px-1 animate-pulse">
@@ -2067,7 +2101,7 @@ export default function VentasPage() {
                       )}
                       {selectedSale.fecha && (
                         <p className="text-[9px] font-bold text-muted-foreground">
-                          Venta del: {new Date(selectedSale.fecha).toLocaleDateString('es-VE')}
+                          Venta del: {new Date(selectedSale.fecha.includes('T') ? selectedSale.fecha : selectedSale.fecha + 'T12:00:00').toLocaleDateString('es-VE')}
                         </p>
                       )}
                       {selectedSale.fecha_registro && (

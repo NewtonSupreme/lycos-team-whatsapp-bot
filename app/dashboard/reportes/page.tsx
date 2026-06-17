@@ -24,7 +24,7 @@ import {
   AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from 'recharts';
-import { supabase } from '@/lib/supabase';
+import { supabase, registrarFactura } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
 import { cn } from '@/lib/utils';
 import { generateInvoicePDF, generateEgresoPDF } from '@/lib/invoice-pdf';
@@ -2432,8 +2432,37 @@ export default function ReportesPage() {
         referencia_tabla: editando.source === 'ia' ? 'ventas_silenciadores' : 'ventas_dia'
       });
     } else {
-      await withSedeFilter(supabase.from('ventas_dia')).insert(withSedeInsert({ ...payload, creado_por: 'Admin' }));
+      const { data: nuevaVenta } = await withSedeFilter(supabase.from('ventas_dia'))
+        .insert(withSedeInsert({ ...payload, creado_por: 'Admin' }))
+        .select()
+        .single();
       
+      try {
+        if (nuevaVenta) {
+          await registrarFactura({
+            tipo: 'venta',
+            modulo_origen: 'reportes',
+            referencia_id: nuevaVenta.id,
+            referencia_tabla: 'ventas_dia',
+            cliente: data.cliente || 'Consumidor Final',
+            total: Number(data.total_ingresos),
+            moneda: 'USD',
+            tasa_cambio: data.tasa_cambio,
+            total_bs: Number(data.total_ingresos) * (data.tasa_cambio || 518),
+            items: data.desglose || [],
+            metodos_pago: data.metodos_pago,
+            con_iva: data.con_iva || false,
+            estado: 'pagado',
+            notas: data.notas || undefined,
+            emitido_por: useAppStore.getState().user?.nombre || 'Admin',
+            fecha_emision: data.fecha || new Date().toISOString().split('T')[0],
+            sede_id: useSedeStore.getState().currentSede?.id || undefined,
+          });
+        }
+      } catch (err) {
+        console.error('Error registering centralized factura from reportes:', err);
+      }
+
       // Log Activity
       await logActivity({
         usuario: useAppStore.getState().user?.nombre || 'Admin',

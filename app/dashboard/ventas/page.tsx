@@ -7,7 +7,7 @@ import {
   TrendingUp, Calendar, ArrowRight, Printer, UserPlus, X,
   ChevronDown, DollarSign, CreditCard, Clock, FileText
 } from 'lucide-react';
-import { supabase, updateInventarioStock } from '@/lib/supabase';
+import { supabase, updateInventarioStock, registrarFactura } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
@@ -230,7 +230,7 @@ export default function VentasPage() {
       }
 
       // 4. Print PDF (Optional but recommended)
-      const data1 = {
+      const data1: any = {
         id: ventaDia.id,
         fecha: format(selectedDate, 'dd/MM/yyyy'),
         cliente: clienteNombre || 'Consumidor Final',
@@ -269,7 +269,43 @@ export default function VentasPage() {
 
       generateInvoicePDF(dataList, { mode: printMode, side: printSide });
 
-      // 5. Success and Reset
+      // 5. Register in centralized facturas table
+      try {
+        const facturaRegistro = await registrarFactura({
+          tipo: 'venta',
+          modulo_origen: 'ventas_pos',
+          referencia_id: ventaDia.id,
+          referencia_tabla: 'ventas_dia',
+          cliente: clienteNombre || 'Consumidor Final',
+          vehiculo: vehiculoInfo || undefined,
+          total: totalConIva,
+          moneda: 'USD',
+          tasa_cambio: rates.bcv,
+          total_bs: totalConIva * rates.bcv,
+          items: cart.map(item => ({
+            descripcion: item.nombre,
+            cantidad: item.cantidad,
+            precio_unitario: item.precio_unitario,
+            total: item.total
+          })),
+          metodos_pago: metodosPago,
+          con_iva: conIva,
+          estado: estadoVenta as 'pagado' | 'pendiente',
+          notas: notas || undefined,
+          emitido_por: 'Admin',
+          fecha_emision: format(selectedDate, 'yyyy-MM-dd'),
+          sede_id: currentSede?.id || undefined,
+        });
+        // Update PDF data with correlativo for next prints
+        if (facturaRegistro?.correlativo) {
+          data1.correlativo = facturaRegistro.correlativo;
+        }
+      } catch (facErr) {
+        console.error('Error registrando factura centralizada:', facErr);
+        // Non-blocking: sale was already saved
+      }
+
+      // 6. Success and Reset
       const abonoMsg = tieneAbono
         ? ` Abono: $${abonoAmount.toFixed(2)} | Saldo pendiente: $${saldoRestante.toFixed(2)}. La factura quedó en estado PENDIENTE POR PAGAR.`
         : '';

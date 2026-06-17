@@ -9,6 +9,11 @@ export function formatCurrency(amount: number, currency = '$') {
   return `${currency}${amount.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+export function getLocalISODate(date?: Date) {
+  const d = date || new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+}
+
 export function formatDate(date: string | Date, options?: Intl.DateTimeFormatOptions) {
   return new Intl.DateTimeFormat('es-VE', {
     day: '2-digit',

@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'; // test
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { Vehiculo, InventarioItem } from '@/types';
+import { getLocalISODate } from '@/lib/utils';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -404,7 +405,7 @@ export async function fetchDashboardStats() {
     withSedeFilter(supabase.from('vehiculos')).select('*', { count: 'exact', head: true }),
     withSedeFilter(supabase.from('servicios')).select('*', { count: 'exact', head: true }).in('estado', ['pendiente', 'en_proceso']),
     withSedeFilter(supabase.from('mensajes_whatsapp')).select('*', { count: 'exact', head: true })
-      .gte('created_at', new Date().toISOString().split('T')[0]),
+      .gte('created_at', getLocalISODate()),
   ]);
   return { totalClientes, totalVehiculos, serviciosActivos, conversacionesHoy };
 }
@@ -676,6 +677,215 @@ export async function updateDistribucionEstado(
   const { data, error } = await supabase
     .from('distribuciones')
     .update({ estado, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+// ─── Facturas (Sistema Centralizado) ────────────────────────────────────────
+
+/**
+ * Genera el siguiente número correlativo de factura
+ * en formato FAC-YYYY-XXXX
+ */
+export async function generateCorrelativoFactura(): Promise<string> {
+  if (!supabase) {
+    const anio = new Date().getFullYear();
+    return `FAC-${anio}-${String(Date.now()).slice(-4)}`;
+  }
+  try {
+    const { data, error } = await supabase.rpc('generar_correlativo_factura');
+    if (error || !data) {
+      // Fallback: count existing + 1
+      const anio = new Date().getFullYear();
+      const { count } = await supabase
+        .from('facturas')
+        .select('*', { count: 'exact', head: true })
+        .like('correlativo', `FAC-${anio}-%`);
+      const correlativo = ((count || 0) + 1);
+      return `FAC-${anio}-${String(correlativo).padStart(4, '0')}`;
+    }
+    return data as string;
+  } catch {
+    const anio = new Date().getFullYear();
+    const rand = Math.floor(Math.random() * 9000) + 1000;
+    return `FAC-${anio}-${rand}`;
+  }
+}
+
+/**
+ * Registra una factura en la tabla centralizada con correlativo auto-generado
+ */
+export async function registrarFactura(factura: {
+  tipo: 'venta' | 'servicio' | 'nota_entrega' | 'presupuesto' | 'egreso' | 'cierre';
+  modulo_origen: 'ventas_pos' | 'silenciadores' | 'servicios' | 'reportes' | 'presupuestos' | 'distribuidor';
+  referencia_id?: string;
+  referencia_tabla?: string;
+  cliente: string;
+  vehiculo?: string;
+  total: number;
+  moneda?: string;
+  tasa_cambio?: number;
+  total_bs?: number;
+  items?: any[];
+  metodos_pago?: any;
+  con_iva?: boolean;
+  estado?: 'pagado' | 'pendiente' | 'anulado';
+  notas?: string;
+  emitido_por?: string;
+  fecha_emision?: string;
+  sede_id?: string | null;
+}) {
+  if (!supabase) return null;
+
+  const correlativo = await generateCorrelativoFactura();
+
+  const insertData = {
+    correlativo,
+    tipo: factura.tipo,
+    modulo_origen: factura.modulo_origen,
+    referencia_id: factura.referencia_id || null,
+    referencia_tabla: factura.referencia_tabla || null,
+    cliente: factura.cliente || 'Consumidor Final',
+    vehiculo: factura.vehiculo || null,
+    total: factura.total,
+    moneda: factura.moneda || 'USD',
+    tasa_cambio: factura.tasa_cambio || null,
+    total_bs: factura.total_bs || null,
+    items: factura.items || [],
+    metodos_pago: factura.metodos_pago || null,
+    con_iva: factura.con_iva || false,
+    estado: factura.estado || 'pagado',
+    notas: factura.notas || null,
+    emitido_por: factura.emitido_por || 'Admin',
+    fecha_emision: factura.fecha_emision || getLocalISODate(),
+    sede_id: factura.sede_id || null,
+  };
+
+  const { data, error } = await supabase
+    .from('facturas')
+    .insert(insertData)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error registrando factura:', error);
+    throw error;
+  }
+  return data;
+}
+
+export interface FiltrosFactura {
+  correlativo?: string;
+  tipo?: string;
+  modulo_origen?: string;
+  cliente?: string;
+  estado?: string;
+  fecha_desde?: string;
+  fecha_hasta?: string;
+  monto_min?: number;
+  monto_max?: number;
+  sede_id?: string;
+  busqueda?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * Consulta facturas con filtros dinámicos
+ */
+export async function fetchFacturas(filtros: FiltrosFactura = {}) {
+  if (!supabase) return { data: [], count: 0 };
+
+  let query = supabase
+    .from('facturas')
+    .select('*', { count: 'exact' });
+
+  // Filtro por sede
+  if (filtros.sede_id) {
+    query = query.eq('sede_id', filtros.sede_id);
+  }
+
+  // Filtro por correlativo (búsqueda parcial)
+  if (filtros.correlativo) {
+    query = query.ilike('correlativo', `%${filtros.correlativo}%`);
+  }
+
+  // Filtro por tipo
+  if (filtros.tipo) {
+    query = query.eq('tipo', filtros.tipo);
+  }
+
+  // Filtro por módulo origen
+  if (filtros.modulo_origen) {
+    query = query.eq('modulo_origen', filtros.modulo_origen);
+  }
+
+  // Filtro por cliente (búsqueda parcial)
+  if (filtros.cliente) {
+    query = query.ilike('cliente', `%${filtros.cliente}%`);
+  }
+
+  // Filtro por estado
+  if (filtros.estado) {
+    query = query.eq('estado', filtros.estado);
+  }
+
+  // Filtro por rango de fecha
+  if (filtros.fecha_desde) {
+    query = query.gte('fecha_emision', filtros.fecha_desde);
+  }
+  if (filtros.fecha_hasta) {
+    query = query.lte('fecha_emision', filtros.fecha_hasta);
+  }
+
+  // Filtro por rango de monto
+  if (filtros.monto_min !== undefined) {
+    query = query.gte('total', filtros.monto_min);
+  }
+  if (filtros.monto_max !== undefined) {
+    query = query.lte('total', filtros.monto_max);
+  }
+
+  // Búsqueda general (correlativo, cliente, notas)
+  if (filtros.busqueda) {
+    query = query.or(
+      `correlativo.ilike.%${filtros.busqueda}%,cliente.ilike.%${filtros.busqueda}%,notas.ilike.%${filtros.busqueda}%`
+    );
+  }
+
+  // Ordenar por fecha más reciente
+  query = query.order('created_at', { ascending: false });
+
+  // Paginación
+  const limit = filtros.limit || 50;
+  const offset = filtros.offset || 0;
+  query = query.range(offset, offset + limit - 1);
+
+  const { data, error, count } = await query;
+
+  if (error) {
+    if (error.code === '42P01' || error.message?.includes('Could not find the table')) {
+      console.warn('La tabla facturas no existe aún. Debes ejecutar la migración 003_facturas.sql');
+      return { data: [], count: 0, missingTable: true };
+    }
+    console.error('Error fetching facturas Details:', error.message, error.details, error.hint, error);
+    throw error;
+  }
+
+  return { data: data || [], count: count || 0, missingTable: false };
+}
+
+/**
+ * Anula una factura (marca como anulado)
+ */
+export async function anularFactura(id: string) {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('facturas')
+    .update({ estado: 'anulado', updated_at: new Date().toISOString() })
     .eq('id', id)
     .select()
     .single();
