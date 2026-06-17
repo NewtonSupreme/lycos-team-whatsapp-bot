@@ -58,6 +58,41 @@ const SERVICIO_LABELS: Record<string, string> = {
 };
 
 // ── Main Component ───────────────────────────────────────────
+// Helper para formatear nombre de cliente y omitir "WHATSAPP" o "ADMIN IA"
+const getDisplayName = (cita: any) => {
+  const relName = cita.vehiculos?.clientes 
+    ? `${cita.vehiculos.clientes.nombre} ${cita.vehiculos.clientes.apellido}`.trim() 
+    : '';
+  
+  let raw = relName;
+  if (cita.nombre_cliente && cita.nombre_cliente.trim() !== relName && cita.nombre_cliente.trim() !== '') {
+     raw = cita.nombre_cliente;
+  }
+  
+  if (!raw) return 'NO DEFINIDO';
+  const upper = raw.toUpperCase();
+  if (upper.includes('WHATSAPP') || upper.includes('ADMIN IA')) return 'NO DEFINIDO';
+  return raw;
+};
+
+const getDisplayVehicle = (cita: any) => {
+  const relVeh = cita.vehiculos ? `${cita.vehiculos.marca} ${cita.vehiculos.modelo}`.trim() : '';
+  let raw = relVeh;
+  if (cita.vehiculo_info && cita.vehiculo_info.trim() !== relVeh && cita.vehiculo_info.trim() !== '') {
+    raw = cita.vehiculo_info;
+  }
+  return raw || '—';
+};
+
+const getDisplayPlaca = (cita: any) => {
+  const relPlaca = cita.vehiculos?.placa || '';
+  let raw = relPlaca;
+  if (cita.placa && cita.placa.trim() !== relPlaca && cita.placa.trim() !== '') {
+    raw = cita.placa;
+  }
+  return raw || 'S/P';
+};
+
 export default function ServiciosPage() {
   const { user } = useAppStore();
   const { currentSede } = useSedeStore();
@@ -179,7 +214,7 @@ export default function ServiciosPage() {
       
       setCitas(prev => prev.map(c => c.id === id ? { ...c, estado: nuevoEstado, seguimiento: newSeguimiento } : c));
       
-      const clienteObj = cita.vehiculos?.clientes ? `${cita.vehiculos?.clientes.nombre} ${cita.vehiculos?.clientes.apellido}` : (cita.nombre_cliente || 'Cliente');
+      const clienteObj = getDisplayName(cita) || 'Cliente';
       const sedeName = 'Carrizal (Principal)';
       
       logActivity({
@@ -195,7 +230,7 @@ export default function ServiciosPage() {
 
   const filtered = citas.filter(c => {
     // 1. Filtro de Texto
-    const cliente = c.vehiculos?.clientes ? `${c.vehiculos?.clientes.nombre} ${c.vehiculos?.clientes.apellido}` : c.nombre_cliente || '';
+    const cliente = getDisplayName(c);
     const vehiculo = c.vehiculos ? `${c.vehiculos.marca} ${c.vehiculos.modelo}` : c.vehiculo_info || '';
     const txt = `${cliente} ${vehiculo} ${c.placa} ${c.descripcion}`.toLowerCase();
     const matchText = search === '' || txt.includes(search.toLowerCase());
@@ -231,8 +266,8 @@ export default function ServiciosPage() {
     
     const selectedCitas = citas.filter(c => selectedForDual.includes(c.id));
     const dataList = selectedCitas.map(cita => {
-      const clientName = cita.vehiculos?.clientes ? `${cita.vehiculos?.clientes.nombre} ${cita.vehiculos?.clientes.apellido}` : cita.nombre_cliente || 'CONSUMIDOR FINAL';
-      const vehicleStr = cita.vehiculos ? `${cita.vehiculos.marca} ${cita.vehiculos.modelo}` : cita.vehiculo_info || '---';
+      const clientName = getDisplayName(cita) || 'CONSUMIDOR FINAL';
+      const vehicleStr = getDisplayVehicle(cita);
       
       return {
         id: cita.id,
@@ -575,10 +610,10 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onMove, is
       <div className="flex justify-between items-start mb-4 pl-8">
         <div>
           <h4 className="text-sm font-bold text-foreground group-hover:text-primary transition-colors uppercase tracking-tight">
-            {cita.vehiculos?.clientes ? `${cita.vehiculos?.clientes.nombre} ${cita.vehiculos?.clientes.apellido}` : cita.nombre_cliente}
+            {getDisplayName(cita)}
           </h4>
           <p className="text-[10px] text-muted-foreground font-medium mt-0.5 flex items-center gap-1 uppercase tracking-widest">
-            <Car className="w-3 h-3" /> {cita.vehiculos ? `${cita.vehiculos.marca} ${cita.vehiculos.modelo}` : cita.vehiculo_info}
+            <Car className="w-3 h-3" /> {getDisplayVehicle(cita)}
           </p>
         </div>
         <div className="flex gap-1">
@@ -602,7 +637,7 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onMove, is
             </span>
           </div>
           <span className="text-[10px] font-mono font-black text-slate-400 bg-white/5 px-2 py-0.5 rounded-md border border-white/5">
-            {cita.vehiculos?.placa || cita.placa}
+            {getDisplayPlaca(cita)}
           </span>
         </div>
 
@@ -627,10 +662,13 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onMove, is
 
         {/* Registrado por */}
         {cita.registrado_por && (
-          <div className="pt-1">
-            <p className="text-[9px] text-muted-foreground/50 font-medium">
-              Registrado por: <span className="text-foreground/60">{cita.registrado_por}</span>
-            </p>
+          <div className="pt-2 border-t border-white/5 mt-2">
+            <div className="flex items-center gap-1.5 p-1.5 bg-primary/10 rounded-md border border-primary/20 w-fit">
+              <User className="w-3 h-3 text-primary" />
+              <p className="text-[10px] text-primary/80 font-bold uppercase tracking-wider">
+                Registrado por: <span className="text-primary font-black ml-1">{cita.registrado_por}</span>
+              </p>
+            </div>
           </div>
         )}
       </div>
@@ -684,7 +722,7 @@ function ListView({ items, onEdit, onDelete, onTracking, onInvoice }: any) {
                     </div>
                     <div>
                       <p className="text-sm font-bold text-foreground">
-                        {cita.vehiculos?.clientes ? `${cita.vehiculos?.clientes.nombre} ${cita.vehiculos?.clientes.apellido}` : cita.nombre_cliente}
+                        {getDisplayName(cita)}
                       </p>
                       <p className="text-[10px] text-muted-foreground">{cita.tipo_personalizado || SERVICIO_LABELS[cita.tipo] || cita.tipo}</p>
                     </div>
@@ -692,9 +730,9 @@ function ListView({ items, onEdit, onDelete, onTracking, onInvoice }: any) {
                 </td>
                 <td className="px-6 py-4">
                   <p className="text-xs text-foreground/80 font-medium">
-                    {cita.vehiculos ? `${cita.vehiculos.marca} ${cita.vehiculos.modelo}` : cita.vehiculo_info}
+                    {getDisplayVehicle(cita)}
                   </p>
-                  <p className="text-[10px] font-mono text-muted-foreground">{cita.vehiculos?.placa || cita.placa}</p>
+                  <p className="text-[10px] font-mono text-muted-foreground">{getDisplayPlaca(cita)}</p>
                 </td>
                 <td className="px-6 py-4">
                   <span className={cn("text-[9px] px-2 py-0.5 rounded-full font-black uppercase border", cfg.bg, cfg.color)}>
@@ -1346,76 +1384,76 @@ function TrackingModal({ cita, onClose }: { cita: CitaServicio; onClose: () => v
   };
 
   return (
-    <div className="fixed inset-0 z-[110] grid place-items-center bg-black/90 backdrop-blur-2xl p-0 sm:p-4">
-      <div className="bg-[#0a0a0a] border border-white/5 w-full max-w-5xl h-full sm:h-[85vh] shadow-[0_0_80px_rgba(0,0,0,1)] flex flex-col overflow-hidden sm:rounded-[40px]">
+    <div className="fixed inset-0 z-[110] grid place-items-center bg-black/60 backdrop-blur-md p-0 sm:p-4">
+      <div className="bg-card border border-border w-full max-w-5xl h-full sm:h-[90vh] shadow-2xl flex flex-col overflow-hidden sm:rounded-[32px]">
         
         {/* Lycos Premium Header */}
-        <div className="p-8 border-b border-white/5 bg-gradient-to-r from-[#f59e0b]/10 via-transparent to-transparent flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <div className="w-16 h-16 rounded-[24px] bg-gradient-to-br from-[#f59e0b] to-[#ea580c] flex items-center justify-center shadow-[0_0_30px_rgba(245,158,11,0.3)]">
-              <Activity className="w-8 h-8 text-black" />
+        <div className="p-6 sm:p-8 border-b border-border bg-gradient-to-r from-primary/10 via-transparent to-transparent flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-4 sm:gap-6">
+            <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-[20px] sm:rounded-[24px] bg-primary/20 flex items-center justify-center border border-primary/30 shrink-0 shadow-[0_0_20px_rgba(var(--primary),0.2)]">
+              <Activity className="w-6 h-6 sm:w-8 sm:h-8 text-primary" />
             </div>
             <div>
-              <h3 className="text-2xl font-black text-white tracking-tighter uppercase italic" style={{ fontFamily: 'Syne, sans-serif' }}>
+              <h3 className="text-xl sm:text-2xl font-black text-foreground tracking-tighter uppercase italic" style={{ fontFamily: 'Syne, sans-serif' }}>
                 Bitácora de Servicio
               </h3>
-              <div className="flex items-center gap-3 mt-1">
-                <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded-md font-mono text-muted-foreground uppercase tracking-widest border border-white/5">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3 mt-1">
+                <span className="text-[9px] sm:text-[10px] bg-muted/50 px-2 py-0.5 rounded-md font-mono text-muted-foreground uppercase tracking-widest border border-border w-fit">
                   ID: {cita.id.slice(0,8)}
                 </span>
-                <span className="text-[10px] text-[#f59e0b] font-black uppercase tracking-widest">
+                <span className="text-[9px] sm:text-[10px] text-primary font-black uppercase tracking-widest line-clamp-1">
                   {cita.vehiculos ? `${cita.vehiculos.marca} ${cita.vehiculos.modelo}` : cita.vehiculo_info} · {cita.vehiculos?.placa || cita.placa}
                 </span>
               </div>
             </div>
           </div>
-          <button onClick={onClose} className="w-14 h-14 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all group">
-            <X className="w-6 h-6 text-muted-foreground group-hover:text-white transition-colors" />
+          <button onClick={onClose} className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-muted hover:bg-muted/80 flex items-center justify-center transition-all group shrink-0">
+            <X className="w-5 h-5 sm:w-6 sm:h-6 text-muted-foreground group-hover:text-foreground transition-colors" />
           </button>
         </div>
         
         <div className="flex-1 overflow-hidden flex flex-col lg:flex-row">
           
           {/* Timeline Panel - Left */}
-          <div className="flex-1 p-8 overflow-y-auto custom-scrollbar bg-gradient-to-b from-transparent to-white/[0.01]">
+          <div className="flex-1 p-4 sm:p-8 overflow-y-auto custom-scrollbar bg-gradient-to-b from-transparent to-muted/10">
              <div className="max-w-2xl mx-auto space-y-8">
                 {(cita.seguimiento || []).length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-24 text-center opacity-20">
-                    <div className="w-20 h-20 rounded-full border-2 border-dashed border-white flex items-center justify-center mb-6">
-                      <Clock className="w-10 h-10" />
+                  <div className="flex flex-col items-center justify-center py-24 text-center opacity-40">
+                    <div className="w-20 h-20 rounded-full border-2 border-dashed border-border flex items-center justify-center mb-6">
+                      <Clock className="w-10 h-10 text-muted-foreground" />
                     </div>
-                    <p className="text-xs font-black uppercase tracking-[0.4em]">Sin registros aún</p>
+                    <p className="text-xs font-black uppercase tracking-[0.4em] text-muted-foreground">Sin registros aún</p>
                   </div>
                 ) : (
-                  <div className="relative pl-10 space-y-12 before:absolute before:left-[19px] before:top-2 before:bottom-2 before:w-[3px] before:bg-gradient-to-b before:from-[#f59e0b] before:via-white/10 before:to-transparent">
+                  <div className="relative pl-8 sm:pl-10 space-y-8 sm:space-y-12 before:absolute before:left-[15px] sm:before:left-[19px] before:top-2 before:bottom-2 before:w-[3px] before:bg-gradient-to-b before:from-primary before:via-border before:to-transparent">
                     {(cita.seguimiento || []).slice().reverse().map((entry, i) => {
                       const cat = CATEGORIES[entry.tipo] || CATEGORIES.nota;
                       const CatIcon = cat.icon;
                       return (
                         <div key={i} className="relative group animate-in fade-in slide-in-from-bottom-4 duration-700">
-                          <div className="absolute -left-[45px] top-1 w-12 h-12 rounded-[18px] bg-[#0a0a0a] border-4 border-white/5 flex items-center justify-center z-10 shadow-2xl transition-transform group-hover:scale-110 group-hover:border-[#f59e0b]/30">
-                            <CatIcon className={cn("w-5 h-5", cat.color)} />
+                          <div className="absolute -left-[39px] sm:-left-[45px] top-1 w-10 h-10 sm:w-12 sm:h-12 rounded-[16px] sm:rounded-[18px] bg-card border-4 border-background flex items-center justify-center z-10 shadow-lg transition-transform group-hover:scale-110 group-hover:border-primary/30">
+                            <CatIcon className={cn("w-4 h-4 sm:w-5 sm:h-5", cat.color)} />
                           </div>
                           
-                          <div className="bg-white/[0.03] border border-white/5 rounded-[28px] p-6 group-hover:bg-white/[0.05] transition-all relative overflow-hidden">
-                            <div className="flex justify-between items-start mb-4">
-                              <span className="text-[10px] px-3 py-1 rounded-full font-black uppercase tracking-widest bg-black/40 border border-white/5 text-muted-foreground">
+                          <div className="bg-muted/30 border border-border rounded-[24px] sm:rounded-[28px] p-5 sm:p-6 group-hover:bg-muted/50 transition-all relative overflow-hidden">
+                            <div className="flex flex-col sm:flex-row justify-start sm:justify-between items-start sm:items-center gap-2 mb-4">
+                              <span className="text-[9px] sm:text-[10px] px-3 py-1 rounded-full font-black uppercase tracking-widest bg-background/50 border border-border/50 text-muted-foreground w-fit">
                                 {new Date(entry.fecha).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {new Date(entry.fecha).toLocaleDateString()}
                               </span>
-                              <span className={cn("text-[10px] font-black uppercase tracking-widest italic", cat.color)}>
+                              <span className={cn("text-[9px] sm:text-[10px] font-black uppercase tracking-widest italic", cat.color)}>
                                 {cat.label}
                               </span>
                             </div>
                             
-                            <p className="text-base text-slate-100 font-bold leading-relaxed mb-4">
+                            <p className="text-sm sm:text-base text-foreground font-bold leading-relaxed mb-4">
                               {entry.accion}
                             </p>
                             
-                            <div className="flex items-center gap-3 pt-4 border-t border-white/5">
-                               <div className="w-6 h-6 rounded-full bg-[#f59e0b] flex items-center justify-center">
-                                 <User className="w-3 h-3 text-black" />
+                            <div className="flex items-center gap-3 pt-4 border-t border-border">
+                               <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-primary/20 flex items-center justify-center">
+                                 <User className="w-3 h-3 text-primary" />
                                </div>
-                               <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                               <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-muted-foreground">
                                  Registrado por {entry.usuario}
                                </span>
                             </div>
@@ -1429,24 +1467,24 @@ function TrackingModal({ cita, onClose }: { cita: CitaServicio; onClose: () => v
           </div>
 
           {/* Action Panel - Right */}
-          <div className="w-full lg:w-96 bg-black/40 p-8 flex flex-col gap-8 border-t lg:border-t-0 lg:border-l border-white/5 overflow-y-auto no-scrollbar">
+          <div className="w-full lg:w-[400px] bg-muted/20 p-4 sm:p-8 flex flex-col gap-8 border-t lg:border-t-0 lg:border-l border-border overflow-y-auto custom-scrollbar shrink-0">
             
             {/* Quick States */}
             <div>
-              <p className="text-[10px] text-muted-foreground uppercase font-black tracking-[0.3em] mb-6 border-l-2 border-[#f59e0b] pl-3">Estados Rápidos</p>
-              <div className="grid grid-cols-1 gap-3">
+              <p className="text-[10px] text-muted-foreground uppercase font-black tracking-[0.3em] mb-4 sm:mb-6 border-l-2 border-primary pl-3">Estados Rápidos</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
                 {QUICK_ACTIONS.map(action => (
                   <button
                     key={action.label}
                     onClick={() => addTrackingEntry(action.text)}
-                    className="flex items-center gap-4 p-4 rounded-[20px] bg-white/[0.03] border border-white/5 hover:bg-gradient-to-r hover:from-[#f59e0b] hover:to-[#ea580c] hover:text-black group transition-all text-left"
+                    className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 rounded-[16px] sm:rounded-[20px] bg-card border border-border hover:bg-primary hover:text-primary-foreground group transition-all text-left"
                   >
-                    <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center group-hover:bg-black/10">
-                      <action.icon className="w-5 h-5" />
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-[12px] bg-muted/50 flex items-center justify-center group-hover:bg-primary-foreground/20 shrink-0">
+                      <action.icon className="w-4 h-4 sm:w-5 sm:h-5 group-hover:text-primary-foreground text-muted-foreground transition-colors" />
                     </div>
-                    <div>
-                      <p className="text-xs font-black uppercase tracking-widest">{action.label}</p>
-                      <p className="text-[10px] opacity-60 font-medium group-hover:opacity-100">Click para registrar</p>
+                    <div className="min-w-0">
+                      <p className="text-[10px] sm:text-xs font-black uppercase tracking-widest truncate">{action.label}</p>
+                      <p className="text-[9px] sm:text-[10px] text-muted-foreground group-hover:text-primary-foreground/70 font-medium">Click para registrar</p>
                     </div>
                   </button>
                 ))}
@@ -1454,8 +1492,8 @@ function TrackingModal({ cita, onClose }: { cita: CitaServicio; onClose: () => v
             </div>
 
             {/* Custom Entry */}
-            <div className="space-y-4 pt-8 border-t border-white/5">
-              <p className="text-[10px] text-muted-foreground uppercase font-black tracking-[0.3em] mb-6 border-l-2 border-[#f59e0b] pl-3">Entrada Manual</p>
+            <div className="space-y-4 pt-6 sm:pt-8 border-t border-border">
+              <p className="text-[10px] text-muted-foreground uppercase font-black tracking-[0.3em] mb-4 sm:mb-6 border-l-2 border-primary pl-3">Entrada Manual</p>
               
               <div className="flex gap-2">
                 {Object.entries(CATEGORIES).map(([id, info]) => (
@@ -1463,17 +1501,17 @@ function TrackingModal({ cita, onClose }: { cita: CitaServicio; onClose: () => v
                     key={id}
                     onClick={() => setCategory(id)}
                     className={cn(
-                      "flex-1 h-12 rounded-2xl flex items-center justify-center border transition-all",
-                      category === id ? "bg-[#f59e0b] text-black border-[#f59e0b]" : "bg-white/5 border-white/10 text-muted-foreground"
+                      "flex-1 h-10 sm:h-12 rounded-xl sm:rounded-2xl flex items-center justify-center border transition-all",
+                      category === id ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:bg-muted/50"
                     )}
                   >
-                    <info.icon className="w-5 h-5" />
+                    <info.icon className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
                 ))}
               </div>
 
               <textarea 
-                className="w-full bg-white/5 border border-white/10 rounded-[24px] px-5 py-4 text-sm text-white placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-[#f59e0b]/40 min-h-[120px] resize-none transition-all"
+                className="w-full bg-muted/50 border border-border rounded-[20px] sm:rounded-[24px] px-4 sm:px-5 py-3 sm:py-4 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[100px] sm:min-h-[120px] resize-none transition-all"
                 placeholder="Escribe un reporte detallado..."
                 value={comment}
                 onChange={e => setComment(e.target.value)}
@@ -1482,9 +1520,9 @@ function TrackingModal({ cita, onClose }: { cita: CitaServicio; onClose: () => v
               <Button 
                 onClick={() => addTrackingEntry()} 
                 disabled={isSaving || !comment.trim()} 
-                className="w-full h-16 rounded-[24px] bg-[#f59e0b] hover:bg-[#fbbf24] text-black font-black text-sm uppercase tracking-widest shadow-[0_10px_30px_rgba(245,158,11,0.2)] gap-3"
+                className="w-full h-14 sm:h-16 rounded-[20px] sm:rounded-[24px] bg-primary hover:bg-primary/90 text-primary-foreground font-black text-xs sm:text-sm uppercase tracking-widest shadow-lg shadow-primary/20 gap-2 sm:gap-3"
               >
-                {isSaving ? <Loader2 className="w-6 h-6 animate-spin" /> : <BadgeCheck className="w-6 h-6" />}
+                {isSaving ? <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" /> : <BadgeCheck className="w-5 h-5 sm:w-6 sm:h-6" />}
                 Registrar Bitácora
               </Button>
             </div>
@@ -1497,9 +1535,7 @@ function TrackingModal({ cita, onClose }: { cita: CitaServicio; onClose: () => v
 
 // ── Invoice Modal (Keep as is but polish colors) ───────────────
 function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita: CitaServicio; citas: CitaServicio[]; inventory: any[]; onClose: () => void; globalBcvRate?: number }) {
-  const [clientName, setClientName] = useState(cita.vehiculos?.clientes
-    ? `${cita.vehiculos?.clientes.nombre} ${cita.vehiculos?.clientes.apellido}`
-    : cita.nombre_cliente || 'Consumidor Final');
+  const [clientName, setClientName] = useState(getDisplayName(cita) || 'Consumidor Final');
 
   const [vehicleStr, setVehicleStr] = useState(cita.vehiculos
     ? `${cita.vehiculos.marca} ${cita.vehiculos.modelo} (${cita.vehiculos.placa})`
