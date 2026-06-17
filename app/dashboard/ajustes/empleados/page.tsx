@@ -14,7 +14,7 @@ import {
   Crown, DollarSign, Headphones, HardHat, KeyRound
 } from "lucide-react";
 import {
-  ROLE_CATALOG, getRoleMeta, normalizePermiso, PERMISOS_DEFAULT,
+  ROLE_CATALOG, getRoleMeta, normalizePermiso, PERMISOS_DEFAULT, MASTER_ADMIN_USERNAME,
   type RoleMeta, type Permisos, type PermisoValue,
 } from "@/types";
 
@@ -23,6 +23,7 @@ function RoleIconCmp({ rol, className }: { rol: string; className?: string }) {
   const icon = getRoleMeta(rol)?.icon;
   switch (icon) {
     case 'crown': return <Crown className={className} />;
+    case 'eye': return <Eye className={className} />;
     case 'shield': return <Shield className={className} />;
     case 'dollar': return <DollarSign className={className} />;
     case 'headset': return <Headphones className={className} />;
@@ -49,11 +50,17 @@ export default function EmpleadosPage() {
   const isAdmin = userRole === 'admin';
   const canEdit = isAdmin || userRole === 'supervisor';
   const canDelete = isAdmin;
+  const isMasterAdmin = user?.username === MASTER_ADMIN_USERNAME;
 
-  // Roles que el usuario actual puede asignar
-  const assignableRoles: RoleMeta[] = isAdmin
-    ? ROLE_CATALOG
-    : ROLE_CATALOG.filter(r => r.asignablePorSupervisor);
+  // Roles que el usuario actual puede asignar:
+  //  - admin: solo el usuario maestro 'administrador'.
+  //  - dueño y demás privilegiados: cualquier admin.
+  //  - supervisor: solo roles operativos (asignablePorSupervisor).
+  const assignableRoles: RoleMeta[] = ROLE_CATALOG.filter(r => {
+    if (r.nombre === 'admin') return isMasterAdmin;
+    if (!isAdmin) return r.asignablePorSupervisor;
+    return true;
+  });
 
   const [formData, setFormData] = useState({
     nombre: "",
@@ -572,7 +579,10 @@ export default function EmpleadosPage() {
                     }}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {assignableRoles.map(r => (
+                        {(assignableRoles.some(r => r.nombre === editFormData.rol)
+                          ? assignableRoles
+                          : [...assignableRoles, getRoleMeta(editFormData.rol)].filter(Boolean) as RoleMeta[]
+                        ).map(r => (
                           <SelectItem key={r.nombre} value={r.nombre}>
                             <div className="flex items-center gap-2"><RoleIconCmp rol={r.nombre} className="w-4 h-4" />{r.label}</div>
                           </SelectItem>

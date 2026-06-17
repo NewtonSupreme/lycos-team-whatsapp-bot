@@ -1,5 +1,17 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
+import { resolveRol, MASTER_ADMIN_USERNAME } from '@/types';
+
+// Devuelve el usuario que hace la petición (según la cookie de sesión).
+async function getRequester(db: any) {
+  try {
+    const username = (await cookies()).get('lycos_session')?.value;
+    if (!username) return null;
+    const { data } = await db.from('usuarios').select('username, rol').eq('username', username).maybeSingle();
+    return data;
+  } catch { return null; }
+}
 
 export async function POST(req: Request) {
   try {
@@ -22,6 +34,17 @@ export async function POST(req: Request) {
 
     if (!nombre || !rol) {
       return NextResponse.json({ error: 'Faltan datos requeridos (nombre, rol)' }, { status: 400 });
+    }
+
+    // REGLA: solo el usuario maestro 'administrador' puede crear/asignar el rol admin.
+    if (resolveRol(rol) === 'admin') {
+      const requester = await getRequester(supabaseAdmin);
+      if (!requester || requester.username !== MASTER_ADMIN_USERNAME) {
+        return NextResponse.json(
+          { error: `Solo el usuario "${MASTER_ADMIN_USERNAME}" puede crear o asignar el rol de Administrador.` },
+          { status: 403 }
+        );
+      }
     }
 
     let username = manualUsername;

@@ -8,9 +8,9 @@ export interface Sede {
 }
 
 // Roles allowed to switch between/view all sedes.
-// Only administrators have multi-sede access; every other role (incl. supervisor)
-// is locked to their assigned sede for strict data isolation.
-const SEDE_SWITCH_ROLES = ['admin'] as const;
+// Only the administrator and the owner (dueño, read-only) have multi-sede access;
+// every other role (incl. supervisor) is locked to their assigned sede.
+const SEDE_SWITCH_ROLES = ['admin', 'dueno'] as const;
 
 interface SedeState {
   currentSede: Sede | null;

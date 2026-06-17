@@ -76,7 +76,7 @@ function full(acceso: boolean): CrudPermiso {
 // Fuente única de verdad para los roles del sistema Lycos Team.
 // El admin puede reconfigurar los permisos de cada rol desde /ajustes/permisos
 // y los permisos por-usuario desde Gestión de Empleados.
-export type RoleIcon = 'crown' | 'shield' | 'dollar' | 'headset' | 'hardhat' | 'wrench';
+export type RoleIcon = 'crown' | 'eye' | 'shield' | 'dollar' | 'headset' | 'hardhat' | 'wrench';
 
 export interface RoleMeta {
   nombre: string;        // slug interno (clave en BD)
@@ -99,6 +99,12 @@ export const ROLE_CATALOG: RoleMeta[] = [
     nombre: 'admin', label: 'Administración',
     descripcion: 'Control total del sistema y de todas las sedes.',
     icon: 'crown', color: 'bg-red-500/10 text-red-500 border-red-500/20',
+    conAcceso: true, esTecnico: false, asignablePorSupervisor: false, multiSede: true,
+  },
+  {
+    nombre: 'dueno', label: 'Dueño',
+    descripcion: 'Visualiza absolutamente todo en todas las sedes. Solo lectura: no crea, edita ni elimina.',
+    icon: 'eye', color: 'bg-indigo-500/10 text-indigo-500 border-indigo-500/20',
     conAcceso: true, esTecnico: false, asignablePorSupervisor: false, multiSede: true,
   },
   {
@@ -154,54 +160,86 @@ export function resolveRol(rol?: string | null): string {
   return ROLE_ALIASES[rol] || rol;
 }
 
+// REGLA DEL SISTEMA: la eliminación definitiva (eliminar) es exclusiva del admin.
+// Por eso ningún rol por defecto (excepto admin) trae eliminar=true.
+// manage = crear/leer/editar sin eliminar · ver = solo lectura · none = sin acceso.
+function manage(crear: boolean, leer: boolean, editar: boolean): CrudPermiso {
+  return { crear, leer, editar, eliminar: false };
+}
+const ver = (): CrudPermiso => ({ crear: false, leer: true, editar: false, eliminar: false });
+const none = (): CrudPermiso => ({ crear: false, leer: false, editar: false, eliminar: false });
+
 export const PERMISOS_DEFAULT: Record<string, Permisos> = {
-  // Administración — acceso total.
+  // Administración — acceso total (único rol que puede eliminar).
   admin: {
     dashboard: full(true), clientes: full(true), vehiculos: full(true), servicios: full(true), taller: full(true),
     agenda: full(true), whatsapp: full(true), leads: full(true), inventario: full(true), papelera: full(true),
     ventas: full(true), ia_asistente: full(true), reportes: full(true), actividad: full(true),
     calculadora: full(true), configuracion: full(true), empleados: full(true), distribuidor: full(true), presupuestos: full(true)
   },
-  // Supervisor de Sede — amplio en su sede; sin configuración del sistema; gestiona personal (sin eliminar).
+  // Dueño — ve absolutamente todo en todas las sedes. Solo lectura (no crea, edita ni elimina).
+  dueno: {
+    dashboard: ver(), clientes: ver(), vehiculos: ver(), servicios: ver(), taller: ver(),
+    agenda: ver(), whatsapp: ver(), leads: ver(), inventario: ver(), papelera: ver(),
+    ventas: ver(), ia_asistente: ver(), reportes: ver(), actividad: ver(),
+    calculadora: full(true), configuracion: ver(), empleados: ver(), distribuidor: ver(), presupuestos: ver()
+  },
+  // Supervisor de Sede — amplio en su sede; sin configuración del sistema; gestiona personal. Sin eliminar.
   supervisor: {
-    dashboard: full(true), clientes: full(true), vehiculos: full(true), servicios: full(true), taller: full(true),
-    agenda: full(true), whatsapp: full(true), leads: full(true), inventario: full(true), papelera: perm(false, true, true, false),
-    ventas: full(true), ia_asistente: full(true), reportes: full(true), actividad: perm(false, true, false, false),
-    calculadora: full(true), configuracion: full(false), empleados: perm(true, true, true, false), distribuidor: full(true), presupuestos: full(true)
+    dashboard: manage(true, true, true), clientes: manage(true, true, true), vehiculos: manage(true, true, true),
+    servicios: manage(true, true, true), taller: manage(true, true, true), agenda: manage(true, true, true), whatsapp: manage(true, true, true),
+    leads: manage(true, true, true), inventario: manage(true, true, true), papelera: manage(false, true, true),
+    ventas: manage(true, true, true), ia_asistente: manage(true, true, true), reportes: ver(), actividad: ver(),
+    calculadora: full(true), configuracion: none(), empleados: manage(true, true, true), distribuidor: manage(true, true, true), presupuestos: manage(true, true, true)
   },
   // Cobranza — facturación, ventas y presupuestos; lectura de clientes/servicios/inventario para facturar.
   cobranza: {
-    dashboard: perm(false, true, false, false), clientes: perm(false, true, true, false), vehiculos: perm(false, true, false, false),
-    servicios: perm(false, true, false, false), taller: full(false), agenda: full(false), whatsapp: perm(false, true, false, false),
-    leads: full(false), inventario: perm(false, true, false, false), papelera: full(false), ventas: full(true),
-    ia_asistente: full(false), reportes: perm(false, true, false, false), actividad: full(false), calculadora: full(true),
-    configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(true)
+    dashboard: ver(), clientes: manage(false, true, true), vehiculos: ver(),
+    servicios: ver(), taller: none(), agenda: none(), whatsapp: ver(),
+    leads: none(), inventario: ver(), papelera: none(), ventas: manage(true, true, true),
+    ia_asistente: none(), reportes: ver(), actividad: none(), calculadora: full(true),
+    configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: manage(true, true, true)
   },
   // Atención al Cliente — recepción: clientes, vehículos, citas, mensajería y presupuestos.
   atencion_cliente: {
-    dashboard: perm(false, true, false, false), clientes: full(true), vehiculos: full(true),
-    servicios: perm(false, true, false, false), taller: perm(false, true, false, false), agenda: full(true), whatsapp: full(true),
-    leads: full(true), inventario: perm(false, true, false, false), papelera: full(false), ventas: full(false),
-    ia_asistente: full(true), reportes: full(false), actividad: full(false), calculadora: full(true),
-    configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(true)
+    dashboard: ver(), clientes: manage(true, true, true), vehiculos: manage(true, true, true),
+    servicios: ver(), taller: ver(), agenda: manage(true, true, true), whatsapp: manage(true, true, true),
+    leads: manage(true, true, true), inventario: ver(), papelera: none(), ventas: none(),
+    ia_asistente: manage(true, true, true), reportes: none(), actividad: none(), calculadora: full(true),
+    configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: manage(true, true, true)
   },
   // Jefe de Taller — manda en el taller: servicios, vehículos e inventario.
   jefe_taller: {
-    dashboard: perm(false, true, false, false), clientes: perm(false, true, false, false), vehiculos: full(true),
-    servicios: full(true), taller: full(true), agenda: perm(false, true, false, false), whatsapp: full(false),
-    leads: full(false), inventario: full(true), papelera: full(false), ventas: full(false),
-    ia_asistente: full(false), reportes: perm(false, true, false, false), actividad: full(false), calculadora: full(true),
-    configuracion: full(false), empleados: full(false), distribuidor: perm(false, true, false, false), presupuestos: perm(true, true, false, false)
+    dashboard: ver(), clientes: ver(), vehiculos: manage(true, true, true),
+    servicios: manage(true, true, true), taller: manage(true, true, true), agenda: ver(), whatsapp: none(),
+    leads: none(), inventario: manage(true, true, true), papelera: none(), ventas: none(),
+    ia_asistente: none(), reportes: ver(), actividad: none(), calculadora: full(true),
+    configuracion: none(), empleados: none(), distribuidor: ver(), presupuestos: manage(true, true, false)
   },
   // Mecánico — ejecuta servicios; sin eliminar, sin áreas administrativas.
   mecanico: {
-    dashboard: perm(false, true, false, false), clientes: full(false), vehiculos: perm(false, true, false, false),
-    servicios: perm(true, true, true, false), taller: perm(false, true, true, false), agenda: full(false), whatsapp: full(false),
-    leads: full(false), inventario: perm(false, true, false, false), papelera: full(false), ventas: full(false),
-    ia_asistente: full(false), reportes: full(false), actividad: full(false), calculadora: full(true),
-    configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(false)
+    dashboard: ver(), clientes: none(), vehiculos: ver(),
+    servicios: manage(true, true, true), taller: manage(false, true, true), agenda: none(), whatsapp: none(),
+    leads: none(), inventario: ver(), papelera: none(), ventas: none(),
+    ia_asistente: none(), reportes: none(), actividad: none(), calculadora: full(true),
+    configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: none()
   },
 };
+
+// REGLA DEL SISTEMA: la eliminación definitiva es exclusiva del Administrador.
+// Se fuerza eliminar=false en TODOS los roles excepto admin (incluye módulos-
+// herramienta como calculadora). El admin puede reactivar permisos puntuales
+// por-usuario desde Gestión de Empleados si lo desea.
+for (const [rol, perms] of Object.entries(PERMISOS_DEFAULT)) {
+  if (rol === 'admin') continue;
+  const soloLectura = rol === 'dueno'; // el Dueño ve todo pero nunca crea/edita/elimina
+  for (const mod of MODULES) {
+    const p = normalizePermiso(perms[mod]);
+    perms[mod] = soloLectura
+      ? { crear: false, leer: p.leer, editar: false, eliminar: false }
+      : { ...p, eliminar: false };
+  }
+}
 
 // Permiso mínimo seguro para roles desconocidos: solo lectura del dashboard.
 const MINIMAL_PERMISOS: Permisos = {
@@ -228,6 +266,55 @@ export function getPermisos(
     }
   }
   return merged;
+}
+
+// ── Reglas de sistema ───────────────────────────────────────────────────────
+// Único usuario maestro autorizado a crear/asignar el rol de Administrador.
+export const MASTER_ADMIN_USERNAME = 'administrador';
+
+// ── Capacidades del Chatbot (Modo Dios) por rol ─────────────────────────────
+// Derivadas de los permisos del rol para que el panel y el webhook usen la
+// MISMA fuente de verdad sobre lo que cada rol puede hacer desde WhatsApp.
+export interface ChatbotCapability {
+  key: string;
+  label: string;
+  allowed: boolean;
+  detail: string;
+}
+
+export interface ChatbotAccess {
+  puedeUsarModoDios: boolean;
+  alcanceSede: 'todas' | 'su_sede';
+  capabilities: ChatbotCapability[];
+}
+
+export function getChatbotCapabilities(
+  rol: string | undefined | null,
+  storedPermisos?: Record<string, PermisoValue>,
+  defaultsOverride?: Record<string, Permisos> | null
+): ChatbotAccess {
+  const meta = getRoleMeta(rol || '');
+  const p = getPermisos(rol, storedPermisos, defaultsOverride);
+  const can = (m: keyof Permisos, a: keyof CrudPermiso = 'leer') => hasPermiso(p[m], a);
+  const esAdmin = resolveRol(rol) === 'admin';
+  const puedeUsarModoDios = can('ia_asistente', 'leer');
+
+  const capabilities: ChatbotCapability[] = [
+    { key: 'consultar', label: 'Consultar el sistema (Modo Dios)', allowed: puedeUsarModoDios,
+      detail: 'Ventas, servicios, citas, inventario, reportes, clientes y vehículos en tiempo real.' },
+    { key: 'servicios', label: 'Registrar / editar servicios por chat', allowed: puedeUsarModoDios && (can('servicios', 'crear') || can('servicios', 'editar')),
+      detail: 'Crear y actualizar órdenes de taller desde WhatsApp.' },
+    { key: 'citas', label: 'Agendar / editar citas por chat', allowed: puedeUsarModoDios && (can('agenda', 'crear') || can('agenda', 'editar')),
+      detail: 'Crear y modificar citas en la agenda.' },
+    { key: 'clientes', label: 'Registrar / editar clientes por chat', allowed: puedeUsarModoDios && (can('clientes', 'crear') || can('clientes', 'editar')),
+      detail: 'Alta y actualización de clientes y sus datos.' },
+    { key: 'inventario', label: 'Gestionar inventario / stock por chat', allowed: puedeUsarModoDios && (can('inventario', 'crear') || can('inventario', 'editar')),
+      detail: 'Actualizar precios, existencias y productos.' },
+    { key: 'eliminar', label: 'Eliminar registros por chat', allowed: esAdmin,
+      detail: 'La eliminación definitiva es exclusiva del Administrador.' },
+  ];
+
+  return { puedeUsarModoDios, alcanceSede: meta?.multiSede ? 'todas' : 'su_sede', capabilities };
 }
 
 export interface User {

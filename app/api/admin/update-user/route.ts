@@ -1,5 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
+import { resolveRol, MASTER_ADMIN_USERNAME } from '@/types';
+
+async function getRequester(db: any) {
+  try {
+    const username = (await cookies()).get('lycos_session')?.value;
+    if (!username) return null;
+    const { data } = await db.from('usuarios').select('username, rol').eq('username', username).maybeSingle();
+    return data;
+  } catch { return null; }
+}
 
 export async function POST(req: Request) {
   try {
@@ -21,6 +32,22 @@ export async function POST(req: Request) {
 
     if (!id) {
       return NextResponse.json({ error: 'ID de usuario requerido' }, { status: 400 });
+    }
+
+    // REGLA: solo el usuario maestro 'administrador' puede ESCALAR a alguien al rol admin.
+    // (Editar otros campos de un admin existente sigue permitido para cualquier admin.)
+    if (rol !== undefined && resolveRol(rol) === 'admin') {
+      const { data: target } = await supabaseAdmin.from('usuarios').select('rol').eq('id', id).maybeSingle();
+      const yaEraAdmin = target && resolveRol(target.rol) === 'admin';
+      if (!yaEraAdmin) {
+        const requester = await getRequester(supabaseAdmin);
+        if (!requester || requester.username !== MASTER_ADMIN_USERNAME) {
+          return NextResponse.json(
+            { error: `Solo el usuario "${MASTER_ADMIN_USERNAME}" puede asignar el rol de Administrador.` },
+            { status: 403 }
+          );
+        }
+      }
     }
 
     const updates: any = {

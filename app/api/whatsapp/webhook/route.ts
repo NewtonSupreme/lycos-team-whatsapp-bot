@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { getPermisos } from '@/types';
+import { getPermisos, hasPermiso, resolveRol, getRoleMeta, type Permisos } from '@/types';
 import { sendGlobalPushNotification } from '@/lib/push-helper';
 
 async function checkIsBotAdmin(phone: string, db: any, adminPhones: string[]): Promise<boolean> {
@@ -1124,6 +1124,10 @@ interface ConversationContext {
   adminName?: string;
   sede_id?: string;
   adminSedeId?: string;
+  // Rol del usuario del bot y sus permisos resueltos (para gating por rol del Modo Dios)
+  botRol?: string;
+  botPermisos?: Permisos;
+  capabilitiesNote?: string;
 }
 
 async function loadConversationContext(
@@ -1148,6 +1152,9 @@ async function loadConversationContext(
 
   let adminName = '';
   let isAdmin = false;
+  let botRol: string | undefined = undefined;
+  let botPermisos: Permisos | undefined = undefined;
+  let capabilitiesNote = '';
 
   let adminSedeId: string | undefined = undefined;
 
@@ -1171,21 +1178,34 @@ async function loadConversationContext(
       if (permissions.ia_asistente?.leer) {
         isAdmin = true;
         adminName = matchedUser.nombre;
+        botRol = matchedUser.rol;
+        botPermisos = permissions;
         if (matchedUser.sede_id) {
           adminSedeId = matchedUser.sede_id;
           sede_id = adminSedeId as string;
         }
-        console.log(`👑 [${from}] Admin detectado dinámicamente por permisos: ${adminName} (${matchedUser.rol})`);
+        console.log(`👑 [${from}] Acceso Modo Dios por permisos: ${adminName} (${matchedUser.rol})`);
       }
     }
-    
+
     if (!isAdmin && ADMIN_PHONES.includes(phone)) {
       isAdmin = true;
+      botRol = 'admin';
+      botPermisos = getPermisos('admin');
       if (phone === '584123343519') adminName = 'Juan Pablo';
       else if (phone === '584241648710') adminName = 'Jorge';
       else if (phone === '584123193206') adminName = 'Leandro';
       else adminName = 'Administrador';
       console.log(`👑 [${from}] Admin detectado por lista hardcodeada: ${adminName}`);
+    }
+
+    // Nota de capacidades para el prompt del Modo Dios (qué puede / no puede hacer este rol)
+    if (isAdmin) {
+      const esAdminTotal = resolveRol(botRol) === 'admin';
+      const cp = botPermisos;
+      const yn = (b?: boolean) => (b ? 'SÍ' : 'NO');
+      const roleLabel = getRoleMeta(botRol || 'admin')?.label || 'Administrador';
+      capabilitiesNote = `\n\n--- PERMISOS DE ESTE USUARIO EN EL MODO DIOS ---\nRol: ${roleLabel}. Alcance: ${esAdminTotal ? 'todas las sedes' : 'su sede asignada'}.\nPuede registrar/editar SERVICIOS: ${yn(esAdminTotal || !!(cp?.servicios?.crear || cp?.servicios?.editar))}.\nPuede agendar/editar CITAS: ${yn(esAdminTotal || !!(cp?.agenda?.crear || cp?.agenda?.editar))}.\nPuede registrar/editar CLIENTES: ${yn(esAdminTotal || !!(cp?.clientes?.crear || cp?.clientes?.editar))}.\nPuede gestionar INVENTARIO/STOCK: ${yn(esAdminTotal || !!(cp?.inventario?.crear || cp?.inventario?.editar))}.\nPuede ELIMINAR registros: ${yn(esAdminTotal)} (la eliminación es exclusiva del Administrador).\nREGLA: Si el usuario te pide una acción que NO puede realizar según esta lista, NO generes el tag correspondiente; explícale cortésmente que su rol no tiene ese permiso y que contacte a un administrador.`;
     }
   } catch (e) { console.error('Error checking admin status:', e); }
 
@@ -1749,7 +1769,7 @@ async function loadConversationContext(
     }
   } catch (e) { console.error('Error loading context for admin/client:', e); }
 
-  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado, isAdmin, adminName, sede_id, adminSedeId };
+  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado, isAdmin, adminName, sede_id, adminSedeId, botRol, botPermisos, capabilitiesNote };
 }
 
 // ─── AI Response ───────────────────────────────────────────────────────────────
@@ -1845,6 +1865,7 @@ AGENDAMIENTO DE CITAS (USO DE TAGS):
 
   if (isAdmin) {
     systemPrompt += `\n\n⚠️ INSTRUCCIÓN DE MONEDA (ADMIN): Si el administrador especifica un precio en dólares en efectivo (divisas) o en dólares a tasa BCV, mantenlo exactamente como él lo indique. NO calcules ni agregues conversiones alternativas de forma automática a menos que te lo solicite explícitamente.`;
+    if (ctx.capabilitiesNote) systemPrompt += ctx.capabilitiesNote;
   }
 
   const contents = [...ctx.historia, { role: 'user', parts: [{ text: userMessage }] }];
@@ -3130,10 +3151,23 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       // ── ADMIN: Process management tags ────────────────────────────────
       const isAdmin = !!ctx.isAdmin || (await checkIsBotAdmin(from || '', db, ADMIN_PHONES));
 
+      // Gating por ROL: cada comando de escritura requiere el permiso correspondiente.
+      // La eliminación definitiva es exclusiva del admin. Si no hay permisos resueltos
+      // (admin por lista hardcodeada), se asume acceso total.
+      const phoneClean2 = (from || '').replace(/[^0-9]/g, '');
+      const isFullAdmin = resolveRol(ctx.botRol) === 'admin'
+        || ADMIN_PHONES.includes(from || '') || ADMIN_PHONES.includes(phoneClean2)
+        || !ctx.botPermisos;
+      const canBot = (mod: keyof Permisos, action: 'crear' | 'leer' | 'editar' | 'eliminar'): boolean => {
+        if (isFullAdmin) return true;
+        return hasPermiso((ctx.botPermisos as Permisos)[mod], action);
+      };
+      const canBotWrite = (mod: keyof Permisos) => canBot(mod, 'crear') || canBot(mod, 'editar');
+
       if (isAdmin && db) {
         // 1. [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca]
         // Regex más flexible que captura el interior del tag
-        const stockUpsertMatchesArray = Array.from(cleanedAi.matchAll(/\[STOCK_?UPSERT:\s*([^\]]+)\]/gi));
+        const stockUpsertMatchesArray = canBotWrite('inventario') ? Array.from(cleanedAi.matchAll(/\[STOCK_?UPSERT:\s*([^\]]+)\]/gi)) : [];
         for (const match of stockUpsertMatchesArray) {
           try {
             const parts = match[1].split('|').map(s => s.trim());
@@ -3215,7 +3249,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         }
 
         // 2. [STOCK_DELETE: id_o_codigo | sede_id]
-        const stockDeleteMatches = Array.from(cleanedAi.matchAll(/\[STOCK_DELETE:\s*([^\]]+)\]/gi));
+        const stockDeleteMatches = canBot('inventario', 'eliminar') ? Array.from(cleanedAi.matchAll(/\[STOCK_DELETE:\s*([^\]]+)\]/gi)) : [];
         for (const match of stockDeleteMatches) {
           try {
             const parts = match[1].split('|').map(s => s.trim());
@@ -3240,7 +3274,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         }
 
         // 3. [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion | sede_id | costo_estimado | nombre_cliente | vehiculo_info | placa | telefono]
-        const citaUpsertMatches = Array.from(cleanedAi.matchAll(/\[CITA_UPSERT:\s*([^\]]+)\]/gi));
+        const citaUpsertMatches = canBotWrite('agenda') ? Array.from(cleanedAi.matchAll(/\[CITA_UPSERT:\s*([^\]]+)\]/gi)) : [];
         for (const match of citaUpsertMatches) {
           try {
             const parts = match[1].split('|').map(s => s.trim());
@@ -3363,7 +3397,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         }
 
         // 3b. [SERVICIO_UPSERT: id_opcional | cliente_id | vehiculo_id | nombre_cliente | telefono | vehiculo_info | placa | tipo | descripcion | estado | costo_estimado | sede_id | tipo_personalizado]
-        const servUpsertMatches = Array.from(cleanedAi.matchAll(/\[SERVICIO_UPSERT:\s*([^\]]+)\]/gi));
+        const servUpsertMatches = canBotWrite('servicios') ? Array.from(cleanedAi.matchAll(/\[SERVICIO_UPSERT:\s*([^\]]+)\]/gi)) : [];
         for (const match of servUpsertMatches) {
           try {
             const rawTag = match[1].trim();
@@ -3536,7 +3570,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         }
 
         // 4. [CITA_DELETE: id]
-        const citaDeleteMatch = cleanedAi.match(/\[CITA_DELETE:\s*([^\]]+?)\s*\]/i);
+        const citaDeleteMatch = canBot('agenda', 'eliminar') ? cleanedAi.match(/\[CITA_DELETE:\s*([^\]]+?)\s*\]/i) : null;
         if (citaDeleteMatch && db) {
           try {
             const target = citaDeleteMatch[1].trim();
@@ -3546,7 +3580,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         }
 
         // 5. [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion | sede_id]
-        const clientUpsertMatches = Array.from(cleanedAi.matchAll(/\[CLIENTE_UPSERT:\s*([^\]]+)\]/gi));
+        const clientUpsertMatches = canBotWrite('clientes') ? Array.from(cleanedAi.matchAll(/\[CLIENTE_UPSERT:\s*([^\]]+)\]/gi)) : [];
         for (const match of clientUpsertMatches) {
           try {
             const parts = match[1].split('|').map(s => s.trim());

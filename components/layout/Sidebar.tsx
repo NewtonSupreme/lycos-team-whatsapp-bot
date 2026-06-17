@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Users, Car, Wrench, Calendar, MessageSquare,
   Bot, FileText, Settings, ChevronLeft, ChevronRight,
   Activity, LogOut, TrendingUp, UserCircle, Package, Calculator, ShoppingCart, Trash2, Truck, Shield,
-  FileSpreadsheet, Receipt
+  FileSpreadsheet, Receipt, Info
 } from 'lucide-react';
 import { cn, getInitials } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -48,6 +48,7 @@ const bottomItems: NavItem[] = [
   { href: '/dashboard/configuracion', icon: Settings, label: 'Configuración', badge: null, permKey: 'configuracion' },
   { href: '/dashboard/ajustes/empleados', icon: Users, label: 'Gestión Empleados', badge: null, permKey: 'empleados' },
   { href: '/dashboard/ajustes/permisos', icon: Shield, label: 'Permisos por Rol', badge: null, permKey: 'empleados' },
+  { href: '/dashboard/informacion', icon: Info, label: 'Información', badge: null },
   { href: '/dashboard/perfil', icon: UserCircle, label: 'Mi Perfil', badge: null },
 ];
 
