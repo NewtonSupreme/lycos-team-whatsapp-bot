@@ -38,6 +38,7 @@ interface CitaServicio {
   vehiculo_id: string | null;
   sede_id?: string | null;
   costo_estimado?: number | null;
+  costo_final?: number | null;
   seguimiento?: any[] | null;
   registrado_por?: string | null;
   vehiculos?: { marca: string; modelo: string; placa: string; anio?: number; clientes?: { nombre: string; apellido: string; telefono: string } | null } | null;
