@@ -2707,51 +2707,105 @@ async function logActivityAdmin(db: any, usuario: string, accion: string, detall
   } catch (e) { console.error('❌ Error logActivityAdmin:', e); }
 }
 
-async function handleCompletedServiceSale(db: any, citaId: string, citaObj: any) {
+// Registers a completed service/cita as a sale in BOTH ventas_silenciadores AND ventas_dia.
+// sourceType: 'cita' or 'servicio' — determines the ref tag used for deduplication.
+// rates: optional exchange rates for tasa_cambio in ventas_dia.
+async function handleCompletedServiceSale(
+  db: any,
+  recordId: string,
+  recordObj: any,
+  sourceType: 'cita' | 'servicio' = 'cita',
+  rates?: { bcv?: number; paralelo?: number } | null
+) {
   try {
-    // Treat 'completada' status as completed/delivered
-    const isCompleted = citaObj.estado === 'completada';
-    const hasPrice = citaObj.costo_estimado && citaObj.costo_estimado > 0;
+    const COMPLETED_STATES = ['completada', 'finalizado', 'finalizada', 'completado'];
+    const isCompleted = COMPLETED_STATES.includes((recordObj.estado || '').toLowerCase());
+    const precio = Number(recordObj.costo_final ?? recordObj.costo_estimado ?? 0);
+    const hasPrice = precio > 0;
 
-    if (isCompleted && hasPrice) {
-      // 1. Check if a sale for this cita is already registered in ventas_silenciadores
-      const citaRefTag = `[CitaID: ${citaId}]`;
-      const { data: existingSale } = await db.from('ventas_silenciadores')
-        .select('id')
-        .like('notas', `%${citaRefTag}%`)
-        .limit(1)
-        .maybeSingle();
+    if (!isCompleted || !hasPrice) return;
 
-      const contextStr = 'Divisas'; // Default context
-      const clienteStr = citaObj.nombre_cliente ? ` | Cliente: ${citaObj.nombre_cliente}` : '';
-      const vehiculoStr = citaObj.vehiculo_info ? ` | Vehículo: ${citaObj.vehiculo_info}` : '';
-      const notesFinal = `${citaObj.descripcion || 'Servicio taller'} [Total: $${citaObj.costo_estimado} (${contextStr})]${clienteStr}${vehiculoStr} ${citaRefTag}`.trim();
+    const refTag = `[${sourceType === 'cita' ? 'CitaID' : 'ServicioID'}: ${recordId}]`;
+    const nowIso = new Date().toISOString();
+    const fechaStr = nowIso.split('T')[0];
+    const sedeId = recordObj.sede_id || DEFAULT_SEDE_ID;
 
-      const nowIso = new Date().toISOString();
-      const fechaStr = nowIso.split('T')[0];
-      const saleData = {
-        cantidad: 1,
-        modelo: citaObj.vehiculo_info || 'Servicio',
-        notas: notesFinal,
-        fecha: nowIso,
-        precio_registrado: citaObj.costo_estimado,
-        sede_id: citaObj.sede_id || DEFAULT_SEDE_ID,
-        fecha_registro: nowIso,
-        registro_atrasado: false
-      };
+    const vehiculoStr = recordObj.vehiculo_info || recordObj.vehiculo || 'Servicio';
+    const clienteNombre = recordObj.nombre_cliente || recordObj.cliente || 'Consumidor Final';
+    const descStr = recordObj.descripcion || 'Servicio de taller';
+    const registradoPor = recordObj.registrado_por || 'Bot IA';
 
-      if (existingSale) {
-        // Update existing sale
-        await db.from('ventas_silenciadores').update(saleData).eq('id', existingSale.id);
-        console.log(`✅ Venta actualizada en ventas_silenciadores para la cita ${citaId}`);
-      } else {
-        // Insert new sale
-        await db.from('ventas_silenciadores').insert(saleData);
-        console.log(`✅ Venta auto-registrada en ventas_silenciadores para la cita ${citaId}`);
-      }
+    const notesFinal = `${descStr} [Total: $${precio} (Divisas)] | Cliente: ${clienteNombre} | Vehículo: ${vehiculoStr} ${refTag}`.trim();
+
+    // ─── 1. ventas_silenciadores ─────────────────────────────────────────────
+    const { data: existingVS } = await db.from('ventas_silenciadores')
+      .select('id')
+      .like('notas', `%${refTag}%`)
+      .limit(1)
+      .maybeSingle();
+
+    const vsData = {
+      cantidad: 1,
+      modelo: vehiculoStr,
+      notas: notesFinal,
+      fecha: nowIso,
+      precio_registrado: precio,
+      sede_id: sedeId,
+      fecha_registro: nowIso,
+      registro_atrasado: false,
+    };
+
+    if (existingVS) {
+      await db.from('ventas_silenciadores').update(vsData).eq('id', existingVS.id);
+      console.log(`✅ ventas_silenciadores ACTUALIZADO (${refTag})`);
+    } else {
+      await db.from('ventas_silenciadores').insert(vsData);
+      console.log(`✅ ventas_silenciadores INSERTADO (${refTag})`);
     }
+
+    // ─── 2. ventas_dia ───────────────────────────────────────────────────────
+    const { data: existingVD } = await db.from('ventas_dia')
+      .select('id')
+      .like('notas', `%${refTag}%`)
+      .limit(1)
+      .maybeSingle();
+
+    const desglose = [{
+      descripcion: descStr,
+      cantidad: 1,
+      precio_unitario: precio,
+      total: precio,
+      tipo: 'servicio',
+    }];
+
+    const vdData = {
+      fecha: fechaStr,
+      cliente: clienteNombre,
+      total_ingresos: precio,
+      total_servicios: 1,
+      total_clientes: 1,
+      desglose,
+      metodos_pago: { divisas: precio },
+      tasa_cambio: rates?.bcv || 0,
+      con_iva: false,
+      notas: notesFinal,
+      creado_por: registradoPor,
+      sede_id: sedeId,
+      fecha_registro: nowIso,
+      registro_atrasado: false,
+      estado: 'pagado',
+    };
+
+    if (existingVD) {
+      await db.from('ventas_dia').update(vdData).eq('id', existingVD.id);
+      console.log(`✅ ventas_dia ACTUALIZADO (${refTag})`);
+    } else {
+      await db.from('ventas_dia').insert(vdData);
+      console.log(`✅ ventas_dia INSERTADO (${refTag})`);
+    }
+
   } catch (err) {
-    console.error('Error auto-registering sale for completed service:', err);
+    console.error('❌ Error auto-registering sale for completed service:', err);
   }
 }
 
@@ -3421,7 +3475,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             // Trigger sale auto-registration if completed
             if (finalCitaId && db) {
               const fullCitaObj = { ...citaObj, id: finalCitaId };
-              await handleCompletedServiceSale(db, finalCitaId, fullCitaObj);
+              await handleCompletedServiceSale(db, finalCitaId, fullCitaObj, 'cita', rates);
             }
           } catch (e) { console.error('Error in CITA_UPSERT:', e); }
         }
@@ -3581,20 +3635,24 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 await db.from('servicios').update(servObj).eq('id', id);
                 console.log(`🔧 ADMIN: Servicio actualizado: ${id}`);
                 await logActivityAdmin(db, adminName, 'Actualizó servicio', `Servicio ${id} actualizado vía ChatBot`, sedeId);
+                // Auto-register sale if now completed
+                await handleCompletedServiceSale(db, id, servObj, 'servicio', rates);
               } else {
                 console.log(`🔧 ADMIN: ID proporcionado pero servicio no encontrado: ${id}. Creando nuevo.`);
-                // Force create new instead
                 delete servObj.updated_at;
                 const { data: newServ, error: insErr } = await db.from('servicios').insert(servObj).select('id').single();
                 if (insErr) throw insErr;
-                console.log(`🔧 ADMIN: Nuevo servicio creado (fallback tras update fallido): ${newServ?.id}`);
+                console.log(`🔧 ADMIN: Nuevo servicio creado (fallback): ${newServ?.id}`);
                 await logActivityAdmin(db, adminName, 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot (fallback)`, sedeId);
+                if (newServ?.id) await handleCompletedServiceSale(db, newServ.id, servObj, 'servicio', rates);
               }
             } else if (db) {
               const { data: newServ, error: insErr } = await db.from('servicios').insert(servObj).select('id').single();
               if (insErr) throw insErr;
               console.log(`🔧 ADMIN: Nuevo servicio creado: ${newServ?.id}`);
               await logActivityAdmin(db, adminName, 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot`, sedeId);
+              // Auto-register sale if completada/finalizado
+              if (newServ?.id) await handleCompletedServiceSale(db, newServ.id, servObj, 'servicio', rates);
             }
           } catch (e) { console.error('Error in SERVICIO_UPSERT:', e); }
         }

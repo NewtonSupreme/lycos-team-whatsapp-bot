@@ -206,25 +206,92 @@ export default function ServiciosPage() {
       const newSeguimiento = [...(cita.seguimiento || []), newEntry];
 
       const { error } = await withSedeFilter(supabase!.from('servicios'))
-        .update({ 
-          estado: nuevoEstado, 
+        .update({
+          estado: nuevoEstado,
           updated_at: new Date().toISOString(),
           seguimiento: newSeguimiento
         })
         .eq('id', id);
 
       if (error) throw error;
-      
+
       setCitas(prev => prev.map(c => c.id === id ? { ...c, estado: nuevoEstado, seguimiento: newSeguimiento } : c));
-      
-      const clienteObj = getDisplayName(cita) || 'Cliente';
-      const sedeName = 'Carrizal (Principal)';
-      
+
+      const clienteNombre = getDisplayName(cita) || 'Consumidor Final';
+      const vehiculoStr = getDisplayVehicle(cita);
+      const sedeName = currentSede?.nombre || 'General';
+
+      // ── Auto-register sale when marking as completada or finalizado ──────────
+      const COMPLETED_STATES = ['completada', 'finalizado', 'finalizada', 'completado'];
+      if (COMPLETED_STATES.includes(nuevoEstado)) {
+        const precio = Number(cita.costo_final ?? cita.costo_estimado ?? 0);
+        if (precio > 0 && supabase) {
+          const refTag = `[ServicioID: ${id}]`;
+          const nowIso = new Date().toISOString();
+          const fechaStr = nowIso.split('T')[0];
+          const sedeId = currentSede?.id || cita.sede_id || undefined;
+          const descStr = cita.descripcion || 'Servicio de taller';
+          const notesFinal = `${descStr} [Total: $${precio} (Divisas)] | Cliente: ${clienteNombre} | Vehículo: ${vehiculoStr} ${refTag}`.trim();
+
+          const desglose = [{
+            descripcion: descStr,
+            cantidad: 1,
+            precio_unitario: precio,
+            total: precio,
+            tipo: 'servicio',
+          }];
+
+          // Check existing records to prevent duplicates
+          const [{ data: existingVS }, { data: existingVD }] = await Promise.all([
+            supabase.from('ventas_silenciadores').select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
+            supabase.from('ventas_dia').select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
+          ]);
+
+          const vsData = {
+            cantidad: 1,
+            modelo: vehiculoStr || 'Servicio',
+            notas: notesFinal,
+            fecha: nowIso,
+            precio_registrado: precio,
+            ...(sedeId ? { sede_id: sedeId } : {}),
+            fecha_registro: nowIso,
+            registro_atrasado: false,
+          };
+
+          const vdData = {
+            fecha: fechaStr,
+            cliente: clienteNombre,
+            total_ingresos: precio,
+            total_servicios: 1,
+            total_clientes: 1,
+            desglose,
+            metodos_pago: { divisas: precio },
+            tasa_cambio: globalBcvRate || 0,
+            con_iva: false,
+            notas: notesFinal,
+            creado_por: user?.nombre || 'Admin',
+            ...(sedeId ? { sede_id: sedeId } : {}),
+            fecha_registro: nowIso,
+            registro_atrasado: false,
+            estado: 'pagado',
+          };
+
+          await Promise.all([
+            existingVS
+              ? supabase.from('ventas_silenciadores').update(vsData).eq('id', existingVS.id)
+              : supabase.from('ventas_silenciadores').insert(vsData),
+            existingVD
+              ? supabase.from('ventas_dia').update(vdData).eq('id', existingVD.id)
+              : supabase.from('ventas_dia').insert(vdData),
+          ]);
+        }
+      }
+
       logActivity({
         usuario: user?.nombre || 'Admin',
         modulo: 'Servicios',
         accion: info.accion,
-        detalles: `${info.fmt}: ${clienteObj} en la sede de ${sedeName}`,
+        detalles: `${info.fmt}: ${clienteNombre} en la sede de ${sedeName}`,
         referencia_id: id,
         referencia_tabla: 'servicios'
       });
@@ -1789,6 +1856,38 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
 
       const { error: citaError } = await withSedeFilter(supabase.from('servicios')).update({ estado: 'completada' }).eq('id', cita.id);
       if (citaError) throw citaError;
+
+      // Also write to ventas_silenciadores for full cross-table consistency (reports + ventas recientes)
+      try {
+        const refTag = `[ServicioID: ${cita.id}]`;
+        const vehiculoStr = getDisplayVehicle(cita);
+        const descStr = cita.descripcion || 'Servicio de taller';
+        const notesFinal = `${descStr} [Total: $${total} (Divisas)] | Cliente: ${clientName} | Vehículo: ${vehiculoStr} ${refTag}`.trim();
+        const nowIso = new Date().toISOString();
+        const sedeIdVS = useSedeStore.getState().currentSede?.id || undefined;
+
+        const { data: existingVS } = await supabase.from('ventas_silenciadores')
+          .select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle();
+
+        const vsData = {
+          cantidad: 1,
+          modelo: vehiculoStr || 'Servicio',
+          notas: notesFinal,
+          fecha: nowIso,
+          precio_registrado: total,
+          ...(sedeIdVS ? { sede_id: sedeIdVS } : {}),
+          fecha_registro: nowIso,
+          registro_atrasado: false,
+        };
+
+        if (existingVS) {
+          await supabase.from('ventas_silenciadores').update(vsData).eq('id', existingVS.id);
+        } else {
+          await supabase.from('ventas_silenciadores').insert(vsData);
+        }
+      } catch (vsErr) {
+        console.error('Error registering in ventas_silenciadores:', vsErr);
+      }
 
       let finalCorrelativo = undefined;
       try {
