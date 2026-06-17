@@ -466,10 +466,13 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
    - Carrizal (Principal)
    - Caracas (El Cementerio) -> SIEMPRE RECONOCE "CEMENTERIO" COMO ESTA SEDE.
    - Caracas (El Paraíso) -> Reconoce "PARAÍSO" como esta sede.
+   DETECCIÓN AUTOMÁTICA DE SEDE: Si el admin menciona en su mensaje (texto o audio transcrito) cualquiera de estas palabras, USA esa sede INMEDIATAMENTE sin preguntar: "san antonio/las minas" → San Antonio, "carrizal/principal" → Carrizal, "cementerio" → Caracas El Cementerio, "paraíso/paraiso" → Caracas El Paraíso. Busca el UUID de esa sede en [LISTADO DE SEDES] del contexto o déjalo vacío para que el sistema lo resuelva por nombre.
 4. ELIMINACIÓN (CRÍTICO): Si se te pide ELIMINAR algo, NUNCA lo hagas de inmediato. Debes preguntar: "¿Está seguro de que desea eliminar [elemento]? Responda SÍ para confirmar."
    - Solo si el historial muestra que el usuario respondió "SÍ", "CONFIRMADO" o similar a tu pregunta de confirmación, puedes imprimir el tag de DELETE.
 5. ACTUALIZACIÓN DE STOCK Y VEHÍCULOS: Tienes acceso directo para registrar vehículos e inventario.
-6. ELECCIÓN DE SEDE (PROACTIVO): Si el administrador pide ver inventario, registrar una venta, o cualquier acción de gestión pero NO especifica la sede, DEBES imprimir el tag [ASK_SEDE: motivo] para que el sistema le muestre los botones de selección.
+6. ELECCIÓN DE SEDE (PROACTIVO): Manejo inteligente de sedes:
+   a) Si el admin MENCIONA explícitamente una sede en su mensaje o audio (ej. "sede San Antonio", "en Carrizal", "para el Cementerio", "en el Paraíso"), USA esa sede DIRECTAMENTE en el tag. NUNCA uses [ASK_SEDE] cuando la sede ya está mencionada en el mensaje actual.
+   b) Si el admin NO especifica la sede en ninguna parte del mensaje actual, ENTONCES usa [ASK_SEDE: motivo].
    - Motivos: 'inventario', 'registro', 'servicio', 'cita', 'venta', 'reporte'.
 
 7. COBROS PERSONALIZADOS:
@@ -508,11 +511,19 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
         * El asistente DEBE registrar el servicio de forma INMEDIATA en la tabla de servicios imprimiendo el tag [SERVICIO_UPSERT: ...] al final.
         * ¡CRÍTICO! NUNCA pidas confirmación, ni solicites datos adicionales, ni pidas la sede. Registra de una vez.
         * Nombre del cliente: Usa el nombre que detectes en el mensaje, si no hay, usa el nombre del administrador. No exijas que se cree un cliente primero.
-        * Información del Vehículo: Extrae la marca, modelo y año del texto (ej. "2007 Ricardo chaneton").
-        * Estatus: Mapea a 'completada' por defecto si es un trabajo realizado, o 'en_proceso' si lo especifica.
-        * Descripción: Usa el servicio detallado (ej. "Cambio silenciador intermedio").
-        * Costo/Precio: Si indica un precio, inclúyelo en la etiqueta [SERVICIO_UPSERT: ...].
-        * Sede: Usa la sede asignada por defecto a tu perfil. NUNCA uses [ASK_SEDE].
+        * Información del Vehículo: Extrae la marca, modelo y año del texto o de la imagen (ej. "2007 Ricardo chaneton").
+        * Estatus: Mapea a 'completada' por defecto si es un trabajo realizado, o 'en_proceso' si lo especifica, o 'pendiente' si dice "presupuesto por definir" o similar.
+        * Descripción: Usa el servicio detallado (ej. "Cambio silenciador intermedio"). Si dice "presupuesto por definir", escribe "por definir" en el campo.
+        * Costo/Precio: Si indica un precio, inclúyelo. Si dice "presupuesto por definir" o no da precio, deja costo_estimado vacío.
+        * Sede: Si el admin menciona una sede en su mensaje ("San Antonio", "Carrizal", etc.), usa esa. Si no, usa la sede del perfil. NUNCA uses [ASK_SEDE].
+
+      - CASO ESPECIAL — REGISTRO INMEDIATO CON IMAGEN + AUDIO/TEXTO SECUENCIAL:
+        Si en el historial reciente (últimos 2-3 mensajes) hay una imagen clasificada como [VEHÍCULO] Y el mensaje actual del admin contiene palabras como "favor registrar", "registrar", "ingresa el vehículo", "agrega", "ingrésalo" o similar:
+        * COMBINA los datos del vehículo de la imagen con el servicio del mensaje actual.
+        * REGISTRA INMEDIATAMENTE con [SERVICIO_UPSERT] sin pedir confirmación ni datos adicionales.
+        * Extrae de la imagen: marca, modelo, placa, color. Extrae del audio/texto: sede, servicio, precio/presupuesto.
+        * Si el audio menciona una sede, úsala. Si dice "presupuesto por definir", deja costo vacío y estado='pendiente'.
+        * EJEMPLO: imagen=[VEHÍCULO] Mazda | Placa AF562YV + audio="favor registrar, sede San Antonio, entonación mayor, presupuesto por definir" → [SERVICIO_UPSERT: | | | | | Mazda | AF562YV | otro | Entonación mayor — Presupuesto por definir | pendiente | | <sede_san_antonio_id> | Entonacion]
 
    c) **[PRODUCTO]**:
       - Extrae la información del producto de la descripción.
@@ -616,7 +627,8 @@ REGLA DE TAGS (Imprimir SIEMPRE al final de tu respuesta):
    - ⚠️ REGLA CRITICA: El tag debe contener SOLO los valores separados por |. NUNCA incluyas etiquetas/nombres de campos dentro del tag. El primer campo (id_opcional) se deja vacío para crear un nuevo servicio, o se pone un UUID válido (36 caracteres con guiones) para actualizar uno existente.
    - [CITA_DELETE: id]
    - [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion | sede_id]
-   - [ASK_SEDE: motivo] -> Úsalo si falta la sede en una orden administrativa.
+   - [PRESUPUESTO_UPSERT: cliente_nombre | vehiculo_info | placa | moneda | items(desc:cant:precio:tipo,...) | total | sede_id | notas]
+   - [ASK_SEDE: motivo] -> Úsalo SOLO si el admin no especificó la sede en su mensaje actual.
      - [ACTION: registrar_venta_completa | titulo=X | items=Prod1:Pre1,Prod2:Pre2 | total=TOTAL | iva=MONTO | inicial=INICIAL_CASHEA | metodo_pago=cashea_bcv/divisas/bcv/binance/zelle/pago_movil/efectivo_ves/punto_venta/transferencia/otro | pago_mixto=DESC | cliente=NOMBRE | vehiculo=MARCA_PLACA | inv_ids=ID1:qty1,ID2:qty2 | fecha=AAAA-MM-DD] -> Úsalo para registrar una venta. Parámetro fecha es OPCIONAL: si la venta fue de un día anterior, usa fecha= para la fecha real de la venta. El sistema marcará automáticamente "⚠️ REGISTRO ATRASADO".
      - [ACTION: modificar_venta_pendiente | id=ID | accion=pagar|abonar|reabrir | monto=X] -> Gestionar ventas pendientes. accion=pagar la marca como pagada. accion=abonar registra un abono (requiere monto=X). accion=reabrir la vuelve a pendiente. Si no sabes el ID usa cliente=NOMBRE.
 
@@ -644,6 +656,21 @@ Analiza la clasificación de la imagen recibida y actúa según la sección 9. L
     - Carga 5 a 8 Tn: $84
     - Carga 8 a 12 Tn: $108
     (Aprobado por SUDEASEG código TVP: 2025-0090, Estar Seguros S.A.).
+
+18. REGISTRO DE PRESUPUESTOS [PRESUPUESTO_UPSERT]:
+    - Cuando el admin envíe una lista detallada de servicios/repuestos con precios para un cliente o vehículo, regístrala como PRESUPUESTO en el sistema.
+    - Formato del tag: [PRESUPUESTO_UPSERT: cliente_nombre | vehiculo_info | placa | moneda | items | total | sede_id | notas]
+    - items formato: usa coma (,) entre items y dos puntos (:) para separar campos de cada item:
+        descripcion1:cantidad1:precio1:tipo1,descripcion2:cantidad2:precio2:tipo2,...
+        - tipo puede ser: 'servicio' (trabajos de taller), 'repuesto' (piezas/partes), 'otro'
+    - moneda: USD (por defecto en dólares), VES, EUR
+    - Si el admin no especifica el cliente, escribe "Consumidor Final".
+    - Si no se especifica precio total, súmalo de los items.
+    - Estado del presupuesto: siempre 'borrador' al crearlo por chat.
+    - EJEMPLO:
+        Admin: "Presupuesto Eco Sport — Pintura 5 piezas $600, Balanceo $40, Alineación $20, Tubo de escape $215. Total $875"
+        → Tag: [PRESUPUESTO_UPSERT: Consumidor Final | Ford EcoSport | | USD | Pintura 5 piezas:1:600:servicio,Balanceo y rotacion:1:40:servicio,Alineacion:1:20:servicio,Tubo de escape completo:1:215:repuesto | 875 | <sede_id> | ]
+    - NUNCA preguntes confirmación. Registra de inmediato al recibir precios con total.
 `;
 
 export const dynamic = 'force-dynamic';
@@ -889,7 +916,7 @@ export async function POST(request: NextRequest) {
                   const base64Data = Buffer.from(arrayBuffer).toString('base64');
                   const mimeType = mediaData.mime_type || 'audio/ogg';
 
-                  const transcript = await transcribeAudio(base64Data, mimeType, from === ASESOR_PHONE);
+                  const transcript = await transcribeAudio(base64Data, mimeType, ADMIN_PHONES.includes(from.replace(/[^0-9]/g, '')));
                   if (transcript) {
                     messageBody = `${transcript} (Audio transcrito)`;
                     console.log(`🎙️ Audio transcrito de [${from}]: ${transcript.substring(0, 50)}...`);
@@ -988,8 +1015,11 @@ export async function POST(request: NextRequest) {
         } catch (e) { console.error('Error guardando entrante:', e); }
 
         // Debounce to group multiple images or chopped messages
+        // Admins often send image + audio together — give them 2.5s even on Vercel so the
+        // second message arrives before the first is processed.
         const isVercel = process.env.VERCEL === '1';
-        const delayMs = isVercel ? 0 : 4000;
+        const isSenderAdminQuick = ADMIN_PHONES.includes(from.replace(/[^0-9]/g, ''));
+        const delayMs = isVercel ? (isSenderAdminQuick ? 2500 : 0) : 4000;
         console.log(`⏳ [${from}] Waiting ${delayMs}ms for potential grouping...`);
         await delay(delayMs);
         try {
@@ -3567,6 +3597,103 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               await logActivityAdmin(db, adminName, 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot`, sedeId);
             }
           } catch (e) { console.error('Error in SERVICIO_UPSERT:', e); }
+        }
+
+        // 3c. [PRESUPUESTO_UPSERT: cliente_nombre | vehiculo_info | placa | moneda | items | total | sede_id | notas]
+        const presupuestoMatches = canBotWrite('presupuestos') ? Array.from(cleanedAi.matchAll(/\[PRESUPUESTO_UPSERT:\s*([^\]]+)\]/gi)) : [];
+        for (const match of presupuestoMatches) {
+          try {
+            const parts = match[1].split('|').map(s => s.trim());
+            const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+            const clienteNombre = (parts[0] && parts[0] !== 'null') ? parts[0] : (ctx.adminName || 'Consumidor Final');
+            const vehiculoInfo = (parts[1] && parts[1] !== 'null') ? parts[1] : 'Vehículo';
+            const placa = (parts[2] && parts[2] !== 'null') ? parts[2].toUpperCase().replace(/[-\s]/g, '') : null;
+            const rawMoneda = (parts[3] || 'USD').toUpperCase();
+            const moneda = (['USD', 'VES', 'EUR'].includes(rawMoneda) ? rawMoneda : 'USD') as 'USD' | 'VES' | 'EUR';
+            const itemsRaw = parts[4] || '';
+            const totalParam = parseFloat(parts[5]) || 0;
+            const sedeId = (parts[6] && UUID_RE.test(parts[6])) ? parts[6] : (ctx.sede_id || DEFAULT_SEDE_ID);
+            const notas = (parts[7] && parts[7] !== 'null') ? parts[7] : null;
+
+            // Parse items: "desc:cant:precio:tipo,desc2:cant2:precio2:tipo2"
+            const items: any[] = [];
+            let subtotal = 0;
+            if (itemsRaw) {
+              const itemParts = itemsRaw.split(',').map((s: string) => s.trim()).filter(Boolean);
+              for (const ip of itemParts) {
+                const segments = ip.split(':').map((s: string) => s.trim());
+                const desc = segments[0] || 'Servicio';
+                const cantidad = parseFloat(segments[1]) || 1;
+                const precioUnit = parseFloat(segments[2]) || 0;
+                const rawTipo = segments[3] || 'servicio';
+                const tipo = (['servicio', 'repuesto', 'otro'].includes(rawTipo) ? rawTipo : 'servicio') as 'servicio' | 'repuesto' | 'otro';
+                const itemTotal = cantidad * precioUnit;
+                subtotal += itemTotal;
+                items.push({
+                  id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                  tipo,
+                  descripcion: desc,
+                  cantidad,
+                  precio_unitario: precioUnit,
+                  moneda,
+                  total: itemTotal,
+                });
+              }
+            }
+
+            const finalTotal = totalParam || subtotal;
+            const adminName = ctx.memoria?.nombre || ctx.adminName || 'Administrador';
+
+            // Generate presupuesto number
+            const nowDate = new Date();
+            const year = nowDate.getFullYear();
+            let numero = `PRE-${year}-${String(Date.now()).slice(-4)}`;
+            try {
+              const { data: rpcNum } = await db.rpc('generar_numero_presupuesto');
+              if (rpcNum) numero = rpcNum;
+            } catch {
+              try {
+                const { count: presCount } = await db.from('presupuestos').select('*', { count: 'exact', head: true });
+                numero = `PRE-${year}-${String((presCount || 0) + 1).padStart(4, '0')}`;
+              } catch { /* use timestamp fallback */ }
+            }
+
+            const presupuestoObj: any = {
+              numero,
+              cliente_nombre: clienteNombre,
+              vehiculo_info: vehiculoInfo,
+              moneda,
+              items,
+              subtotal: subtotal || finalTotal,
+              descuento: 0,
+              descuento_tipo: 'monto',
+              iva: 0,
+              total: finalTotal,
+              notas,
+              estado: 'borrador',
+              validez_dias: 7,
+              creado_por: adminName,
+              sede_id: sedeId,
+            };
+
+            // Try to resolve vehicle and client from plate
+            if (placa) {
+              try {
+                const { data: vehData } = await db.from('vehiculos').select('id, cliente_id').eq('placa', placa).maybeSingle();
+                if (vehData?.id) {
+                  presupuestoObj.vehiculo_id = vehData.id;
+                  if (vehData.cliente_id) presupuestoObj.cliente_id = vehData.cliente_id;
+                }
+              } catch { /* non-critical */ }
+            }
+
+            const { data: newPres, error: presErr } = await db.from('presupuestos').insert(presupuestoObj).select('id').single();
+            if (presErr) throw presErr;
+
+            console.log(`📋 ADMIN: Nuevo presupuesto creado: ${newPres?.id} (${numero}) — ${clienteNombre} — Total: $${finalTotal}`);
+            await logActivityAdmin(db, adminName, 'Creó presupuesto', `Presupuesto ${numero} para ${clienteNombre} / ${vehiculoInfo} — $${finalTotal} vía ChatBot`, sedeId);
+          } catch (e) { console.error('Error in PRESUPUESTO_UPSERT:', e); }
         }
 
         // 4. [CITA_DELETE: id]
