@@ -6,15 +6,16 @@ import {
   Banknote, BadgeCheck, Activity, Plus, Trash2, Edit3, 
   ChevronRight, ChevronLeft, MoreHorizontal, MessageSquare, Tag, Info,
   MapPin, Filter, LayoutGrid, List, FileText, MoveHorizontal, Download,
-  TrendingUp
+  TrendingUp, Save
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase, registrarFactura } from '@/lib/supabase';
+import { supabase, registrarFactura, createPresupuesto, generateNumeroPresupuesto, syncClientData } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from "@/lib/store/useSedeStore";
 import { Button } from '@/components/ui/button';
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
+import { generatePresupuestoPDF } from '@/lib/presupuesto-pdf';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 import { cn, getLocalISODate } from '@/lib/utils';
@@ -42,11 +43,12 @@ interface CitaServicio {
   vehiculos?: { marca: string; modelo: string; placa: string; anio?: number; clientes?: { nombre: string; apellido: string; telefono: string } | null } | null;
 }
 
-const ESTADOS = ['pendiente', 'confirmada', 'en_proceso', 'completada', 'cancelada'];
+const ESTADOS = ['pendiente', 'confirmada', 'en_revision', 'en_proceso', 'completada', 'cancelada'];
 
 const ESTADO_CONFIG: Record<string, { label: string; color: string; bg: string; icon: React.ElementType; glow: string }> = {
   pendiente:   { label: 'Pendiente',   color: 'text-amber-400',  bg: 'bg-amber-400/10 border-amber-400/20',  glow: 'shadow-amber-500/20', icon: AlertCircle },
   confirmada:  { label: 'Confirmada',  color: 'text-blue-400',   bg: 'bg-blue-400/10 border-blue-400/20',    glow: 'shadow-blue-500/20',  icon: Calendar },
+  en_revision: { label: 'Revisión',    color: 'text-fuchsia-400',bg: 'bg-fuchsia-400/10 border-fuchsia-400/20',glow: 'shadow-fuchsia-500/20', icon: Search },
   en_proceso:  { label: 'En Proceso',  color: 'text-violet-400', bg: 'bg-violet-400/10 border-violet-400/20', glow: 'shadow-violet-500/20', icon: RefreshCw },
   completada:  { label: 'Completada',  color: 'text-green-400',  bg: 'bg-green-400/10 border-green-400/20',  glow: 'shadow-green-500/20', icon: CheckCircle },
   cancelada:   { label: 'Cancelada',   color: 'text-red-400',    bg: 'bg-red-400/10 border-red-400/20',      glow: 'shadow-red-500/20',   icon: X },
@@ -108,6 +110,7 @@ export default function ServiciosPage() {
   const [editCita, setEditCita] = useState<CitaServicio | null>(null);
   const [trackingCita, setTrackingCita] = useState<CitaServicio | null>(null);
   const [invoiceCita, setInvoiceCita] = useState<CitaServicio | null>(null);
+  const [budgetCita, setBudgetCita] = useState<CitaServicio | null>(null);
   const [inventory, setInventory] = useState<any[]>([]);
   const [selectedForDual, setSelectedForDual] = useState<string[]>([]);
   const [mounted, setMounted] = useState(false);
@@ -163,7 +166,7 @@ export default function ServiciosPage() {
 
   const getEstadoLabel = (estado: string) => {
     const labels: Record<string, string> = {
-      pendiente: 'Pendiente', confirmada: 'Confirmada',
+      pendiente: 'Pendiente', confirmada: 'Confirmada', en_revision: 'En Revisión',
       en_proceso: 'En Proceso', completada: 'Completada',
       finalizado: 'Finalizado', cancelada: 'Cancelada', cancelado: 'Cancelado'
     };
@@ -239,13 +242,19 @@ export default function ServiciosPage() {
     if (!matchText) return false;
     if (dateFilter === 'todos') return true;
 
-    const citaDate = new Date(c.fecha);
-    const now = new Date();
+    const rawDateStr = c.fecha || c.created_at;
+    if (!rawDateStr) return false;
+    
+    // Convert to Date object safely
+    const citaDate = new Date(rawDateStr);
+    // Para 'hoy', usamos substring para no pelear con zonas horarias
+    const citaIsoDate = rawDateStr.split('T')[0];
     
     if (dateFilter === 'hoy') {
-      return citaDate.toISOString().split('T')[0] === getLocalISODate();
+      return citaIsoDate === getLocalISODate();
     }
     
+    const now = new Date();
     if (dateFilter === 'semana') {
       const weekAgo = new Date();
       weekAgo.setDate(now.getDate() - 7);
@@ -382,7 +391,7 @@ export default function ServiciosPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-6"
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 xl:gap-6"
           >
             {ESTADOS.map(estado => (
               <KanbanColumn 
@@ -393,6 +402,7 @@ export default function ServiciosPage() {
                 onDelete={handleDelete}
                 onTracking={setTrackingCita}
                 onInvoice={setInvoiceCita}
+                onBudget={setBudgetCita}
                 onMove={updateEstado}
                 selectedForDual={selectedForDual}
                 setSelectedForDual={setSelectedForDual}
@@ -413,6 +423,7 @@ export default function ServiciosPage() {
               onDelete={handleDelete} 
               onTracking={setTrackingCita}
               onInvoice={setInvoiceCita}
+              onBudget={setBudgetCita}
             />
           </motion.div>
         )}
@@ -468,12 +479,13 @@ export default function ServiciosPage() {
       {editCita && <ServiceFormModal cita={editCita} onClose={() => { setEditCita(null); loadCitas(); }} />}
       {trackingCita && <TrackingModal cita={trackingCita} onClose={() => { setTrackingCita(null); loadCitas(); }} />}
       {invoiceCita && <InvoiceModal cita={invoiceCita} citas={citas} inventory={inventory} onClose={() => { setInvoiceCita(null); loadCitas(); }} globalBcvRate={globalBcvRate} />}
+      {budgetCita && <BudgetModal cita={budgetCita} inventory={inventory} onClose={() => setBudgetCita(null)} />}
     </div>
   );
 }
 
 // ── Kanban Components ──────────────────────────────────────────
-function KanbanColumn({ estado, items, onEdit, onDelete, onTracking, onInvoice, onMove, selectedForDual, setSelectedForDual }: any) {
+function KanbanColumn({ estado, items, onEdit, onDelete, onTracking, onInvoice, onBudget, onMove, selectedForDual, setSelectedForDual }: any) {
   const cfg = ESTADO_CONFIG[estado];
   const Icon = cfg.icon;
 
@@ -500,6 +512,7 @@ function KanbanColumn({ estado, items, onEdit, onDelete, onTracking, onInvoice, 
               onDelete={onDelete} 
               onTracking={onTracking}
               onInvoice={onInvoice}
+              onBudget={onBudget}
               onMove={onMove}
               isSelected={selectedForDual.includes(cita.id)}
               onSelect={(selected: boolean) => {
@@ -526,7 +539,7 @@ function KanbanColumn({ estado, items, onEdit, onDelete, onTracking, onInvoice, 
   );
 }
 
-function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onMove, isSelected, onSelect }: any) {
+function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onBudget, onMove, isSelected, onSelect }: any) {
   const lastUpdate = cita.seguimiento?.[cita.seguimiento.length - 1];
 
   const currentIndex = ESTADOS.indexOf(cita.estado);
@@ -691,12 +704,22 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onMove, is
            </button>
         </div>
       </div>
+      
+      {/* Convertir en Presupuesto */}
+      <div className="px-5 pb-5 pt-1">
+        <button
+          onClick={() => onBudget(cita)}
+          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary/10 hover:bg-primary text-primary hover:text-primary-foreground transition-all font-black text-[10px] uppercase tracking-widest border border-primary/20 shadow-sm"
+        >
+          Convertir en Presupuesto
+        </button>
+      </div>
     </motion.div>
   );
 }
 
 // ── List View Component ──────────────────────────────────────
-function ListView({ items, onEdit, onDelete, onTracking, onInvoice }: any) {
+function ListView({ items, onEdit, onDelete, onTracking, onInvoice, onBudget }: any) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left">
@@ -985,6 +1008,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
 
       if (cita?.id) {
         // UPDATE
+        const oldNombreCliente = cita.nombre_cliente;
         const finalTipo = isCustomServicio ? 'otro' : formData.tipo;
         const updatePayload: any = {
           nombre_cliente: formData.nombre_cliente,
@@ -1008,6 +1032,54 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           .update(updatePayload)
           .eq('id', cita.id);
         if (error) throw error;
+        
+        // Sync client name to CRM if edited
+        if (finalClienteId && formData.nombre_cliente.trim() !== '') {
+          const names = formData.nombre_cliente.trim().split(' ');
+          const cNombre = names[0];
+          const cApellido = names.slice(1).join(' ');
+          await supabase!.from('clientes').update({ nombre: cNombre, apellido: cApellido }).eq('id', finalClienteId);
+          await syncClientData(finalClienteId, cNombre, cApellido, formData.telefono || '');
+        }
+        
+        // Sync client name to related factura if changed
+        const newNombreCliente = formData.nombre_cliente.trim();
+        if (oldNombreCliente && oldNombreCliente !== newNombreCliente) {
+          let facturaIdToUpdate: string | null = null;
+          // 1st: direct reference (new format: referencia_tabla = 'servicios')
+          const { data: facturaDirect } = await supabase!
+            .from('facturas')
+            .select('id')
+            .eq('referencia_id', cita.id)
+            .eq('modulo_origen', 'servicios')
+            .maybeSingle();
+          if (facturaDirect) {
+            facturaIdToUpdate = facturaDirect.id;
+          } else {
+            // 2nd: legacy format (referencia_tabla = 'ventas_dia')
+            // Find ventas_dia with matching old client name
+            const { data: ventasMatch } = await supabase!
+              .from('ventas_dia')
+              .select('id')
+              .eq('cliente', oldNombreCliente)
+              .limit(2);
+            if (ventasMatch && ventasMatch.length === 1) {
+              const { data: facturaLegacy } = await supabase!
+                .from('facturas')
+                .select('id')
+                .eq('referencia_id', ventasMatch[0].id)
+                .eq('modulo_origen', 'servicios')
+                .maybeSingle();
+              if (facturaLegacy) facturaIdToUpdate = facturaLegacy.id;
+            }
+          }
+          if (facturaIdToUpdate) {
+            await supabase!
+              .from('facturas')
+              .update({ cliente: newNombreCliente, updated_at: new Date().toISOString() })
+              .eq('id', facturaIdToUpdate);
+          }
+        }
         
         logActivity({
           usuario: user?.nombre || 'Admin',
@@ -1061,6 +1133,15 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
         if (!payload.telefono) delete payload.telefono;
         const { error } = await withSedeFilter(supabase!.from('servicios')).insert(withSedeInsert(payload));
         if (error) throw error;
+
+        // Sync client name to CRM if edited
+        if (finalClienteId && formData.nombre_cliente.trim() !== '') {
+          const names = formData.nombre_cliente.trim().split(' ');
+          const cNombre = names[0];
+          const cApellido = names.slice(1).join(' ');
+          await supabase!.from('clientes').update({ nombre: cNombre, apellido: cApellido }).eq('id', finalClienteId);
+          await syncClientData(finalClienteId, cNombre, cApellido, formData.telefono || '');
+        }
 
         logActivity({
           usuario: user?.nombre || 'Admin',
@@ -1701,7 +1782,7 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
         metodos_pago: payments,
         tasa_cambio: rates.bcv || globalBcvRate || 518.0,
         con_iva: withIva,
-        notas: cita.descripcion || 'Servicio de taller',
+        notas: [cita.descripcion, cita.tipo_personalizado].filter(Boolean).join(' | ') || 'Servicio de taller',
         creado_por: 'Admin'
       })).select().single();
       if (ventaError) throw ventaError;
@@ -1714,8 +1795,8 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
         const facturaRegistro = await registrarFactura({
           tipo: 'servicio',
           modulo_origen: 'servicios',
-          referencia_id: ventaDia?.id || cita.id,
-          referencia_tabla: 'ventas_dia',
+          referencia_id: cita.id,
+          referencia_tabla: 'servicios',
           cliente: clientName,
           vehiculo: vehicleStr,
           total: total,
@@ -2073,5 +2154,272 @@ function InvoiceEditor({
         </div>
       </div>
     </>
+  );
+}
+
+// ── Budget Modal ───────────────────────────────────────────────
+function BudgetModal({ cita, inventory, onClose }: { cita: CitaServicio; inventory: any[]; onClose: () => void }) {
+  const getDisplayName = (c: CitaServicio) => {
+    if (c.vehiculos?.clientes) return `${c.vehiculos.clientes.nombre} ${c.vehiculos.clientes.apellido}`;
+    return c.nombre_cliente || 'Consumidor Final';
+  };
+
+  const [clientName, setClientName] = useState(getDisplayName(cita) || 'Consumidor Final');
+  const [clientPhone, setClientPhone] = useState(cita.telefono || '');
+  
+  const [vehicleStr, setVehicleStr] = useState(cita.vehiculos
+    ? `${cita.vehiculos.marca} ${cita.vehiculos.modelo} (${cita.vehiculos.placa})`
+    : cita.vehiculo_info || '—');
+
+  const SERVICIO_LABELS: Record<string, string> = {
+    mantenimiento_preventivo: 'Mantenimiento Preventivo',
+    cambio_aceite: 'Cambio de Aceite',
+    frenos: 'Frenos',
+    motor: 'Motor',
+    transmision: 'Transmisión',
+    suspension: 'Suspensión',
+    electrico: 'Sistema Eléctrico',
+    aire_acondicionado: 'Aire Acondicionado',
+    diagnostico: 'Diagnóstico por Escáner'
+  };
+
+  const [items, setItems] = useState(() => {
+    const match = inventory.find((i: any) => 
+      (cita.descripcion || '').toLowerCase().includes(i.nombre.toLowerCase().trim()) ||
+      i.nombre.toLowerCase().trim().includes((cita.descripcion || '').toLowerCase().trim()) ||
+      (cita.tipo_personalizado || SERVICIO_LABELS[cita.tipo] || '').toLowerCase().includes(i.nombre.toLowerCase().trim())
+    );
+    const price = match?.precio_usd || cita.costo_estimado || 0;
+    return [{
+      id: `item-${Date.now()}`,
+      tipo: match ? 'repuesto' : 'servicio',
+      descripcion: cita.descripcion || cita.tipo_personalizado || SERVICIO_LABELS[cita.tipo] || 'Servicio General',
+      cantidad: 1,
+      precio_unitario: price,
+      moneda: 'USD' as const,
+      total: price,
+      inventario_id: match ? match.id : null,
+    }];
+  });
+
+  const [isSaving, setIsSaving] = useState(false);
+  const [globalBcvRate, setGlobalBcvRate] = useState(0);
+  
+  useEffect(() => {
+    fetch('/api/rates?t=' + Date.now()).then(r => r.json()).then(d => setGlobalBcvRate(d.bcv || 0)).catch(() => {});
+  }, []);
+
+  const [validezDias, setValidezDias] = useState(15);
+  const [notas, setNotas] = useState('');
+  
+  const subtotal = items.reduce((sum, item) => sum + (item.total || 0), 0);
+  const total = subtotal;
+
+  const addItem = () => setItems([...items, { id: `item-${Date.now()}`, tipo: 'servicio', descripcion: '', cantidad: 1, precio_unitario: 0, moneda: 'USD' as const, total: 0, inventario_id: null }]);
+  const removeItem = (i: number) => items.length > 1 && setItems(items.filter((_, idx) => idx !== i));
+  const updateItem = (i: number, f: string, v: any) => {
+    const n = [...items];
+    const item = { ...n[i], [f]: v };
+    if (f === 'cantidad' || f === 'precio_unitario') item.total = (item.cantidad || 0) * (item.precio_unitario || 0);
+    n[i] = item;
+    setItems(n);
+  };
+
+  const handleSaveBudget = async () => {
+    if (!clientName.trim()) return alert('El nombre del cliente es obligatorio.');
+    
+    setIsSaving(true);
+    try {
+      const numero = await generateNumeroPresupuesto();
+      const expDate = new Date();
+      expDate.setDate(expDate.getDate() + validezDias);
+      
+      const payload = {
+        numero,
+        cliente_id: cita.cliente_id || null,
+        cliente_nombre: clientName.trim(),
+        cliente_telefono: clientPhone.trim() || null,
+        vehiculo_id: cita.vehiculo_id || null,
+        vehiculo_info: vehicleStr.trim() || null,
+        moneda: 'USD',
+        tasa_cambio: globalBcvRate,
+        items,
+        subtotal,
+        descuento: 0,
+        descuento_tipo: 'porcentaje',
+        iva: 0,
+        total,
+        notas: notas.trim() || null,
+        estado: 'borrador',
+        validez_dias: validezDias,
+        fecha_expiracion: expDate.toISOString(),
+      };
+      
+      const result = await createPresupuesto(payload);
+      if (!result) throw new Error('Error al crear presupuesto');
+      
+      generatePresupuestoPDF({
+        numero,
+        created_at: new Date().toISOString(),
+        fecha_expiracion: expDate.toISOString(),
+        cliente_nombre: payload.cliente_nombre,
+        cliente_telefono: payload.cliente_telefono,
+        vehiculo_info: payload.vehiculo_info,
+        moneda: payload.moneda,
+        tasa_cambio: payload.tasa_cambio,
+        items,
+        subtotal: payload.subtotal,
+        descuento: 0,
+        descuento_tipo: 'porcentaje',
+        iva: 0,
+        total: payload.total,
+        notas: payload.notas,
+        estado: 'borrador',
+        validez_dias: payload.validez_dias,
+      });
+      
+      alert(`¡Presupuesto #${numero} creado y guardado en la tabla de presupuestos con éxito!`);
+      onClose();
+    } catch (err: any) {
+      alert('Error: ' + err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[120] grid place-items-center bg-black/60 backdrop-blur-md p-4">
+      <div className="bg-card border border-border w-full max-w-4xl max-h-[90vh] shadow-2xl flex flex-col overflow-hidden rounded-[32px] animate-in zoom-in-95 duration-300">
+        
+        <div className="p-6 border-b border-border flex items-center justify-between shrink-0 bg-gradient-to-r from-primary/10 to-transparent">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-[20px] bg-primary/20 flex items-center justify-center border border-primary/30">
+              <FileText className="w-6 h-6 text-primary" />
+            </div>
+            <div>
+              <h3 className="text-xl font-black text-foreground uppercase tracking-tight italic" style={{ fontFamily: 'Syne, sans-serif' }}>
+                Generar Presupuesto
+              </h3>
+              <p className="text-xs text-muted-foreground uppercase tracking-widest font-bold">A partir de Ticket #{cita.id.slice(0,8)}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="w-10 h-10 rounded-full bg-muted hover:bg-muted/80 flex items-center justify-center transition-all group shrink-0">
+            <X className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
+          </button>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-1">Nombre del Cliente</label>
+              <input 
+                className="w-full bg-muted/50 border border-border rounded-xl px-4 py-2.5 text-sm text-foreground focus:ring-2 focus:ring-primary/30 outline-none transition-all"
+                value={clientName} onChange={e => setClientName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-1">Vehículo / Placa</label>
+              <input 
+                className="w-full bg-muted/50 border border-border rounded-xl px-4 py-2.5 text-sm text-foreground focus:ring-2 focus:ring-primary/30 outline-none transition-all"
+                value={vehicleStr} onChange={e => setVehicleStr(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="border border-border rounded-[24px] bg-muted/10 overflow-hidden overflow-x-auto">
+            <div className="min-w-[600px]">
+              <div className="grid grid-cols-12 gap-2 bg-muted/40 p-4 border-b border-border text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+              <div className="col-span-6">Descripción</div>
+              <div className="col-span-2 text-center">Cant</div>
+              <div className="col-span-2 text-right">Precio $</div>
+              <div className="col-span-2 text-right">Total $</div>
+            </div>
+            <div className="divide-y divide-border/50">
+              {items.map((item, i) => (
+                <div key={i} className="p-2 flex items-center gap-2">
+                   <div className="w-8 flex justify-center shrink-0">
+                     <button onClick={() => removeItem(i)} className="p-2 hover:bg-destructive/10 text-muted-foreground hover:text-destructive rounded-lg transition-colors">
+                       <Trash2 className="w-4 h-4" />
+                     </button>
+                   </div>
+                   <div className="grid grid-cols-12 gap-2 flex-1 items-center">
+                     <div className="col-span-6">
+                       <input 
+                         className="w-full bg-transparent border border-transparent hover:border-border focus:border-primary/50 focus:bg-background rounded-lg px-2 py-1.5 text-sm text-foreground outline-none transition-all"
+                         value={item.descripcion} onChange={e => updateItem(i, 'descripcion', e.target.value)}
+                       />
+                     </div>
+                     <div className="col-span-2">
+                       <input 
+                         type="number" min="1" step="1"
+                         className="w-full text-center bg-transparent border border-transparent hover:border-border focus:border-primary/50 focus:bg-background rounded-lg px-2 py-1.5 text-sm font-mono text-foreground outline-none transition-all"
+                         value={item.cantidad} onChange={e => updateItem(i, 'cantidad', parseFloat(e.target.value) || 0)}
+                       />
+                     </div>
+                     <div className="col-span-2 relative">
+                       <input 
+                         type="number" min="0" step="0.01"
+                         className="w-full text-right bg-transparent border border-transparent hover:border-border focus:border-primary/50 focus:bg-background rounded-lg pl-6 pr-2 py-1.5 text-sm font-mono text-foreground outline-none transition-all"
+                         value={item.precio_unitario} onChange={e => updateItem(i, 'precio_unitario', parseFloat(e.target.value) || 0)}
+                       />
+                       <span className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground font-mono text-xs">$</span>
+                     </div>
+                     <div className="col-span-2 text-right px-2 text-sm font-mono font-bold text-primary">
+                       $ {item.total.toFixed(2)}
+                     </div>
+                   </div>
+                </div>
+              ))}
+            </div>
+            <div className="p-3 bg-muted/20 border-t border-border flex justify-center">
+              <button 
+                onClick={addItem}
+                className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-primary hover:text-primary-foreground hover:bg-primary px-4 py-2 rounded-xl transition-all"
+              >
+                <Plus className="w-4 h-4" /> Agregar Ítem
+              </button>
+            </div>
+            </div>
+          </div>
+
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-1">Notas (Opcional)</label>
+              <textarea 
+                className="w-full bg-muted/50 border border-border rounded-xl px-4 py-2.5 text-sm text-foreground focus:ring-2 focus:ring-primary/30 outline-none transition-all resize-none h-24 custom-scrollbar"
+                placeholder="Notas que aparecerán en el PDF..."
+                value={notas} onChange={e => setNotas(e.target.value)}
+              />
+            </div>
+            <div className="bg-primary/5 border border-primary/20 rounded-[24px] p-6 space-y-3 relative overflow-hidden">
+               <div className="absolute right-0 top-0 w-32 h-32 bg-primary/10 rounded-full blur-3xl" />
+               <div className="flex justify-between items-center relative z-10">
+                 <span className="text-xs font-black uppercase tracking-widest text-muted-foreground">Tasa BCV Referencial</span>
+                 <span className="text-sm font-mono font-bold text-foreground">{globalBcvRate || 'Cargando...'} Bs</span>
+               </div>
+               <div className="flex justify-between items-end relative z-10 pt-2 border-t border-primary/10">
+                 <span className="text-sm font-black uppercase tracking-[0.3em] text-primary">Total Presupuesto</span>
+                 <div className="text-right">
+                   <p className="text-3xl font-black text-primary font-mono leading-none">$ {total.toFixed(2)}</p>
+                   <p className="text-xs font-bold text-muted-foreground mt-1 tracking-widest">{(total * (globalBcvRate || 1)).toFixed(2)} Bs</p>
+                 </div>
+               </div>
+            </div>
+          </div>
+        </div>
+        
+        <div className="p-6 border-t border-border bg-card shrink-0">
+          <Button 
+            onClick={handleSaveBudget} 
+            disabled={isSaving} 
+            className="w-full h-16 rounded-[24px] bg-primary hover:bg-primary/90 text-primary-foreground font-black text-sm uppercase tracking-widest shadow-lg shadow-primary/20 gap-3"
+          >
+            {isSaving ? <Loader2 className="w-6 h-6 animate-spin" /> : <Save className="w-6 h-6" />}
+            Guardar Presupuesto y Generar PDF
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }

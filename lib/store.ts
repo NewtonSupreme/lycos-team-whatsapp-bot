@@ -13,6 +13,7 @@ interface AppStore {
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   addNotification: (notif: Omit<Notification, 'id' | 'created_at'>) => void;
+  setNotifications: (notifs: Notification[]) => void;
   markAllRead: () => void;
   setPushRegistered: (val: boolean) => void;
   setRoleDefaults: (defaults: Record<string, Permisos>) => void;
@@ -41,6 +42,12 @@ export const useAppStore = create<AppStore>((set) => ({
         ...state.notifications,
       ].slice(0, 50), // max 50 notificaciones
       unreadCount: state.unreadCount + (notif.leida ? 0 : 1),
+    })),
+
+  setNotifications: (notifs) =>
+    set(() => ({
+      notifications: notifs,
+      unreadCount: notifs.filter(n => !n.leida).length
     })),
 
   markAllRead: () =>

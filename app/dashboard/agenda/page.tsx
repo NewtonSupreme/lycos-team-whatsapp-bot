@@ -15,6 +15,7 @@ import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
+import { useSedeStore } from '@/lib/store/useSedeStore';
 
 const HORAS = ['08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00'];
 const TIPOS: { v: TipoServicio; l: string }[] = [
@@ -39,6 +40,7 @@ const estadoColorMap: Record<string, string> = {
 
 export default function AgendaPage() {
   const { user } = useAppStore();
+  const { currentSede } = useSedeStore();
   const { can } = useRolePermissions();
   const [mounted, setMounted] = React.useState(false);
   const [citas, setCitas] = React.useState<Cita[]>([]);
@@ -282,14 +284,29 @@ export default function AgendaPage() {
           notas: form.notas || null,
           costo_estimado: form.costo_estimado || 0
         });
+        const newId = (result as any)?.id;
         logActivity({
           usuario: user?.nombre || 'Sistema',
           modulo: 'Agenda',
           accion: 'Agendó cita',
           detalles: `${form.fecha} ${form.hora}`,
-          referencia_id: (result as any)?.id,
+          referencia_id: newId,
           referencia_tabla: 'citas'
         });
+        if (newId) {
+          fetch('/api/notificaciones/create', {
+            method: 'POST',
+            body: JSON.stringify({
+              sede_id: currentSede?.id,
+              tipo: 'success',
+              titulo: '📅 Nueva cita agendada',
+              mensaje: `Cliente — ${form.fecha} a las ${form.hora} · ${form.descripcion}`,
+              entidad_tipo: 'cita',
+              entidad_id: newId,
+              url: '/dashboard/agenda'
+            })
+          });
+        }
       }
       setShowModal(false);
       await loadData();
@@ -352,8 +369,22 @@ export default function AgendaPage() {
           progreso: 0,
         }],
       };
-      const { error } = await withSedeFilter(supabase!.from('servicios')).insert(withSedeInsert(payload));
+      const { data: newSrvData, error } = await withSedeFilter(supabase!.from('servicios')).insert(withSedeInsert(payload)).select('id').single();
       if (error) throw error;
+      if (newSrvData) {
+        fetch('/api/notificaciones/create', {
+          method: 'POST',
+          body: JSON.stringify({
+            sede_id: currentSede?.id,
+            tipo: 'warning',
+            titulo: '🔧 Nuevo servicio asignado',
+            mensaje: `${payload.nombre_cliente} · Estado: pendiente`,
+            entidad_tipo: 'servicio',
+            entidad_id: newSrvData.id,
+            url: '/dashboard/servicios'
+          })
+        });
+      }
       await updateCita(cita.id, { estado: 'completada' });
       logActivity({
         usuario: user?.nombre || 'Admin', modulo: 'Agenda', accion: 'Convirtió cita a servicio',

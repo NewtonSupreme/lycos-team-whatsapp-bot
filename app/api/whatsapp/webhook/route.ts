@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getPermisos } from '@/types';
+import { sendGlobalPushNotification } from '@/lib/push-helper';
 
 async function checkIsBotAdmin(phone: string, db: any, adminPhones: string[]): Promise<boolean> {
   const phoneClean = phone.replace(/[^0-9]/g, '');
@@ -25,23 +26,7 @@ async function checkIsBotAdmin(phone: string, db: any, adminPhones: string[]): P
 
 const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'lycos_webhook_token_2026';
 
-// ─── Fire push notification to all subscribed devices ──────────────────────────
-async function firePushNotification(payload: {
-  title: string;
-  body: string;
-  type: string;
-  url?: string;
-  tag?: string;
-}): Promise<void> {
-  try {
-    const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000';
-    await fetch(`${baseUrl}/api/push/send`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-  } catch { /* never block webhook processing */ }
-}
+// Push notification is now imported from push-helper
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
@@ -552,7 +537,8 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
     - Para REGISTRAR un nuevo servicio/orden de taller, usa el tag [SERVICIO_UPSERT: ...] con los campos correspondientes.
     - Para ACTUALIZAR un servicio existente (cambiar estado, actualizar costo, etc.), incluye el ID del servicio en el tag.
     - El tag [SERVICIO_UPSERT] crea/actualiza en la tabla 'servicios' (NO en 'citas'). Usa [CITA_UPSERT] solo para agendar citas.
-    - Mapeo de estados válidos para servicios: 'pendiente', 'confirmada', 'en_proceso', 'completada', 'finalizado', 'cancelada', 'cancelado'.
+    - Mapeo de estados válidos para servicios: 'pendiente', 'confirmada', 'en_revision', 'en_proceso', 'completada', 'finalizado', 'cancelada', 'cancelado'.
+    - ⚠️ REGLA ESTRICTA DE ESTADO "EN REVISIÓN": Si el administrador que registra el servicio es Rafael (teléfono 584262474374) o Jorge, y el trabajo a realizar incluye "balanceo", "tren delantero", "rótulas", "terminales", "amortiguadores", "estoperas", "suspensión" o "mecánica", el estado por defecto del [SERVICIO_UPSERT] DEBE SER obligatoriamente 'en_revision' (y NO 'en_proceso'). Aplica esto de forma automática.
     - El tipo de servicio debe ser uno de: 'mecanica', 'electronica', 'cerrajeria', 'diagnostico', 'motor', 'emergencia', 'otro'.
     - Si es un tipo personalizado, usa 'otro' como tipo y coloca el nombre en 'tipo_personalizado'.
     - Siempre incluye nombre_cliente, vehiculo_info y descripcion para que el servicio se vea completo en el sistema.
@@ -967,7 +953,7 @@ export async function POST(request: NextRequest) {
             media_url: currentMediaId,
             media_type: currentMediaType,
             sede_id: effectiveSedeId
-          }).select('created_at').single();
+          }).select('id, created_at').single();
 
           if (error) {
             console.error('❌ Error Supabase al insertar mensaje:', error.message, error.details, error.hint);
@@ -984,7 +970,21 @@ export async function POST(request: NextRequest) {
           if (isImage) { pushTitle = `🖼️ ${from} envió una imagen`; pushBody = 'El cliente envió una foto'; pushType = 'whatsapp-image'; }
           else if (isVideo) { pushTitle = `🎥 ${from} envió un video`; pushBody = 'El cliente envió un video'; pushType = 'whatsapp-video'; }
           else if (isAudio) { pushTitle = `🎤 ${from} envió un audio`; pushBody = 'Nota de voz recibida'; pushType = 'whatsapp-audio'; }
-          void firePushNotification({ title: pushTitle, body: pushBody, type: pushType, url: '/dashboard/whatsapp', tag: 'whatsapp' });
+          
+          // Guardar notificación en BD para historial y disparar push global
+          try {
+            const { data: notifData } = await db.from('notificaciones').insert({
+              sede_id: effectiveSedeId,
+              tipo: 'info',
+              titulo: pushTitle,
+              mensaje: pushBody,
+              entidad_tipo: 'whatsapp',
+              entidad_id: data?.id || null,
+              leida: false
+            }).select('id').single();
+            
+            void sendGlobalPushNotification({ title: pushTitle, body: pushBody, type: pushType, url: '/dashboard/whatsapp', tag: 'whatsapp' });
+          } catch (ne) { console.error('Error insertando notificacion', ne); }
         } catch (e) { console.error('Error guardando entrante:', e); }
 
         // Debounce to group multiple images or chopped messages
@@ -1033,7 +1033,7 @@ export async function POST(request: NextRequest) {
               mensajes_sin_leer: currentUnread,
             }).eq('telefono', from).eq('sede_id', effectiveSedeId);
             // Extra push: human mode means you MUST respond manually
-            void firePushNotification({
+            void sendGlobalPushNotification({
               title: `🆘 Respuesta manual requerida`,
               body: `${from}: ${messageBody.slice(0, 80)}`,
               type: 'whatsapp-human',
@@ -1311,7 +1311,7 @@ async function loadConversationContext(
         db.from('mensajes_whatsapp').select('*', { count: 'exact', head: true }).eq('es_ia', true).gte('created_at', monthStartStr),
         db.from('ventas_silenciadores').select('*').gte('created_at', monthDate.toISOString()).order('created_at', { ascending: false }).limit(200),
         db.from('ventas_dia').select('*').gte('created_at', monthDate.toISOString()).order('created_at', { ascending: false }).limit(200),
-        db.from('servicios').select('*').in('estado', ['en_proceso', 'en_progreso', 'confirmada']).limit(200),
+        db.from('servicios').select('*').in('estado', ['pendiente', 'confirmada', 'en_revision', 'en_progreso', 'en_proceso']).limit(200),
         db.from('servicios').select('*').eq('estado', 'pendiente').limit(200)
       ]);
 
@@ -3090,7 +3090,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         const userName = ctx.memoria?.nombre || from;
         console.log(`🚨 [ALERTA TRAMITE] Solicitud de Certificado Medico o RCV de ${userName} (${from})`);
         
-        await firePushNotification({
+        await sendGlobalPushNotification({
           title: '🚨 Nueva Solicitud de Trámite',
           body: `El cliente ${userName} (${from}) está solicitando un Certificado Médico o RCV. ¡Atiéndelo pronto!`,
           type: 'tramite_alert',

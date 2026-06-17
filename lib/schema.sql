@@ -173,10 +173,13 @@ create index if not exists idx_log_modulo  on activity_log(modulo);
 -- ──────────────────────────────────────────────────────────────
 create table if not exists notificaciones (
   id          uuid primary key default gen_random_uuid(),
+  sede_id     uuid references sedes(id) on delete cascade,
   usuario_id  uuid references perfiles(id) on delete cascade,
   tipo        text not null check (tipo in ('info','success','warning','error')),
   titulo      text not null,
   mensaje     text not null,
+  entidad_tipo text,
+  entidad_id  uuid,
   leida       boolean not null default false,
   created_at  timestamptz not null default now()
 );

@@ -1653,12 +1653,14 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
   const [showSelector, setShowSelector] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
+  const cleanCliente = venta.cliente ? venta.cliente.replace(/\(WhatsApp\)/gi, '').replace(/ADMIN IA/gi, '').trim() || 'No definido' : 'Consumidor Final';
+
   const handleDownload = () => {
     try {
       const dataList = [{
         id: venta.id,
         fecha: venta.fecha,
-        cliente: venta.cliente || undefined,
+        cliente: cleanCliente === 'Consumidor Final' ? undefined : cleanCliente,
         items: venta.desglose || [],
         total: venta.total_ingresos,
         notas: venta.notas || undefined,
@@ -1672,10 +1674,11 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
       if (printMode === 'dual') {
         dataList.push(dataList[0]);
       } else if (printMode === 'diferente' && secondVenta) {
+        const cleanSecondCliente = secondVenta.cliente ? secondVenta.cliente.replace(/\(WhatsApp\)/gi, '').replace(/ADMIN IA/gi, '').trim() || 'No definido' : 'Consumidor Final';
         dataList.push({
           id: secondVenta.id,
           fecha: secondVenta.fecha,
-          cliente: secondVenta.cliente || undefined,
+          cliente: cleanSecondCliente === 'Consumidor Final' ? undefined : cleanSecondCliente,
           items: secondVenta.desglose || [],
           total: secondVenta.total_ingresos,
           notas: secondVenta.notas || undefined,
@@ -1728,7 +1731,7 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
             <div className="grid grid-cols-2 gap-8 mb-8 pb-8 border-b border-slate-100">
               <div>
                 <p className="text-[9px] font-bold text-slate-400 uppercase mb-2">Facturado a:</p>
-                <p className="text-xs font-bold text-slate-900">{venta.cliente || 'Consumidor Final'}</p>
+                <p className="text-xs font-bold text-slate-900">{cleanCliente}</p>
                 <p className="text-[10px] text-slate-500 mt-1">Control de Cierre de Caja</p>
               </div>
               <div className="text-right">

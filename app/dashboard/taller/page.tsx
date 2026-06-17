@@ -31,6 +31,7 @@ interface ServicioRow {
 const ESTADO_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   pendiente:   { label: 'Pendiente',  color: 'text-amber-400',  bg: 'bg-amber-400/10 border-amber-400/20' },
   confirmada:  { label: 'Confirmada', color: 'text-blue-400',   bg: 'bg-blue-400/10 border-blue-400/20' },
+  en_revision: { label: 'Revisión',   color: 'text-fuchsia-400',bg: 'bg-fuchsia-400/10 border-fuchsia-400/20' },
   en_proceso:  { label: 'En Proceso', color: 'text-violet-400', bg: 'bg-violet-400/10 border-violet-400/20' },
   completada:  { label: 'Completada', color: 'text-green-400',  bg: 'bg-green-400/10 border-green-400/20' },
   cancelada:   { label: 'Cancelada',  color: 'text-red-400',    bg: 'bg-red-400/10 border-red-400/20' },
@@ -46,16 +47,18 @@ const STATIC_TIPO_OPTIONS = [
   { value: 'otro', label: 'General' },
 ];
 
-const ESTADO_ORDER = ['pendiente', 'confirmada', 'en_proceso', 'completada', 'cancelada'];
+const ESTADO_ORDER = ['pendiente', 'confirmada', 'en_revision', 'en_proceso', 'completada', 'cancelada'];
 
 const NEXT_ESTADOS: Record<string, string> = {
   pendiente: 'confirmada',
-  confirmada: 'en_proceso',
+  confirmada: 'en_revision',
+  en_revision: 'en_proceso',
   en_proceso: 'completada',
 };
 const PREV_ESTADOS: Record<string, string> = {
   confirmada: 'pendiente',
-  en_proceso: 'confirmada',
+  en_revision: 'confirmada',
+  en_proceso: 'en_revision',
   completada: 'en_proceso',
 };
 
@@ -83,6 +86,7 @@ const getDisplayName = (nombre: string | null) => {
 
 export default function TallerPage() {
   const { user } = useAppStore();
+  const { currentSede } = useSedeStore();
   const { can } = useRolePermissions();
   const [servicios, setServicios] = useState<ServicioRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -225,6 +229,15 @@ export default function TallerPage() {
     return () => { supabase?.removeChannel(channel); };
   }, [fetchTrabajos]);
 
+  const getEstadoLabel = (estado: string) => {
+    const labels: Record<string, string> = {
+      pendiente: 'Pendiente', confirmada: 'Confirmada', en_revision: 'En Revisión',
+      en_proceso: 'En Proceso', completada: 'Completada',
+      finalizado: 'Finalizado', cancelada: 'Cancelada', cancelado: 'Cancelado'
+    };
+    return labels[estado] || estado;
+  };
+
   const getTransicionInfo = (viejo: string, nuevo: string) => {
     const trans: Record<string, { accion: string; fmt: string }> = {
       'pendiente->confirmada': { accion: 'Confirmó servicio', fmt: 'Servicio confirmado' },
@@ -239,7 +252,7 @@ export default function TallerPage() {
     };
     const key = `${viejo}->${nuevo}`;
     if (trans[key]) return trans[key];
-    return { accion: `Cambió estado (${viejo} → ${nuevo})`, fmt: `Estado cambiado: ${viejo} → ${nuevo}` };
+    return { accion: `Cambió estado (${getEstadoLabel(viejo)} → ${getEstadoLabel(nuevo)})`, fmt: `Estado cambiado: ${getEstadoLabel(viejo)} → ${getEstadoLabel(nuevo)}` };
   };
 
   const fetchCustomTypes = useCallback(async () => {
@@ -286,16 +299,31 @@ export default function TallerPage() {
       .eq('id', id);
     if (error) { alert('Error al cambiar estado'); return; }
 
-    setServicios(prev => prev.map(s => s.id === id ? { ...s, estado: nuevoEstado, seguimiento: newSeguimiento } : s));
-
     logActivity({
       usuario: user?.nombre || 'Admin',
       modulo: 'Taller',
       accion: info.accion,
-      detalles: `${servicio.nombre_cliente || 'Cliente'} — ${servicio.vehiculo_info || servicio.placa || ''} (${servicio.descripcion?.substring(0, 40) || ''})`,
+      detalles: `${info.fmt} - Ticket #${id.slice(0,5)} de ${servicio.nombre_cliente || 'cliente'}`,
       referencia_id: id,
       referencia_tabla: 'servicios',
     });
+
+    if (nuevoEstado === 'en_revision' || nuevoEstado === 'completada') {
+      fetch('/api/notificaciones/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          sede_id: currentSede?.id,
+          tipo: nuevoEstado === 'completada' ? 'success' : 'info',
+          titulo: '🔄 Servicio actualizado',
+          mensaje: `${servicio.nombre_cliente || 'Servicio'} cambió a: ${getEstadoLabel(nuevoEstado)}`,
+          entidad_tipo: 'servicio',
+          entidad_id: id,
+          url: '/dashboard/taller'
+        })
+      });
+    }
+
+    setServicios(prev => prev.map(s => s.id === id ? { ...s, estado: nuevoEstado, seguimiento: newSeguimiento } : s));
   };
 
   const handleRegister = async (e: React.FormEvent) => {
@@ -468,7 +496,7 @@ export default function TallerPage() {
     return true;
   });
 
-  const ESTADOS_FILTER = ['todas', 'pendiente', 'confirmada', 'en_proceso', 'completada', 'cancelada'];
+  const ESTADOS_FILTER = ['todas', 'pendiente', 'confirmada', 'en_revision', 'en_proceso', 'completada', 'cancelada'];
 
   return (
     <div className="space-y-6">

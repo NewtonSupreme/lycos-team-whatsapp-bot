@@ -305,6 +305,22 @@ export default function InventarioPage() {
         referencia_tabla: 'inventario'
       });
       
+      // Notification for critical stock
+      if (item && newStock <= (item.stock_minimo ?? 1) && currentStock > (item.stock_minimo ?? 1)) {
+        fetch('/api/notificaciones/create', {
+          method: 'POST',
+          body: JSON.stringify({
+            sede_id: user?.sede_id || '310595c5-5258-47fa-9b69-5ad9932685a7',
+            tipo: 'error',
+            titulo: '⚠️ Stock crítico',
+            mensaje: `${item.nombre} tiene solo ${newStock} unidad(es)`,
+            entidad_tipo: 'inventario',
+            entidad_id: id,
+            url: '/dashboard/inventario'
+          })
+        });
+      }
+      
       loadData();
     } catch (error) {
       console.error('Error updating stock:', error);

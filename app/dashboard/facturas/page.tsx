@@ -153,16 +153,21 @@ export default function FacturasPage() {
       }
       
       setIsTableMissing(false);
-      setFacturas(result.data as Factura[]);
+      
+      const cleanedData = (result.data as Factura[]).map(f => ({
+        ...f,
+        cliente: f.cliente ? f.cliente.replace(/\(WhatsApp\)/gi, '').replace(/ADMIN IA/gi, '').trim() || 'No definido' : 'Consumidor Final'
+      }));
+
+      setFacturas(cleanedData);
       setTotalCount(result.count);
 
       // Calculate stats from all results
-      const allData = result.data as Factura[];
       setStats({
         total: result.count,
-        totalUsd: allData.reduce((s, f) => s + (f.moneda === 'USD' ? Number(f.total) : 0), 0),
-        pendientes: allData.filter(f => f.estado === 'pendiente').length,
-        pagadas: allData.filter(f => f.estado === 'pagado').length,
+        totalUsd: cleanedData.reduce((s, f) => s + (f.moneda === 'USD' ? Number(f.total) : 0), 0),
+        pendientes: cleanedData.filter(f => f.estado === 'pendiente').length,
+        pagadas: cleanedData.filter(f => f.estado === 'pagado').length,
       });
     } catch (err: any) {
       console.error('Error loading facturas Details:', err?.message || err, err);
@@ -285,6 +290,30 @@ export default function FacturasPage() {
               className="h-8 w-8 p-0 rounded-xl"
             >
               <RefreshCw className={cn("w-4 h-4", refreshing && "animate-spin")} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={async () => {
+                if (!confirm('¿Sincronizar nombres de clientes desde servicios a facturas?')) return;
+                setRefreshing(true);
+                try {
+                  const res = await fetch('/api/facturas/sync-clientes');
+                  const data = await res.json();
+                  alert(`Sincronización: ${data.updated} actualizadas, ${data.skipped} sin cambios, ${data.errors} errores.`);
+                  loadData(true);
+                } catch (e) {
+                  alert('Error al sincronizar');
+                } finally {
+                  setRefreshing(false);
+                }
+              }}
+              disabled={refreshing}
+              className="h-8 px-2 rounded-xl text-[10px] font-black uppercase tracking-widest gap-1"
+              title="Sincronizar clientes desde servicios"
+            >
+              <RefreshCw className={cn("w-3 h-3", refreshing && "animate-spin")} />
+              Sync
             </Button>
           </div>
         </div>

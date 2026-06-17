@@ -59,22 +59,7 @@ function buildWaNotifBody(body: string, senderName?: string): { title: string; m
   };
 }
 
-// ── Push notification helper ──────────────────────────────────
-async function sendPushNotification(payload: {
-  title: string;
-  body: string;
-  type: string;
-  url?: string;
-  tag?: string;
-}) {
-  try {
-    await fetch('/api/push/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-  } catch { /* silent */ }
-}
+// Send push removed from frontend
 
 export default function Header() {
   const { user, sidebarOpen, toggleSidebar, notifications, unreadCount, markAllRead, addNotification, pushRegistered, setPushRegistered } = useAppStore();
@@ -133,112 +118,48 @@ export default function Header() {
     registerPush();
   }, [registerPush]);
 
-  // ── Realtime: mensajes WhatsApp entrantes ────────────────────
+  // ── Load Initial Notifications ──────────────────────────────
+  const loadInitialNotifs = useCallback(async () => {
+    if (!supabase || !currentSede) return;
+    try {
+      const { data } = await supabase
+        .from('notificaciones')
+        .select('*')
+        .eq('sede_id', currentSede.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+      if (data) {
+        useAppStore.getState().setNotifications(data as any);
+      }
+    } catch {}
+  }, [currentSede]);
+
   useEffect(() => {
-    if (!supabase) return;
+    loadInitialNotifs();
+  }, [loadInitialNotifs]);
+
+  // ── Realtime: Global Notificaciones ─────────────────────────
+  useEffect(() => {
+    if (!supabase || !currentSede) return;
     const channel = supabase
-      .channel('header-wa-notifs')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mensajes_whatsapp' }, async (payload) => {
-        const msg = payload.new as { tipo: string; body: string; from_number: string };
-        if (msg.tipo !== 'entrante') return;
-
-        // Lookup sender name from conversaciones
-        let senderName: string | undefined;
-        try {
-          const { data } = await supabase!
-            .from('conversaciones')
-            .select('datos_cliente')
-            .eq('telefono', msg.from_number)
-            .single();
-          senderName = (data?.datos_cliente as { nombre?: string } | null)?.nombre;
-        } catch { /* ignore */ }
-
-        const { title, mensaje } = buildWaNotifBody(msg.body, senderName || msg.from_number);
-        const mediaType = detectMediaType(msg.body);
-
+      .channel('header-global-notifs')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notificaciones', filter: `sede_id=eq.${currentSede.id}` }, (payload) => {
+        const notif = payload.new as any;
         addNotification({
-          tipo: 'info',
-          titulo: title,
-          mensaje,
+          tipo: notif.tipo,
+          titulo: notif.titulo,
+          mensaje: notif.mensaje,
           leida: false,
         });
 
-        // Notificación nativa del browser
         if (Notification.permission === 'granted') {
-          new Notification(title, { body: mensaje, icon: '/Nuevo_Lycos_LOGO copy.png', tag: 'wa-msg' });
+          new Notification(notif.titulo, { body: notif.mensaje, icon: '/Nuevo_Lycos_LOGO copy.png', tag: notif.entidad_tipo || 'general' });
         }
-
-        // Push background (para cuando el teléfono no tiene la app abierta)
-        sendPushNotification({
-          title,
-          body: mensaje,
-          type: mediaType !== 'texto' ? `whatsapp-${mediaType}` : 'whatsapp-message',
-          url: '/dashboard/whatsapp',
-          tag: 'whatsapp',
-        });
       })
       .subscribe();
 
     return () => { supabase?.removeChannel(channel); };
-  }, [addNotification]);
-
-  // ── Realtime: nuevas citas ────────────────────────────────────
-  useEffect(() => {
-    if (!supabase) return;
-    const channel = supabase
-      .channel('header-citas-notifs')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'citas' }, (payload) => {
-        const cita = payload.new as { fecha?: string; hora?: string; telefono?: string; descripcion?: string; nombre_cliente?: string };
-        const titulo = '📅 Nueva cita agendada';
-        const mensaje = `${cita.nombre_cliente || cita.telefono || 'Cliente'} — ${cita.fecha ?? ''} a las ${cita.hora ?? ''}${cita.descripcion ? ` · ${cita.descripcion}` : ''}`;
-
-        addNotification({ tipo: 'success', titulo, mensaje, leida: false });
-
-        if (Notification.permission === 'granted') {
-          new Notification(titulo, { body: mensaje, icon: '/Nuevo_Lycos_LOGO copy.png', tag: 'cita' });
-        }
-
-        sendPushNotification({ title: titulo, body: mensaje, type: 'cita', url: '/dashboard/agenda', tag: 'cita' });
-      })
-      .subscribe();
-
-    return () => { supabase?.removeChannel(channel); };
-  }, [addNotification]);
-
-  // ── Realtime: servicios asignados o actualizados ─────────────
-  useEffect(() => {
-    if (!supabase) return;
-    const channel = supabase
-      .channel('header-servicios-notifs')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'servicios' }, (payload) => {
-        const srv = payload.new as { nombre?: string; descripcion?: string; estado?: string; tecnico?: string };
-        const titulo = '🔧 Nuevo servicio asignado';
-        const mensaje = `${srv.nombre || srv.descripcion || 'Servicio'}${srv.tecnico ? ` → ${srv.tecnico}` : ''} · Estado: ${srv.estado || 'pendiente'}`;
-
-        addNotification({ tipo: 'warning', titulo, mensaje, leida: false });
-
-        if (Notification.permission === 'granted') {
-          new Notification(titulo, { body: mensaje, icon: '/Nuevo_Lycos_LOGO copy.png', tag: 'servicio' });
-        }
-
-        sendPushNotification({ title: titulo, body: mensaje, type: 'servicio', url: '/dashboard/servicios', tag: 'servicio' });
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'servicios' }, (payload) => {
-        const srv = payload.new as { nombre?: string; estado?: string };
-        const old = payload.old as { estado?: string };
-        if (srv.estado === old.estado) return; // solo notificar si cambia estado
-        const titulo = '🔄 Servicio actualizado';
-        const mensaje = `${srv.nombre || 'Servicio'} cambió a: ${srv.estado}`;
-        addNotification({ tipo: 'info', titulo, mensaje, leida: false });
-        if (Notification.permission === 'granted') {
-          new Notification(titulo, { body: mensaje, icon: '/Nuevo_Lycos_LOGO copy.png', tag: 'servicio-update' });
-        }
-        sendPushNotification({ title: titulo, body: mensaje, type: 'servicio', url: '/dashboard/servicios', tag: 'servicio' });
-      })
-      .subscribe();
-
-    return () => { supabase?.removeChannel(channel); };
-  }, [addNotification]);
+  }, [addNotification, currentSede]);
 
   const notifIcons: Record<string, React.ReactNode> = {
     'whatsapp': <MessageSquare className="w-3.5 h-3.5 text-green-400" />,

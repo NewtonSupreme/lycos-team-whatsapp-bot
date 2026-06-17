@@ -454,7 +454,7 @@ async function loadDbContext(sedeId: string | null): Promise<string> {
   try {
     const { data: enTaller } = await db('servicios')
       .select('*, vehiculos(marca, modelo, placa, clientes(nombre, apellido, telefono))')
-      .in('estado', ['en_proceso', 'pendiente', 'en_revision'])
+      .in('estado', ['en_proceso', 'pendiente', 'en_revision', 'confirmada', 'en_progreso'])
       .order('created_at', { ascending: false });
     if (enTaller && enTaller.length > 0) {
       sections.push(
@@ -1427,8 +1427,8 @@ TAGS DE ACCIÓN DISPONIBLES:
 • Eliminar producto: [ACTION: eliminar_producto | id=INV_ID]
 • Crear cliente: [ACTION: crear_cliente | nombre=N | apellido=A | telefono=T | email=E | cedula=CI]
 • Crear vehículo: [ACTION: crear_vehiculo | marca=MARCA | modelo_vehiculo=MODELO | placa=PLACA | anio=ANO | color=COLOR | cliente_id=UUID]
-• Actualizar servicio: [ACTION: actualizar_servicio | id=ID | estado=finalizado|cancelado | nota=Texto]
-• Registrar servicio taller: [ACTION: registrar_servicio | descripcion=Texto | tipo=mecanica|electronica|cerrajeria|diagnostico|motor|emergencia|otro | estado=pendiente|en_proceso | costo_estimado=Numero | nombre_cliente=Nombre | telefono=Numero | vehiculo_info=Marca Modelo | placa=PLACA | cliente_id=UUID | vehiculo_id=UUID | tipo_personalizado=Texto]
+• Actualizar servicio: [ACTION: actualizar_servicio | id=ID | estado=pendiente|confirmada|en_revision|en_proceso|completada|finalizado|cancelada|cancelado | nota=Texto]
+• Registrar servicio taller: [ACTION: registrar_servicio | descripcion=Texto | tipo=mecanica|electronica|cerrajeria|diagnostico|motor|emergencia|otro | estado=pendiente|confirmada|en_revision|en_proceso | costo_estimado=Numero | nombre_cliente=Nombre | telefono=Numero | vehiculo_info=Marca Modelo | placa=PLACA | cliente_id=UUID | vehiculo_id=UUID | tipo_personalizado=Texto]
 • Registrar venta COMPLETA: [ACTION: registrar_venta_completa | titulo=X | items=Prod1:Pre1,Prod2:Pre2 | total=TOTAL | iva=MONTO | inicial=INICIAL_CASHEA | metodo_pago=cashea_bcv/divisas/euros/bcv/binance/zelle/pago_movil/efectivo_ves/punto_venta/transferencia/otro | pago_mixto=DESC | cliente=NOMBRE | vehiculo=MARCA_PLACA | inv_ids=ID1:qty1,ID2:qty2 | fecha=AAAA-MM-DD] — Parámetro OPCIONAL: si la venta fue de un día anterior, usa fecha= para indicar la fecha real. El sistema marcará automáticamente como "⚠️ REGISTRO ATRASADO".
 • Modificar venta RECIENTE (<10 min): [ACTION: modificar_venta_reciente | id=ID | total=NUEVO_TOTAL | cliente=NUEVO_CLIENTE | items=Prod1:Pre1,Prod2:Pre2 | metodo_pago=...]  — Si no sabes el ID, usa cliente=NOMBRE para buscar la última venta de ese cliente.
 • Eliminar venta RECIENTE (<10 min): [ACTION: eliminar_venta_reciente | id=ID]  — Igual, si no sabes el ID usa cliente=NOMBRE.

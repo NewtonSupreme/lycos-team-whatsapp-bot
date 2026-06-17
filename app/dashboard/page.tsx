@@ -4,7 +4,7 @@ import {
   Users, Car, Wrench, MessageSquare, Bot,
   Calendar, CheckCircle, ArrowRight, Zap, RefreshCw,
   Coins, TrendingUp, DollarSign, MapPin, ShieldCheck,
-  X, Play, Maximize2, Minimize2
+  X, Play, Maximize2, Minimize2, Banknote
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
@@ -59,6 +59,14 @@ interface WaChartPoint {
   mensajes: number;
 }
 
+interface RecentVenta {
+  id: string;
+  cliente: string;
+  total_ingresos: number;
+  created_at: string;
+  estado: string;
+}
+
 interface SilenciadoresChartPoint {
   fecha: string;
   vendidos: number;
@@ -106,6 +114,7 @@ export default function DashboardPage() {
   });
   const [recentServicios, setRecentServicios] = useState<RecentServicio[]>([]);
   const [recentConvs, setRecentConvs] = useState<RecentConv[]>([]);
+  const [recentVentas, setRecentVentas] = useState<RecentVenta[]>([]);
   const [waChart, setWaChart] = useState<WaChartPoint[]>([]);
   const [silenciadoresChart, setSilenciadoresChart] = useState<SilenciadoresChartPoint[]>([]);
   const [serviciosChart, setServiciosChart] = useState<ServiciosChartPoint[]>([]);
@@ -143,10 +152,11 @@ export default function DashboardPage() {
         { data: servicios },
         { data: convs },
         { data: waMsgs },
+        { data: ventas },
       ] = await Promise.all([
         withSedeFilter(supabase.from('clientes')).select('*', { count: 'exact', head: true }),
         withSedeFilter(supabase.from('vehiculos')).select('*', { count: 'exact', head: true }),
-        withSedeFilter(supabase.from('servicios')).select('*', { count: 'exact', head: true }).in('estado', ['pendiente', 'en_progreso', 'en_proceso']),
+        withSedeFilter(supabase.from('servicios')).select('*', { count: 'exact', head: true }).in('estado', ['pendiente', 'confirmada', 'en_revision', 'en_progreso', 'en_proceso']),
         withSedeFilter(supabase.from('mensajes_whatsapp')).select('*', { count: 'exact', head: true }).gte('created_at', `${today}T00:00:00`).lt('created_at', `${today}T23:59:59`),
         withSedeFilter(supabase.from('conversaciones')).select('*', { count: 'exact', head: true }).gte('ultimo_mensaje_at', `${today}T00:00:00`),
         withSedeFilter(supabase.from('conversaciones')).select('*', { count: 'exact', head: true }).gte('ultimo_mensaje_at', `${firstDay}T00:00:00`),
@@ -156,6 +166,7 @@ export default function DashboardPage() {
         withSedeFilter(supabase.from('servicios')).select('id, descripcion, tipo, estado, costo_estimado, created_at, nombre_cliente, placa, vehiculo_info, vehiculos (marca, modelo, placa, clientes (nombre, apellido))').order('created_at', { ascending: false }).limit(5),
         withSedeFilter(supabase.from('conversaciones')).select('id, telefono, ultimo_mensaje, ultimo_mensaje_at, mensajes_sin_leer, estado, datos_cliente').order('ultimo_mensaje_at', { ascending: false }).limit(6),
         withSedeFilter(supabase.from('mensajes_whatsapp')).select('created_at').gte('created_at', `${today}T00:00:00`).lt('created_at', `${today}T23:59:59`).eq('tipo', 'entrante'),
+        withSedeFilter(supabase.from('ventas_dia')).select('id, cliente, total_ingresos, created_at, estado').order('created_at', { ascending: false }).limit(6),
       ]);
 
       setStats({
@@ -172,6 +183,7 @@ export default function DashboardPage() {
 
       setRecentServicios((servicios as RecentServicio[]) || []);
       setRecentConvs((convs as RecentConv[]) || []);
+      setRecentVentas((ventas as RecentVenta[]) || []);
 
       if (waMsgs) {
         const hourMap: Record<string, number> = {};
@@ -237,7 +249,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!supabase || !mounted || !currentSede) return;
-    const tables = ['mensajes_whatsapp', 'conversaciones', 'servicios', 'citas', 'clientes', 'vehiculos', 'ventas_silenciadores'];
+    const tables = ['mensajes_whatsapp', 'conversaciones', 'servicios', 'citas', 'clientes', 'vehiculos', 'ventas_silenciadores', 'ventas_dia'];
     const channels = tables.map(table =>
       supabase!.channel(`dashboard-${table}`)
         .on('postgres_changes', { event: '*', schema: 'public', table }, () => { loadData(); })
@@ -273,7 +285,7 @@ export default function DashboardPage() {
 
         const link = document.createElement('link');
         link.rel = 'preload';
-        link.as = 'video';
+        link.as = 'fetch';
         link.href = data.signedUrl;
         document.head.appendChild(link);
       })
@@ -597,7 +609,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Bottom row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Recent services */}
         <Card>
           <CardHeader>
@@ -614,7 +626,19 @@ export default function DashboardPage() {
                 <p className="text-xs text-muted-foreground py-4 text-center">Sin servicios registrados</p>
               ) : (
                 recentServicios.map((s) => {
-                  const clientName = s.nombre_cliente || s.vehiculos?.clientes ? `${s.vehiculos?.clientes?.nombre} ${s.vehiculos?.clientes?.apellido}` : '';
+                  const relName = s.vehiculos?.clientes ? `${s.vehiculos.clientes.nombre} ${s.vehiculos.clientes.apellido || ''}`.trim() : '';
+                  let rawName = relName;
+                  if (s.nombre_cliente && s.nombre_cliente.trim() !== relName && s.nombre_cliente.trim() !== '') {
+                    rawName = s.nombre_cliente;
+                  }
+                  if (!rawName) {
+                    rawName = 'No definido';
+                  } else {
+                    // Remove "(WhatsApp)" and "ADMIN IA" but keep the rest of the name
+                    rawName = rawName.replace(/\(WhatsApp\)/gi, '').replace(/ADMIN IA/gi, '').trim();
+                    if (!rawName) rawName = 'No definido';
+                  }
+                  const clientName = rawName;
                   const vehicleStr = s.vehiculo_info || (s.vehiculos ? `${s.vehiculos.marca} ${s.vehiculos.modelo}` : '');
                   const plate = s.placa || s.vehiculos?.placa || '';
                   return (
@@ -678,6 +702,49 @@ export default function DashboardPage() {
                       <StatusBadge status={conv.estado || 'activa'} type="conversacion" />
                       <span className="text-[10px] text-muted-foreground">
                         {conv.ultimo_mensaje_at ? formatRelativeTime(conv.ultimo_mensaje_at) : '---'}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Recent Sales */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Ventas Recientes</CardTitle>
+              <a href="/dashboard/ventas" className="text-xs text-primary flex items-center gap-1 hover:underline">
+                Ir a caja <ArrowRight className="w-3 h-3" />
+              </a>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="space-y-2">
+              {recentVentas.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-4 text-center">Sin ventas registradas</p>
+              ) : (
+                recentVentas.map((venta) => (
+                  <div key={venta.id} className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-white/3 transition-colors">
+                    <div className="relative w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/20 flex items-center justify-center flex-shrink-0">
+                      <Banknote className="w-3.5 h-3.5 text-emerald-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium truncate">
+                        {venta.cliente 
+                          ? venta.cliente.replace(/\(WhatsApp\)/gi, '').replace(/ADMIN IA/gi, '').trim() || 'No definido'
+                          : 'Consumidor Final'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {formatRelativeTime(venta.created_at)}
+                      </p>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      <StatusBadge status={venta.estado || 'pagado'} />
+                      <span className="text-xs font-bold text-foreground">
+                        {formatCurrency(venta.total_ingresos)}
                       </span>
                     </div>
                   </div>
