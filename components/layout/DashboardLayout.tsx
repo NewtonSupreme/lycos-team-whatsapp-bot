@@ -199,6 +199,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     else if (pathname.includes('/dashboard/taller')) requiredModule = 'taller';
     else if (pathname.includes('/dashboard/agenda')) requiredModule = 'agenda';
     else if (pathname.includes('/dashboard/whatsapp')) requiredModule = 'whatsapp';
+    else if (pathname.includes('/dashboard/inventario/papelera')) requiredModule = 'papelera';
     else if (pathname.includes('/dashboard/inventario')) requiredModule = 'inventario';
     else if (pathname.includes('/dashboard/ventas') || pathname.includes('/dashboard/silenciadores') || pathname.includes('/dashboard/facturas')) requiredModule = 'ventas';
     else if (pathname.includes('/dashboard/ajustes/permisos') || pathname.includes('/dashboard/ajustes/empleados')) requiredModule = 'empleados';

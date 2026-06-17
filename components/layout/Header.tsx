@@ -11,6 +11,7 @@ import { supabase } from '@/lib/supabase';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Building2 } from 'lucide-react';
+import { getRoleMeta } from '@/types';
 
 // ── Helpers ──────────────────────────────────────────────────
 function urlBase64ToUint8Array(base64String: string) {
@@ -322,10 +323,10 @@ export default function Header() {
           <div className="flex items-center gap-1 mt-1">
             <div className={cn(
               "w-1.5 h-1.5 rounded-full",
-              userRole === 'admin' ? "bg-red-500" : userRole === 'gerente' ? "bg-blue-500" : "bg-slate-400"
+              userRole === 'admin' ? "bg-red-500" : userRole === 'supervisor' ? "bg-blue-500" : "bg-slate-400"
             )} />
             <span className="text-[9px] text-muted-foreground uppercase tracking-wider font-bold">
-              {userRole || 'Admin'}
+              {getRoleMeta(userRole || '')?.label || userRole || 'Admin'}
             </span>
           </div>
         </div>

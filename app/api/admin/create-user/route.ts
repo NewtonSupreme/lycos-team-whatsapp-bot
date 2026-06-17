@@ -33,18 +33,15 @@ export async function POST(req: Request) {
         .select('id')
         .eq('username', username)
         .single();
-      
+
       if (existingUser) {
         return NextResponse.json({ error: 'El nombre de usuario ya está en uso' }, { status: 400 });
       }
     } else {
       // Auto-generate if not provided
-      const isTechnical = rol === 'mecanico' || rol === 'jefe_taller';
-      const noAccess = isTechnical;
       username = email ? email.split('@')[0].toLowerCase() : nombre.replace(/\s+/g, '_').toLowerCase();
-      
-      // If it's technical staff or email is missing, ensure uniqueness with a timestamp
-      if (isTechnical || !email) {
+      // Ensure uniqueness when no email was provided
+      if (!email) {
         username = `${username}_${Date.now()}`;
       }
     }
@@ -59,8 +56,10 @@ export async function POST(req: Request) {
       username: username,
       nombre: apellido ? `${nombre} ${apellido}`.trim() : nombre,
       email: finalEmail,
-      password_hash: password_hash || 'lycos2026', 
+      password_hash: password_hash || 'lycos2026',
       rol: rol,
+      // Todos los roles tienen acceso al panel; nuevos usuarios heredan los
+      // permisos de su rol (permisos por-usuario quedan en NULL).
       activo: activo !== undefined ? activo : true,
       sede_id: sede_id,
       telefono: telefono || null

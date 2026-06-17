@@ -72,52 +72,154 @@ function full(acceso: boolean): CrudPermiso {
   return { crear: acceso, leer: acceso, editar: acceso, eliminar: acceso };
 }
 
+// ── Catálogo canónico de roles ─────────────────────────────────────────────
+// Fuente única de verdad para los roles del sistema Lycos Team.
+// El admin puede reconfigurar los permisos de cada rol desde /ajustes/permisos
+// y los permisos por-usuario desde Gestión de Empleados.
+export type RoleIcon = 'crown' | 'shield' | 'dollar' | 'headset' | 'hardhat' | 'wrench';
+
+export interface RoleMeta {
+  nombre: string;        // slug interno (clave en BD)
+  label: string;        // nombre visible
+  descripcion: string;
+  icon: RoleIcon;
+  color: string;        // clases tailwind para el badge
+  /** Puede iniciar sesión en el panel */
+  conAcceso: boolean;
+  /** Personal técnico (taller) */
+  esTecnico: boolean;
+  /** Un supervisor (no admin) puede asignar este rol al crear/editar personal */
+  asignablePorSupervisor: boolean;
+  /** Puede ver/cambiar entre todas las sedes (solo admin) */
+  multiSede: boolean;
+}
+
+export const ROLE_CATALOG: RoleMeta[] = [
+  {
+    nombre: 'admin', label: 'Administración',
+    descripcion: 'Control total del sistema y de todas las sedes.',
+    icon: 'crown', color: 'bg-red-500/10 text-red-500 border-red-500/20',
+    conAcceso: true, esTecnico: false, asignablePorSupervisor: false, multiSede: true,
+  },
+  {
+    nombre: 'supervisor', label: 'Supervisor de Sede',
+    descripcion: 'Gestiona su sede asignada: operaciones, personal y ventas.',
+    icon: 'shield', color: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+    conAcceso: true, esTecnico: false, asignablePorSupervisor: false, multiSede: false,
+  },
+  {
+    nombre: 'cobranza', label: 'Cobranza',
+    descripcion: 'Facturación, ventas, presupuestos y reportes financieros.',
+    icon: 'dollar', color: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
+    conAcceso: true, esTecnico: false, asignablePorSupervisor: true, multiSede: false,
+  },
+  {
+    nombre: 'atencion_cliente', label: 'Atención al Cliente',
+    descripcion: 'Recepción: clientes, vehículos, citas y mensajería.',
+    icon: 'headset', color: 'bg-pink-500/10 text-pink-500 border-pink-500/20',
+    conAcceso: true, esTecnico: false, asignablePorSupervisor: true, multiSede: false,
+  },
+  {
+    nombre: 'jefe_taller', label: 'Jefe de Taller',
+    descripcion: 'Lidera el taller: servicios, vehículos e inventario.',
+    icon: 'hardhat', color: 'bg-violet-500/10 text-violet-500 border-violet-500/20',
+    conAcceso: true, esTecnico: true, asignablePorSupervisor: true, multiSede: false,
+  },
+  {
+    nombre: 'mecanico', label: 'Mecánico',
+    descripcion: 'Ejecuta y actualiza los servicios del taller.',
+    icon: 'wrench', color: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
+    conAcceso: true, esTecnico: true, asignablePorSupervisor: true, multiSede: false,
+  },
+];
+
+export const ROLE_LABELS: Record<string, string> =
+  Object.fromEntries(ROLE_CATALOG.map(r => [r.nombre, r.label]));
+
+export function getRoleMeta(rol: string): RoleMeta | undefined {
+  return ROLE_CATALOG.find(r => r.nombre === resolveRol(rol));
+}
+
+// Roles heredados → rol canónico. Permite que la app funcione correctamente
+// incluso antes de migrar la base de datos.
+export const ROLE_ALIASES: Record<string, string> = {
+  gerente: 'supervisor',
+  empleado: 'atencion_cliente',
+  mecanico_acceso: 'mecanico',
+  jefe_taller_acceso: 'jefe_taller',
+};
+
+export function resolveRol(rol?: string | null): string {
+  if (!rol) return 'atencion_cliente';
+  return ROLE_ALIASES[rol] || rol;
+}
+
 export const PERMISOS_DEFAULT: Record<string, Permisos> = {
+  // Administración — acceso total.
   admin: {
     dashboard: full(true), clientes: full(true), vehiculos: full(true), servicios: full(true), taller: full(true),
     agenda: full(true), whatsapp: full(true), leads: full(true), inventario: full(true), papelera: full(true),
     ventas: full(true), ia_asistente: full(true), reportes: full(true), actividad: full(true),
     calculadora: full(true), configuracion: full(true), empleados: full(true), distribuidor: full(true), presupuestos: full(true)
   },
-  gerente: {
+  // Supervisor de Sede — amplio en su sede; sin configuración del sistema; gestiona personal (sin eliminar).
+  supervisor: {
     dashboard: full(true), clientes: full(true), vehiculos: full(true), servicios: full(true), taller: full(true),
-    agenda: full(true), whatsapp: full(true), leads: full(true), inventario: full(true), papelera: full(false),
-    ventas: full(true), ia_asistente: full(true), reportes: full(true), actividad: full(false),
-    calculadora: full(true), configuracion: full(false), empleados: full(false), distribuidor: full(true), presupuestos: full(true)
+    agenda: full(true), whatsapp: full(true), leads: full(true), inventario: full(true), papelera: perm(false, true, true, false),
+    ventas: full(true), ia_asistente: full(true), reportes: full(true), actividad: perm(false, true, false, false),
+    calculadora: full(true), configuracion: full(false), empleados: perm(true, true, true, false), distribuidor: full(true), presupuestos: full(true)
   },
-  empleado: {
-    dashboard: full(true), clientes: full(true), vehiculos: full(true), servicios: full(true), taller: full(true),
-    agenda: full(true), whatsapp: full(true), leads: full(false), inventario: full(true), papelera: full(false),
-    ventas: full(true), ia_asistente: full(false), reportes: full(false), actividad: full(false),
-    calculadora: full(true), configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(true)
+  // Cobranza — facturación, ventas y presupuestos; lectura de clientes/servicios/inventario para facturar.
+  cobranza: {
+    dashboard: perm(false, true, false, false), clientes: perm(false, true, true, false), vehiculos: perm(false, true, false, false),
+    servicios: perm(false, true, false, false), taller: full(false), agenda: full(false), whatsapp: perm(false, true, false, false),
+    leads: full(false), inventario: perm(false, true, false, false), papelera: full(false), ventas: full(true),
+    ia_asistente: full(false), reportes: perm(false, true, false, false), actividad: full(false), calculadora: full(true),
+    configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(true)
   },
-  mecanico_acceso: {
-    dashboard: full(true), clientes: full(false), vehiculos: full(false), servicios: full(true), taller: full(true),
-    agenda: full(false), whatsapp: full(false), leads: full(false), inventario: full(false), papelera: full(false),
-    ventas: full(false), ia_asistente: full(false), reportes: full(false), actividad: full(false),
-    calculadora: full(true), configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(true)
-  },
-  jefe_taller_acceso: {
-    dashboard: full(true), clientes: full(true), vehiculos: full(true), servicios: full(true), taller: full(true),
-    agenda: full(false), whatsapp: full(false), leads: full(false), inventario: full(true), papelera: full(false),
-    ventas: full(true), ia_asistente: full(false), reportes: full(false), actividad: full(false),
-    calculadora: full(true), configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(true)
-  },
+  // Atención al Cliente — recepción: clientes, vehículos, citas, mensajería y presupuestos.
   atencion_cliente: {
-    dashboard: full(true), clientes: full(true), vehiculos: full(true), servicios: perm(false, true, false, false), taller: perm(false, true, false, false),
-    agenda: full(true), whatsapp: full(true), leads: full(true), inventario: perm(false, true, false, false), papelera: full(false),
-    ventas: full(false), ia_asistente: full(true), reportes: full(false), actividad: full(false),
-    calculadora: full(true), configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(true)
+    dashboard: perm(false, true, false, false), clientes: full(true), vehiculos: full(true),
+    servicios: perm(false, true, false, false), taller: perm(false, true, false, false), agenda: full(true), whatsapp: full(true),
+    leads: full(true), inventario: perm(false, true, false, false), papelera: full(false), ventas: full(false),
+    ia_asistente: full(true), reportes: full(false), actividad: full(false), calculadora: full(true),
+    configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(true)
+  },
+  // Jefe de Taller — manda en el taller: servicios, vehículos e inventario.
+  jefe_taller: {
+    dashboard: perm(false, true, false, false), clientes: perm(false, true, false, false), vehiculos: full(true),
+    servicios: full(true), taller: full(true), agenda: perm(false, true, false, false), whatsapp: full(false),
+    leads: full(false), inventario: full(true), papelera: full(false), ventas: full(false),
+    ia_asistente: full(false), reportes: perm(false, true, false, false), actividad: full(false), calculadora: full(true),
+    configuracion: full(false), empleados: full(false), distribuidor: perm(false, true, false, false), presupuestos: perm(true, true, false, false)
+  },
+  // Mecánico — ejecuta servicios; sin eliminar, sin áreas administrativas.
+  mecanico: {
+    dashboard: perm(false, true, false, false), clientes: full(false), vehiculos: perm(false, true, false, false),
+    servicios: perm(true, true, true, false), taller: perm(false, true, true, false), agenda: full(false), whatsapp: full(false),
+    leads: full(false), inventario: perm(false, true, false, false), papelera: full(false), ventas: full(false),
+    ia_asistente: full(false), reportes: full(false), actividad: full(false), calculadora: full(true),
+    configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(false)
   },
 };
 
+// Permiso mínimo seguro para roles desconocidos: solo lectura del dashboard.
+const MINIMAL_PERMISOS: Permisos = {
+  dashboard: perm(false, true, false, false), clientes: full(false), vehiculos: full(false), servicios: full(false),
+  taller: full(false), agenda: full(false), whatsapp: full(false), leads: full(false), inventario: full(false),
+  papelera: full(false), ventas: full(false), ia_asistente: full(false), reportes: full(false), actividad: full(false),
+  calculadora: full(true), configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(false)
+};
+
 export function getPermisos(
-  rol: string,
+  rol: string | undefined | null,
   storedPermisos?: Record<string, PermisoValue>,
   defaultsOverride?: Record<string, Permisos> | null
 ): Permisos {
+  const canonical = resolveRol(rol);
   const source = defaultsOverride ?? PERMISOS_DEFAULT;
-  const defaults = source[rol] || source['empleado'] || PERMISOS_DEFAULT.empleado;
+  // Defaults del rol: BD (override) → catálogo de código → mínimo seguro.
+  const defaults = source[canonical] || (rol ? source[rol] : undefined) || PERMISOS_DEFAULT[canonical] || MINIMAL_PERMISOS;
   if (!storedPermisos) return defaults;
   const merged = { ...defaults };
   for (const [key, val] of Object.entries(storedPermisos)) {

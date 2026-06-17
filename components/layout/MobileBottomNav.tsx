@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, MessageSquare, Calendar, Wrench,
-  MoreHorizontal, Users, Car, Bot, FileText, Activity, Settings, X, TrendingUp, LogOut, Package, Calculator, ShoppingCart, Receipt
+  MoreHorizontal, Users, Car, Bot, FileText, Activity, Settings, X, TrendingUp, LogOut, Calculator, ShoppingCart, Receipt
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -48,7 +48,7 @@ export default function MobileBottomNav() {
   React.useEffect(() => { setMounted(true); }, []);
 
   const roleDefaults = useAppStore(s => s.roleDefaults);
-  const permisos = getPermisos(user?.rol || 'empleado', user?.permisos, roleDefaults);
+  const permisos = getPermisos(user?.rol, user?.permisos, roleDefaults);
   const isAdmin = user?.rol === 'admin';
 
   const canAccess = (permKey?: keyof Permisos): boolean => {
@@ -56,6 +56,8 @@ export default function MobileBottomNav() {
     if (!permKey) return true;
     return hasPermiso(permisos[permKey]);
   };
+
+  const visiblePrimaryNav = PRIMARY_NAV.filter(item => canAccess(item.permKey));
 
   const visibleMoreNav = MORE_NAV.filter(item => {
     if (!canAccess(item.permKey)) return false;
@@ -149,7 +151,7 @@ export default function MobileBottomNav() {
       >
         <div className="bg-card/90 backdrop-blur-2xl border-t border-border/30 shadow-2xl">
           <div className="flex items-center justify-around px-2 pt-1" style={{ paddingBottom: '8px' }}>
-            {PRIMARY_NAV.map((item) => {
+            {visiblePrimaryNav.map((item) => {
               const active = isActive(item.href);
               const isWa = item.href === '/dashboard/whatsapp';
               return (

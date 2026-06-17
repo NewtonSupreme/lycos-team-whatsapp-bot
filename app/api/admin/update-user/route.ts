@@ -17,7 +17,7 @@ export async function POST(req: Request) {
       }
     });
 
-    const { id, email, nombre, sede_id, rol, activo, telefono, username, permisos } = await req.json();
+    const { id, email, nombre, sede_id, rol, activo, telefono, username, permisos, password } = await req.json();
 
     if (!id) {
       return NextResponse.json({ error: 'ID de usuario requerido' }, { status: 400 });
@@ -36,6 +36,11 @@ export async function POST(req: Request) {
 
     if (permisos !== undefined) {
       updates.permisos = permisos;
+    }
+
+    // Reseteo opcional de contraseña (solo si el admin escribió una nueva)
+    if (typeof password === 'string' && password.trim().length > 0) {
+      updates.password_hash = password.trim();
     }
 
     const { data: updatedUser, error } = await supabaseAdmin

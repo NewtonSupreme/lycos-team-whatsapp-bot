@@ -9,8 +9,30 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSedeStore } from "@/lib/store/useSedeStore";
 import { useAppStore } from "@/lib/store";
-import { Loader2, Plus, Users, Shield, MapPin, Trash2, Mail, User, Wrench, Search, Eye, EyeOff, Settings2, Lock, Unlock } from "lucide-react";
-import { getPermisos, normalizePermiso, type Permisos, type PermisoValue, PERMISOS_DEFAULT } from "@/types";
+import {
+  Loader2, Plus, Users, Shield, MapPin, Trash2, User, Wrench, Eye, EyeOff,
+  Crown, DollarSign, Headphones, HardHat, KeyRound
+} from "lucide-react";
+import {
+  ROLE_CATALOG, getRoleMeta, normalizePermiso, PERMISOS_DEFAULT,
+  type RoleMeta, type Permisos, type PermisoValue,
+} from "@/types";
+
+// Icono lucide por rol del catálogo
+function RoleIconCmp({ rol, className }: { rol: string; className?: string }) {
+  const icon = getRoleMeta(rol)?.icon;
+  switch (icon) {
+    case 'crown': return <Crown className={className} />;
+    case 'shield': return <Shield className={className} />;
+    case 'dollar': return <DollarSign className={className} />;
+    case 'headset': return <Headphones className={className} />;
+    case 'hardhat': return <HardHat className={className} />;
+    case 'wrench': return <Wrench className={className} />;
+    default: return <Shield className={className} />;
+  }
+}
+
+const DEFAULT_PASSWORD = "lycos2026";
 
 export default function EmpleadosPage() {
   const [empleados, setEmpleados] = useState<any[]>([]);
@@ -23,19 +45,25 @@ export default function EmpleadosPage() {
 
   const { canViewAll, currentSede } = useSedeStore();
   const { user, setUser } = useAppStore();
-  const userRole = user?.rol || 'empleado';
+  const userRole = user?.rol || 'atencion_cliente';
   const isAdmin = userRole === 'admin';
-  const canEdit = isAdmin || userRole === 'gerente';
+  const canEdit = isAdmin || userRole === 'supervisor';
   const canDelete = isAdmin;
+
+  // Roles que el usuario actual puede asignar
+  const assignableRoles: RoleMeta[] = isAdmin
+    ? ROLE_CATALOG
+    : ROLE_CATALOG.filter(r => r.asignablePorSupervisor);
 
   const [formData, setFormData] = useState({
     nombre: "",
     apellido: "",
     email: "",
     username: "",
-    rol: "empleado",
+    rol: "atencion_cliente",
     sede_id: "",
-    telefono: ""
+    telefono: "",
+    password: DEFAULT_PASSWORD,
   });
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -46,11 +74,12 @@ export default function EmpleadosPage() {
     setMounted(true);
     fetchSedes();
     fetchEmpleados();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSede?.id, sedeFilter]);
 
   async function fetchSedes() {
     if (!supabase) return;
-    const { data } = await supabase.from("sedes").select("*");
+    const { data } = await supabase.from("sedes").select("*").order('nombre');
     if (data) {
       setSedes(data);
       if (data.length > 0 && !formData.sede_id) {
@@ -63,85 +92,58 @@ export default function EmpleadosPage() {
     if (!supabase) return;
     setLoading(true);
     let query = supabase.from("usuarios").select(`
-      id, rol, username, email, nombre, telefono,
+      id, rol, username, email, nombre, telefono, activo,
       sede:sedes(id, nombre)
     `).order('nombre', { ascending: true });
 
-    if (sedeFilter && sedeFilter !== "todas") {
-      query = query.eq("sede_id", sedeFilter);
-    } else if (!isAdmin && currentSede) {
+    // Admin: filtra por el selector; el resto siempre ve solo su sede
+    if (isAdmin) {
+      if (sedeFilter && sedeFilter !== "todas") query = query.eq("sede_id", sedeFilter);
+    } else if (currentSede) {
       query = query.eq("sede_id", currentSede.id);
     }
 
     const { data, error } = await query;
-    if (error) {
-      console.error('Error fetching empleados:', error);
-    }
+    if (error) console.error('Error fetching empleados:', error);
     if (data) setEmpleados(data);
     setLoading(false);
   }
 
-  function getPasswordForRole(rol: string): string {
-    if (rol === 'mecanico' || rol === 'jefe_taller') return 'NO_ACCESS_STAFF';
-    return 'lycos2026';
+  function roleLabel(rol: string): string {
+    return getRoleMeta(rol)?.label || rol.replace(/_/g, ' ');
   }
-
-  function getRoleBadgeColor(rol: string): string {
-    switch (rol) {
-      case 'admin': return 'bg-red-500/10 text-red-500 border-red-500/20';
-      case 'gerente': return 'bg-blue-500/10 text-blue-500 border-blue-500/20';
-      case 'jefe_taller_acceso': return 'bg-violet-500/10 text-violet-500 border-violet-500/20';
-      case 'jefe_taller': return 'bg-primary/10 text-primary border-primary/20';
-      case 'mecanico_acceso': return 'bg-amber-500/10 text-amber-500 border-amber-500/20';
-      case 'mecanico': return 'bg-orange-500/10 text-orange-500 border-orange-500/20';
-      case 'atencion_cliente': return 'bg-pink-500/10 text-pink-500 border-pink-500/20';
-      default: return 'bg-slate-500/10 text-slate-500 border-slate-500/20';
-    }
-  }
-
-  function getRoleIcon(rol: string): string {
-    return rol === 'mecanico' || rol === 'mecanico_acceso' ? 'wrench' : 'shield';
-  }
-
-  function getRoleDisplayName(rol: string): string {
-    switch (rol) {
-      case 'jefe_taller_acceso': return 'Jefe Taller (Con Acceso)';
-      case 'jefe_taller': return 'Jefe Taller (Sin Acceso)';
-      case 'mecanico_acceso': return 'Mecánico (Con Acceso)';
-      case 'mecanico': return 'Mecánico (Sin Acceso)';
-      case 'atencion_cliente': return 'Atención al Cliente';
-      default: return rol.replace(/_/g, ' ');
-    }
-  }
-
-  function isNoAccessRole(rol: string): boolean {
-    return rol === 'mecanico' || rol === 'jefe_taller';
+  function roleBadge(rol: string): string {
+    return getRoleMeta(rol)?.color || 'bg-slate-500/10 text-slate-500 border-slate-500/20';
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!canEdit) return;
     setSaving(true);
     try {
       const payload: any = { ...formData };
+      // Supervisor siempre crea en su propia sede
+      if (!isAdmin) payload.sede_id = currentSede?.id || "";
       if (payload.sede_id === "todas" || !payload.sede_id) {
         payload.sede_id = currentSede?.id || sedes[0]?.id || "";
       }
-      payload.activo = !isNoAccessRole(formData.rol);
-      payload.password_hash = getPasswordForRole(formData.rol);
+      payload.activo = true;
+      payload.password_hash = (formData.password || DEFAULT_PASSWORD).trim();
 
       const res = await fetch('/api/admin/create-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
       alert("Personal registrado exitosamente.");
       setFormData({
         nombre: "", apellido: "", email: "", username: "",
-        rol: "empleado", sede_id: isAdmin ? "todas" : (sedes[0]?.id || ""), telefono: ""
+        rol: assignableRoles[0]?.nombre || "atencion_cliente",
+        sede_id: isAdmin ? "todas" : (currentSede?.id || sedes[0]?.id || ""),
+        telefono: "", password: DEFAULT_PASSWORD,
       });
       fetchEmpleados();
     } catch (error: any) {
@@ -153,18 +155,16 @@ export default function EmpleadosPage() {
 
   async function handleDelete(id: string, nombre: string) {
     if (!canDelete) return;
-    if (!confirm(`¿Estás seguro de eliminar permanentemente a ${nombre} de la base de datos? Esta acción es irreversible.`)) return;
-
+    if (id === user?.id) { alert("No puedes eliminar tu propia cuenta."); return; }
+    if (!confirm(`¿Eliminar permanentemente a ${nombre}? Esta acción es irreversible.`)) return;
     try {
       const res = await fetch('/api/admin/delete-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id })
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-
       setEmpleados(prev => prev.filter(e => e.id !== id));
       alert("Usuario eliminado correctamente.");
     } catch (error: any) {
@@ -174,23 +174,18 @@ export default function EmpleadosPage() {
 
   const handleEditClick = async (emp: any) => {
     if (!canEdit) return;
-    const defaults = PERMISOS_DEFAULT[emp.rol] || PERMISOS_DEFAULT.empleado;
+    const defaults = PERMISOS_DEFAULT[emp.rol] || PERMISOS_DEFAULT.atencion_cliente;
     setEditingId(emp.id);
 
-    let permisos: Permisos = { ...defaults };
+    let permisos: Permisos = JSON.parse(JSON.stringify(defaults));
     if (isAdmin && supabase) {
       const { data: pData } = await supabase
-        .from('usuarios')
-        .select('permisos')
-        .eq('id', emp.id)
-        .single();
+        .from('usuarios').select('permisos').eq('id', emp.id).single();
       if (pData?.permisos) {
         const raw = typeof pData.permisos === 'string' ? JSON.parse(pData.permisos) : pData.permisos;
-        const merged = { ...defaults };
+        const merged: any = JSON.parse(JSON.stringify(defaults));
         for (const [key, val] of Object.entries(raw)) {
-          if (key in defaults) {
-            (merged as any)[key] = normalizePermiso(val as PermisoValue);
-          }
+          if (key in merged) merged[key] = normalizePermiso(val as PermisoValue);
         }
         permisos = merged;
       }
@@ -202,9 +197,10 @@ export default function EmpleadosPage() {
       username: emp.username,
       email: emp.email || '',
       rol: emp.rol,
-      sede_id: emp.sede?.id || "",
+      sede_id: emp.sede?.id || currentSede?.id || "",
       telefono: emp.telefono || "",
-      permisos
+      password: "",
+      permisos,
     });
     setShowEditDialog(true);
   };
@@ -213,18 +209,16 @@ export default function EmpleadosPage() {
     e.preventDefault();
     setSaving(true);
     try {
-      const payload = { ...editFormData };
-      if (isAdmin) {
-        payload.permisos = editFormData.permisos;
-      } else {
-        delete payload.permisos;
-      }
+      const payload: any = { ...editFormData };
+      if (isAdmin) payload.permisos = editFormData.permisos;
+      else delete payload.permisos;
+      if (!payload.password) delete payload.password; // no cambiar si está vacío
+
       const res = await fetch('/api/admin/update-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
@@ -232,26 +226,23 @@ export default function EmpleadosPage() {
       setShowEditDialog(false);
       fetchEmpleados();
 
-      // Refresh the current user's store if they edited their own permissions
+      // Si el admin editó sus propios permisos, refrescar su sesión
       if (isAdmin && editingId === user?.id) {
-        fetch('/api/auth/me')
-          .then(r => r.json())
-          .then(({ user: freshUser }) => {
-            if (freshUser) {
-              setUser({
-                id: freshUser.id || freshUser.username,
-                username: freshUser.username,
-                email: freshUser.email || `${freshUser.username}@lycosteam.com`,
-                nombre: freshUser.nombre,
-                rol: freshUser.rol,
-                avatar_url: freshUser.avatar_url,
-                sede_id: freshUser.sede_id,
-                permisos: freshUser.permisos,
-                created_at: ''
-              });
-            }
-          })
-          .catch(() => {});
+        fetch('/api/auth/me').then(r => r.json()).then(({ user: freshUser }) => {
+          if (freshUser) {
+            setUser({
+              id: freshUser.id || freshUser.username,
+              username: freshUser.username,
+              email: freshUser.email || `${freshUser.username}@lycosteam.com`,
+              nombre: freshUser.nombre,
+              rol: freshUser.rol,
+              avatar_url: freshUser.avatar_url,
+              sede_id: freshUser.sede_id,
+              permisos: freshUser.permisos,
+              created_at: ''
+            });
+          }
+        }).catch(() => {});
       }
     } catch (error: any) {
       alert("Error actualizando: " + error.message);
@@ -259,6 +250,15 @@ export default function EmpleadosPage() {
       setSaving(false);
     }
   };
+
+  function toggleVista(key: string) {
+    const p = normalizePermiso(editFormData.permisos[key]);
+    // Activar = solo lectura por defecto; Desactivar = sin ningún acceso.
+    const next = p.leer
+      ? { crear: false, leer: false, editar: false, eliminar: false }
+      : { crear: false, leer: true, editar: false, eliminar: false };
+    setEditFormData({ ...editFormData, permisos: { ...editFormData.permisos, [key]: next } });
+  }
 
   const renderTable = (list: any[], showCredentials: boolean) => {
     if (loading) return <div className="flex justify-center p-8"><Loader2 className="w-8 h-8 animate-spin text-slate-400" /></div>;
@@ -268,7 +268,6 @@ export default function EmpleadosPage() {
         <p>No hay personal registrado en esta sección.</p>
       </div>
     );
-
     return (
       <div className="w-full overflow-x-auto">
         <table className="w-full text-sm text-left">
@@ -286,12 +285,15 @@ export default function EmpleadosPage() {
             {list.map((emp) => (
               <tr key={emp.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/50 transition-colors">
                 <td className="px-4 py-3">
-                  <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wider ${getRoleBadgeColor(emp.rol)}`}>
-                    {emp.rol === 'mecanico' || emp.rol === 'mecanico_acceso' ? <Wrench className="w-3 h-3" /> : <Shield className="w-3 h-3" />}
-                    {getRoleDisplayName(emp.rol)}
+                  <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wider ${roleBadge(emp.rol)}`}>
+                    <RoleIconCmp rol={emp.rol} className="w-3 h-3" />
+                    {roleLabel(emp.rol)}
                   </div>
                 </td>
-                <td className="px-4 py-3 font-semibold whitespace-nowrap text-slate-700 dark:text-slate-200">{emp.nombre}</td>
+                <td className="px-4 py-3 font-semibold whitespace-nowrap text-slate-700 dark:text-slate-200">
+                  {emp.nombre}
+                  {emp.activo === false && <span className="ml-2 text-[10px] text-red-500 font-medium">(inactivo)</span>}
+                </td>
                 {showCredentials && (
                   <td className="px-4 py-3">
                     <div className="flex flex-col min-w-[150px]">
@@ -316,28 +318,20 @@ export default function EmpleadosPage() {
                 <td className="px-4 py-3 text-right">
                   <div className="flex items-center justify-end gap-2">
                     {canEdit && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors"
-                        onClick={() => handleEditClick(emp)}
-                      >
+                      <Button variant="ghost" size="icon"
+                        className="text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30"
+                        onClick={() => handleEditClick(emp)}>
                         <User className="h-4 w-4" />
                       </Button>
                     )}
                     {canDelete && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
-                        onClick={() => handleDelete(emp.id, emp.nombre)}
-                      >
+                      <Button variant="ghost" size="icon"
+                        className="text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
+                        onClick={() => handleDelete(emp.id, emp.nombre)}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     )}
-                    {!canEdit && (
-                      <span className="text-[10px] text-slate-400 italic">Solo vista</span>
-                    )}
+                    {!canEdit && <span className="text-[10px] text-slate-400 italic">Solo vista</span>}
                   </div>
                 </td>
               </tr>
@@ -350,6 +344,10 @@ export default function EmpleadosPage() {
 
   if (!mounted) return null;
 
+  const administrativos = empleados.filter(e => !getRoleMeta(e.rol)?.esTecnico);
+  const tecnicos = empleados.filter(e => getRoleMeta(e.rol)?.esTecnico);
+  const botAdmins = empleados.filter(e => e.rol === 'admin' && e.telefono);
+
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -360,7 +358,7 @@ export default function EmpleadosPage() {
           </h1>
           <p className="text-sm text-slate-500 mt-1">
             {isAdmin ? 'Control total del personal en todas las sedes.' :
-             canEdit ? 'Administra los accesos y roles de tu sede.' :
+             canEdit ? `Administra el personal de ${currentSede?.nombre || 'tu sede'}.` :
              'Visualización del personal del sistema.'}
           </p>
         </div>
@@ -371,40 +369,27 @@ export default function EmpleadosPage() {
           <MapPin className="w-4 h-4 text-blue-500" />
           <span className="text-xs font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider">Filtrar por Sede</span>
           <Select value={sedeFilter} onValueChange={setSedeFilter}>
-            <SelectTrigger className="w-48 h-9 text-sm">
-              <SelectValue />
-            </SelectTrigger>
+            <SelectTrigger className="w-48 h-9 text-sm"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="todas">
-                <div className="flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-red-400" />
-                  <span className="font-medium">Todas las Sedes</span>
-                </div>
+                <div className="flex items-center gap-2"><Shield className="w-4 h-4 text-red-400" /><span className="font-medium">Todas las Sedes</span></div>
               </SelectItem>
               {sedes.map(s => (
                 <SelectItem key={s.id} value={s.id}>
-                  <div className="flex items-center gap-2">
-                    <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                    <span>{s.nombre}</span>
-                  </div>
+                  <div className="flex items-center gap-2"><MapPin className="w-3.5 h-3.5 text-slate-400" /><span>{s.nombre}</span></div>
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-          {sedeFilter !== "todas" && (
-            <span className="text-xs text-slate-500 ml-1">
-              {empleados.length} empleado{empleados.length !== 1 ? 's' : ''} en esta sede
-            </span>
-          )}
         </div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {canEdit && (
-          <Card className="lg:col-span-1 border-slate-200 dark:border-slate-800 shadow-sm h-fit sticky top-6">
+          <Card className="lg:col-span-1 border-slate-200 dark:border-slate-800 shadow-sm h-fit lg:sticky lg:top-6">
             <CardHeader className="pb-4">
               <CardTitle className="text-lg">Nuevo Registro</CardTitle>
-              <CardDescription>Añade personal administrativo o técnico.</CardDescription>
+              <CardDescription>Añade personal y asígnale un rol.</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-4">
@@ -418,24 +403,21 @@ export default function EmpleadosPage() {
                     <Input required value={formData.apellido} onChange={e => setFormData({ ...formData, apellido: e.target.value })} />
                   </div>
                 </div>
+
                 <div className="space-y-2">
                   <Label>Nombre de Usuario</Label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-mono text-sm">@</span>
-                    <Input
-                      placeholder="usuario123"
-                      className="pl-7 font-mono"
-                      value={formData.username}
-                      onChange={e => setFormData({ ...formData, username: e.target.value.toLowerCase().replace(/\s+/g, '') })}
-                    />
+                    <Input placeholder="usuario123" className="pl-7 font-mono" value={formData.username}
+                      onChange={e => setFormData({ ...formData, username: e.target.value.toLowerCase().replace(/\s+/g, '') })} />
                   </div>
                   <p className="text-[10px] text-slate-400">Si se deja vacío, se generará automáticamente.</p>
                 </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Correo Electrónico</Label>
                     <Input type="email" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} placeholder="opcional@correo.com" />
-                    <p className="text-[10px] text-slate-400">Campo opcional</p>
                   </div>
                   <div className="space-y-2">
                     <Label>Teléfono WhatsApp</Label>
@@ -443,107 +425,51 @@ export default function EmpleadosPage() {
                     <p className="text-[10px] text-slate-400">Requerido solo para modo dios IA</p>
                   </div>
                 </div>
+
                 <div className="space-y-2">
                   <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Rol de Acceso</Label>
                   <Select value={formData.rol} onValueChange={v => setFormData({ ...formData, rol: v })}>
                     <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="empleado">
-                      <div className="flex items-center gap-2">
-                        <Shield className="w-4 h-4 text-slate-400" />
-                        <span>Empleado (Acceso Panel)</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="gerente">
-                      <div className="flex items-center gap-2">
-                        <Shield className="w-4 h-4 text-blue-500" />
-                        <span>Gerente de Sede</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="mecanico">
-                      <div className="flex items-center gap-2">
-                        <Wrench className="w-4 h-4 text-orange-500" />
-                        <span>Mecánico (Sin Acceso)</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="mecanico_acceso">
-                      <div className="flex items-center gap-2">
-                        <Wrench className="w-4 h-4 text-amber-500" />
-                        <span>Mecánico (Con Acceso)</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="jefe_taller">
-                      <div className="flex items-center gap-2">
-                        <Shield className="w-4 h-4 text-primary" />
-                        <span>Jefe de Taller (Sin Acceso)</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="jefe_taller_acceso">
-                      <div className="flex items-center gap-2">
-                        <Shield className="w-4 h-4 text-violet-500" />
-                        <span>Jefe de Taller (Con Acceso)</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="atencion_cliente">
-                      <div className="flex items-center gap-2">
-                        <Shield className="w-4 h-4 text-pink-500" />
-                        <span>Atención al Cliente</span>
-                      </div>
-                    </SelectItem>
-                    {isAdmin && (
-                      <SelectItem value="admin">
-                        <div className="flex items-center gap-2">
-                          <Shield className="w-4 h-4 text-red-500" />
-                          <span>Administrador</span>
-                        </div>
-                      </SelectItem>
-                    )}
-                  </SelectContent>
+                    <SelectContent>
+                      {assignableRoles.map(r => (
+                        <SelectItem key={r.nombre} value={r.nombre}>
+                          <div className="flex items-center gap-2">
+                            <RoleIconCmp rol={r.nombre} className="w-4 h-4" />
+                            <span>{r.label}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
                   </Select>
+                  <p className="text-[10px] text-slate-400">{getRoleMeta(formData.rol)?.descripcion}</p>
                 </div>
 
                 <div className="space-y-2">
                   <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Sede Asignada</Label>
-                  <Select
-                    value={formData.sede_id}
+                  <Select value={isAdmin ? formData.sede_id : (currentSede?.id || "")}
                     onValueChange={v => setFormData({ ...formData, sede_id: v })}
-                    disabled={!isAdmin && !canViewAll()}
-                  >
-                    <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
+                    disabled={!isAdmin}>
+                    <SelectTrigger className="h-11"><SelectValue placeholder="Selecciona una sede" /></SelectTrigger>
                     <SelectContent>
-                      {isAdmin && (
-                        <SelectItem value="todas">
-                          <div className="flex items-center gap-2">
-                            <Shield className="w-4 h-4 text-red-400" />
-                            <span className="font-medium">Todas (Sin restricción)</span>
-                          </div>
-                        </SelectItem>
-                      )}
-                      {sedes.map(s => (
-                        <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>
-                      ))}
+                      {isAdmin && <SelectItem value="todas"><span className="font-medium">Sede actual / principal</span></SelectItem>}
+                      {sedes.map(s => <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                  {!isAdmin && !canViewAll() && (
-                    <p className="text-[10px] text-slate-400">La sede se asigna automáticamente según tu acceso.</p>
-                  )}
+                  {!isAdmin && <p className="text-[10px] text-slate-400">Se asigna a tu sede: {currentSede?.nombre}.</p>}
                 </div>
 
-                <div className="p-3 bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-slate-200 dark:border-slate-800">
-                  <div className="flex items-center justify-between mb-2">
-                    <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Contraseña generada</Label>
-                    <button type="button" onClick={() => setShowPassword(!showPassword)} className="text-slate-400 hover:text-slate-600">
+                <div className="space-y-2">
+                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Contraseña inicial</Label>
+                  <div className="relative">
+                    <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                    <Input type={showPassword ? "text" : "password"} className="pl-9 pr-9 font-mono"
+                      value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} />
+                    <button type="button" onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                       {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                     </button>
                   </div>
-                  <code className={`block text-xs font-mono ${showPassword ? 'text-slate-800 dark:text-slate-200' : 'text-transparent dark:text-transparent select-none'} bg-white dark:bg-slate-950 px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700`}>
-                    {showPassword ? getPasswordForRole(formData.rol) : '••••••••••••'}
-                  </code>
-                  <p className="text-[10px] text-slate-400 mt-1.5">
-                    {isNoAccessRole(formData.rol)
-                      ? 'No genera acceso al panel — solo registro interno.'
-                      : 'Contraseña por defecto: lycos2026'}
-                  </p>
+                  <p className="text-[10px] text-slate-400">Por defecto: {DEFAULT_PASSWORD} · El empleado puede cambiarla luego.</p>
                 </div>
 
                 <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white" disabled={saving}>
@@ -556,39 +482,32 @@ export default function EmpleadosPage() {
         )}
 
         <div className={`${canEdit ? 'lg:col-span-2' : 'lg:col-span-3'} space-y-6`}>
-          {/* SECCIÓN 1: PERSONAL CON ACCESO AL SISTEMA */}
           <Card className="border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
             <CardHeader className="bg-slate-50/50 dark:bg-slate-900/50 border-b border-border/50">
               <div className="flex items-center gap-2">
                 <Shield className="w-5 h-5 text-blue-500" />
                 <div>
-                  <CardTitle className="text-lg">Personal con Acceso al Sistema</CardTitle>
-                  <CardDescription>Administradores, gerentes y empleados autorizados para usar el panel</CardDescription>
+                  <CardTitle className="text-lg">Personal Administrativo</CardTitle>
+                  <CardDescription>Administración, supervisores, cobranza y atención al cliente</CardDescription>
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="p-0">
-              {renderTable(empleados.filter(e => ['admin', 'gerente', 'empleado', 'jefe_taller_acceso', 'mecanico_acceso', 'atencion_cliente'].includes(e.rol)), true)}
-            </CardContent>
+            <CardContent className="p-0">{renderTable(administrativos, true)}</CardContent>
           </Card>
 
-          {/* SECCIÓN 2: PERSONAL TÉCNICO (TALLER) */}
           <Card className="border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
             <CardHeader className="bg-slate-50/50 dark:bg-slate-900/50 border-b border-border/50">
               <div className="flex items-center gap-2">
-                <Wrench className="w-5 h-5 text-orange-500" />
+                <Wrench className="w-5 h-5 text-amber-500" />
                 <div>
                   <CardTitle className="text-lg">Personal Técnico (Taller)</CardTitle>
-                  <CardDescription>Mecánicos y Jefes de Taller — No tienen acceso al panel administrativo</CardDescription>
+                  <CardDescription>Jefes de taller y mecánicos — con acceso limitado al panel</CardDescription>
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="p-0">
-              {renderTable(empleados.filter(e => ['mecanico', 'jefe_taller'].includes(e.rol)), false)}
-            </CardContent>
+            <CardContent className="p-0">{renderTable(tecnicos, true)}</CardContent>
           </Card>
 
-          {/* SECCIÓN 3: ADMINISTRADORES DEL BOT IA */}
           <Card className="border-emerald-200 dark:border-emerald-900/50 shadow-sm overflow-hidden bg-emerald-50/10">
             <CardHeader className="bg-emerald-50/50 dark:bg-emerald-900/20 border-b border-emerald-100 dark:border-emerald-900/50">
               <div className="flex items-center gap-2">
@@ -596,26 +515,23 @@ export default function EmpleadosPage() {
                 <div>
                   <CardTitle className="text-lg text-emerald-800 dark:text-emerald-400">Administradores del Bot (Modo Dios IA)</CardTitle>
                   <CardDescription className="text-emerald-600/80 dark:text-emerald-400/70">
-                    Números de WhatsApp con acceso total a inventario, cajas y servicios desde el Chatbot.
+                    Números de WhatsApp con acceso total al chatbot.
                   </CardDescription>
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="p-0">
-              {renderTable(empleados.filter(e => e.rol === 'admin' && e.telefono), true)}
-            </CardContent>
+            <CardContent className="p-0">{renderTable(botAdmins, true)}</CardContent>
           </Card>
         </div>
       </div>
 
       {/* MODAL DE EDICIÓN */}
-      {showEditDialog && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 md:p-6 overflow-hidden">
+      {showEditDialog && editFormData && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 md:p-6">
           <Card className="w-full max-w-2xl border-slate-200 dark:border-slate-800 shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
             <CardHeader className="bg-slate-50/50 dark:bg-slate-900/50 border-b shrink-0 py-4">
               <CardTitle className="text-xl flex items-center gap-2">
-                <User className="w-5 h-5 text-blue-500" />
-                Editar Usuario
+                <User className="w-5 h-5 text-blue-500" /> Editar Usuario
               </CardTitle>
             </CardHeader>
             <CardContent className="p-4 sm:p-6 overflow-y-auto custom-scrollbar flex-1">
@@ -631,43 +547,42 @@ export default function EmpleadosPage() {
                   </div>
                   <div className="space-y-2">
                     <Label>Email</Label>
-                    <Input type="email" value={editFormData.email} onChange={e => setEditFormData({ ...editFormData, email: e.target.value })}
-                      placeholder="opcional@correo.com" />
-                    <p className="text-[10px] text-slate-400">Campo opcional</p>
+                    <Input type="email" value={editFormData.email} onChange={e => setEditFormData({ ...editFormData, email: e.target.value })} placeholder="opcional@correo.com" />
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Teléfono WhatsApp (Modo Dios IA)</Label>
-                  <Input value={editFormData.telefono} onChange={e => setEditFormData({ ...editFormData, telefono: e.target.value })}
-                    placeholder="Opcional — solo para modo dios" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Teléfono WhatsApp (Modo Dios IA)</Label>
+                    <Input value={editFormData.telefono} onChange={e => setEditFormData({ ...editFormData, telefono: e.target.value })} placeholder="Opcional" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Nueva contraseña</Label>
+                    <Input type="text" className="font-mono" value={editFormData.password}
+                      onChange={e => setEditFormData({ ...editFormData, password: e.target.value })}
+                      placeholder="Dejar vacío para no cambiar" />
+                  </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Rol</Label>
                     <Select value={editFormData.rol} onValueChange={v => {
                       const updated = { ...editFormData, rol: v };
-                      if (isAdmin) {
-                        const defaults = PERMISOS_DEFAULT[v] || PERMISOS_DEFAULT.empleado;
-                        updated.permisos = { ...defaults };
-                      }
+                      if (isAdmin) updated.permisos = JSON.parse(JSON.stringify(PERMISOS_DEFAULT[v] || PERMISOS_DEFAULT.atencion_cliente));
                       setEditFormData(updated);
                     }}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {isAdmin && <SelectItem value="admin">Admin</SelectItem>}
-                        <SelectItem value="gerente">Gerente</SelectItem>
-                        <SelectItem value="empleado">Empleado</SelectItem>
-                        <SelectItem value="mecanico">Mecánico (Sin Acceso)</SelectItem>
-                        <SelectItem value="mecanico_acceso">Mecánico (Con Acceso)</SelectItem>
-                        <SelectItem value="jefe_taller">Jefe Taller (Sin Acceso)</SelectItem>
-                        <SelectItem value="jefe_taller_acceso">Jefe Taller (Con Acceso)</SelectItem>
-                        <SelectItem value="atencion_cliente">Atención al Cliente</SelectItem>
+                        {assignableRoles.map(r => (
+                          <SelectItem key={r.nombre} value={r.nombre}>
+                            <div className="flex items-center gap-2"><RoleIconCmp rol={r.nombre} className="w-4 h-4" />{r.label}</div>
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-2">
                     <Label>Sede</Label>
-                    <Select value={editFormData.sede_id} onValueChange={v => setEditFormData({ ...editFormData, sede_id: v })}>
+                    <Select value={editFormData.sede_id} onValueChange={v => setEditFormData({ ...editFormData, sede_id: v })} disabled={!isAdmin}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {sedes.map(s => <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>)}
@@ -678,7 +593,6 @@ export default function EmpleadosPage() {
 
                 {isAdmin && editFormData.rol !== 'admin' && (
                   <div className="space-y-5 pt-4 border-t border-border/30">
-                    {/* VISTAS DEL SISTEMA - toggle simple por módulo */}
                     <div className="space-y-3">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
                         <Label className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
@@ -691,50 +605,16 @@ export default function EmpleadosPage() {
                           const p = normalizePermiso(crud as PermisoValue);
                           const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
                           return (
-                            <label
-                              key={key}
+                            <label key={key}
                               className={`flex items-center justify-between px-2.5 py-2 rounded-lg border text-xs cursor-pointer transition-all select-none ${
-                                p.leer
-                                  ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800 shadow-sm'
-                                  : 'bg-slate-50 dark:bg-slate-900/50 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
-                              }`}
-                            >
-                              <span className={`font-medium truncate mr-2 ${p.leer ? 'text-blue-700 dark:text-blue-300' : 'text-slate-500'}`}>
-                                {label}
-                              </span>
-                              <span
-                                role="checkbox"
-                                tabIndex={0}
-                                aria-checked={p.leer}
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  setEditFormData({
-                                    ...editFormData,
-                                    permisos: {
-                                      ...editFormData.permisos,
-                                      [key]: { ...p, leer: !p.leer, crear: !p.leer, editar: !p.leer, eliminar: !p.leer }
-                                    }
-                                  });
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter' || e.key === ' ') {
-                                    e.preventDefault();
-                                    setEditFormData({
-                                      ...editFormData,
-                                      permisos: {
-                                        ...editFormData.permisos,
-                                        [key]: { ...p, leer: !p.leer, crear: !p.leer, editar: !p.leer, eliminar: !p.leer }
-                                      }
-                                    });
-                                  }
-                                }}
-                                className={`w-8 h-4 rounded-full transition-colors duration-200 relative inline-block flex-shrink-0 ${
-                                  p.leer ? 'bg-blue-500' : 'bg-slate-300 dark:bg-slate-600'
-                                }`}
-                              >
-                                <span className={`absolute w-3 h-3 bg-white rounded-full top-0.5 shadow-sm transition-transform duration-200 ${
-                                  p.leer ? 'left-[18px]' : 'left-[2px]'
-                                }`} />
+                                p.leer ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800 shadow-sm'
+                                       : 'bg-slate-50 dark:bg-slate-900/50 border-slate-200 dark:border-slate-700 hover:border-slate-300'}`}>
+                              <span className={`font-medium truncate mr-2 ${p.leer ? 'text-blue-700 dark:text-blue-300' : 'text-slate-500'}`}>{label}</span>
+                              <span role="checkbox" tabIndex={0} aria-checked={p.leer}
+                                onClick={(e) => { e.preventDefault(); toggleVista(key); }}
+                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleVista(key); } }}
+                                className={`w-8 h-4 rounded-full transition-colors duration-200 relative inline-block flex-shrink-0 ${p.leer ? 'bg-blue-500' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                                <span className={`absolute w-3 h-3 bg-white rounded-full top-0.5 shadow-sm transition-transform duration-200 ${p.leer ? 'left-[18px]' : 'left-[2px]'}`} />
                               </span>
                             </label>
                           );
@@ -742,22 +622,14 @@ export default function EmpleadosPage() {
                       </div>
                     </div>
 
-                    {/* PERMISOS CRUD - control granular por módulo */}
                     <div className="space-y-3 border-t border-border/20 pt-4">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                         <Label className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
                           <Shield className="w-3.5 h-3.5 text-amber-500" /> Permisos CRUD del Sistema
                         </Label>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const defaults = PERMISOS_DEFAULT[editFormData.rol] || PERMISOS_DEFAULT.empleado;
-                            setEditFormData({ ...editFormData, permisos: JSON.parse(JSON.stringify(defaults)) });
-                          }}
-                          className="text-[10px] text-blue-500 hover:text-blue-600 font-medium"
-                        >
-                          Restaurar por defecto
-                        </button>
+                        <button type="button"
+                          onClick={() => setEditFormData({ ...editFormData, permisos: JSON.parse(JSON.stringify(PERMISOS_DEFAULT[editFormData.rol] || PERMISOS_DEFAULT.atencion_cliente)) })}
+                          className="text-[10px] text-blue-500 hover:text-blue-600 font-medium">Restaurar por defecto</button>
                       </div>
                       <div className="overflow-x-auto max-h-64 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 custom-scrollbar">
                         <table className="w-full text-xs min-w-[400px]">
@@ -774,44 +646,28 @@ export default function EmpleadosPage() {
                             {Object.entries(editFormData.permisos || {}).map(([key, crud]) => {
                               const p = normalizePermiso(crud as PermisoValue);
                               return (
-                                <tr key={key} className="border-b border-slate-100 dark:border-slate-800/30 hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition-colors">
+                                <tr key={key} className="border-b border-slate-100 dark:border-slate-800/30 hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
                                   <td className="py-2 px-3 font-medium text-slate-700 dark:text-slate-300 whitespace-nowrap text-[11px]">
                                     {key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                                   </td>
-                                  {(['crear', 'leer', 'editar', 'eliminar'] as const).map(action => {
-                                    const isActive = p[action];
-                                    return (
-                                      <td key={action} className="text-center py-2 px-1">
-                                        <input
-                                          type="checkbox"
-                                          checked={isActive}
-                                          onChange={() => {
-                                            setEditFormData({
-                                              ...editFormData,
-                                              permisos: {
-                                                ...editFormData.permisos,
-                                                [key]: { ...p, [action]: !isActive }
-                                              }
-                                            });
-                                          }}
-                                          className="w-4 h-4 accent-blue-600 rounded cursor-pointer"
-                                        />
-                                      </td>
-                                    );
-                                  })}
+                                  {(['crear', 'leer', 'editar', 'eliminar'] as const).map(action => (
+                                    <td key={action} className="text-center py-2 px-1">
+                                      <input type="checkbox" checked={p[action]}
+                                        onChange={() => setEditFormData({ ...editFormData, permisos: { ...editFormData.permisos, [key]: { ...p, [action]: !p[action] } } })}
+                                        className="w-4 h-4 accent-blue-600 rounded cursor-pointer" />
+                                    </td>
+                                  ))}
                                 </tr>
                               );
                             })}
                           </tbody>
                         </table>
                       </div>
-                      <p className="text-[10px] text-slate-400 text-center">
-                        C = Crear · R = Leer · U = Editar · D = Eliminar
-                      </p>
+                      <p className="text-[10px] text-slate-400 text-center">C = Crear · R = Leer · U = Editar · D = Eliminar</p>
                     </div>
                   </div>
                 )}
-                
+
                 <div className="flex gap-3 pt-6 mt-4 border-t border-border/10">
                   <Button type="button" variant="outline" className="flex-1" onClick={() => setShowEditDialog(false)}>Cancelar</Button>
                   <Button type="submit" className="flex-1 bg-blue-600 text-white" disabled={saving}>

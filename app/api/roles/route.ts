@@ -1,16 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 
-import { PERMISOS_DEFAULT } from '@/types';
-
-const DEFAULT_ROLE_LABELS: Record<string, string> = {
-  admin: 'Administrador',
-  gerente: 'Gerente',
-  empleado: 'Empleado',
-  mecanico_acceso: 'Mecánico (Con Acceso)',
-  jefe_taller_acceso: 'Jefe de Taller (Con Acceso)',
-  atencion_cliente: 'Atención al Cliente'
-};
+import { PERMISOS_DEFAULT, ROLE_CATALOG } from '@/types';
 
 export async function GET() {
   try {
@@ -21,35 +12,33 @@ export async function GET() {
     );
     let { data, error } = await supabaseAdmin.from('roles').select('*').order('label');
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    
-    // Auto-sync missing default roles into the database
+
+    // Auto-sync: crea en la BD cualquier rol canónico del catálogo que falte,
+    // con sus permisos por defecto. No sobreescribe roles ya existentes
+    // (el admin puede haberlos personalizado desde /ajustes/permisos).
     if (data) {
       const existingNames = new Set(data.map(r => r.nombre));
-      const missingRoles = [];
-      
-      for (const [nombre, permisos] of Object.entries(PERMISOS_DEFAULT)) {
-        if (!existingNames.has(nombre) && DEFAULT_ROLE_LABELS[nombre]) {
-          missingRoles.push({
-            nombre,
-            label: DEFAULT_ROLE_LABELS[nombre],
-            descripcion: 'Rol de sistema generado automáticamente',
-            permisos
-          });
-        }
-      }
-      
+      const missingRoles = ROLE_CATALOG
+        .filter(meta => !existingNames.has(meta.nombre))
+        .map(meta => ({
+          nombre: meta.nombre,
+          label: meta.label,
+          descripcion: meta.descripcion,
+          permisos: PERMISOS_DEFAULT[meta.nombre] || {}
+        }));
+
       if (missingRoles.length > 0) {
         const { data: inserted, error: insertError } = await supabaseAdmin
           .from('roles')
           .insert(missingRoles)
           .select();
-          
+
         if (!insertError && inserted) {
           data = [...data, ...inserted].sort((a, b) => a.label.localeCompare(b.label));
         }
       }
     }
-    
+
     return NextResponse.json({ roles: data });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
