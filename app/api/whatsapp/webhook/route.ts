@@ -2756,10 +2756,12 @@ async function handleCompletedServiceSale(
     };
 
     if (existingVS) {
-      await db.from('ventas_silenciadores').update(vsData).eq('id', existingVS.id);
+      const { error: vsErr } = await db.from('ventas_silenciadores').update(vsData).eq('id', existingVS.id);
+      if (vsErr) throw new Error(`ventas_silenciadores update: ${vsErr.message}`);
       console.log(`✅ ventas_silenciadores ACTUALIZADO (${refTag})`);
     } else {
-      await db.from('ventas_silenciadores').insert(vsData);
+      const { error: vsErr } = await db.from('ventas_silenciadores').insert(vsData);
+      if (vsErr) throw new Error(`ventas_silenciadores insert: ${vsErr.message}`);
       console.log(`✅ ventas_silenciadores INSERTADO (${refTag})`);
     }
 
@@ -2797,10 +2799,12 @@ async function handleCompletedServiceSale(
     };
 
     if (existingVD) {
-      await db.from('ventas_dia').update(vdData).eq('id', existingVD.id);
+      const { error: vdErr } = await db.from('ventas_dia').update(vdData).eq('id', existingVD.id);
+      if (vdErr) throw new Error(`ventas_dia update: ${vdErr.message}`);
       console.log(`✅ ventas_dia ACTUALIZADO (${refTag})`);
     } else {
-      await db.from('ventas_dia').insert(vdData);
+      const { error: vdErr } = await db.from('ventas_dia').insert(vdData);
+      if (vdErr) throw new Error(`ventas_dia insert: ${vdErr.message}`);
       console.log(`✅ ventas_dia INSERTADO (${refTag})`);
     }
 

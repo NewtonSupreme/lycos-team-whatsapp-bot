@@ -132,7 +132,8 @@ export default function ServiciosPage() {
         .select(`
           id, fecha, hora, tipo, tipo_personalizado, descripcion, estado,
           nombre_cliente, vehiculo_info, placa, telefono, created_at,
-          cliente_id, vehiculo_id, seguimiento, costo_estimado, registrado_por,
+          cliente_id, vehiculo_id, sede_id, seguimiento,
+          costo_estimado, costo_final, registrado_por,
           vehiculos (marca, modelo, placa, anio, clientes (nombre, apellido, telefono))
         `)
         .order('fecha', { ascending: false })
@@ -224,25 +225,20 @@ export default function ServiciosPage() {
 
       // ── Auto-register sale when marking as completada or finalizado ──────────
       const COMPLETED_STATES = ['completada', 'finalizado', 'finalizada', 'completado'];
-      if (COMPLETED_STATES.includes(nuevoEstado)) {
+      if (COMPLETED_STATES.includes(nuevoEstado) && supabase) {
         const precio = Number(cita.costo_final ?? cita.costo_estimado ?? 0);
-        if (precio > 0 && supabase) {
+        // sede_id: use the service's own sede_id (NOT NULL in DB), fall back to store
+        const sedeId = cita.sede_id || currentSede?.id;
+        if (precio > 0 && sedeId) {
           const refTag = `[ServicioID: ${id}]`;
           const nowIso = new Date().toISOString();
           const fechaStr = nowIso.split('T')[0];
-          const sedeId = currentSede?.id || cita.sede_id || undefined;
           const descStr = cita.descripcion || 'Servicio de taller';
           const notesFinal = `${descStr} [Total: $${precio} (Divisas)] | Cliente: ${clienteNombre} | Vehículo: ${vehiculoStr} ${refTag}`.trim();
 
-          const desglose = [{
-            descripcion: descStr,
-            cantidad: 1,
-            precio_unitario: precio,
-            total: precio,
-            tipo: 'servicio',
-          }];
+          const desglose = [{ descripcion: descStr, cantidad: 1, precio_unitario: precio, total: precio, tipo: 'servicio' }];
 
-          // Check existing records to prevent duplicates
+          // Dedup check — prevent double-registering the same service
           const [{ data: existingVS }, { data: existingVD }] = await Promise.all([
             supabase.from('ventas_silenciadores').select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
             supabase.from('ventas_dia').select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
@@ -254,7 +250,7 @@ export default function ServiciosPage() {
             notas: notesFinal,
             fecha: nowIso,
             precio_registrado: precio,
-            ...(sedeId ? { sede_id: sedeId } : {}),
+            sede_id: sedeId,
             fecha_registro: nowIso,
             registro_atrasado: false,
           };
@@ -271,13 +267,13 @@ export default function ServiciosPage() {
             con_iva: false,
             notas: notesFinal,
             creado_por: user?.nombre || 'Admin',
-            ...(sedeId ? { sede_id: sedeId } : {}),
+            sede_id: sedeId,
             fecha_registro: nowIso,
             registro_atrasado: false,
             estado: 'pagado',
           };
 
-          await Promise.all([
+          const [vsResult, vdResult] = await Promise.all([
             existingVS
               ? supabase.from('ventas_silenciadores').update(vsData).eq('id', existingVS.id)
               : supabase.from('ventas_silenciadores').insert(vsData),
@@ -285,6 +281,9 @@ export default function ServiciosPage() {
               ? supabase.from('ventas_dia').update(vdData).eq('id', existingVD.id)
               : supabase.from('ventas_dia').insert(vdData),
           ]);
+
+          if (vsResult.error) throw new Error(`Error al registrar venta (silenciadores): ${vsResult.error.message}`);
+          if (vdResult.error) throw new Error(`Error al registrar venta (dia): ${vdResult.error.message}`);
         }
       }
 
@@ -1859,13 +1858,15 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
       if (citaError) throw citaError;
 
       // Also write to ventas_silenciadores for full cross-table consistency (reports + ventas recientes)
-      try {
+      {
         const refTag = `[ServicioID: ${cita.id}]`;
         const vehiculoStr = getDisplayVehicle(cita);
         const descStr = cita.descripcion || 'Servicio de taller';
         const notesFinal = `${descStr} [Total: $${total} (Divisas)] | Cliente: ${clientName} | Vehículo: ${vehiculoStr} ${refTag}`.trim();
         const nowIso = new Date().toISOString();
-        const sedeIdVS = useSedeStore.getState().currentSede?.id || undefined;
+        // cita.sede_id is NOT NULL in DB — use it as primary, fall back to store
+        const sedeIdVS = cita.sede_id || useSedeStore.getState().currentSede?.id;
+        if (!sedeIdVS) throw new Error('No se puede registrar la venta: sede del servicio no encontrada');
 
         const { data: existingVS } = await supabase.from('ventas_silenciadores')
           .select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle();
@@ -1876,18 +1877,15 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
           notas: notesFinal,
           fecha: nowIso,
           precio_registrado: total,
-          ...(sedeIdVS ? { sede_id: sedeIdVS } : {}),
+          sede_id: sedeIdVS,
           fecha_registro: nowIso,
           registro_atrasado: false,
         };
 
-        if (existingVS) {
-          await supabase.from('ventas_silenciadores').update(vsData).eq('id', existingVS.id);
-        } else {
-          await supabase.from('ventas_silenciadores').insert(vsData);
-        }
-      } catch (vsErr) {
-        console.error('Error registering in ventas_silenciadores:', vsErr);
+        const vsOpResult = existingVS
+          ? await supabase.from('ventas_silenciadores').update(vsData).eq('id', existingVS.id)
+          : await supabase.from('ventas_silenciadores').insert(vsData);
+        if (vsOpResult.error) throw new Error(`Error al registrar venta (silenciadores): ${vsOpResult.error.message}`);
       }
 
       let finalCorrelativo = undefined;
@@ -1910,7 +1908,7 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
           notas: cita.descripcion || undefined,
           emitido_por: useAppStore.getState().user?.nombre || 'Admin',
           fecha_emision: getLocalISODate(),
-          sede_id: useSedeStore.getState().currentSede?.id || undefined,
+          sede_id: cita.sede_id || useSedeStore.getState().currentSede?.id,
         });
         if (facturaRegistro?.correlativo) finalCorrelativo = facturaRegistro.correlativo;
       } catch (e) {
