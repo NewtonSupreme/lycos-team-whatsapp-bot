@@ -641,8 +641,8 @@ export default function FacturasPage() {
 
         {/* ── Detail Panel ─────────────────────────────────── */}
         {selectedFactura && (
-          <div className="lg:col-span-5">
-            <Card className="glass-panel border-primary/20 bg-card/60 shadow-2xl sticky top-6 overflow-hidden">
+          <div className="lg:col-span-5 relative">
+            <Card className="glass-panel border-primary/20 bg-card/60 shadow-2xl sticky top-24 overflow-hidden">
               {/* Detail Header */}
               <CardHeader className="bg-primary/5 border-b border-border/30 pb-4">
                 <div className="flex items-center justify-between">

@@ -29,6 +29,8 @@ export default function VehiculosPage() {
   const [showModal, setShowModal] = useState(false);
   const [editVehiculo, setEditVehiculo] = useState<Vehiculo | null>(null);
   const [viewVehiculo, setViewVehiculo] = useState<Vehiculo | null>(null);
+  const [vehiculoServicios, setVehiculoServicios] = useState<any[]>([]);
+  const [loadingServicios, setLoadingServicios] = useState(false);
   const [form, setForm] = useState({ cliente_id: '', marca: '', modelo: '', anio: '', placa: '', color: '', kilometraje: '', vin: '', estado: 'activo', notas: '' });
   const [plateStatus, setPlateStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
   const [plateOwner, setPlateOwner] = useState('');
@@ -179,9 +181,23 @@ export default function VehiculosPage() {
   };
 
   const getCliente = (id: string) => clientes.find(c => c.id === id);
-  const getServicios = (): Servicio[] => {
-    return []; 
-  };
+
+  // Load service history when detail modal opens
+  React.useEffect(() => {
+    if (!viewVehiculo?.id || !supabase) { setVehiculoServicios([]); return; }
+    setLoadingServicios(true);
+    (async () => {
+      try {
+        const { data } = await supabase.from('servicios')
+          .select('id, fecha, tipo, tipo_personalizado, descripcion, estado, costo_estimado, costo_final, nombre_cliente')
+          .eq('vehiculo_id', viewVehiculo.id)
+          .order('fecha', { ascending: false })
+          .limit(50);
+        setVehiculoServicios(data || []);
+      } catch { setVehiculoServicios([]); }
+      setLoadingServicios(false);
+    })();
+  }, [viewVehiculo?.id]);
 
   const estadoBgColor: Record<string, string> = {
     activo: 'border-green-500/20 bg-green-500/5',
@@ -479,7 +495,7 @@ export default function VehiculosPage() {
 
       {/* View modal */}
       <Dialog open={!!viewVehiculo} onOpenChange={() => setViewVehiculo(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           {viewVehiculo && (
             <>
               <DialogHeader>
@@ -526,16 +542,64 @@ export default function VehiculosPage() {
                 </div>
               </div>
               <div>
-                <p className="text-xs font-medium text-muted-foreground mb-2">Historial de Servicios ({getServicios().length})</p>
-                <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                  {getServicios().map(s => (
-                    <div key={s.id} className="flex items-center gap-2 p-2 rounded-lg bg-muted/20 border border-border/20">
-                      <Wrench className="w-3 h-3 text-primary flex-shrink-0" />
-                      <span className="text-xs flex-1 truncate">{s.descripcion}</span>
-                      <StatusBadge status={s.estado} />
+                <p className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-2">
+                  Historial de Servicios ({loadingServicios ? '…' : vehiculoServicios.length})
+                </p>
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  {loadingServicios && (
+                    <div className="flex items-center justify-center py-4 gap-2 text-muted-foreground">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      <span className="text-xs">Cargando historial…</span>
                     </div>
-                  ))}
-                  {getServicios().length === 0 && <p className="text-xs text-muted-foreground text-center py-2">Sin historial de servicios</p>}
+                  )}
+                  {!loadingServicios && vehiculoServicios.length === 0 && (
+                    <p className="text-xs text-muted-foreground text-center py-3">Sin historial de servicios</p>
+                  )}
+                  {!loadingServicios && vehiculoServicios.map(s => {
+                    const estadoColor: Record<string, string> = {
+                      pendiente: 'text-amber-400 bg-amber-400/10 border-amber-400/20',
+                      confirmada: 'text-blue-400 bg-blue-400/10 border-blue-400/20',
+                      en_revision: 'text-fuchsia-400 bg-fuchsia-400/10 border-fuchsia-400/20',
+                      en_proceso: 'text-violet-400 bg-violet-400/10 border-violet-400/20',
+                      completada: 'text-green-400 bg-green-400/10 border-green-400/20',
+                      finalizado: 'text-green-400 bg-green-400/10 border-green-400/20',
+                      cancelada: 'text-red-400 bg-red-400/10 border-red-400/20',
+                    };
+                    const estadoLabel: Record<string, string> = {
+                      pendiente: 'Pendiente', confirmada: 'Confirmada', en_revision: 'Revisión',
+                      en_proceso: 'En Proceso', completada: 'Completada',
+                      finalizado: 'Finalizado', cancelada: 'Cancelada',
+                    };
+                    const tipoLabel: Record<string, string> = {
+                      mecanica: 'Mecánica', electronica: 'Electrónica', cerrajeria: 'Cerrajería',
+                      diagnostico: 'Diagnóstico', motor: 'Motor', emergencia: 'Emergencia', otro: 'General',
+                    };
+                    const costo = s.costo_final ?? s.costo_estimado;
+                    return (
+                      <div key={s.id} className="flex items-start gap-3 p-2.5 rounded-xl bg-muted/20 border border-border/20 hover:bg-muted/40 transition-all">
+                        <div className="w-7 h-7 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <Wrench className="w-3.5 h-3.5 text-primary" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] font-black text-primary uppercase tracking-tight">
+                              {s.tipo_personalizado || tipoLabel[s.tipo] || s.tipo}
+                            </span>
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md border ${estadoColor[s.estado] || 'text-gray-400 bg-gray-400/10 border-gray-400/20'}`}>
+                              {estadoLabel[s.estado] || s.estado}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-foreground/80 truncate mt-0.5">{s.descripcion || 'Sin descripción'}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-[9px] text-muted-foreground">{s.fecha ? formatDate(s.fecha) : ''}</span>
+                            {costo != null && costo > 0 && (
+                              <span className="text-[9px] font-bold text-primary">${Number(costo).toFixed(2)}</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </>

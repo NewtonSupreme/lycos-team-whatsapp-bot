@@ -720,7 +720,7 @@ export async function generateCorrelativoFactura(): Promise<string> {
  */
 export async function registrarFactura(factura: {
   tipo: 'venta' | 'servicio' | 'nota_entrega' | 'presupuesto' | 'egreso' | 'cierre';
-  modulo_origen: 'ventas_pos' | 'silenciadores' | 'servicios' | 'reportes' | 'presupuestos' | 'distribuidor';
+  modulo_origen: 'ventas_pos' | 'silenciadores' | 'servicios' | 'reportes' | 'presupuestos' | 'distribuidor' | 'bot';
   referencia_id?: string;
   referencia_tabla?: string;
   cliente: string;

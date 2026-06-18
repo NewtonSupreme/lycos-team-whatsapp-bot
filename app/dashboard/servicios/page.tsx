@@ -41,6 +41,7 @@ interface CitaServicio {
   costo_final?: number | null;
   seguimiento?: any[] | null;
   registrado_por?: string | null;
+  notas?: string | null;
   vehiculos?: { marca: string; modelo: string; placa: string; anio?: number; clientes?: { nombre: string; apellido: string; telefono: string } | null } | null;
 }
 
@@ -132,7 +133,7 @@ export default function ServiciosPage() {
         .select(`
           id, fecha, hora, tipo, tipo_personalizado, descripcion, estado,
           nombre_cliente, vehiculo_info, placa, telefono, created_at,
-          cliente_id, vehiculo_id, sede_id, seguimiento,
+          cliente_id, vehiculo_id, sede_id, seguimiento, notas,
           costo_estimado, costo_final, registrado_por,
           vehiculos (marca, modelo, placa, anio, clientes (nombre, apellido, telefono))
         `)
@@ -845,7 +846,16 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
     descripcion: cita?.descripcion || '',
     costo_estimado: cita?.costo_estimado?.toString() || '',
   });
-  const [encargados, setEncargados] = useState<{ nombre: string; rol: 'mecanico' | 'jefe_taller' }[]>([]);
+  const [encargados, setEncargados] = useState<{ nombre: string; rol: 'mecanico' | 'jefe_taller' }[]>(() => {
+    if (!cita?.notas) return [];
+    const match = cita.notas.match(/^Encargados?: (.+)/);
+    if (!match) return [];
+    return match[1].split(', ').reduce<{ nombre: string; rol: 'mecanico' | 'jefe_taller' }[]>((acc, entry) => {
+      const m = entry.match(/^(.+) \((Jefe|Mecánico)\)$/);
+      if (m) acc.push({ nombre: m[1].trim(), rol: m[2] === 'Jefe' ? 'jefe_taller' : 'mecanico' });
+      return acc;
+    }, []);
+  });
   const [staffSuggestions, setStaffSuggestions] = useState<{ nombre: string; rol: string }[]>([]);
   const [staffSearch, setStaffSearch] = useState('');
   const [showStaffResults, setShowStaffResults] = useState(false);
@@ -860,7 +870,10 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
   const [plateStatus, setPlateStatus] = useState<'idle' | 'checking' | 'found' | 'new'>('idle');
   const [clientVehiculos, setClientVehiculos] = useState<any[]>([]);
   const [showVehiculoSelector, setShowVehiculoSelector] = useState(false);
+  const [vehiculoSuggestions, setVehiculoSuggestions] = useState<any[]>([]);
+  const [showVehiculoSuggestions, setShowVehiculoSuggestions] = useState(false);
   const plateTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const vehiculoSearchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const { user } = useAppStore();
 
   useEffect(() => {
@@ -893,8 +906,8 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
   }, []);
 
   useEffect(() => {
-    if (formData.nombre_cliente.length > 1 && !cita) {
-      const results = allClientes.filter(c => 
+    if (formData.nombre_cliente.length > 1) {
+      const results = allClientes.filter(c =>
         `${c.nombre} ${c.apellido}`.toLowerCase().includes(formData.nombre_cliente.toLowerCase())
       );
       setFilteredClientes(results);
@@ -902,7 +915,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
     } else {
       setShowClientResults(false);
     }
-  }, [formData.nombre_cliente, allClientes, cita]);
+  }, [formData.nombre_cliente, allClientes]);
 
   const selectCliente = (c: any) => {
     const vehs = c.vehiculos || [];
@@ -1112,6 +1125,9 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           tipo_personalizado: isCustomServicio ? customServicio.trim() : null,
           descripcion: formData.descripcion || '',
           costo_estimado: parseFloat(formData.costo_estimado) || 0,
+          notas: encargados.length > 0
+            ? `Encargados: ${encargados.map(e => `${e.nombre} (${e.rol === 'jefe_taller' ? 'Jefe' : 'Mecánico'})`).join(', ')}`
+            : (cita?.notas || ''),
           updated_at: new Date().toISOString()
         };
         // Avoid sending empty strings for optional fields
@@ -1319,9 +1335,27 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
                   placeholder="Ej: Toyota Corolla 2015"
                   value={formData.vehiculo_info}
                   onChange={e => {
-                    setFormData({...formData, vehiculo_info: e.target.value});
+                    const val = e.target.value;
+                    setFormData({...formData, vehiculo_info: val});
                     setSelectedVehiculoId(null);
+                    // debounce search only if client not already selected
+                    clearTimeout(vehiculoSearchTimer.current);
+                    if (val.length >= 2 && !selectedClienteId) {
+                      vehiculoSearchTimer.current = setTimeout(async () => {
+                        if (!supabase) return;
+                        const { data } = await supabase.from('vehiculos')
+                          .select('id, marca, modelo, anio, placa, clientes(id, nombre, apellido, telefono)')
+                          .or(`marca.ilike.%${val}%,modelo.ilike.%${val}%`)
+                          .limit(6);
+                        setVehiculoSuggestions(data || []);
+                        setShowVehiculoSuggestions((data || []).length > 0);
+                      }, 400);
+                    } else {
+                      setVehiculoSuggestions([]);
+                      setShowVehiculoSuggestions(false);
+                    }
                   }}
+                  onBlur={() => setTimeout(() => setShowVehiculoSuggestions(false), 200)}
                 />
                 {clientVehiculos.length > 1 && (
                   <button
@@ -1333,11 +1367,51 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
                   </button>
                 )}
               </div>
+              {/* Suggestions from DB when typing model */}
+              {showVehiculoSuggestions && vehiculoSuggestions.length > 0 && (
+                <div className="absolute top-full left-0 right-0 z-[200] mt-1 bg-popover border border-border rounded-xl shadow-2xl py-1">
+                  {vehiculoSuggestions.map((v: any) => {
+                    const cliente = (v as any).clientes;
+                    return (
+                      <button
+                        key={v.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedVehiculoId(v.id);
+                          setFormData(prev => ({
+                            ...prev,
+                            vehiculo_info: `${v.marca} ${v.modelo}${v.anio ? ` ${v.anio}` : ''}`,
+                            placa: v.placa,
+                            nombre_cliente: cliente ? `${cliente.nombre} ${cliente.apellido}` : prev.nombre_cliente,
+                            telefono: cliente?.telefono || prev.telefono,
+                          }));
+                          if (cliente) setSelectedClienteId(cliente.id);
+                          setPlateStatus('found');
+                          setShowVehiculoSuggestions(false);
+                          setVehiculoSuggestions([]);
+                        }}
+                        className="w-full text-left px-4 py-2.5 hover:bg-muted transition-colors group flex items-center gap-3"
+                      >
+                        <Car className="w-4 h-4 text-primary/60 flex-shrink-0" />
+                        <div>
+                          <p className="text-xs font-bold text-foreground group-hover:text-primary">{v.marca} {v.modelo}{v.anio ? ` ${v.anio}` : ''}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-[10px] font-mono text-primary/70">{v.placa}</span>
+                            {cliente && <span className="text-[10px] text-muted-foreground">{cliente.nombre} {cliente.apellido}</span>}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {/* Multi-vehicle selector for the same client */}
               {showVehiculoSelector && clientVehiculos.length > 1 && (
                 <div className="absolute top-full left-0 right-0 z-[200] mt-1 bg-popover border border-border rounded-xl shadow-2xl py-1">
                   {clientVehiculos.map((v: any) => (
                     <button
                       key={v.id}
+                      type="button"
                       onClick={() => {
                         setSelectedVehiculoId(v.id);
                         setFormData(prev => ({ ...prev, vehiculo_info: `${v.marca} ${v.modelo}`, placa: v.placa }));

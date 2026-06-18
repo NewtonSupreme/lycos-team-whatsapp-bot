@@ -233,10 +233,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <div suppressHydrationWarning className="min-h-screen bg-background dot-pattern overflow-x-hidden">
+    <div suppressHydrationWarning className="min-h-screen bg-background dot-pattern overflow-x-clip">
       <Sidebar />
       <div className={cn(
-        'flex flex-col min-h-screen transition-all duration-300 overflow-x-hidden',
+        'flex flex-col min-h-screen transition-all duration-300 overflow-x-clip',
         (mounted && sidebarOpen) ? 'lg:ml-60' : 'lg:ml-16'
       )}>
         <Header />
