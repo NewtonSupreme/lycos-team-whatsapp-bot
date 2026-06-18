@@ -1789,10 +1789,13 @@ async function loadConversationContext(
         });
       }
 
-      // ─── GANANCIAS Y MÁRGENES (CONFIDENCIAL — solo Administrador total / dueño) ───
+      // ─── GANANCIAS Y MÁRGENES (CONFIDENCIAL) ───
+      // Visible para admin, dueño y cualquier rol con permiso `distribuidor` (p. ej.
+      // Supervisor de Sede que gestiona la distribución desde Carrizal). NUNCA a clientes.
       let gananciasInfo = '';
-      const esAdminTotalGan = resolveRol(botRol) === 'admin';
-      if (esAdminTotalGan) {
+      const rolCanonGan = resolveRol(botRol);
+      const puedeVerGanancias = rolCanonGan === 'admin' || rolCanonGan === 'dueno' || hasPermiso(botPermisos?.distribuidor, 'leer');
+      if (puedeVerGanancias) {
         // Mapa de costo de fabricante por inventario_id (fallback para distribuciones sin snapshot)
         const costMap: Record<string, number> = {};
         (allInv || []).forEach((i: any) => { costMap[i.id] = Number(i.precio_fabricante) || 0; });

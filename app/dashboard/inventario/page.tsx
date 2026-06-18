@@ -838,7 +838,7 @@ export default function InventarioPage() {
                   />
                 </div>
               </div>
-              {user?.rol === 'admin' && (
+              {can('distribuidor', 'leer') && (
                 <div className="space-y-1.5">
                   <Label htmlFor="precio_fabricante" className="text-xs font-bold uppercase text-amber-500/80 flex items-center gap-1">
                     Costo Fabricante <span className="text-[9px] font-normal normal-case text-muted-foreground">(confidencial)</span>

@@ -100,15 +100,16 @@ export default function Sidebar() {
         const sedeName = currentSede?.nombre?.toLowerCase() || '';
         if (!sedeName.includes('san antonio')) return false;
       }
-      // Distribuidor: visible for Carrizal (principal) sede; y para el dueño/admin
-      // desde San Antonio (solo accede a la pestaña Ganancias dentro del módulo).
+      // Distribuidor: el permiso `distribuidor` ya se validó arriba (canAccess).
+      // Aquí solo restringimos por sede: la distribución se origina en Carrizal
+      // (sede principal) y las ganancias también las ve el dueño/admin/supervisor
+      // desde San Antonio. Otras sedes no ven el módulo.
       if (item.label === 'Distribuidor' && mounted) {
         const { currentSede, availableSedes } = useSedeStore.getState();
         const sedeName = currentSede?.nombre?.toLowerCase() || '';
-        if (sedeName.includes('carrizal')) return true;
-        if (isAdmin && sedeName.includes('san antonio')) return true;
         const sedeData = availableSedes.find(s => s.id === currentSede?.id);
-        if (!sedeData?.es_principal) return false;
+        const sedePermitida = sedeName.includes('carrizal') || sedeName.includes('san antonio') || !!sedeData?.es_principal;
+        if (!sedePermitida) return false;
       }
       return true;
     })

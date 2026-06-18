@@ -16,6 +16,7 @@ import {
 } from '@/lib/supabase';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from '@/lib/store/useSedeStore';
+import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 import { logActivity } from '@/lib/activity';
 import { generateNotaEntregaPDF } from '@/lib/distribucion-pdf';
 import { generateNotaGananciaPDF } from '@/lib/ganancia-pdf';
@@ -1515,6 +1516,7 @@ function GananciasTab({ inventario, currentSede, userName, tasaBCV }: {
 export default function DistribuidorPage() {
   const { user } = useAppStore();
   const { currentSede, availableSedes } = useSedeStore();
+  const { getModulePermissions } = useRolePermissions();
   const [mounted, setMounted] = useState(false);
 
   const [inventario, setInventario] = useState<InventarioItem[]>([]);
@@ -1540,14 +1542,16 @@ export default function DistribuidorPage() {
     return sedeData?.es_principal === true;
   }, [currentSede, availableSedes]);
 
-  // Dueño/admin en San Antonio: puede ver Ganancias (no distribuir)
-  const isAdmin = user?.rol === 'admin';
+  // Acceso por PERMISO `distribuidor` (admin/dueño/supervisor lo traen por defecto)
+  // combinado con la sede: la distribución se origina en Carrizal; las ganancias
+  // también las ve el dueño/admin desde San Antonio.
+  const distPerms = getModulePermissions('distribuidor');
   const isSanAntonio = useMemo(
     () => (currentSede?.nombre || '').toLowerCase().includes('san antonio'),
     [currentSede]
   );
-  const canDistribute = isCarrizal;                       // creación de distribuciones (solo Carrizal)
-  const canAccess = isCarrizal || (isAdmin && isSanAntonio); // acceso al módulo
+  const canDistribute = distPerms.crear && isCarrizal;           // crear distribuciones (solo Carrizal)
+  const canAccess = distPerms.leer && (isCarrizal || isSanAntonio); // acceso al módulo
   const [activeTab, setActiveTab] = useState<'distribucion' | 'ganancias'>('distribucion');
 
   // El dueño en San Antonio entra directo a Ganancias
