@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useRef } from 'react';
-import { Car, Plus, Search, Edit, Trash2, Eye, Wrench, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { Car, Plus, Search, Edit, Trash2, Eye, Wrench, CheckCircle2, XCircle, Loader2, ArrowRightLeft } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,6 +16,8 @@ import { Calendar as CalendarIcon, FilterX, Clock, SortAsc, SortDesc } from 'luc
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
+import TransferVehiculoModal from '@/components/TransferVehiculoModal';
+import { useAppStore } from '@/lib/store';
 
 const MARCAS = ['Toyota','Ford','Chevrolet','Honda','Nissan','Hyundai','Kia','Mazda','Volkswagen','Mercedes','BMW','Audi','Mitsubishi','Jeep','Otro'];
 const ESTADOS_V = [{ v:'activo',l:'Activo'},{v:'en_servicio',l:'En Servicio'},{v:'listo',l:'Listo'},{v:'inactivo',l:'Inactivo'}];
@@ -29,6 +31,8 @@ export default function VehiculosPage() {
   const [showModal, setShowModal] = useState(false);
   const [editVehiculo, setEditVehiculo] = useState<Vehiculo | null>(null);
   const [viewVehiculo, setViewVehiculo] = useState<Vehiculo | null>(null);
+  const [transferVehiculoTarget, setTransferVehiculoTarget] = useState<Vehiculo | null>(null);
+  const { user } = useAppStore();
   const [vehiculoServicios, setVehiculoServicios] = useState<any[]>([]);
   const [loadingServicios, setLoadingServicios] = useState(false);
   const [form, setForm] = useState({ cliente_id: '', marca: '', modelo: '', anio: '', placa: '', color: '', kilometraje: '', vin: '', estado: 'activo', notas: '' });
@@ -393,6 +397,7 @@ export default function VehiculosPage() {
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button onClick={() => setViewVehiculo(vehiculo)} className="w-6 h-6 rounded-md hover:bg-white/10 flex items-center justify-center"><Eye className="w-3.5 h-3.5 text-muted-foreground" /></button>
                       <button onClick={() => openEdit(vehiculo)} className="w-6 h-6 rounded-md hover:bg-white/10 flex items-center justify-center"><Edit className="w-3.5 h-3.5 text-muted-foreground" /></button>
+                      <button onClick={() => setTransferVehiculoTarget(vehiculo)} title="Transferir a otro cliente" className="w-6 h-6 rounded-md hover:bg-primary/10 flex items-center justify-center"><ArrowRightLeft className="w-3.5 h-3.5 text-muted-foreground" /></button>
                       <button onClick={() => handleDelete(vehiculo.id)} className="w-6 h-6 rounded-md hover:bg-red-500/10 flex items-center justify-center"><Trash2 className="w-3.5 h-3.5 text-red-400" /></button>
                     </div>
                   </div>
@@ -696,6 +701,14 @@ export default function VehiculosPage() {
                       <span className="font-medium truncate text-right">{(viewVehiculo.cliente || getCliente(viewVehiculo.cliente_id))?.telefono}</span>
                     </div>
                   </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full mt-3 gap-2 text-xs"
+                    onClick={() => { setTransferVehiculoTarget(viewVehiculo); setViewVehiculo(null); }}
+                  >
+                    <ArrowRightLeft className="w-3.5 h-3.5" /> Transferir a otro cliente
+                  </Button>
                 </div>
                 <div>
                   <p className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-2">
@@ -763,6 +776,16 @@ export default function VehiculosPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <TransferVehiculoModal
+        vehiculo={transferVehiculoTarget}
+        clientes={clientes}
+        open={!!transferVehiculoTarget}
+        onClose={() => setTransferVehiculoTarget(null)}
+        onTransferred={loadData}
+        usuario={user?.nombre || user?.email || 'Sistema'}
+        currentOwnerName={transferVehiculoTarget ? `${(transferVehiculoTarget.cliente || getCliente(transferVehiculoTarget.cliente_id))?.nombre || ''} ${(transferVehiculoTarget.cliente || getCliente(transferVehiculoTarget.cliente_id))?.apellido || ''}`.trim() : ''}
+      />
     </div>
   );
 }

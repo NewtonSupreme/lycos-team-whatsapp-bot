@@ -554,6 +554,9 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
     - Si es un tipo personalizado, usa 'otro' como tipo y coloca el nombre en 'tipo_personalizado'.
     - Siempre incluye nombre_cliente, vehiculo_info y descripcion para que el servicio se vea completo en el sistema.
     - Si el admin pregunta por servicios existentes, muestra el listado completo de [SERVICIOS RECIENTES] con su estado, costo y seguimiento.
+    - ⛔ REGLA DE ORO INQUEBRANTABLE: Si vas a decir "registré", "quedó registrado", "listo", "agregué el servicio" o cualquier confirmación de registro, DEBES incluir OBLIGATORIAMENTE el tag [SERVICIO_UPSERT: ...] al final de ESE MISMO mensaje. Decir que lo registraste SIN imprimir el tag es un ERROR GRAVE: el servicio NO se guarda y el sistema queda inconsistente. NUNCA confirmes un registro sin su tag.
+    - Si te faltan datos para registrar (no hay vehículo ni placa ni servicio claro), NO digas que registraste: pregunta lo que falta. Solo confirma registro cuando emitas el tag.
+    - ⚠️ COMBINACIÓN IMAGEN + AUDIO (CRÍTICO): Cuando el historial reciente tenga una imagen de un vehículo Y el mensaje actual (audio o texto) pida registrar/ingresar el servicio, COMBINA AMBOS en UNA sola respuesta y UN solo [SERVICIO_UPSERT]: toma marca/modelo/placa de la descripción de la imagen y la sede/servicio/precio del audio. No respondas dos veces ni pidas de nuevo lo que ya está en la imagen.
 
 12. GESTIÓN DE VENTAS:
     - [VENTAS RECIENTES] contiene ventas de los últimos 30 días (de ventas_silenciadores y ventas_dia).
@@ -757,9 +760,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ status: value?.statuses?.length ? 'ok' : 'no_messages' });
     }
 
-    for (const message of value.messages) {
+    // ── Agrupamiento dentro del mismo lote del webhook ──────────────────────
+    // WhatsApp puede entregar imagen + audio en un MISMO payload. Como el loop
+    // procesa los mensajes secuencialmente, el debounce por BD no detecta al
+    // "hermano" que aún no se ha insertado. Precalculamos el último índice por
+    // remitente para responder UNA sola vez (con el último mensaje del lote).
+    const lastMsgIdxByFrom: Record<string, number> = {};
+    (value.messages as any[]).forEach((m: any, idx: number) => { if (m?.from) lastMsgIdxByFrom[m.from] = idx; });
+
+    for (let __msgIdx = 0; __msgIdx < value.messages.length; __msgIdx++) {
+      const message = value.messages[__msgIdx];
       const from: string = message.from;
       const wa_message_id: string = message.id;
+      const hasLaterInPayload = (lastMsgIdxByFrom[from] ?? __msgIdx) > __msgIdx;
 
       // ── Mark as read immediately ───────────────────────────────────────────
       void markMessageAsRead(wa_message_id);
@@ -916,7 +929,8 @@ export async function POST(request: NextRequest) {
                   const base64Data = Buffer.from(arrayBuffer).toString('base64');
                   const mimeType = mediaData.mime_type || 'audio/ogg';
 
-                  const transcript = await transcribeAudio(base64Data, mimeType, ADMIN_PHONES.includes(from.replace(/[^0-9]/g, '')));
+                  const isSenderAdminAudio = await checkIsBotAdmin(from, db, ADMIN_PHONES);
+                  const transcript = await transcribeAudio(base64Data, mimeType, isSenderAdminAudio);
                   if (transcript) {
                     messageBody = `${transcript} (Audio transcrito)`;
                     console.log(`🎙️ Audio transcrito de [${from}]: ${transcript.substring(0, 50)}...`);
@@ -1014,13 +1028,25 @@ export async function POST(request: NextRequest) {
           } catch (ne) { console.error('Error insertando notificacion', ne); }
         } catch (e) { console.error('Error guardando entrante:', e); }
 
-        // Debounce to group multiple images or chopped messages
-        // Admins often send image + audio together — give them 2.5s even on Vercel so the
-        // second message arrives before the first is processed.
+        // ── Agrupar imagen + audio enviados juntos en el MISMO lote ──────────
+        // Si hay un mensaje posterior del mismo remitente en este payload, ya quedó
+        // guardado en BD (descripción de imagen / transcripción de audio). Omitimos
+        // la respuesta IA aquí para que la maneje el último mensaje del grupo con el
+        // contexto COMPLETO (imagen + audio juntos).
+        if (hasLaterInPayload) {
+          console.log(`⏩ [${from}] Mensaje ${wa_message_id} agrupado en el lote — se omite respuesta IA (la dará el último del grupo).`);
+          continue;
+        }
+
+        // Debounce to group multiple images or chopped messages.
+        // Los administradores (por lista o por permisos de Modo Dios en BD) suelen
+        // enviar imagen + audio en mensajes separados con segundos de diferencia.
+        // Les damos una ventana real incluso en Vercel para que el segundo mensaje
+        // llegue antes de procesar el primero y se combinen en una sola respuesta.
         const isVercel = process.env.VERCEL === '1';
-        const isSenderAdminQuick = ADMIN_PHONES.includes(from.replace(/[^0-9]/g, ''));
-        const delayMs = isVercel ? (isSenderAdminQuick ? 2500 : 0) : 4000;
-        console.log(`⏳ [${from}] Waiting ${delayMs}ms for potential grouping...`);
+        const isSenderAdminQuick = await checkIsBotAdmin(from, db, ADMIN_PHONES);
+        const delayMs = isVercel ? (isSenderAdminQuick ? 3500 : 1200) : 4000;
+        console.log(`⏳ [${from}] Waiting ${delayMs}ms for potential grouping... (admin=${isSenderAdminQuick})`);
         await delay(delayMs);
         try {
           const { data: newer } = await db.from('mensajes_whatsapp')
@@ -3247,6 +3273,12 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       // ── ADMIN: Process management tags ────────────────────────────────
       const isAdmin = !!ctx.isAdmin || (await checkIsBotAdmin(from || '', db, ADMIN_PHONES));
 
+      // Rastreo de registro de servicio: nos permite detectar el caso "la IA dijo
+      // que registró pero no emitió/falló el tag" y aplicar un fallback que evita
+      // perder el registro. servicioOK = se guardó OK; servicioFalló = hubo error.
+      let servicioOK = false;
+      let servicioFallo = false;
+
       // Gating por ROL: cada comando de escritura requiere el permiso correspondiente.
       // La eliminación definitiva es exclusiva del admin. Si no hay permisos resueltos
       // (admin por lista hardcodeada), se asume acceso total.
@@ -3474,11 +3506,13 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
             if (id && id.length > 5 && db) {
               await db.from('citas').update(citaObj).eq('id', id);
+              servicioOK = true;
               console.log(`📅 ADMIN: Cita actualizada: ${id}`);
               await logActivityAdmin(db, adminName, 'Actualizó cita', `Cita ${id} actualizada vía ChatBot`, sedeId);
             } else if (db) {
               const { data: newCita, error: insErr } = await db.from('citas').insert(citaObj).select('id').single();
               if (insErr) throw insErr;
+              servicioOK = true;
               finalCitaId = newCita?.id || null;
               console.log(`📅 ADMIN: Nueva cita creada por administrador: ${finalCitaId}`);
               await logActivityAdmin(db, adminName, 'Agendó cita', `Cita para ${fecha} creada vía ChatBot`, sedeId);
@@ -3643,7 +3677,9 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 servObj.updated_at = now.toISOString();
                 delete servObj.fecha;
                 delete servObj.hora;
-                await db.from('servicios').update(servObj).eq('id', id);
+                const { error: updErr } = await db.from('servicios').update(servObj).eq('id', id);
+                if (updErr) throw updErr;
+                servicioOK = true;
                 console.log(`🔧 ADMIN: Servicio actualizado: ${id}`);
                 await logActivityAdmin(db, adminName, 'Actualizó servicio', `Servicio ${id} actualizado vía ChatBot`, sedeId);
                 // Auto-register sale if now completed
@@ -3653,6 +3689,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 delete servObj.updated_at;
                 const { data: newServ, error: insErr } = await db.from('servicios').insert(servObj).select('id').single();
                 if (insErr) throw insErr;
+                servicioOK = true;
                 console.log(`🔧 ADMIN: Nuevo servicio creado (fallback): ${newServ?.id}`);
                 await logActivityAdmin(db, adminName, 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot (fallback)`, sedeId);
                 if (newServ?.id) await handleCompletedServiceSale(db, newServ.id, servObj, 'servicio', rates);
@@ -3660,12 +3697,16 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             } else if (db) {
               const { data: newServ, error: insErr } = await db.from('servicios').insert(servObj).select('id').single();
               if (insErr) throw insErr;
+              servicioOK = true;
               console.log(`🔧 ADMIN: Nuevo servicio creado: ${newServ?.id}`);
               await logActivityAdmin(db, adminName, 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot`, sedeId);
               // Auto-register sale if completada/finalizado
               if (newServ?.id) await handleCompletedServiceSale(db, newServ.id, servObj, 'servicio', rates);
             }
-          } catch (e) { console.error('Error in SERVICIO_UPSERT:', e); }
+          } catch (e) {
+            servicioFallo = true;
+            console.error('Error in SERVICIO_UPSERT:', e);
+          }
         }
 
         // 3c. [PRESUPUESTO_UPSERT: cliente_nombre | vehiculo_info | placa | moneda | items | total | sede_id | notas]
@@ -4079,6 +4120,115 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           .replace(/\[ACTION: registrar_venta_completa[^\]]+\]/gi, '')
           .replace(/\[ACTION: modificar_venta_pendiente[^\]]+\]/gi, '')
           .trim();
+
+        // ── VERIFICACIÓN + FALLBACK DE REGISTRO DE SERVICIO (ADMIN) ──────────
+        // Problema corregido: la IA decía "servicio registrado" pero no emitía el
+        // tag [SERVICIO_UPSERT] (o este fallaba), dejando al admin con la falsa
+        // impresión de que quedó guardado. Aquí lo detectamos y NO perdemos el
+        // registro: lo creamos a partir del contexto combinado (imagen + audio/texto).
+        // La IA AFIRMA haber registrado (texto de confirmación) — debe existir un tag.
+        const aiClaimsRegistro = /(registr[aoóe]|qued[oó]\s|guard[aeóo]|anot[aeéó]|agregu[eé]|✅).{0,40}(servicio|orden|veh[ií]culo|carro|registro)|(servicio|orden|registro).{0,40}(registr|guard|cread|anot)/i.test(cleanedAi);
+
+        // Solo recuperamos cuando la IA dijo que registró pero NO se guardó, o cuando
+        // el tag existió pero falló. NO disparamos por simple intención del mensaje:
+        // si la IA legítimamente pidió confirmación, no debemos registrar a la fuerza.
+        if (canBotWrite('servicios') && !servicioOK && (servicioFallo || aiClaimsRegistro)) {
+          try {
+            // Texto combinado: mensaje actual + última descripción de imagen reciente del historial
+            const imgHist = [...(ctx.historia || [])].reverse().find(h =>
+              h.role === 'user' && /\[imagen|descripci[oó]n autom[aá]tica|matr[ií]cula|clasificaci[oó]n:|\[veh[ií]culo\]/i.test(h.parts?.[0]?.text || '')
+            );
+            const imgText = imgHist?.parts?.[0]?.text || '';
+            const combinedText = `${messageBody}\n${imgText}`.trim();
+
+            // Solo registramos si hay datos REALES de vehículo (evita basura)
+            const placaFb = extractPlate(combinedText) || ctx.memoria?.placa || '';
+            // Marca + hasta 2 tokens de modelo (corta en conectores/relleno como "de color")
+            const brandRe = /\b(toyota|chevrolet|chevy|ford|mazda|hyundai|kia|nissan|honda|jeep|mitsubishi|renault|fiat|volkswagen|vw|chery|dodge|jac|peugeot|citroen|citro[eé]n|suzuki|subaru|bmw|mercedes|audi|isuzu|daewoo|encava|iveco|hino|foton)((?:\s+[a-záéíóúñ0-9\-]+){0,2})/i;
+            const brandMatch = combinedText.match(brandRe);
+            const FILLER = new Set(['de', 'del', 'la', 'el', 'color', 'un', 'una', 'vista', 'estacionada', 'estacionado', 'que', 'en', 'año', 'anio', 'modelo']);
+            let vehFromBrand = '';
+            if (brandMatch) {
+              const tokens = `${brandMatch[1]}${brandMatch[2] || ''}`.trim().split(/\s+/);
+              const kept: string[] = [];
+              for (let i = 0; i < tokens.length; i++) {
+                if (i > 0 && FILLER.has(tokens[i].toLowerCase())) break;
+                kept.push(tokens[i]);
+              }
+              vehFromBrand = kept.join(' ').trim();
+            }
+            const memVeh = ctx.memoria?.vehiculos?.[0];
+            const anioFb = (combinedText.match(/\b(19[8-9]\d|20[0-2]\d)\b/) || [])[1] || '';
+            const vehiculoFb = (vehFromBrand ? `${vehFromBrand}${anioFb ? ' ' + anioFb : ''}`.trim() : '')
+              || (memVeh ? `${memVeh.marca} ${memVeh.modelo}${memVeh.anio ? ' ' + memVeh.anio : ''}`.trim() : '');
+
+            if (placaFb || vehiculoFb) {
+              const adminNameFb = ctx.memoria?.nombre || ctx.adminName || 'Administrador';
+              // Sede: detectar en el mensaje, si no usar la del perfil/contexto
+              const sedeFb = (await findSedeIdByName(db, messageBody)) || ctx.adminSedeId || ctx.sede_id || DEFAULT_SEDE_ID;
+              // Estado: "por definir / presupuesto por definir" → pendiente
+              const estadoFb = 'pendiente';
+              // Descripción: usar el texto del mensaje (transcripción) limpio de marcadores
+              let descFb = messageBody
+                .replace(/\(audio transcrito\)/gi, '')
+                .replace(/\[[^\]]*\]/g, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+              if (descFb.length < 3) descFb = 'Servicio de taller (registro automático)';
+              // Costo: si hay un precio explícito tipo $123
+              const costMatch = combinedText.match(/\$\s?(\d+(?:[.,]\d+)?)/);
+              const costoFb = costMatch ? parseFloat(costMatch[1].replace(',', '.')) : null;
+
+              const nowFb = new Date();
+              const vzlaTimeFb = new Intl.DateTimeFormat('es-VE', {
+                timeZone: 'America/Caracas', hour: '2-digit', minute: '2-digit', hour12: false,
+              }).format(nowFb);
+
+              const servFbObj: any = {
+                cliente_id: null,
+                vehiculo_id: null,
+                nombre_cliente: ctx.memoria?.nombre || 'No definido',
+                telefono: '00000000000',
+                vehiculo_info: vehiculoFb || 'Vehículo (de imagen)',
+                placa: placaFb || 'SIN-PLACA',
+                tipo: 'otro',
+                tipo_personalizado: null,
+                descripcion: descFb,
+                estado: estadoFb,
+                costo_estimado: costoFb,
+                registrado_por: adminNameFb,
+                fecha: getVzlaDateString(),
+                hora: vzlaTimeFb,
+                seguimiento: [{
+                  fecha: nowFb.toISOString(),
+                  accion: 'Registrado vía WhatsApp Admin (recuperación automática)',
+                  usuario: adminNameFb,
+                  tipo: 'sistema',
+                  progreso: 0,
+                }],
+                sede_id: sedeFb,
+              };
+
+              const { data: fbServ, error: fbErr } = await db.from('servicios').insert(servFbObj).select('id').single();
+              if (fbErr) throw fbErr;
+              servicioOK = true;
+              servicioFallo = false;
+              console.log(`🛟 FALLBACK SERVICIO: registro recuperado ${fbServ?.id} (placa=${placaFb}, veh=${vehiculoFb})`);
+              await logActivityAdmin(db, adminNameFb, 'Creó servicio', `Servicio recuperado vía ChatBot (fallback ${vehiculoFb} ${placaFb})`, sedeFb);
+              // Confirmar al admin con datos reales para que tenga certeza
+              cleanedAi = `${cleanedAi}\n\n✅ Servicio registrado correctamente:\n🚗 ${vehiculoFb || 'Vehículo'}${placaFb ? ' — Placa ' + placaFb : ''}\n🔧 ${descFb}\n📌 Estado: ${estadoFb}`.trim();
+            } else if (servicioFallo) {
+              // No pudimos recuperar datos suficientes pero el tag falló: avisar honestamente
+              cleanedAi = `${cleanedAi}\n\n⚠️ No pude completar el registro del servicio automáticamente. Por favor confírmame el vehículo (marca/modelo) y la placa para registrarlo correctamente.`.trim();
+            }
+          } catch (e) {
+            console.error('❌ Error en fallback de SERVICIO_UPSERT:', e);
+            cleanedAi = `${cleanedAi}\n\n⚠️ Hubo un problema al registrar el servicio. Reenvíame el vehículo y el trabajo a realizar para reintentarlo.`.trim();
+          }
+        } else if (servicioFallo && !servicioOK) {
+          // El tag existía pero falló y no aplica el fallback: nunca afirmar éxito en falso
+          cleanedAi = `${cleanedAi}\n\n⚠️ No se pudo guardar el servicio en el sistema. Indícame nuevamente los datos para reintentar.`.trim();
+        }
       }
 
       // Format: [CITA: AAAA-MM-DD HH:MM | descripcion | marca modelo]

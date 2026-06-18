@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Phone, Mail, Car, Edit, Trash2, Eye } from 'lucide-react';
+import { Plus, Search, Phone, Mail, Car, Edit, Trash2, Eye, ArrowRightLeft } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,6 +20,7 @@ import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
+import TransferVehiculoModal from '@/components/TransferVehiculoModal';
 
 const COLORS = ['bg-blue-500/20 text-blue-400','bg-purple-500/20 text-purple-400','bg-green-500/20 text-green-400','bg-orange-500/20 text-orange-400','bg-pink-500/20 text-pink-400','bg-cyan-500/20 text-cyan-400'];
 
@@ -42,6 +43,7 @@ export default function ClientesPage() {
   // Vehiculo management
   const [showVehiculoModal, setShowVehiculoModal] = useState(false);
   const [editVehiculo, setEditVehiculo] = useState<Vehiculo | null>(null);
+  const [transferVehiculoTarget, setTransferVehiculoTarget] = useState<Vehiculo | null>(null);
   const [vForm, setVForm] = useState({ marca: '', modelo: '', anio: new Date().getFullYear(), color: '', placa: '' });
 
   const [mounted, setMounted] = useState(false);
@@ -550,6 +552,11 @@ export default function ClientesPage() {
                             <Edit className="w-3 h-3" />
                           </button>
                         )}
+                        {can('vehiculos', 'editar') && (
+                          <button onClick={() => setTransferVehiculoTarget(v)} title="Transferir a otro cliente" className="p-1.5 rounded-md hover:bg-primary/10 hover:text-primary transition-colors">
+                            <ArrowRightLeft className="w-3 h-3" />
+                          </button>
+                        )}
                         {can('vehiculos', 'eliminar') && (
                           <button onClick={() => handleDeleteVehiculo(v.id)} className="p-1.5 rounded-md hover:bg-red-500/10 hover:text-red-400 transition-colors">
                             <Trash2 className="w-3 h-3" />
@@ -682,6 +689,16 @@ export default function ClientesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <TransferVehiculoModal
+        vehiculo={transferVehiculoTarget}
+        clientes={clientes}
+        open={!!transferVehiculoTarget}
+        onClose={() => setTransferVehiculoTarget(null)}
+        onTransferred={loadData}
+        usuario={user?.nombre || user?.email || 'Sistema'}
+        currentOwnerName={editCliente ? `${editCliente.nombre} ${editCliente.apellido}` : (transferVehiculoTarget?.cliente ? `${transferVehiculoTarget.cliente.nombre} ${transferVehiculoTarget.cliente.apellido}` : '')}
+      />
     </div>
   );
 }

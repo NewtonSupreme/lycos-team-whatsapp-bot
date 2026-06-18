@@ -99,6 +99,117 @@ export async function deleteVehiculo(id: string) {
   if (error) throw error;
 }
 
+/**
+ * Transfiere un vehículo de su dueño actual a otro cliente.
+ * - Cambia el dueño (cliente_id) del vehículo y su sede para que siga al nuevo dueño.
+ * - Reasigna los servicios y citas de ESE vehículo al nuevo cliente (cliente_id,
+ *   nombre y teléfono) para que el historial se refleje bajo el nuevo dueño en todos lados.
+ *   NO altera la sede de servicios/citas: eso preserva los reportes históricos por sede.
+ * - Es una transferencia real (UPDATE), nunca crea un vehículo nuevo → no genera duplicados.
+ * - Valida que no sea el mismo dueño y que el destino no tenga ya esa placa (anti-duplicado).
+ * Opera por IDs explícitos (sin filtro de sede) para soportar transferencias entre sedes.
+ */
+export async function transferVehiculo(
+  vehiculoId: string,
+  newClienteId: string,
+  opts?: { usuario?: string }
+): Promise<{
+  vehiculo: { id: string; marca: string; modelo: string; placa: string };
+  oldClient: { nombre: string; apellido: string } | null;
+  newClient: { id: string; nombre: string; apellido: string };
+  serviciosMovidos: number;
+  citasMovidas: number;
+}> {
+  if (!supabase) throw new Error('Supabase no está configurado.');
+  if (!vehiculoId || !newClienteId) throw new Error('Faltan datos para la transferencia.');
+
+  // 1. Vehículo actual (por id, sin filtro de sede)
+  const { data: veh, error: vErr } = await supabase
+    .from('vehiculos')
+    .select('id, cliente_id, placa, marca, modelo, anio, sede_id')
+    .eq('id', vehiculoId)
+    .maybeSingle();
+  if (vErr) throw vErr;
+  if (!veh) throw new Error('El vehículo no existe.');
+  if (veh.cliente_id === newClienteId) throw new Error('El vehículo ya pertenece a este cliente.');
+
+  // 2. Cliente destino
+  const { data: newClient, error: cErr } = await supabase
+    .from('clientes')
+    .select('id, nombre, apellido, telefono, sede_id')
+    .eq('id', newClienteId)
+    .maybeSingle();
+  if (cErr) throw cErr;
+  if (!newClient) throw new Error('El cliente destino no existe.');
+
+  // 3. Anti-duplicado: el destino no debe tener ya OTRO vehículo con la misma placa
+  const placaClean = (veh.placa || '').replace(/[-\s]/g, '').toUpperCase();
+  if (placaClean) {
+    const { data: existing } = await supabase
+      .from('vehiculos')
+      .select('id, placa')
+      .eq('cliente_id', newClienteId)
+      .neq('id', vehiculoId);
+    const conflict = (existing || []).find(
+      d => (d.placa || '').replace(/[-\s]/g, '').toUpperCase() === placaClean
+    );
+    if (conflict) throw new Error('El cliente destino ya tiene un vehículo con esa placa.');
+  }
+
+  // 4. Dueño anterior (para el registro de actividad)
+  let oldClient: { nombre: string; apellido: string } | null = null;
+  if (veh.cliente_id) {
+    const { data } = await supabase.from('clientes').select('nombre, apellido').eq('id', veh.cliente_id).maybeSingle();
+    oldClient = data || null;
+  }
+
+  // 5. Transferir el vehículo: nuevo dueño + sede del nuevo dueño
+  const newSede = newClient.sede_id || veh.sede_id || null;
+  const { error: upErr } = await supabase
+    .from('vehiculos')
+    .update({ cliente_id: newClienteId, sede_id: newSede, updated_at: new Date().toISOString() })
+    .eq('id', vehiculoId);
+  if (upErr) throw upErr;
+
+  // 6. Reasignar servicios y citas del vehículo al nuevo dueño (sin tocar su sede histórica)
+  const fullName = `${newClient.nombre} ${newClient.apellido}`.trim();
+  const newTel = newClient.telefono || null;
+  const { data: servData } = await supabase
+    .from('servicios')
+    .update({ cliente_id: newClienteId, nombre_cliente: fullName, telefono: newTel })
+    .eq('vehiculo_id', vehiculoId)
+    .select('id');
+  const { data: citaData } = await supabase
+    .from('citas')
+    .update({ cliente_id: newClienteId, nombre_cliente: fullName, telefono: newTel })
+    .eq('vehiculo_id', vehiculoId)
+    .select('id');
+
+  const serviciosMovidos = servData?.length || 0;
+  const citasMovidas = citaData?.length || 0;
+
+  // 7. Log de actividad (no crítico)
+  try {
+    const { logActivity } = await import('@/lib/activity');
+    await logActivity({
+      usuario: opts?.usuario || 'Sistema',
+      modulo: 'vehiculos',
+      accion: 'Transfirió vehículo',
+      detalles: `${veh.marca} ${veh.modelo} (${veh.placa}) de ${oldClient ? `${oldClient.nombre} ${oldClient.apellido}` : 'sin dueño'} → ${fullName}. ${serviciosMovidos} servicio(s) y ${citasMovidas} cita(s) reasignados.`,
+      referencia_id: vehiculoId,
+      referencia_tabla: 'vehiculos',
+    });
+  } catch { /* log no crítico */ }
+
+  return {
+    vehiculo: { id: veh.id, marca: veh.marca, modelo: veh.modelo, placa: veh.placa },
+    oldClient,
+    newClient: { id: newClient.id, nombre: newClient.nombre, apellido: newClient.apellido },
+    serviciosMovidos,
+    citasMovidas,
+  };
+}
+
 // ─── Servicios ─────────────────────────────────────────────────────────────
 export async function fetchServicios() {
   if (!supabase) return null;
