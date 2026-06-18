@@ -2727,7 +2727,8 @@ async function handleCompletedServiceSale(
 
     const refTag = `[${sourceType === 'cita' ? 'CitaID' : 'ServicioID'}: ${recordId}]`;
     const nowIso = new Date().toISOString();
-    const fechaStr = nowIso.split('T')[0];
+    // Use Venezuela local date — server runs UTC so toISOString().split('T')[0] would give wrong date at night
+    const fechaStr = getVzlaDateString();
     const sedeId = recordObj.sede_id || DEFAULT_SEDE_ID;
 
     const vehiculoStr = recordObj.vehiculo_info || recordObj.vehiculo || 'Servicio';

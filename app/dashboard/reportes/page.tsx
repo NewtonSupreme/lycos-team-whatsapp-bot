@@ -26,7 +26,7 @@ import {
 } from 'recharts';
 import { supabase, registrarFactura } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
-import { cn } from '@/lib/utils';
+import { cn, getLocalISODate } from '@/lib/utils';
 import { generateInvoicePDF, generateEgresoPDF } from '@/lib/invoice-pdf';
 import { generateCierrePDF, type CierreData } from '@/lib/cierre-pdf';
 import { generateNotaEntregaPDF } from '@/lib/distribucion-pdf';
@@ -2280,7 +2280,7 @@ export default function ReportesPage() {
       }
       return {
         id: v.id || `sil-${idx}-${Date.now()}`,
-        fecha: (v.fecha || v.created_at || new Date().toISOString()).split('T')[0],
+        fecha: getLocalISODate(new Date(v.fecha || v.created_at || new Date())),
         cliente: cliente,
         total_ingresos: finalTotal,
         total_servicios: v.cantidad || 1,

@@ -223,40 +223,25 @@ export default function ServiciosPage() {
       const vehiculoStr = getDisplayVehicle(cita);
       const sedeName = currentSede?.nombre || 'General';
 
-      // ── Auto-register sale when marking as completada or finalizado ──────────
+      // ── Auto-register sale in ventas_dia when marking as completada/finalizado ──
+      // Dashboard-originated sales go only to ventas_dia. Bot-originated go to ventas_silenciadores.
+      // This ensures each service appears exactly once in the combined ventas view.
       const COMPLETED_STATES = ['completada', 'finalizado', 'finalizada', 'completado'];
       if (COMPLETED_STATES.includes(nuevoEstado) && supabase) {
         const precio = Number(cita.costo_final ?? cita.costo_estimado ?? 0);
-        // sede_id: use the service's own sede_id (NOT NULL in DB), fall back to store
         const sedeId = cita.sede_id || currentSede?.id;
         if (precio > 0 && sedeId) {
           const refTag = `[ServicioID: ${id}]`;
-          const nowIso = new Date().toISOString();
-          const fechaStr = nowIso.split('T')[0];
           const descStr = cita.descripcion || 'Servicio de taller';
           const notesFinal = `${descStr} [Total: $${precio} (Divisas)] | Cliente: ${clienteNombre} | Vehículo: ${vehiculoStr} ${refTag}`.trim();
-
           const desglose = [{ descripcion: descStr, cantidad: 1, precio_unitario: precio, total: precio, tipo: 'servicio' }];
 
-          // Dedup check — prevent double-registering the same service
-          const [{ data: existingVS }, { data: existingVD }] = await Promise.all([
-            supabase.from('ventas_silenciadores').select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
-            supabase.from('ventas_dia').select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
-          ]);
-
-          const vsData = {
-            cantidad: 1,
-            modelo: vehiculoStr || 'Servicio',
-            notas: notesFinal,
-            fecha: nowIso,
-            precio_registrado: precio,
-            sede_id: sedeId,
-            fecha_registro: nowIso,
-            registro_atrasado: false,
-          };
+          // Dedup check — update if already registered (e.g., if invoice modal later replaces this entry)
+          const { data: existingVD } = await supabase.from('ventas_dia')
+            .select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle();
 
           const vdData = {
-            fecha: fechaStr,
+            fecha: getLocalISODate(),
             cliente: clienteNombre,
             total_ingresos: precio,
             total_servicios: 1,
@@ -268,22 +253,16 @@ export default function ServiciosPage() {
             notas: notesFinal,
             creado_por: user?.nombre || 'Admin',
             sede_id: sedeId,
-            fecha_registro: nowIso,
+            fecha_registro: new Date().toISOString(),
             registro_atrasado: false,
             estado: 'pagado',
           };
 
-          const [vsResult, vdResult] = await Promise.all([
-            existingVS
-              ? supabase.from('ventas_silenciadores').update(vsData).eq('id', existingVS.id)
-              : supabase.from('ventas_silenciadores').insert(vsData),
-            existingVD
-              ? supabase.from('ventas_dia').update(vdData).eq('id', existingVD.id)
-              : supabase.from('ventas_dia').insert(vdData),
-          ]);
+          const vdResult = existingVD
+            ? await supabase.from('ventas_dia').update(vdData).eq('id', existingVD.id)
+            : await supabase.from('ventas_dia').insert(vdData);
 
-          if (vsResult.error) throw new Error(`Error al registrar venta (silenciadores): ${vsResult.error.message}`);
-          if (vdResult.error) throw new Error(`Error al registrar venta (dia): ${vdResult.error.message}`);
+          if (vdResult.error) throw new Error(`Error al registrar venta: ${vdResult.error.message}`);
         }
       }
 
@@ -1839,7 +1818,16 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
     if (!supabase) return;
     try {
       setIsSaving(true);
-      const { data: ventaDia, error: ventaError } = await withSedeFilter(supabase.from('ventas_dia')).insert(withSedeInsert({
+      // ref tag enables dedup — if Kanban drag already registered this sale, update instead of insert
+      const vdRefTag = `[ServicioID: ${cita.id}]`;
+      const vdNotas = `${[cita.descripcion, cita.tipo_personalizado].filter(Boolean).join(' | ') || 'Servicio de taller'} ${vdRefTag}`.trim();
+      const sedeIdFinal = cita.sede_id || useSedeStore.getState().currentSede?.id;
+      if (!sedeIdFinal) throw new Error('No se puede registrar la venta: sede del servicio no encontrada');
+
+      const { data: existingVD } = await supabase.from('ventas_dia')
+        .select('id').like('notas', `%${vdRefTag}%`).limit(1).maybeSingle();
+
+      const vdPayload = {
         fecha: getLocalISODate(),
         cliente: clientName,
         total_ingresos: total,
@@ -1849,44 +1837,30 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
         metodos_pago: payments,
         tasa_cambio: rates.bcv || globalBcvRate || 518.0,
         con_iva: withIva,
-        notas: [cita.descripcion, cita.tipo_personalizado].filter(Boolean).join(' | ') || 'Servicio de taller',
-        creado_por: 'Admin'
-      })).select().single();
-      if (ventaError) throw ventaError;
+        notas: vdNotas,
+        creado_por: 'Admin',
+        sede_id: sedeIdFinal,
+        estado: 'pagado',
+      };
+
+      let ventaDia: any = null;
+      if (existingVD) {
+        const { data: upd, error: ventaError } = await supabase.from('ventas_dia')
+          .update(vdPayload).eq('id', existingVD.id).select().single();
+        if (ventaError) throw ventaError;
+        ventaDia = upd;
+      } else {
+        const { data: ins, error: ventaError } = await supabase.from('ventas_dia')
+          .insert(vdPayload).select().single();
+        if (ventaError) throw ventaError;
+        ventaDia = ins;
+      }
 
       const { error: citaError } = await withSedeFilter(supabase.from('servicios')).update({ estado: 'completada' }).eq('id', cita.id);
       if (citaError) throw citaError;
 
-      // Also write to ventas_silenciadores for full cross-table consistency (reports + ventas recientes)
-      {
-        const refTag = `[ServicioID: ${cita.id}]`;
-        const vehiculoStr = getDisplayVehicle(cita);
-        const descStr = cita.descripcion || 'Servicio de taller';
-        const notesFinal = `${descStr} [Total: $${total} (Divisas)] | Cliente: ${clientName} | Vehículo: ${vehiculoStr} ${refTag}`.trim();
-        const nowIso = new Date().toISOString();
-        // cita.sede_id is NOT NULL in DB — use it as primary, fall back to store
-        const sedeIdVS = cita.sede_id || useSedeStore.getState().currentSede?.id;
-        if (!sedeIdVS) throw new Error('No se puede registrar la venta: sede del servicio no encontrada');
-
-        const { data: existingVS } = await supabase.from('ventas_silenciadores')
-          .select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle();
-
-        const vsData = {
-          cantidad: 1,
-          modelo: vehiculoStr || 'Servicio',
-          notas: notesFinal,
-          fecha: nowIso,
-          precio_registrado: total,
-          sede_id: sedeIdVS,
-          fecha_registro: nowIso,
-          registro_atrasado: false,
-        };
-
-        const vsOpResult = existingVS
-          ? await supabase.from('ventas_silenciadores').update(vsData).eq('id', existingVS.id)
-          : await supabase.from('ventas_silenciadores').insert(vsData);
-        if (vsOpResult.error) throw new Error(`Error al registrar venta (silenciadores): ${vsOpResult.error.message}`);
-      }
+      // ventas_dia is the authoritative accounting table for dashboard-originated sales.
+      // ventas_silenciadores is reserved for bot/IA registrations to avoid duplicates in the combined view.
 
       let finalCorrelativo = undefined;
       try {
