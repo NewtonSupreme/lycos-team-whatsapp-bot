@@ -495,111 +495,113 @@ export default function VehiculosPage() {
 
       {/* View modal */}
       <Dialog open={!!viewVehiculo} onOpenChange={() => setViewVehiculo(null)}>
-        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-md max-h-[90vh] flex flex-col p-0 overflow-hidden">
           {viewVehiculo && (
             <>
-              <DialogHeader>
+              <DialogHeader className="p-6 pb-2 shrink-0">
                 <DialogTitle>Detalle del Vehículo</DialogTitle>
               </DialogHeader>
-              <div className="flex items-center gap-3 p-3 rounded-xl bg-muted/30 border border-border/30">
-                <div className="w-12 h-12 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
-                  <Car className="w-6 h-6 text-primary" />
+              <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 pt-2 space-y-4 custom-scrollbar">
+                <div className="flex items-center gap-3 p-3 rounded-xl bg-muted/30 border border-border/30">
+                  <div className="w-12 h-12 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                    <Car className="w-6 h-6 text-primary" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold truncate">{viewVehiculo.marca} {viewVehiculo.modelo} {viewVehiculo.anio}</h3>
+                    <p className="text-xs font-bold tracking-wider text-primary mt-0.5 truncate">{viewVehiculo.placa}</p>
+                    <div className="mt-1"><StatusBadge status={viewVehiculo.estado} type="vehiculo" /></div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { label: 'Color', value: viewVehiculo.color || 'N/A' },
+                    { label: 'Km', value: viewVehiculo.kilometraje?.toLocaleString() + ' km' },
+                    { label: 'VIN', value: viewVehiculo.vin || 'N/A' },
+                    { label: 'Registrado', value: formatDate(viewVehiculo.created_at) },
+                  ].map(f => (
+                    <div key={f.label} className="p-2.5 rounded-lg border border-border/30 bg-muted/20 min-w-0">
+                      <p className="text-[10px] text-muted-foreground">{f.label}</p>
+                      <p className="text-xs font-medium mt-0.5 truncate" title={f.value}>{f.value}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="p-3 rounded-lg border border-border/30 bg-primary/5">
+                  <p className="text-xs font-bold text-primary mb-2 uppercase tracking-tight">Propietario</p>
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between items-center text-xs gap-2">
+                      <span className="text-muted-foreground whitespace-nowrap">Nombre:</span>
+                      <span className="font-medium truncate text-right">{(viewVehiculo.cliente || getCliente(viewVehiculo.cliente_id))?.nombre} {(viewVehiculo.cliente || getCliente(viewVehiculo.cliente_id))?.apellido}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-xs gap-2">
+                      <span className="text-muted-foreground whitespace-nowrap">Cédula:</span>
+                      <span className="font-medium truncate text-right">{(viewVehiculo.cliente || getCliente(viewVehiculo.cliente_id))?.cedula || 'N/A'}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-xs gap-2">
+                      <span className="text-muted-foreground whitespace-nowrap">Teléfono:</span>
+                      <span className="font-medium truncate text-right">{(viewVehiculo.cliente || getCliente(viewVehiculo.cliente_id))?.telefono}</span>
+                    </div>
+                  </div>
                 </div>
                 <div>
-                  <h3 className="font-semibold">{viewVehiculo.marca} {viewVehiculo.modelo} {viewVehiculo.anio}</h3>
-                  <p className="text-xs font-bold tracking-wider text-primary mt-0.5">{viewVehiculo.placa}</p>
-                  <StatusBadge status={viewVehiculo.estado} type="vehiculo" />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  { label: 'Color', value: viewVehiculo.color || 'N/A' },
-                  { label: 'Km', value: viewVehiculo.kilometraje?.toLocaleString() + ' km' },
-                  { label: 'VIN', value: viewVehiculo.vin || 'N/A' },
-                  { label: 'Registrado', value: formatDate(viewVehiculo.created_at) },
-                ].map(f => (
-                  <div key={f.label} className="p-2.5 rounded-lg border border-border/30 bg-muted/20">
-                    <p className="text-[10px] text-muted-foreground">{f.label}</p>
-                    <p className="text-xs font-medium mt-0.5">{f.value}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="p-3 rounded-lg border border-border/30 bg-primary/5">
-                <p className="text-xs font-bold text-primary mb-2 uppercase tracking-tight">Propietario</p>
-                <div className="space-y-1.5">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-muted-foreground">Nombre:</span>
-                    <span className="font-medium">{(viewVehiculo.cliente || getCliente(viewVehiculo.cliente_id))?.nombre} {(viewVehiculo.cliente || getCliente(viewVehiculo.cliente_id))?.apellido}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-muted-foreground">Cédula:</span>
-                    <span className="font-medium">{(viewVehiculo.cliente || getCliente(viewVehiculo.cliente_id))?.cedula || 'N/A'}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-muted-foreground">Teléfono:</span>
-                    <span className="font-medium">{(viewVehiculo.cliente || getCliente(viewVehiculo.cliente_id))?.telefono}</span>
-                  </div>
-                </div>
-              </div>
-              <div>
-                <p className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-2">
-                  Historial de Servicios ({loadingServicios ? '…' : vehiculoServicios.length})
-                </p>
-                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                  {loadingServicios && (
-                    <div className="flex items-center justify-center py-4 gap-2 text-muted-foreground">
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                      <span className="text-xs">Cargando historial…</span>
-                    </div>
-                  )}
-                  {!loadingServicios && vehiculoServicios.length === 0 && (
-                    <p className="text-xs text-muted-foreground text-center py-3">Sin historial de servicios</p>
-                  )}
-                  {!loadingServicios && vehiculoServicios.map(s => {
-                    const estadoColor: Record<string, string> = {
-                      pendiente: 'text-amber-400 bg-amber-400/10 border-amber-400/20',
-                      confirmada: 'text-blue-400 bg-blue-400/10 border-blue-400/20',
-                      en_revision: 'text-fuchsia-400 bg-fuchsia-400/10 border-fuchsia-400/20',
-                      en_proceso: 'text-violet-400 bg-violet-400/10 border-violet-400/20',
-                      completada: 'text-green-400 bg-green-400/10 border-green-400/20',
-                      finalizado: 'text-green-400 bg-green-400/10 border-green-400/20',
-                      cancelada: 'text-red-400 bg-red-400/10 border-red-400/20',
-                    };
-                    const estadoLabel: Record<string, string> = {
-                      pendiente: 'Pendiente', confirmada: 'Confirmada', en_revision: 'Revisión',
-                      en_proceso: 'En Proceso', completada: 'Completada',
-                      finalizado: 'Finalizado', cancelada: 'Cancelada',
-                    };
-                    const tipoLabel: Record<string, string> = {
-                      mecanica: 'Mecánica', electronica: 'Electrónica', cerrajeria: 'Cerrajería',
-                      diagnostico: 'Diagnóstico', motor: 'Motor', emergencia: 'Emergencia', otro: 'General',
-                    };
-                    const costo = s.costo_final ?? s.costo_estimado;
-                    return (
-                      <div key={s.id} className="flex items-start gap-3 p-2.5 rounded-xl bg-muted/20 border border-border/20 hover:bg-muted/40 transition-all">
-                        <div className="w-7 h-7 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                          <Wrench className="w-3.5 h-3.5 text-primary" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[10px] font-black text-primary uppercase tracking-tight">
-                              {s.tipo_personalizado || tipoLabel[s.tipo] || s.tipo}
-                            </span>
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md border ${estadoColor[s.estado] || 'text-gray-400 bg-gray-400/10 border-gray-400/20'}`}>
-                              {estadoLabel[s.estado] || s.estado}
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-foreground/80 truncate mt-0.5">{s.descripcion || 'Sin descripción'}</p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-[9px] text-muted-foreground">{s.fecha ? formatDate(s.fecha) : ''}</span>
-                            {costo != null && costo > 0 && (
-                              <span className="text-[9px] font-bold text-primary">${Number(costo).toFixed(2)}</span>
-                            )}
-                          </div>
-                        </div>
+                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-wide mb-2">
+                    Historial de Servicios ({loadingServicios ? '…' : vehiculoServicios.length})
+                  </p>
+                  <div className="space-y-2">
+                    {loadingServicios && (
+                      <div className="flex items-center justify-center py-4 gap-2 text-muted-foreground">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <span className="text-xs">Cargando historial…</span>
                       </div>
-                    );
-                  })}
+                    )}
+                    {!loadingServicios && vehiculoServicios.length === 0 && (
+                      <p className="text-xs text-muted-foreground text-center py-3">Sin historial de servicios</p>
+                    )}
+                    {!loadingServicios && vehiculoServicios.map(s => {
+                      const estadoColor: Record<string, string> = {
+                        pendiente: 'text-amber-400 bg-amber-400/10 border-amber-400/20',
+                        confirmada: 'text-blue-400 bg-blue-400/10 border-blue-400/20',
+                        en_revision: 'text-fuchsia-400 bg-fuchsia-400/10 border-fuchsia-400/20',
+                        en_proceso: 'text-violet-400 bg-violet-400/10 border-violet-400/20',
+                        completada: 'text-green-400 bg-green-400/10 border-green-400/20',
+                        finalizado: 'text-green-400 bg-green-400/10 border-green-400/20',
+                        cancelada: 'text-red-400 bg-red-400/10 border-red-400/20',
+                      };
+                      const estadoLabel: Record<string, string> = {
+                        pendiente: 'Pendiente', confirmada: 'Confirmada', en_revision: 'Revisión',
+                        en_proceso: 'En Proceso', completada: 'Completada',
+                        finalizado: 'Finalizado', cancelada: 'Cancelada',
+                      };
+                      const tipoLabel: Record<string, string> = {
+                        mecanica: 'Mecánica', electronica: 'Electrónica', cerrajeria: 'Cerrajería',
+                        diagnostico: 'Diagnóstico', motor: 'Motor', emergencia: 'Emergencia', otro: 'General',
+                      };
+                      const costo = s.costo_final ?? s.costo_estimado;
+                      return (
+                        <div key={s.id} className="flex items-start gap-3 p-2.5 rounded-xl bg-muted/20 border border-border/20 hover:bg-muted/40 transition-all">
+                          <div className="w-7 h-7 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0 mt-0.5">
+                            <Wrench className="w-3.5 h-3.5 text-primary" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[10px] font-black text-primary uppercase tracking-tight truncate max-w-[140px]" title={s.tipo_personalizado || tipoLabel[s.tipo] || s.tipo}>
+                                {s.tipo_personalizado || tipoLabel[s.tipo] || s.tipo}
+                              </span>
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md border whitespace-nowrap ${estadoColor[s.estado] || 'text-gray-400 bg-gray-400/10 border-gray-400/20'}`}>
+                                {estadoLabel[s.estado] || s.estado}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-foreground/80 truncate mt-0.5" title={s.descripcion || 'Sin descripción'}>{s.descripcion || 'Sin descripción'}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className="text-[9px] text-muted-foreground whitespace-nowrap">{s.fecha ? formatDate(s.fecha) : ''}</span>
+                              {costo != null && costo > 0 && (
+                                <span className="text-[9px] font-bold text-primary whitespace-nowrap">${Number(costo).toFixed(2)}</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             </>
