@@ -18,7 +18,7 @@ import { generateInvoicePDF } from '@/lib/invoice-pdf';
 import { generatePresupuestoPDF } from '@/lib/presupuesto-pdf';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
-import { cn, getLocalISODate } from '@/lib/utils';
+import { cn, getLocalISODate, parseDescripcionItems } from '@/lib/utils';
 
 // ── Types ─────────────────────────────────────────────────────
 interface CitaServicio {
@@ -234,7 +234,7 @@ export default function ServiciosPage() {
           const refTag = `[ServicioID: ${id}]`;
           const descStr = cita.descripcion || 'Servicio de taller';
           const notesFinal = `${descStr} [Total: $${precio} (Divisas)] | Cliente: ${clienteNombre} | Vehículo: ${vehiculoStr} ${refTag}`.trim();
-          const desglose = [{ descripcion: descStr, cantidad: 1, precio_unitario: precio, total: precio, tipo: 'servicio' }];
+          const desglose = parseDescripcionItems(descStr, precio);
 
           // Dedup check — update if already registered (e.g., if invoice modal later replaces this entry)
           const { data: existingVD } = await supabase.from('ventas_dia')
@@ -1672,18 +1672,14 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
   const [showSelector, setShowSelector] = useState(false);
 
   const [items, setItems] = useState(() => {
-    const match = inventory.find((i: any) => 
+    const match = inventory.find((i: any) =>
       (cita.descripcion || '').toLowerCase().includes(i.nombre.toLowerCase().trim()) ||
       i.nombre.toLowerCase().trim().includes((cita.descripcion || '').toLowerCase().trim()) ||
       (cita.tipo_personalizado || SERVICIO_LABELS[cita.tipo] || '').toLowerCase().includes(i.nombre.toLowerCase().trim())
     );
     const price = match?.precio_usd || cita.costo_estimado || 0;
-    return [{
-      descripcion: cita.descripcion || cita.tipo_personalizado || SERVICIO_LABELS[cita.tipo] || 'Servicio General',
-      cantidad: 1,
-      precio_unitario: price,
-      total: price
-    }];
+    const rawDesc = cita.descripcion || cita.tipo_personalizado || SERVICIO_LABELS[cita.tipo] || 'Servicio General';
+    return parseDescripcionItems(rawDesc, price);
   });
 
   const [secondItems, setSecondItems] = useState<any[]>([]);
@@ -1699,12 +1695,8 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
         (secondCita.tipo_personalizado || SERVICIO_LABELS[secondCita.tipo] || '').toLowerCase().includes(i.nombre.toLowerCase().trim())
       );
       const price = match?.precio_usd || secondCita.costo_estimado || 0;
-      setSecondItems([{
-        descripcion: secondCita.descripcion || secondCita.tipo_personalizado || SERVICIO_LABELS[secondCita.tipo] || 'Servicio General',
-        cantidad: 1,
-        precio_unitario: price,
-        total: price
-      }]);
+      const rawDesc = secondCita.descripcion || secondCita.tipo_personalizado || SERVICIO_LABELS[secondCita.tipo] || 'Servicio General';
+      setSecondItems(parseDescripcionItems(rawDesc, price));
       setSecondClientName(secondCita.vehiculos?.clientes ? `${secondCita.vehiculos?.clientes.nombre} ${secondCita.vehiculos?.clientes.apellido}` : secondCita.nombre_cliente || 'Consumidor Final');
       setSecondVehicleStr(secondCita.vehiculos ? `${secondCita.vehiculos.marca} ${secondCita.vehiculos.modelo}` : secondCita.vehiculo_info || '---');
       setSecondWithIva(false);

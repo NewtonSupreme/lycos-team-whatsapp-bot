@@ -267,9 +267,8 @@ export default function VentasPage() {
         });
       }
 
-      generateInvoicePDF(dataList, { mode: printMode, side: printSide });
-
-      // 5. Register in centralized facturas table
+      // 5. Register in centralized facturas table (BEFORE PDF so correlativo is included)
+      let correlativoVenta: string | undefined;
       try {
         const facturaRegistro = await registrarFactura({
           tipo: 'venta',
@@ -296,14 +295,14 @@ export default function VentasPage() {
           fecha_emision: format(selectedDate, 'yyyy-MM-dd'),
           sede_id: currentSede?.id || undefined,
         });
-        // Update PDF data with correlativo for next prints
-        if (facturaRegistro?.correlativo) {
-          data1.correlativo = facturaRegistro.correlativo;
-        }
+        if (facturaRegistro?.correlativo) correlativoVenta = facturaRegistro.correlativo;
       } catch (facErr) {
         console.error('Error registrando factura centralizada:', facErr);
-        // Non-blocking: sale was already saved
       }
+
+      // 6. Print PDF with correlativo
+      data1.correlativo = correlativoVenta;
+      generateInvoicePDF(dataList, { mode: printMode, side: printSide });
 
       // 6. Success and Reset
       const abonoMsg = tieneAbono

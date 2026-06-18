@@ -1655,10 +1655,21 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
 
   const cleanCliente = venta.cliente ? venta.cliente.replace(/\(WhatsApp\)/gi, '').replace(/ADMIN IA/gi, '').trim() || 'No definido' : 'Consumidor Final';
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     try {
+      // Fetch correlativo from facturas table before building PDF
+      let correlativo: string | undefined;
+      try {
+        if (supabase) {
+          const { data: facData } = await supabase.from('facturas')
+            .select('correlativo').eq('referencia_id', venta.id).limit(1).maybeSingle();
+          if (facData?.correlativo) correlativo = facData.correlativo;
+        }
+      } catch { /* non-blocking */ }
+
       const dataList = [{
         id: venta.id,
+        correlativo,
         fecha: venta.fecha,
         cliente: cleanCliente === 'Consumidor Final' ? undefined : cleanCliente,
         items: venta.desglose || [],
@@ -1674,9 +1685,19 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
       if (printMode === 'dual') {
         dataList.push(dataList[0]);
       } else if (printMode === 'diferente' && secondVenta) {
+        // Fetch correlativo for second venta too
+        let correlativoSecond: string | undefined;
+        try {
+          if (supabase) {
+            const { data: fac2 } = await supabase.from('facturas')
+              .select('correlativo').eq('referencia_id', secondVenta.id).limit(1).maybeSingle();
+            if (fac2?.correlativo) correlativoSecond = fac2.correlativo;
+          }
+        } catch { /* non-blocking */ }
         const cleanSecondCliente = secondVenta.cliente ? secondVenta.cliente.replace(/\(WhatsApp\)/gi, '').replace(/ADMIN IA/gi, '').trim() || 'No definido' : 'Consumidor Final';
         dataList.push({
           id: secondVenta.id,
+          correlativo: correlativoSecond,
           fecha: secondVenta.fecha,
           cliente: cleanSecondCliente === 'Consumidor Final' ? undefined : cleanSecondCliente,
           items: secondVenta.desglose || [],

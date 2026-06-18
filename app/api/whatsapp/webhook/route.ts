@@ -2773,13 +2773,20 @@ async function handleCompletedServiceSale(
       .limit(1)
       .maybeSingle();
 
-    const desglose = [{
-      descripcion: descStr,
-      cantidad: 1,
-      precio_unitario: precio,
-      total: precio,
-      tipo: 'servicio',
-    }];
+    // Parse multi-component descriptions ("Service: Part1 + Part2") into individual line items
+    const colonIdx = descStr.indexOf(': ');
+    let serviceLabel = '';
+    let componentStr = descStr;
+    if (colonIdx > 0) { serviceLabel = descStr.substring(0, colonIdx).trim(); componentStr = descStr.substring(colonIdx + 2).trim(); }
+    const parts = componentStr.split(' + ').map((p: string) => p.trim()).filter(Boolean);
+    const desglose = serviceLabel
+      ? [
+          { descripcion: serviceLabel, cantidad: 1, precio_unitario: precio, total: precio },
+          ...parts.map((p: string) => ({ descripcion: p, cantidad: 1, precio_unitario: 0, total: 0 }))
+        ]
+      : parts.length > 1
+        ? parts.map((p: string, i: number) => ({ descripcion: p, cantidad: 1, precio_unitario: i === 0 ? precio : 0, total: i === 0 ? precio : 0 }))
+        : [{ descripcion: descStr, cantidad: 1, precio_unitario: precio, total: precio }];
 
     const vdData = {
       fecha: fechaStr,

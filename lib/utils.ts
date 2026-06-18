@@ -89,6 +89,47 @@ export const tipoServicioColor: Record<string, string> = {
   otro: 'text-gray-400 bg-gray-400/10',
 };
 
+export type DesgloseItem = { descripcion: string; cantidad: number; precio_unitario: number; total: number };
+
+/**
+ * Converts a service description string like
+ * "Revisión de tren delantero: Bujes de meseta grandes dañados + Base de caja trasera dañada"
+ * into individual line items for invoicing/desglose.
+ * – Text before ": " → labor/service line (gets totalPrecio)
+ * – Each "+" component → separate repair/part line at $0 (to be priced later)
+ */
+export function parseDescripcionItems(descripcion: string, totalPrecio = 0): DesgloseItem[] {
+  const raw = (descripcion || '').trim();
+  if (!raw) return [{ descripcion: 'Servicio General', cantidad: 1, precio_unitario: totalPrecio, total: totalPrecio }];
+
+  const colonIdx = raw.indexOf(': ');
+  let serviceLabel = '';
+  let componentStr = raw;
+
+  if (colonIdx > 0) {
+    serviceLabel = raw.substring(0, colonIdx).trim();
+    componentStr = raw.substring(colonIdx + 2).trim();
+  }
+
+  const parts = componentStr.split(' + ').map(p => p.trim()).filter(Boolean);
+
+  if (parts.length <= 1 && !serviceLabel) {
+    return [{ descripcion: raw, cantidad: 1, precio_unitario: totalPrecio, total: totalPrecio }];
+  }
+
+  const result: DesgloseItem[] = [];
+  if (serviceLabel) {
+    result.push({ descripcion: serviceLabel, cantidad: 1, precio_unitario: totalPrecio, total: totalPrecio });
+    for (const part of parts) result.push({ descripcion: part, cantidad: 1, precio_unitario: 0, total: 0 });
+  } else {
+    for (let i = 0; i < parts.length; i++) {
+      const p = i === 0 ? totalPrecio : 0;
+      result.push({ descripcion: parts[i], cantidad: 1, precio_unitario: p, total: p });
+    }
+  }
+  return result;
+}
+
 export const estadoColor: Record<string, string> = {
   pendiente: 'text-yellow-400 bg-yellow-400/10',
   en_proceso: 'text-blue-400 bg-blue-400/10',

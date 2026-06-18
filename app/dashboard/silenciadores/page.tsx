@@ -595,9 +595,8 @@ export default function VentasPage() {
         });
       }
 
-      generateInvoicePDF(dataList, { mode: printMode, side: printSide, currencyMode: resolvedCurrencyMode as any });
-
-      // Register in centralized facturas table
+      // Register in centralized facturas table BEFORE generating PDF so correlativo is included
+      let correlativoSil: string | undefined;
       try {
         const facturaRegistro = await registrarFactura({
           tipo: 'venta',
@@ -624,12 +623,13 @@ export default function VentasPage() {
           fecha_emision: format(selectedDate, 'yyyy-MM-dd'),
           sede_id: currentSede?.id || undefined,
         });
-        if (facturaRegistro?.correlativo) {
-          data1.correlativo = facturaRegistro.correlativo;
-        }
+        if (facturaRegistro?.correlativo) correlativoSil = facturaRegistro.correlativo;
       } catch (facErr) {
         console.error('Error registrando factura centralizada:', facErr);
       }
+
+      data1.correlativo = correlativoSil;
+      generateInvoicePDF(dataList, { mode: printMode, side: printSide, currencyMode: resolvedCurrencyMode as any });
 
       setCart([]);
       setClienteNombre('');
@@ -798,8 +798,19 @@ export default function VentasPage() {
       ? ((mp.pago_movil > 0 || mp.efectivo_ves > 0 || venta.isCashea) ? 'dual' : 'usd')
       : printCurrencyMode;
 
+    // Look up correlativo from facturas table before generating PDF
+    let correlativoReprint: string | undefined;
+    try {
+      if (supabase) {
+        const { data: facData } = await supabase.from('facturas')
+          .select('correlativo').eq('referencia_id', venta.id).limit(1).maybeSingle();
+        if (facData?.correlativo) correlativoReprint = facData.correlativo;
+      }
+    } catch { /* non-blocking */ }
+
     generateInvoicePDF([{
       id: venta.id,
+      correlativo: correlativoReprint,
       fecha: new Date(venta.fecha || venta.created_at).toLocaleDateString(),
       cliente: venta.cliente,
       items: venta.desglose || [{ descripcion: 'Producto', cantidad: 1, total: venta.total_ingresos }],
