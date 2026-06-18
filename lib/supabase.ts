@@ -740,6 +740,17 @@ export async function registrarFactura(factura: {
 }) {
   if (!supabase) return null;
 
+  // Guard against duplicate facturas for the same referencia_id
+  if (factura.referencia_id) {
+    const { data: existing } = await supabase
+      .from('facturas')
+      .select('id, correlativo')
+      .eq('referencia_id', factura.referencia_id)
+      .limit(1)
+      .maybeSingle();
+    if (existing) return existing;
+  }
+
   const correlativo = await generateCorrelativoFactura();
 
   const insertData = {

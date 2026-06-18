@@ -23,43 +23,6 @@ function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
-function detectMediaType(body: string): 'imagen' | 'video' | 'audio' | 'documento' | 'texto' {
-  if (!body) return 'texto';
-  const lower = body.toLowerCase();
-  if (lower.includes('imagen') || lower.includes('image') || lower.match(/\.(jpg|jpeg|png|gif|webp)/)) return 'imagen';
-  if (lower.includes('video') || lower.match(/\.(mp4|mov|avi|mkv)/)) return 'video';
-  if (lower.includes('audio') || lower.includes('voz') || lower.match(/\.(mp3|ogg|m4a|opus)/)) return 'audio';
-  if (lower.includes('documento') || lower.match(/\.(pdf|doc|xlsx|csv)/)) return 'documento';
-  return 'texto';
-}
-
-function buildWaNotifBody(body: string, senderName?: string): { title: string; mensaje: string } {
-  const sender = senderName ? `${senderName}` : 'Cliente';
-  const mediaType = detectMediaType(body);
-  const mediaEmojis = { imagen: '🖼️', video: '🎥', audio: '🎤', documento: '📄', texto: '' };
-  const mediaLabels = { imagen: 'envió una imagen', video: 'envió un video', audio: 'envió un audio', documento: 'envió un documento', texto: '' };
-
-  if (mediaType !== 'texto') {
-    return {
-      title: `📱 ${sender} ${mediaLabels[mediaType]}`,
-      mensaje: `${mediaEmojis[mediaType]} ${mediaLabels[mediaType].charAt(0).toUpperCase() + mediaLabels[mediaType].slice(1)}`,
-    };
-  }
-
-  const isContactRequest = body.toLowerCase().includes('asesor') || body.toLowerCase().includes('hablar') || body.toLowerCase().includes('agente') || body.toLowerCase().includes('humano');
-  if (isContactRequest) {
-    return {
-      title: `🆘 ${sender} quiere hablar con un asesor`,
-      mensaje: body.slice(0, 80),
-    };
-  }
-
-  return {
-    title: `💬 Nuevo mensaje de ${sender}`,
-    mensaje: body.slice(0, 80) + (body.length > 80 ? '...' : ''),
-  };
-}
-
 // Send push removed from frontend
 
 export default function Header() {
@@ -110,7 +73,10 @@ export default function Header() {
 
       console.log('✅ Push Notifications registradas correctamente.');
       setPushRegistered(true);
-    } catch (err) {
+    } catch (err: any) {
+      // Silently skip known browser-policy errors (incognito, iframe, disabled feature)
+      const msg = String(err?.message || err);
+      if (msg.includes('disabled') || msg.includes('denied') || msg.includes('not allowed') || msg.includes('permission')) return;
       console.error('❌ Falló el registro de Push Notifications:', err);
     }
   }, [pushRegistered, setPushRegistered]);

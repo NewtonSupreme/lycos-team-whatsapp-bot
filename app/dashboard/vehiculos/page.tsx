@@ -48,6 +48,23 @@ export default function VehiculosPage() {
     loadData();
   }, []);
 
+  // Must be before the `if (!mounted) return null` guard — hooks cannot follow conditional returns
+  React.useEffect(() => {
+    if (!viewVehiculo?.id || !supabase) { setVehiculoServicios([]); return; }
+    setLoadingServicios(true);
+    (async () => {
+      try {
+        const { data } = await supabase.from('servicios')
+          .select('id, fecha, tipo, tipo_personalizado, descripcion, estado, costo_estimado, costo_final')
+          .eq('vehiculo_id', viewVehiculo.id)
+          .order('fecha', { ascending: false })
+          .limit(50);
+        setVehiculoServicios(data || []);
+      } catch { setVehiculoServicios([]); }
+      setLoadingServicios(false);
+    })();
+  }, [viewVehiculo?.id]);
+
   if (!mounted) return null;
 
   async function loadData() {
@@ -181,23 +198,6 @@ export default function VehiculosPage() {
   };
 
   const getCliente = (id: string) => clientes.find(c => c.id === id);
-
-  // Load service history when detail modal opens
-  React.useEffect(() => {
-    if (!viewVehiculo?.id || !supabase) { setVehiculoServicios([]); return; }
-    setLoadingServicios(true);
-    (async () => {
-      try {
-        const { data } = await supabase.from('servicios')
-          .select('id, fecha, tipo, tipo_personalizado, descripcion, estado, costo_estimado, costo_final, nombre_cliente')
-          .eq('vehiculo_id', viewVehiculo.id)
-          .order('fecha', { ascending: false })
-          .limit(50);
-        setVehiculoServicios(data || []);
-      } catch { setVehiculoServicios([]); }
-      setLoadingServicios(false);
-    })();
-  }, [viewVehiculo?.id]);
 
   const estadoBgColor: Record<string, string> = {
     activo: 'border-green-500/20 bg-green-500/5',

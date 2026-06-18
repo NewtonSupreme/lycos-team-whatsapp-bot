@@ -905,6 +905,14 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
     fetchData();
   }, []);
 
+  // Cleanup debounce timers on unmount
+  useEffect(() => {
+    return () => {
+      if (plateTimerRef.current) clearTimeout(plateTimerRef.current);
+      if (vehiculoSearchTimer.current) clearTimeout(vehiculoSearchTimer.current);
+    };
+  }, []);
+
   useEffect(() => {
     if (formData.nombre_cliente.length > 1) {
       const results = allClientes.filter(c =>
