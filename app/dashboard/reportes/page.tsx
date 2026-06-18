@@ -1654,11 +1654,31 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
   const [searchTerm, setSearchTerm] = useState('');
   const [correlativo, setCorrelativo] = useState<string>('');
 
-  // Load correlativo from facturas table on mount
+  // Load or generate correlativo on mount
   useEffect(() => {
     if (!supabase || !venta?.id) return;
-    supabase.from('facturas').select('correlativo').eq('referencia_id', venta.id).limit(1).maybeSingle()
-      .then(({ data }) => { if (data?.correlativo) setCorrelativo(data.correlativo); });
+    (async () => {
+      const { data } = await supabase.from('facturas').select('correlativo').eq('referencia_id', venta.id).limit(1).maybeSingle();
+      if (data?.correlativo) { setCorrelativo(data.correlativo); return; }
+      try {
+        const referencia_tabla = venta.source === 'ia' ? 'ventas_silenciadores' : 'ventas_dia';
+        const modulo_origen = venta.source === 'ia' ? 'bot' : 'ventas_pos';
+        const localParsedItems = (venta.desglose || []).flatMap((item: any) =>
+          parseDescripcionItems(item.descripcion || '', item.total ?? item.precio_unitario ?? 0));
+        const localCliente = venta.cliente ? venta.cliente.replace(/\(WhatsApp\)/gi, '').replace(/ADMIN IA/gi, '').trim() || 'No definido' : 'Consumidor Final';
+        const reg = await registrarFactura({
+          tipo: 'venta', modulo_origen, referencia_id: venta.id, referencia_tabla,
+          cliente: localCliente, total: venta.total_ingresos || 0, moneda: 'USD',
+          tasa_cambio: venta.tasa_cambio || 1,
+          total_bs: (venta.total_ingresos || 0) * (venta.tasa_cambio || 1),
+          items: localParsedItems, metodos_pago: venta.metodos_pago,
+          con_iva: venta.con_iva ?? false, estado: 'pagado',
+          fecha_emision: venta.fecha || new Date().toISOString().split('T')[0],
+          sede_id: undefined,
+        });
+        if (reg?.correlativo) setCorrelativo(reg.correlativo);
+      } catch { /* non-blocking */ }
+    })();
   }, [venta?.id]);
 
   // Parse desglose items — split multi-component descriptions into individual lines
@@ -1670,13 +1690,30 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
 
   const handleDownload = async () => {
     try {
-      // Fetch correlativo from facturas table before building PDF
+      // Fetch correlativo from facturas; generate on-the-fly if no record exists
       let correlativo: string | undefined;
       try {
         if (supabase) {
           const { data: facData } = await supabase.from('facturas')
             .select('correlativo').eq('referencia_id', venta.id).limit(1).maybeSingle();
-          if (facData?.correlativo) correlativo = facData.correlativo;
+          if (facData?.correlativo) {
+            correlativo = facData.correlativo;
+          } else {
+            const referencia_tabla = venta.source === 'ia' ? 'ventas_silenciadores' : 'ventas_dia';
+            const modulo_origen = venta.source === 'ia' ? 'bot' : 'ventas_pos';
+            const reg = await registrarFactura({
+              tipo: 'venta', modulo_origen, referencia_id: venta.id, referencia_tabla,
+              cliente: cleanCliente || 'Consumidor Final',
+              total: venta.total_ingresos || 0, moneda: 'USD',
+              tasa_cambio: venta.tasa_cambio || 1,
+              total_bs: (venta.total_ingresos || 0) * (venta.tasa_cambio || 1),
+              items: parsedItems, metodos_pago: venta.metodos_pago,
+              con_iva: venta.con_iva ?? false, estado: 'pagado',
+              fecha_emision: venta.fecha || new Date().toISOString().split('T')[0],
+              sede_id: undefined,
+            });
+            if (reg?.correlativo) correlativo = reg.correlativo;
+          }
         }
       } catch { /* non-blocking */ }
 
@@ -1698,13 +1735,33 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
       if (printMode === 'dual') {
         dataList.push(dataList[0]);
       } else if (printMode === 'diferente' && secondVenta) {
-        // Fetch correlativo for second venta too
+        // Fetch correlativo for second venta; generate on-the-fly if missing
         let correlativoSecond: string | undefined;
         try {
           if (supabase) {
             const { data: fac2 } = await supabase.from('facturas')
               .select('correlativo').eq('referencia_id', secondVenta.id).limit(1).maybeSingle();
-            if (fac2?.correlativo) correlativoSecond = fac2.correlativo;
+            if (fac2?.correlativo) {
+              correlativoSecond = fac2.correlativo;
+            } else {
+              const cleanSecondClienteTmp = secondVenta.cliente ? secondVenta.cliente.replace(/\(WhatsApp\)/gi, '').replace(/ADMIN IA/gi, '').trim() || 'No definido' : 'Consumidor Final';
+              const referencia_tabla2 = secondVenta.source === 'ia' ? 'ventas_silenciadores' : 'ventas_dia';
+              const modulo_origen2 = secondVenta.source === 'ia' ? 'bot' : 'ventas_pos';
+              const parsedSecondItemsTmp = (secondVenta.desglose || []).flatMap((item: any) =>
+                parseDescripcionItems(item.descripcion || '', item.total ?? item.precio_unitario ?? 0));
+              const reg2 = await registrarFactura({
+                tipo: 'venta', modulo_origen: modulo_origen2, referencia_id: secondVenta.id, referencia_tabla: referencia_tabla2,
+                cliente: cleanSecondClienteTmp || 'Consumidor Final',
+                total: secondVenta.total_ingresos || 0, moneda: 'USD',
+                tasa_cambio: secondVenta.tasa_cambio || 1,
+                total_bs: (secondVenta.total_ingresos || 0) * (secondVenta.tasa_cambio || 1),
+                items: parsedSecondItemsTmp, metodos_pago: secondVenta.metodos_pago,
+                con_iva: secondVenta.con_iva ?? false, estado: 'pagado',
+                fecha_emision: secondVenta.fecha || new Date().toISOString().split('T')[0],
+                sede_id: undefined,
+              });
+              if (reg2?.correlativo) correlativoSecond = reg2.correlativo;
+            }
           }
         } catch { /* non-blocking */ }
         const cleanSecondCliente = secondVenta.cliente ? secondVenta.cliente.replace(/\(WhatsApp\)/gi, '').replace(/ADMIN IA/gi, '').trim() || 'No definido' : 'Consumidor Final';

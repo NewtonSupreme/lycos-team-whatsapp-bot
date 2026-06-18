@@ -74,11 +74,39 @@ export default function VentasPage() {
   const [showPreview, setShowPreview] = useState(false);
   const [selectedSale, setSelectedSale] = useState<any>(null);
   const [showSaleDetail, setShowSaleDetail] = useState(false);
+  const [saleCorrelativo, setSaleCorrelativo] = useState<string>('');
   const [showAbonoDialog, setShowAbonoDialog] = useState(false);
   const [selectedPendiente, setSelectedPendiente] = useState<any>(null);
   const [abonoExtra, setAbonoExtra] = useState(0);
 
   const symbol = (selectedSale?.metodos_pago?.euros > 0 || /euro/i.test(selectedSale?.notes || '') || /euro/i.test(selectedSale?.notas || '')) ? '€' : '$';
+
+  // Load or generate correlativo when a sale detail is opened
+  useEffect(() => {
+    if (!selectedSale?.id || !supabase) { setSaleCorrelativo(''); return; }
+    (async () => {
+      try {
+        const { data: facData } = await supabase.from('facturas')
+          .select('correlativo').eq('referencia_id', selectedSale.id).limit(1).maybeSingle();
+        if (facData?.correlativo) { setSaleCorrelativo(facData.correlativo); return; }
+        // No record yet — generate one now
+        const referencia_tabla = selectedSale.source === 'ia' ? 'ventas_silenciadores' : 'ventas_dia';
+        const modulo_origen = selectedSale.source === 'ia' ? 'bot' : 'silenciadores';
+        const facturaRegistro = await registrarFactura({
+          tipo: 'venta', modulo_origen, referencia_id: selectedSale.id, referencia_tabla,
+          cliente: selectedSale.cliente || 'Consumidor Final',
+          total: selectedSale.total_ingresos || 0, moneda: 'USD',
+          tasa_cambio: selectedSale.tasa_cambio || rates.bcv,
+          total_bs: (selectedSale.total_ingresos || 0) * (selectedSale.tasa_cambio || rates.bcv),
+          items: (selectedSale.desglose || []).flatMap((item: any) => parseDescripcionItems(item.descripcion || '', item.total ?? 0)),
+          metodos_pago: selectedSale.metodos_pago, con_iva: selectedSale.con_iva ?? false,
+          estado: 'pagado', fecha_emision: selectedSale.fecha || new Date().toISOString().split('T')[0],
+          sede_id: currentSede?.id || undefined,
+        });
+        if (facturaRegistro?.correlativo) setSaleCorrelativo(facturaRegistro.correlativo);
+      } catch { setSaleCorrelativo(''); }
+    })();
+  }, [selectedSale?.id]);
 
   // Payment methods (Stored in USD/Euros)
   const [metodosPago, setMetodosPago] = useState({
@@ -798,13 +826,32 @@ export default function VentasPage() {
       ? ((mp.pago_movil > 0 || mp.efectivo_ves > 0 || venta.isCashea) ? 'dual' : 'usd')
       : printCurrencyMode;
 
-    // Look up correlativo from facturas table before generating PDF
+    // Look up correlativo from facturas table; generate on-the-fly if missing
     let correlativoReprint: string | undefined;
     try {
       if (supabase) {
         const { data: facData } = await supabase.from('facturas')
           .select('correlativo').eq('referencia_id', venta.id).limit(1).maybeSingle();
-        if (facData?.correlativo) correlativoReprint = facData.correlativo;
+        if (facData?.correlativo) {
+          correlativoReprint = facData.correlativo;
+        } else {
+          const referencia_tabla = venta.source === 'ia' ? 'ventas_silenciadores' : 'ventas_dia';
+          const modulo_origen = venta.source === 'ia' ? 'bot' : 'silenciadores';
+          const parsedItemsReprint = (venta.desglose || []).flatMap((item: any) =>
+            parseDescripcionItems(item.descripcion || '', item.total ?? item.precio_unitario ?? 0));
+          const reg = await registrarFactura({
+            tipo: 'venta', modulo_origen, referencia_id: venta.id, referencia_tabla,
+            cliente: venta.cliente || 'Consumidor Final',
+            total: venta.total_ingresos || 0, moneda: 'USD',
+            tasa_cambio: venta.tasa_cambio || rates.bcv,
+            total_bs: (venta.total_ingresos || 0) * (venta.tasa_cambio || rates.bcv),
+            items: parsedItemsReprint, metodos_pago: venta.metodos_pago,
+            con_iva: venta.con_iva ?? false, estado: 'pagado',
+            fecha_emision: venta.fecha || new Date().toISOString().split('T')[0],
+            sede_id: currentSede?.id || undefined,
+          });
+          if (reg?.correlativo) correlativoReprint = reg.correlativo;
+        }
       }
     } catch { /* non-blocking */ }
 
@@ -2096,7 +2143,7 @@ export default function VentasPage() {
               <div className="bg-primary/5 p-8 border-b border-border/30">
                  <DialogTitle className="text-2xl font-black tracking-tighter flex items-center gap-3 uppercase italic">
                    {selectedSale.source === 'ia' ? <Bot className="w-8 h-8 text-violet-500" /> : <Receipt className="w-8 h-8 text-primary" />}
-                   {selectedSale.source === 'ia' ? 'REGISTRO DE IA' : `FACTURA #${selectedSale.id?.slice(0, 8)}`}
+                   {saleCorrelativo || (selectedSale.source === 'ia' ? 'REGISTRO DE IA' : `FACTURA #${selectedSale.id?.slice(0, 8).toUpperCase()}`)}
                  </DialogTitle>
               </div>
               <div className="p-8 space-y-6">
@@ -2136,9 +2183,15 @@ export default function VentasPage() {
                        <tr><th className="px-4 py-3 uppercase">ARTÍCULO</th><th className="px-4 py-3 text-center uppercase">CANT</th><th className="px-4 py-3 text-right uppercase">TOTAL</th></tr>
                      </thead>
                      <tbody className="divide-y divide-border/20">
-                       {selectedSale.desglose?.map((item: any, idx: number) => (
-                         <tr key={idx}><td className="px-4 py-3 uppercase font-bold">{item.descripcion}</td><td className="px-4 py-3 text-center font-black">{item.cantidad}</td><td className="px-4 py-3 text-right font-black">{symbol}{item.total?.toFixed(2)}</td></tr>
-                       ))}
+                       {(selectedSale.desglose || []).flatMap((item: any, idx: number) =>
+                         parseDescripcionItems(item.descripcion || '', item.total ?? item.precio_unitario ?? 0).map((parsed, pidx) => (
+                           <tr key={`${idx}-${pidx}`}>
+                             <td className="px-4 py-3 uppercase font-bold">{parsed.descripcion}</td>
+                             <td className="px-4 py-3 text-center font-black">{parsed.cantidad}</td>
+                             <td className="px-4 py-3 text-right font-black">{symbol}{parsed.total?.toFixed(2)}</td>
+                           </tr>
+                         ))
+                       )}
                      </tbody>
                    </table>
                 </div>

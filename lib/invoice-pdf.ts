@@ -68,15 +68,17 @@ export const generateInvoicePDF = (
     doc.setFont('helvetica', 'bold');
     doc.text('MECÁNICA INTEGRAL', margin, 31);
 
-    // Nota de Entrega Title (Top Right)
+    // Correlativo / Nota de Entrega (Top Right)
+    const correlativoLabel = data.correlativo ? 'FACTURA' : 'NOTA DE ENTREGA #';
+    const correlativoValue = data.correlativo || (data.id ? data.id.slice(0, 8).toUpperCase() : 'BORRADOR');
     doc.setTextColor(...grayLight);
     doc.setFontSize(7);
     doc.setFont('helvetica', 'bold');
-    doc.text('NOTA DE ENTREGA #', rightAlign, 20, { align: 'right' });
-    
+    doc.text(correlativoLabel, rightAlign, 20, { align: 'right' });
+
     doc.setTextColor(...black);
     doc.setFontSize(14);
-    doc.text(`${data.correlativo || data.id?.slice(0, 8).toUpperCase() || 'BORRADOR'}`, rightAlign, 27, { align: 'right' });
+    doc.text(correlativoValue, rightAlign, 27, { align: 'right' });
     
     doc.setTextColor(...grayDark);
     doc.setFontSize(9);
