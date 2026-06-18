@@ -102,20 +102,24 @@ export function parseDescripcionItems(descripcion: string, totalPrecio = 0): Des
   const raw = (descripcion || '').trim();
   if (!raw) return [{ descripcion: 'Servicio General', cantidad: 1, precio_unitario: totalPrecio, total: totalPrecio }];
 
+  const SEP = ' + ';
+  // Only split multi-component format when at least one ' + ' separator exists
+  if (!raw.includes(SEP)) {
+    return [{ descripcion: raw, cantidad: 1, precio_unitario: totalPrecio, total: totalPrecio }];
+  }
+
+  const firstSepIdx = raw.indexOf(SEP);
   const colonIdx = raw.indexOf(': ');
   let serviceLabel = '';
   let componentStr = raw;
 
-  if (colonIdx > 0) {
+  // Colon must appear BEFORE the first ' + ' to be a label separator
+  if (colonIdx > 0 && colonIdx < firstSepIdx) {
     serviceLabel = raw.substring(0, colonIdx).trim();
     componentStr = raw.substring(colonIdx + 2).trim();
   }
 
-  const parts = componentStr.split(' + ').map(p => p.trim()).filter(Boolean);
-
-  if (parts.length <= 1 && !serviceLabel) {
-    return [{ descripcion: raw, cantidad: 1, precio_unitario: totalPrecio, total: totalPrecio }];
-  }
+  const parts = componentStr.split(SEP).map(p => p.trim()).filter(Boolean);
 
   const result: DesgloseItem[] = [];
   if (serviceLabel) {

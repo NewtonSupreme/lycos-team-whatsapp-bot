@@ -14,7 +14,7 @@ import {
 import { supabase, updateInventarioStock, registrarFactura } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
-import { cn } from '@/lib/utils';
+import { cn, parseDescripcionItems } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useSedeStore } from '@/lib/store/useSedeStore';
@@ -813,7 +813,7 @@ export default function VentasPage() {
       correlativo: correlativoReprint,
       fecha: new Date(venta.fecha || venta.created_at).toLocaleDateString(),
       cliente: venta.cliente,
-      items: venta.desglose || [{ descripcion: 'Producto', cantidad: 1, total: venta.total_ingresos }],
+      items: (venta.desglose || [{ descripcion: 'Producto', cantidad: 1, precio_unitario: venta.total_ingresos, total: venta.total_ingresos }]).flatMap((item: any) => parseDescripcionItems(item.descripcion || '', item.total ?? item.precio_unitario ?? 0)),
       total: venta.total_ingresos,
       notas: venta.notas,
       tasa_bcv: bcvRate,

@@ -510,7 +510,7 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
       - Si el administrador envía una imagen de un vehículo Y TAMBIÉN especifica el servicio, precio o estatus en el texto/caption (ej. "2007 Ricardo chaneton Cambio silenciador intermedio"):
         * El asistente DEBE registrar el servicio de forma INMEDIATA en la tabla de servicios imprimiendo el tag [SERVICIO_UPSERT: ...] al final.
         * ¡CRÍTICO! NUNCA pidas confirmación, ni solicites datos adicionales, ni pidas la sede. Registra de una vez.
-        * Nombre del cliente: Usa el nombre que detectes en el mensaje, si no hay, usa el nombre del administrador. No exijas que se cree un cliente primero.
+        * Nombre del cliente: Usa el nombre que detectes en el mensaje. Si NO hay ningún nombre de cliente identificable en el mensaje, deja el campo nombre_cliente VACÍO (no uses el nombre del administrador ni ningún nombre genérico). No exijas que se cree un cliente primero.
         * Información del Vehículo: Extrae la marca, modelo y año del texto o de la imagen (ej. "2007 Ricardo chaneton").
         * Estatus: Mapea a 'completada' por defecto si es un trabajo realizado, o 'en_proceso' si lo especifica, o 'pendiente' si dice "presupuesto por definir" o similar.
         * Descripción: Usa el servicio detallado (ej. "Cambio silenciador intermedio"). Si dice "presupuesto por definir", escribe "por definir" en el campo.
@@ -3569,29 +3569,28 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
             const now = new Date();
             const adminName = ctx.memoria?.nombre || ctx.adminName || 'Administrador';
-            const defaultName = adminName;
-            const nameToUse = nombreCliente || defaultName;
+            // Only use the provided nombre_cliente — NEVER default to admin's own name
+            const nameToUse = nombreCliente || null;
 
             let finalClientId = clienteId;
             let finalVehId = vehId;
 
-            // Resolve or create client & vehicle if IDs missing
-            const clientPhone = telefono || from;
-            if (!finalClientId && nameToUse) {
+            // Resolve or create client & vehicle only when we have an explicit client name or ID
+            const clientPhone = telefono || (nameToUse ? from : null);
+            if (!finalClientId && nameToUse && clientPhone) {
               const { clientId: newCId } = await getOrCreateClientAndVehicle(
                 db, clientPhone, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
               );
               finalClientId = newCId || null;
             }
-            if (finalClientId && !finalVehId && (vehiculoInfo || placa)) {
+            if (finalClientId && !finalVehId && (vehiculoInfo || placa) && clientPhone) {
               const { vehicleId: newVId } = await getOrCreateClientAndVehicle(
-                db, clientPhone, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
+                db, clientPhone, nameToUse || '', vehiculoInfo || '', placa || '', undefined, undefined, sedeId
               );
               finalVehId = newVId || null;
             }
 
-            // After resolving client, get the actual client name from DB
-            // so we never store the admin's name as nombre_cliente
+            // Resolve client display name from DB if we have an ID but no explicit name
             let resolvedClientName = nombreCliente || '';
             if (finalClientId && !nombreCliente) {
               const { data: clientData } = await db.from('clientes').select('nombre, apellido').eq('id', finalClientId).maybeSingle();
@@ -3608,7 +3607,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             const servObj: any = {
               cliente_id: finalClientId,
               vehiculo_id: finalVehId,
-              nombre_cliente: resolvedClientName || nameToUse,
+              nombre_cliente: resolvedClientName || 'No definido',
               telefono: telefono || '00000000000',
               vehiculo_info: vehiculoInfo || 'Vehículo desconocido',
               placa: placa || 'SIN-PLACA',

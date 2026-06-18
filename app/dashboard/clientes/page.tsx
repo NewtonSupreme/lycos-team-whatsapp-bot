@@ -442,79 +442,137 @@ export default function ClientesPage() {
 
       {/* Modal nuevo/editar */}
       <Dialog open={showModal} onOpenChange={setShowModal}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{editCliente ? 'Editar Cliente' : 'Nuevo Cliente'}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              {editCliente ? (
+                <>
+                  <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
+                    <Edit className="w-3.5 h-3.5 text-primary" />
+                  </div>
+                  Editar Cliente
+                </>
+              ) : (
+                <>
+                  <div className="w-7 h-7 rounded-lg bg-green-500/10 flex items-center justify-center">
+                    <Plus className="w-3.5 h-3.5 text-green-500" />
+                  </div>
+                  Nuevo Cliente
+                </>
+              )}
+            </DialogTitle>
           </DialogHeader>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Nombre *</label>
-              <Input value={form.nombre} onChange={e => setForm(p => ({ ...p, nombre: e.target.value }))} placeholder="Ej: Carlos" />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Apellido *</label>
-              <Input value={form.apellido} onChange={e => setForm(p => ({ ...p, apellido: e.target.value }))} placeholder="Ej: Rodríguez" />
-            </div>
-            <div className="space-y-1.5 col-span-2">
-              <label className="text-xs font-medium text-muted-foreground">Email *</label>
-              <Input type="email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} placeholder="correo@ejemplo.com" />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Teléfono *</label>
-              <Input value={form.telefono} onChange={e => setForm(p => ({ ...p, telefono: e.target.value }))} placeholder="+58412-000-0000" />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Cédula</label>
-              <Input value={form.cedula} onChange={e => setForm(p => ({ ...p, cedula: e.target.value }))} placeholder="V-12345678" />
-            </div>
-            <div className="space-y-1.5 col-span-2">
-              <label className="text-xs font-medium text-muted-foreground">Dirección</label>
-              <Input value={form.direccion} onChange={e => setForm(p => ({ ...p, direccion: e.target.value }))} placeholder="Ej: Los Teques, Miranda" />
-            </div>
-             <div className="space-y-1.5 col-span-2">
-              <label className="text-xs font-medium text-muted-foreground">Notas</label>
-              <textarea
-                className="flex w-full rounded-lg border border-border/50 bg-background/50 px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary resize-none min-h-[60px]"
-                value={form.notas}
-                onChange={e => setForm(p => ({ ...p, notas: e.target.value }))}
-                placeholder="Observaciones del cliente..."
-              />
-            </div>
 
-            {/* Vehiculos en edicion */}
-            {editCliente && (
-              <div className="col-span-2 mt-2 pt-2 border-t border-border/30">
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-bold text-primary uppercase">Vehículos</label>
-                  <Button variant="ghost" size="sm" onClick={openVehiculoNew} className="h-7 text-[10px] gap-1 px-2">
-                    <Plus className="w-3 h-3" /> Añadir
+          {/* Datos personales */}
+          <div className="space-y-3">
+            <p className="text-[10px] font-bold text-primary uppercase tracking-widest">Datos Personales</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Nombre *</label>
+                <Input value={form.nombre} onChange={e => setForm(p => ({ ...p, nombre: e.target.value }))} placeholder="Ej: Carlos" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Apellido *</label>
+                <Input value={form.apellido} onChange={e => setForm(p => ({ ...p, apellido: e.target.value }))} placeholder="Ej: Rodríguez" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Teléfono *</label>
+                <Input value={form.telefono} onChange={e => setForm(p => ({ ...p, telefono: e.target.value }))} placeholder="+58412-000-0000" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Cédula</label>
+                <Input value={form.cedula} onChange={e => setForm(p => ({ ...p, cedula: e.target.value }))} placeholder="V-12345678" />
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <label className="text-xs font-medium text-muted-foreground">Email</label>
+                <Input type="email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} placeholder="correo@ejemplo.com" />
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <label className="text-xs font-medium text-muted-foreground">Dirección</label>
+                <Input value={form.direccion} onChange={e => setForm(p => ({ ...p, direccion: e.target.value }))} placeholder="Ej: Los Teques, Miranda" />
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <label className="text-xs font-medium text-muted-foreground">Notas</label>
+                <textarea
+                  className="flex w-full rounded-lg border border-border/50 bg-background/50 px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary resize-none min-h-[56px]"
+                  value={form.notas}
+                  onChange={e => setForm(p => ({ ...p, notas: e.target.value }))}
+                  placeholder="Observaciones del cliente..."
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Vehículos (solo en edición) */}
+          {editCliente && (
+            <div className="space-y-3 pt-3 border-t border-border/30 mt-1">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-bold text-primary uppercase tracking-widest flex items-center gap-1.5">
+                  <Car className="w-3.5 h-3.5" /> Vehículos ({getVehiculos(editCliente.id).length})
+                </p>
+                {can('vehiculos', 'crear') && (
+                  <Button variant="ghost" size="sm" onClick={openVehiculoNew} className="h-7 text-[10px] gap-1 px-2 text-primary hover:bg-primary/10">
+                    <Plus className="w-3 h-3" /> Añadir vehículo
                   </Button>
-                </div>
-                <div className="space-y-2">
-                  {getVehiculos(editCliente.id).map(v => (
-                    <div key={v.id} className="flex items-center justify-between p-2 rounded-lg bg-white/5 border border-border/20 group">
-                      <div className="flex flex-col">
-                        <span className="text-[11px] font-medium">{v.marca} {v.modelo}</span>
-                        <span className="text-[9px] text-muted-foreground font-mono">{v.placa} • {v.color || 'S/C'}</span>
+                )}
+              </div>
+              <div className="space-y-2">
+                {getVehiculos(editCliente.id).map(v => {
+                  const estadoColor: Record<string, string> = {
+                    activo: 'bg-green-500/15 text-green-400 border-green-500/20',
+                    en_servicio: 'bg-blue-500/15 text-blue-400 border-blue-500/20',
+                    listo: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20',
+                    inactivo: 'bg-gray-500/15 text-gray-400 border-gray-500/20',
+                  };
+                  const estadoLabel: Record<string, string> = { activo: 'Activo', en_servicio: 'En Servicio', listo: 'Listo', inactivo: 'Inactivo' };
+                  return (
+                    <div key={v.id} className="flex items-start justify-between p-3 rounded-xl bg-white/4 border border-border/20 group hover:border-border/40 transition-colors">
+                      <div className="flex items-start gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <Car className="w-4 h-4 text-primary" />
+                        </div>
+                        <div>
+                          <p className="text-[12px] font-bold text-foreground">{v.marca} {v.modelo} {v.anio && `(${v.anio})`}</p>
+                          <p className="text-[10px] font-mono text-primary font-bold mt-0.5">{v.placa}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            {v.color && <span className="text-[10px] text-muted-foreground">{v.color}</span>}
+                            {v.color && <span className="text-muted-foreground/30 text-[10px]">•</span>}
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${estadoColor[v.estado] || estadoColor.activo}`}>
+                              {estadoLabel[v.estado] || v.estado}
+                            </span>
+                          </div>
+                          {v.kilometraje && <p className="text-[10px] text-muted-foreground mt-0.5">{Number(v.kilometraje).toLocaleString()} km</p>}
+                        </div>
                       </div>
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={() => openVehiculoEdit(v)} className="p-1 hover:text-primary transition-colors">
-                          <Edit className="w-3 h-3" />
-                        </button>
-                        <button onClick={() => handleDeleteVehiculo(v.id)} className="p-1 hover:text-red-400 transition-colors">
-                          <Trash2 className="w-3 h-3" />
-                        </button>
+                        {can('vehiculos', 'editar') && (
+                          <button onClick={() => openVehiculoEdit(v)} className="p-1.5 rounded-md hover:bg-primary/10 hover:text-primary transition-colors">
+                            <Edit className="w-3 h-3" />
+                          </button>
+                        )}
+                        {can('vehiculos', 'eliminar') && (
+                          <button onClick={() => handleDeleteVehiculo(v.id)} className="p-1.5 rounded-md hover:bg-red-500/10 hover:text-red-400 transition-colors">
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
                       </div>
                     </div>
-                  ))}
-                  {getVehiculos(editCliente.id).length === 0 && (
-                    <p className="text-[10px] text-muted-foreground text-center py-2 opacity-50 italic">Sin vehículos registrados</p>
-                  )}
-                </div>
+                  );
+                })}
+                {getVehiculos(editCliente.id).length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-5 text-center border border-dashed border-border/30 rounded-xl">
+                    <Car className="w-6 h-6 text-muted-foreground/30 mb-1.5" />
+                    <p className="text-[11px] text-muted-foreground/50 italic">Sin vehículos registrados</p>
+                    {can('vehiculos', 'crear') && (
+                      <button onClick={openVehiculoNew} className="mt-2 text-[10px] text-primary hover:underline">+ Añadir primer vehículo</button>
+                    )}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-          <DialogFooter className="gap-2 mt-2">
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 mt-2 pt-2 border-t border-border/20">
             <Button variant="outline" onClick={() => setShowModal(false)}>Cancelar</Button>
             <Button onClick={handleSave} disabled={!form.nombre || !form.apellido || !form.telefono}>
               {editCliente ? 'Guardar Cambios' : 'Crear Cliente'}

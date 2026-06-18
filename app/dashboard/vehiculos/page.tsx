@@ -1,12 +1,12 @@
 'use client';
-import React, { useState } from 'react';
-import { Car, Plus, Search, Edit, Trash2, Eye, Wrench } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Car, Plus, Search, Edit, Trash2, Eye, Wrench, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import StatusBadge from '@/components/ui/status-badge';
-import { fetchVehiculos, createVehiculo, updateVehiculo, deleteVehiculo, fetchClientes } from '@/lib/supabase';
+import { fetchVehiculos, createVehiculo, updateVehiculo, deleteVehiculo, fetchClientes, supabase } from '@/lib/supabase';
 import { Vehiculo, Cliente, Servicio } from '@/types';
 import { formatDate, cn } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -30,6 +30,9 @@ export default function VehiculosPage() {
   const [editVehiculo, setEditVehiculo] = useState<Vehiculo | null>(null);
   const [viewVehiculo, setViewVehiculo] = useState<Vehiculo | null>(null);
   const [form, setForm] = useState({ cliente_id: '', marca: '', modelo: '', anio: '', placa: '', color: '', kilometraje: '', vin: '', estado: 'activo', notas: '' });
+  const [plateStatus, setPlateStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
+  const [plateOwner, setPlateOwner] = useState('');
+  const plateTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Filtering & Sorting
   const [sortBy, setSortBy] = useState('recent');
@@ -109,8 +112,40 @@ export default function VehiculosPage() {
 
   const hasActiveFilters = search || filterEstado !== 'todos' || dateFilter || monthFilter !== 'all' || sortBy !== 'recent';
 
-  const openNew = () => { setEditVehiculo(null); setForm({ cliente_id:'', marca:'', modelo:'', anio:'', placa:'', color:'', kilometraje:'', vin:'', estado:'activo', notas:'' }); setShowModal(true); };
-  const openEdit = (v: Vehiculo) => { setEditVehiculo(v); setForm({ cliente_id:v.cliente_id, marca:v.marca, modelo:v.modelo, anio:v.anio.toString(), placa:v.placa, color:v.color||'', kilometraje:v.kilometraje?.toString()||'', vin:v.vin||'', estado:v.estado, notas:v.notas||'' }); setShowModal(true); };
+  const checkPlate = async (placa: string, currentId?: string) => {
+    const clean = placa.replace(/[-\s]/g, '').toUpperCase();
+    if (clean.length < 3) { setPlateStatus('idle'); setPlateOwner(''); return; }
+    setPlateStatus('checking');
+    try {
+      if (!supabase) { setPlateStatus('idle'); return; }
+      const { data } = await supabase.from('vehiculos')
+        .select('id, marca, modelo, anio, clientes(nombre, apellido)')
+        .ilike('placa', clean)
+        .limit(1)
+        .maybeSingle();
+      if (data && data.id !== currentId) {
+        const c = (data as any).clientes;
+        setPlateOwner(c ? `${c.nombre} ${c.apellido}` : 'Cliente no asignado');
+        setPlateStatus('taken');
+      } else {
+        setPlateOwner('');
+        setPlateStatus('available');
+      }
+    } catch { setPlateStatus('idle'); }
+  };
+
+  const openNew = () => {
+    setEditVehiculo(null);
+    setForm({ cliente_id:'', marca:'', modelo:'', anio:'', placa:'', color:'', kilometraje:'', vin:'', estado:'activo', notas:'' });
+    setPlateStatus('idle'); setPlateOwner('');
+    setShowModal(true);
+  };
+  const openEdit = (v: Vehiculo) => {
+    setEditVehiculo(v);
+    setForm({ cliente_id:v.cliente_id, marca:v.marca, modelo:v.modelo, anio:v.anio.toString(), placa:v.placa, color:v.color||'', kilometraje:v.kilometraje?.toString()||'', vin:v.vin||'', estado:v.estado, notas:v.notas||'' });
+    setPlateStatus('available'); setPlateOwner('');
+    setShowModal(true);
+  };
 
   const handleSave = async () => {
     try {
@@ -390,7 +425,32 @@ export default function VehiculosPage() {
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">Placa *</label>
-              <Input value={form.placa} onChange={e => setForm(p => ({ ...p, placa: e.target.value.toUpperCase() }))} placeholder="ABC-123" />
+              <div className="relative">
+                <Input
+                  value={form.placa}
+                  onChange={e => {
+                    const val = e.target.value.toUpperCase();
+                    setForm(p => ({ ...p, placa: val }));
+                    clearTimeout(plateTimerRef.current);
+                    plateTimerRef.current = setTimeout(() => checkPlate(val, editVehiculo?.id), 500);
+                  }}
+                  placeholder="ABC-123"
+                  className={plateStatus === 'taken' ? 'border-red-500 pr-8' : plateStatus === 'available' ? 'border-green-500 pr-8' : 'pr-8'}
+                />
+                <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                  {plateStatus === 'checking' && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+                  {plateStatus === 'available' && <CheckCircle2 className="w-4 h-4 text-green-500" />}
+                  {plateStatus === 'taken' && <XCircle className="w-4 h-4 text-red-500" />}
+                </div>
+              </div>
+              {plateStatus === 'taken' && (
+                <p className="text-[11px] text-red-400 flex items-center gap-1">
+                  Placa ya registrada — Propietario: <span className="font-semibold">{plateOwner}</span>
+                </p>
+              )}
+              {plateStatus === 'available' && (
+                <p className="text-[11px] text-green-400">Placa disponible</p>
+              )}
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">Color</label>
@@ -410,7 +470,7 @@ export default function VehiculosPage() {
           </div>
           <DialogFooter className="gap-2 mt-2">
             <Button variant="outline" onClick={() => setShowModal(false)}>Cancelar</Button>
-            <Button onClick={handleSave} disabled={!form.cliente_id || !form.marca || !form.modelo || !form.placa}>
+            <Button onClick={handleSave} disabled={!form.cliente_id || !form.marca || !form.modelo || !form.placa || plateStatus === 'taken' || plateStatus === 'checking'}>
               {editVehiculo ? 'Guardar Cambios' : 'Registrar Vehículo'}
             </Button>
           </DialogFooter>

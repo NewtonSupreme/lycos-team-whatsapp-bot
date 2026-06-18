@@ -26,7 +26,7 @@ import {
 } from 'recharts';
 import { supabase, registrarFactura } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
-import { cn, getLocalISODate } from '@/lib/utils';
+import { cn, getLocalISODate, parseDescripcionItems } from '@/lib/utils';
 import { generateInvoicePDF, generateEgresoPDF } from '@/lib/invoice-pdf';
 import { generateCierrePDF, type CierreData } from '@/lib/cierre-pdf';
 import { generateNotaEntregaPDF } from '@/lib/distribucion-pdf';
@@ -1652,6 +1652,19 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
   const [secondVenta, setSecondVenta] = useState<any | null>(null);
   const [showSelector, setShowSelector] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [correlativo, setCorrelativo] = useState<string>('');
+
+  // Load correlativo from facturas table on mount
+  useEffect(() => {
+    if (!supabase || !venta?.id) return;
+    supabase.from('facturas').select('correlativo').eq('referencia_id', venta.id).limit(1).maybeSingle()
+      .then(({ data }) => { if (data?.correlativo) setCorrelativo(data.correlativo); });
+  }, [venta?.id]);
+
+  // Parse desglose items — split multi-component descriptions into individual lines
+  const parsedItems = (venta.desglose || []).flatMap((item: any) =>
+    parseDescripcionItems(item.descripcion || '', item.total ?? item.precio_unitario ?? 0)
+  );
 
   const cleanCliente = venta.cliente ? venta.cliente.replace(/\(WhatsApp\)/gi, '').replace(/ADMIN IA/gi, '').trim() || 'No definido' : 'Consumidor Final';
 
@@ -1669,10 +1682,10 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
 
       const dataList = [{
         id: venta.id,
-        correlativo,
+        correlativo: correlativo || undefined,
         fecha: venta.fecha,
         cliente: cleanCliente === 'Consumidor Final' ? undefined : cleanCliente,
-        items: venta.desglose || [],
+        items: parsedItems,
         total: venta.total_ingresos,
         notas: venta.notas || undefined,
         pago_usd: venta.pago_usd,
@@ -1695,12 +1708,15 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
           }
         } catch { /* non-blocking */ }
         const cleanSecondCliente = secondVenta.cliente ? secondVenta.cliente.replace(/\(WhatsApp\)/gi, '').replace(/ADMIN IA/gi, '').trim() || 'No definido' : 'Consumidor Final';
+        const parsedSecondItems = (secondVenta.desglose || []).flatMap((item: any) =>
+          parseDescripcionItems(item.descripcion || '', item.total ?? item.precio_unitario ?? 0)
+        );
         dataList.push({
           id: secondVenta.id,
-          correlativo: correlativoSecond,
+          correlativo: correlativoSecond || undefined,
           fecha: secondVenta.fecha,
           cliente: cleanSecondCliente === 'Consumidor Final' ? undefined : cleanSecondCliente,
-          items: secondVenta.desglose || [],
+          items: parsedSecondItems,
           total: secondVenta.total_ingresos,
           notas: secondVenta.notas || undefined,
           pago_usd: secondVenta.pago_usd,
@@ -1744,7 +1760,7 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
               </div>
               <div className="text-right">
                 <p className="text-xs font-bold text-slate-400 uppercase">Factura</p>
-                <p className="text-sm font-bold text-slate-900">#{venta.id.slice(0, 8).toUpperCase()}</p>
+                <p className="text-sm font-bold text-slate-900">{correlativo || `#${venta.id.slice(0, 8).toUpperCase()}`}</p>
                 <p className="text-[10px] text-slate-500 mt-1">{venta.fecha}</p>
               </div>
             </div>
@@ -1772,12 +1788,12 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {(venta.desglose || []).map((item: any, i: number) => (
+                {parsedItems.map((item: any, i: number) => (
                   <tr key={i}>
                     <td className="py-3 text-slate-700">{item.descripcion}</td>
                     <td className="py-3 text-center text-slate-600">{item.cantidad}</td>
-                    <td className="py-3 text-right text-slate-600">${item.precio_unitario.toFixed(2)}</td>
-                    <td className="py-3 text-right font-medium text-slate-900">${item.total.toFixed(2)}</td>
+                    <td className="py-3 text-right text-slate-600">${Number(item.precio_unitario ?? 0).toFixed(2)}</td>
+                    <td className="py-3 text-right font-medium text-slate-900">${Number(item.total ?? 0).toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>

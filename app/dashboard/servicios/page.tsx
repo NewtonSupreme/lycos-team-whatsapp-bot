@@ -1,12 +1,12 @@
 'use client';
-import React, { useState, useEffect, useCallback } from 'react';
-import { 
-  Wrench, Search, Calendar, Clock, CheckCircle, AlertCircle, 
-  Loader2, RefreshCw, User, Car, Phone, ChevronDown, X, 
-  Banknote, BadgeCheck, Activity, Plus, Trash2, Edit3, 
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  Wrench, Search, Calendar, Clock, CheckCircle, AlertCircle,
+  Loader2, RefreshCw, User, Car, Phone, ChevronDown, X,
+  Banknote, BadgeCheck, Activity, Plus, Trash2, Edit3,
   ChevronRight, ChevronLeft, MoreHorizontal, MessageSquare, Tag, Info,
   MapPin, Filter, LayoutGrid, List, FileText, MoveHorizontal, Download,
-  TrendingUp, Save
+  TrendingUp, Save, CheckCircle2, XCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase, registrarFactura, createPresupuesto, generateNumeroPresupuesto, syncClientData } from '@/lib/supabase';
@@ -857,6 +857,10 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
   const [filteredClientes, setFilteredClientes] = useState<any[]>([]);
   const [showClientResults, setShowClientResults] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [plateStatus, setPlateStatus] = useState<'idle' | 'checking' | 'found' | 'new'>('idle');
+  const [clientVehiculos, setClientVehiculos] = useState<any[]>([]);
+  const [showVehiculoSelector, setShowVehiculoSelector] = useState(false);
+  const plateTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const { user } = useAppStore();
 
   useEffect(() => {
@@ -901,17 +905,58 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
   }, [formData.nombre_cliente, allClientes, cita]);
 
   const selectCliente = (c: any) => {
-    const mainVehiculo = c.vehiculos?.[0];
+    const vehs = c.vehiculos || [];
+    setClientVehiculos(vehs);
+    const mainVehiculo = vehs[0];
     setSelectedClienteId(c.id);
     setSelectedVehiculoId(mainVehiculo?.id || null);
     setFormData({
       ...formData,
       nombre_cliente: `${c.nombre} ${c.apellido}`,
       telefono: c.telefono || '',
-      vehiculo_info: mainVehiculo ? `${mainVehiculo.marca} ${mainVehiculo.modelo}` : '',
-      placa: mainVehiculo ? mainVehiculo.placa : ''
+      vehiculo_info: mainVehiculo ? `${mainVehiculo.marca} ${mainVehiculo.modelo}` : formData.vehiculo_info,
+      placa: mainVehiculo ? mainVehiculo.placa : formData.placa,
     });
+    if (mainVehiculo) setPlateStatus('found');
     setShowClientResults(false);
+  };
+
+  const checkPlateForService = async (placa: string) => {
+    const clean = placa.replace(/[-\s]/g, '').toUpperCase();
+    if (clean.length < 3) { setPlateStatus('idle'); return; }
+    setPlateStatus('checking');
+    try {
+      if (!supabase) { setPlateStatus('idle'); return; }
+      const { data } = await supabase.from('vehiculos')
+        .select('id, marca, modelo, anio, placa, clientes(id, nombre, apellido, telefono, vehiculos(id, marca, modelo, placa))')
+        .ilike('placa', clean)
+        .limit(1)
+        .maybeSingle();
+      if (data) {
+        const c = (data as any).clientes;
+        const vehs: any[] = c?.vehiculos || [data];
+        setClientVehiculos(vehs);
+        setSelectedVehiculoId(data.id);
+        if (c) {
+          setSelectedClienteId(c.id);
+          setFormData(prev => ({
+            ...prev,
+            vehiculo_info: `${data.marca} ${data.modelo}${data.anio ? ` ${data.anio}` : ''}`,
+            nombre_cliente: `${c.nombre} ${c.apellido}`,
+            telefono: c.telefono || prev.telefono,
+          }));
+        } else {
+          setFormData(prev => ({
+            ...prev,
+            vehiculo_info: `${data.marca} ${data.modelo}${data.anio ? ` ${data.anio}` : ''}`,
+          }));
+        }
+        setPlateStatus('found');
+      } else {
+        setClientVehiculos([]);
+        setPlateStatus('new');
+      }
+    } catch { setPlateStatus('idle'); }
   };
 
   const handleSave = async () => {
@@ -1236,15 +1281,22 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
                 onFocus={() => formData.nombre_cliente.length > 1 && setShowClientResults(true)}
               />
               {showClientResults && (
-                <div className="absolute top-full left-0 right-0 z-[150] mt-1 bg-popover border border-border rounded-xl sm:rounded-2xl shadow-2xl max-h-40 overflow-y-auto no-scrollbar py-1">
+                <div className="absolute top-full left-0 right-0 z-[150] mt-1 bg-popover border border-border rounded-xl sm:rounded-2xl shadow-2xl max-h-48 overflow-y-auto no-scrollbar py-1">
                   {filteredClientes.map((c, idx) => (
                     <button
                       key={c.id || idx}
                       onClick={() => selectCliente(c)}
-                      className="w-full text-left px-4 py-2 hover:bg-muted transition-colors group"
+                      className="w-full text-left px-4 py-2.5 hover:bg-muted transition-colors group"
                     >
                       <p className="text-sm font-bold text-foreground group-hover:text-primary transition-colors">{c.nombre} {c.apellido}</p>
-                      <p className="text-[10px] text-muted-foreground">{c.telefono}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <p className="text-[10px] text-muted-foreground">{c.telefono}</p>
+                        {c.vehiculos?.length > 0 && (
+                          <span className="text-[10px] text-primary/70 flex items-center gap-0.5">
+                            <Car className="w-2.5 h-2.5" />{c.vehiculos.length} veh.
+                          </span>
+                        )}
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -1259,26 +1311,72 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
                 onChange={e => setFormData({...formData, telefono: e.target.value})}
               />
             </div>
-            <div className="col-span-2 sm:col-span-1 space-y-2">
+            <div className="col-span-2 sm:col-span-1 space-y-2 relative">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Veh&iacute;culo / Modelo</label>
-              <input 
-                className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
-                placeholder="Ej: Toyota Corolla 2015"
-                value={formData.vehiculo_info}
-                onChange={e => {
-                  setFormData({...formData, vehiculo_info: e.target.value});
-                  setSelectedVehiculoId(null);
-                }}
-              />
+              <div className="relative">
+                <input
+                  className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all pr-8"
+                  placeholder="Ej: Toyota Corolla 2015"
+                  value={formData.vehiculo_info}
+                  onChange={e => {
+                    setFormData({...formData, vehiculo_info: e.target.value});
+                    setSelectedVehiculoId(null);
+                  }}
+                />
+                {clientVehiculos.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowVehiculoSelector(v => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-primary hover:text-primary/70"
+                  >
+                    <ChevronDown className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+              {showVehiculoSelector && clientVehiculos.length > 1 && (
+                <div className="absolute top-full left-0 right-0 z-[200] mt-1 bg-popover border border-border rounded-xl shadow-2xl py-1">
+                  {clientVehiculos.map((v: any) => (
+                    <button
+                      key={v.id}
+                      onClick={() => {
+                        setSelectedVehiculoId(v.id);
+                        setFormData(prev => ({ ...prev, vehiculo_info: `${v.marca} ${v.modelo}`, placa: v.placa }));
+                        setShowVehiculoSelector(false);
+                        setPlateStatus('found');
+                      }}
+                      className="w-full text-left px-4 py-2 hover:bg-muted transition-colors"
+                    >
+                      <p className="text-xs font-bold">{v.marca} {v.modelo}</p>
+                      <p className="text-[10px] text-muted-foreground font-mono">{v.placa}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="col-span-2 sm:col-span-1 space-y-2">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">N&uacute;mero de Placa</label>
-              <input 
-                className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground font-mono uppercase focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
-                placeholder="ABC-123"
-                value={formData.placa}
-                onChange={e => setFormData({...formData, placa: e.target.value.toUpperCase()})}
-              />
+              <div className="relative">
+                <input
+                  className={`w-full bg-muted/50 border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground font-mono uppercase focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all pr-9 ${
+                    plateStatus === 'found' ? 'border-green-500/60' : plateStatus === 'new' ? 'border-yellow-500/60' : 'border-border'
+                  }`}
+                  placeholder="ABC-123"
+                  value={formData.placa}
+                  onChange={e => {
+                    const val = e.target.value.toUpperCase();
+                    setFormData({...formData, placa: val});
+                    clearTimeout(plateTimerRef.current);
+                    plateTimerRef.current = setTimeout(() => checkPlateForService(val), 600);
+                  }}
+                />
+                <div className="absolute right-2.5 top-1/2 -translate-y-1/2">
+                  {plateStatus === 'checking' && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+                  {plateStatus === 'found' && <CheckCircle2 className="w-4 h-4 text-green-500" />}
+                  {plateStatus === 'new' && <XCircle className="w-4 h-4 text-yellow-500" />}
+                </div>
+              </div>
+              {plateStatus === 'found' && <p className="text-[10px] text-green-400 ml-1">Vehículo encontrado en sistema</p>}
+              {plateStatus === 'new' && <p className="text-[10px] text-yellow-400 ml-1">Placa no registrada — se vinculará al guardar</p>}
             </div>
             <div className="col-span-2 sm:col-span-1 space-y-2">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Tipo de Servicio</label>
@@ -1762,11 +1860,19 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
 
   const [printMode, setPrintMode] = useState<'single' | 'dual' | 'diferente'>('dual');
   const [printSide, setPrintSide] = useState<'left' | 'right'>('left');
+  const [existingCorrelativo, setExistingCorrelativo] = useState('');
+
+  // Load correlativo from facturas table for already-registered services
+  useEffect(() => {
+    if (!supabase || !cita?.id) return;
+    supabase.from('facturas').select('correlativo').eq('referencia_id', cita.id).limit(1).maybeSingle()
+      .then(({ data }) => { if (data?.correlativo) setExistingCorrelativo(data.correlativo); });
+  }, [cita?.id]);
 
   const handleDownload = (correlativo?: string) => {
-    const data1 = { 
-      id: cita.id, 
-      correlativo,
+    const data1 = {
+      id: cita.id,
+      correlativo: correlativo || existingCorrelativo || undefined,
       fecha: cita.fecha, 
       cliente: clientName, 
       vehiculo: vehicleStr, 
@@ -2050,12 +2156,13 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
           <div className="flex flex-col lg:flex-row gap-10">
             {/* Factura 1 */}
             <div className="flex-1 border border-gray-200 p-6 sm:p-10 rounded-[40px] shadow-sm bg-white relative transition-all duration-500">
-               <InvoiceEditor 
-                 cita={cita} 
+               <InvoiceEditor
+                 cita={cita}
                  clientName={clientName} setClientName={setClientName}
                  vehicleStr={vehicleStr} setVehicleStr={setVehicleStr}
                  items={items} setItems={setItems}
                  withIva={withIva} setWithIva={setWithIva}
+                 correlativo={existingCorrelativo || undefined}
                  rates={rates}
                  subtotal={subtotal} ivaAmount={ivaAmount} total={total} totalVes={totalVes}
                />
@@ -2123,10 +2230,10 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
 }
 
 // ── Subcomponent: Invoice Editor ──────────────────────────────
-function InvoiceEditor({ 
-  cita, clientName, setClientName, vehicleStr, setVehicleStr, 
-  items, setItems, withIva, setWithIva, rates, 
-  subtotal, ivaAmount, total, totalVes 
+function InvoiceEditor({
+  cita, clientName, setClientName, vehicleStr, setVehicleStr,
+  items, setItems, withIva, setWithIva, rates,
+  subtotal, ivaAmount, total, totalVes, correlativo
 }: any) {
   const updateItem = (i: number, f: string, v: any) => {
     const n = [...items];
@@ -2146,8 +2253,8 @@ function InvoiceEditor({
           <p className="text-[10px] text-slate-500 font-black uppercase tracking-[0.4em] mt-2">Mecánica Integral</p>
         </div>
         <div className="text-left sm:text-right">
-          <p className="text-[9px] font-black text-gray-300 uppercase tracking-widest mb-1">Nota de Entrega #</p>
-          <p className="text-base font-black text-slate-900">{cita.id.slice(0, 8).toUpperCase()}</p>
+          <p className="text-[9px] font-black text-gray-300 uppercase tracking-widest mb-1">Nota de Entrega</p>
+          <p className="text-base font-black text-slate-900">{correlativo || `#${cita.id.slice(0, 8).toUpperCase()}`}</p>
           <p className="text-[10px] text-gray-500 mt-1 font-bold">{cita.fecha}</p>
         </div>
       </div>
