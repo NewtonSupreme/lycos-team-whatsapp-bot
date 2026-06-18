@@ -479,6 +479,7 @@ export interface InventarioItem {
   descripcion: string | null;
   precio_usd: number | null;
   precio_bs: number | null;
+  precio_fabricante?: number | null;
   stock: number;
   stock_minimo: number;
   unidad: string;
@@ -503,6 +504,7 @@ export interface DistribucionItem {
   stock_antes: number;
   stock_despues: number;
   precio_usd: number;
+  precio_fabricante?: number;
   unidad: string;
 }
 
@@ -525,6 +527,52 @@ export interface Distribucion {
   sede_id?: string | null;
   created_at: string;
   updated_at?: string;
+}
+
+// ── Notas de Ganancia (Fabricante → Distribuidor → Reventa) ────────────
+export interface NotaGananciaItem {
+  nombre: string;
+  codigo?: string | null;
+  cantidad: number;
+  precio_fabricante: number;   // costo unitario (lo que se paga al fabricante)
+  precio_venta: number;        // reventa unitaria (a Lycos/talleres)
+  ganancia_unit: number;       // precio_venta - precio_fabricante
+  ganancia_total: number;      // ganancia_unit * cantidad
+}
+
+export interface NotaGanancia {
+  id: string;
+  numero_nota: string;         // NG-YYYY-XXXX
+  fecha: string;
+  cliente: string;             // a quién se le revende
+  responsable: string;
+  items: NotaGananciaItem[];
+  total_costo: number;
+  total_venta: number;
+  total_ganancia: number;
+  observaciones?: string | null;
+  sede_id?: string | null;
+  created_at: string;
+  updated_at?: string;
+}
+
+/**
+ * Fila unificada de ganancia para la tabla del módulo (distribución auto + nota manual).
+ */
+export interface GananciaRow {
+  id: string;
+  origen: 'distribucion' | 'manual';
+  numero_nota: string;
+  fecha: string;
+  cliente: string;             // sede destino o cliente manual
+  responsable: string;
+  total_costo: number;
+  total_venta: number;
+  total_ganancia: number;
+  margen_pct: number;          // total_ganancia / total_venta * 100
+  // referencias a la entidad original (para abrir detalle / PDF)
+  distribucion?: Distribucion;
+  nota?: NotaGanancia;
 }
 
 // ── Presupuestos (Budgets/Quotes) ──────────────────────────────────────

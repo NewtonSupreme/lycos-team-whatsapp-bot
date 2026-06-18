@@ -5,14 +5,21 @@ import {
   Truck, Package, Search, Plus, ChevronRight, X, Check,
   AlertTriangle, RefreshCw, MapPin, User, Users, FileText,
   Download, Eye, Clock, CheckCircle2, Loader2, ArrowRight,
-  BoxSelect, ShieldAlert, Boxes, BadgeCheck, Filter
+  BoxSelect, ShieldAlert, Boxes, BadgeCheck, Filter,
+  TrendingUp, DollarSign, Percent, Factory, Wallet
 } from 'lucide-react';
-import { supabase, fetchInventario, createDistribucion, fetchDistribuciones, generateNumeroNota, updateDistribucionEstado, registrarFactura } from '@/lib/supabase';
+import {
+  supabase, fetchInventario, createDistribucion, fetchDistribuciones, generateNumeroNota,
+  updateDistribucionEstado, registrarFactura,
+  fetchGananciasDistribuciones, fetchNotasGanancia, createNotaGanancia,
+  generateNumeroNotaGanancia,
+} from '@/lib/supabase';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { logActivity } from '@/lib/activity';
 import { generateNotaEntregaPDF } from '@/lib/distribucion-pdf';
-import { InventarioItem, Distribucion, DistribucionItem } from '@/types';
+import { generateNotaGananciaPDF } from '@/lib/ganancia-pdf';
+import { InventarioItem, Distribucion, DistribucionItem, NotaGanancia, NotaGananciaItem, GananciaRow } from '@/types';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -47,6 +54,7 @@ interface DistribucionFormItem {
   stock_disponible: number;
   stock_minimo: number;
   precio_usd: number;
+  precio_fabricante: number;
   unidad: string;
   cantidad: number;
 }
@@ -139,6 +147,7 @@ function NuevaDistribucionWizard({
       stock_disponible: item.stock,
       stock_minimo: item.stock_minimo,
       precio_usd: item.precio_usd || 0,
+      precio_fabricante: item.precio_fabricante || 0,
       unidad: item.unidad || 'unidad',
       cantidad: 1,
     }]);
@@ -176,6 +185,7 @@ function NuevaDistribucionWizard({
         stock_antes: i.stock_disponible,
         stock_despues: i.stock_disponible - i.cantidad,
         precio_usd: i.precio_usd,
+        precio_fabricante: i.precio_fabricante,
         unidad: i.unidad,
       }));
 
@@ -797,6 +807,709 @@ function DetailModal({ dist, onClose, tasaBCV }: {
   );
 }
 
+// ─── GANANCIAS: helpers ──────────────────────────────────────────────────────
+
+/**
+ * Construye filas de ganancia unificadas a partir de distribuciones (automático)
+ * y notas de ganancia manuales. `costMap` permite el fallback al costo actual del
+ * inventario cuando una distribución antigua no tiene snapshot de costo.
+ */
+function buildGananciaRows(
+  distribuciones: Distribucion[],
+  notas: NotaGanancia[],
+  costMap: Record<string, number>,
+): GananciaRow[] {
+  const rows: GananciaRow[] = [];
+
+  for (const d of distribuciones) {
+    if (d.estado === 'anulado') continue;
+    let totalCosto = 0;
+    let totalVenta = 0;
+    for (const it of d.items || []) {
+      const costoUnit = (it.precio_fabricante && it.precio_fabricante > 0)
+        ? it.precio_fabricante
+        : (costMap[it.inventario_id] || 0);
+      totalCosto += costoUnit * it.cantidad;
+      totalVenta += (it.precio_usd || 0) * it.cantidad;
+    }
+    const ganancia = totalVenta - totalCosto;
+    rows.push({
+      id: `dist-${d.id}`,
+      origen: 'distribucion',
+      numero_nota: d.numero_nota,
+      fecha: d.fecha,
+      cliente: d.sede_destino_nombre,
+      responsable: d.responsable,
+      total_costo: totalCosto,
+      total_venta: totalVenta,
+      total_ganancia: ganancia,
+      margen_pct: totalVenta > 0 ? (ganancia / totalVenta) * 100 : 0,
+      distribucion: d,
+    });
+  }
+
+  for (const n of notas) {
+    rows.push({
+      id: `nota-${n.id}`,
+      origen: 'manual',
+      numero_nota: n.numero_nota,
+      fecha: n.fecha,
+      cliente: n.cliente,
+      responsable: n.responsable,
+      total_costo: n.total_costo,
+      total_venta: n.total_venta,
+      total_ganancia: n.total_ganancia,
+      margen_pct: n.total_venta > 0 ? (n.total_ganancia / n.total_venta) * 100 : 0,
+      nota: n,
+    });
+  }
+
+  // Orden por fecha desc
+  rows.sort((a, b) => (a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0));
+  return rows;
+}
+
+// ─── GANANCIAS: Nueva Nota Manual ────────────────────────────────────────────
+
+interface NotaGananciaFormItem {
+  inventario_id: string | null;
+  nombre: string;
+  codigo: string | null;
+  cantidad: number;
+  precio_fabricante: number;
+  precio_venta: number;
+}
+
+function NuevaNotaGananciaWizard({
+  inventario, onClose, onSuccess, currentSede, userName, tasaBCV,
+}: {
+  inventario: InventarioItem[];
+  onClose: () => void;
+  onSuccess: (nota: NotaGanancia) => void;
+  currentSede: { id: string; nombre: string } | null;
+  userName: string;
+  tasaBCV: number;
+}) {
+  const [cliente, setCliente] = useState('');
+  const [responsable, setResponsable] = useState(userName);
+  const [fecha, setFecha] = useState(getVzlaDate());
+  const [observaciones, setObservaciones] = useState('');
+  const [searchProd, setSearchProd] = useState('');
+  const [items, setItems] = useState<NotaGananciaFormItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const filteredInventario = useMemo(() => {
+    const q = searchProd.toLowerCase();
+    if (!q) return [] as InventarioItem[];
+    return inventario.filter(i =>
+      i.nombre.toLowerCase().includes(q) ||
+      (i.codigo?.toLowerCase() || '').includes(q) ||
+      (i.marca?.toLowerCase() || '').includes(q)
+    ).slice(0, 8);
+  }, [inventario, searchProd]);
+
+  const addFromInventario = (item: InventarioItem) => {
+    if (items.some(i => i.inventario_id === item.id)) return;
+    setItems(prev => [...prev, {
+      inventario_id: item.id,
+      nombre: item.nombre,
+      codigo: item.codigo,
+      cantidad: 1,
+      precio_fabricante: item.precio_fabricante || 0,
+      precio_venta: item.precio_usd || 0,
+    }]);
+    setSearchProd('');
+  };
+
+  const addBlank = () => setItems(prev => [...prev, {
+    inventario_id: null, nombre: '', codigo: null, cantidad: 1, precio_fabricante: 0, precio_venta: 0,
+  }]);
+
+  const updateItem = (idx: number, patch: Partial<NotaGananciaFormItem>) =>
+    setItems(prev => prev.map((it, i) => i === idx ? { ...it, ...patch } : it));
+
+  const removeItem = (idx: number) => setItems(prev => prev.filter((_, i) => i !== idx));
+
+  const totalCosto = items.reduce((s, i) => s + i.precio_fabricante * i.cantidad, 0);
+  const totalVenta = items.reduce((s, i) => s + i.precio_venta * i.cantidad, 0);
+  const totalGanancia = totalVenta - totalCosto;
+  const margenPct = totalVenta > 0 ? (totalGanancia / totalVenta) * 100 : 0;
+
+  const canSave = cliente.trim() && responsable.trim() && items.length > 0 &&
+    items.every(i => i.nombre.trim() && i.cantidad > 0);
+
+  const handleSave = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const numero = await generateNumeroNotaGanancia();
+      const notaItems: NotaGananciaItem[] = items.map(i => ({
+        nombre: i.nombre,
+        codigo: i.codigo,
+        cantidad: i.cantidad,
+        precio_fabricante: i.precio_fabricante,
+        precio_venta: i.precio_venta,
+        ganancia_unit: i.precio_venta - i.precio_fabricante,
+        ganancia_total: (i.precio_venta - i.precio_fabricante) * i.cantidad,
+      }));
+
+      const result = await createNotaGanancia({
+        numero_nota: numero,
+        fecha,
+        cliente,
+        responsable,
+        items: notaItems,
+        total_costo: totalCosto,
+        total_venta: totalVenta,
+        total_ganancia: totalGanancia,
+        observaciones: observaciones || null,
+        sede_id: currentSede?.id || null,
+      });
+
+      if (!result) throw new Error('No se pudo crear la nota de ganancia');
+
+      try {
+        await registrarFactura({
+          tipo: 'nota_ganancia',
+          modulo_origen: 'ganancias',
+          referencia_id: (result as any).id,
+          referencia_tabla: 'notas_ganancia',
+          cliente,
+          total: totalGanancia,
+          moneda: 'USD',
+          items: notaItems.map(i => ({
+            descripcion: i.nombre,
+            cantidad: i.cantidad,
+            precio_unitario: i.precio_venta,
+            total: i.precio_venta * i.cantidad,
+          })),
+          con_iva: false,
+          estado: 'pagado',
+          notas: observaciones || undefined,
+          emitido_por: responsable,
+          fecha_emision: fecha,
+          sede_id: currentSede?.id || null,
+        });
+      } catch (err) {
+        console.error('Error registering factura from ganancia:', err);
+      }
+
+      await logActivity({
+        usuario: userName,
+        modulo: 'Ganancias',
+        accion: 'Nota de ganancia manual',
+        detalles: `${numero} · ${cliente} · Ganancia $${totalGanancia.toFixed(2)}`,
+        referencia_id: (result as any).id,
+        referencia_tabla: 'notas_ganancia',
+      });
+
+      onSuccess(result as unknown as NotaGanancia);
+    } catch (e: any) {
+      setError(e.message || 'Error al guardar la nota');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 backdrop-blur-sm p-2 sm:p-4">
+      <div className="bg-card border border-border rounded-2xl w-full max-w-3xl max-h-[94vh] flex flex-col shadow-2xl overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border/30 bg-gradient-to-r from-green-600/10 to-emerald-600/5 flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-green-500/20 flex items-center justify-center">
+              <Wallet className="w-5 h-5 text-green-400" />
+            </div>
+            <div>
+              <h2 className="text-sm font-black text-green-400 uppercase tracking-wider">Nueva Nota de Ganancia</h2>
+              <p className="text-[10px] text-muted-foreground mt-0.5">Costo fabricante vs reventa</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-white/5 flex items-center justify-center transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="space-y-1.5 sm:col-span-1">
+              <Label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Cliente / Reventa a *</Label>
+              <Input value={cliente} onChange={e => setCliente(e.target.value)} placeholder="Lycos San Antonio, Taller X..." className="bg-background/50" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Responsable *</Label>
+              <Input value={responsable} onChange={e => setResponsable(e.target.value)} className="bg-background/50" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Fecha</Label>
+              <Input type="date" value={fecha} onChange={e => setFecha(e.target.value)} className="bg-background/50" />
+            </div>
+          </div>
+
+          {/* Buscar producto */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              value={searchProd}
+              onChange={e => setSearchProd(e.target.value)}
+              placeholder="Buscar producto del inventario para autocompletar costo/precio..."
+              className="pl-9 bg-background/50 h-9 text-xs"
+            />
+            {filteredInventario.length > 0 && (
+              <div className="absolute z-10 left-0 right-0 mt-1 bg-card border border-border/40 rounded-xl shadow-xl max-h-56 overflow-y-auto">
+                {filteredInventario.map(it => (
+                  <button
+                    key={it.id}
+                    onClick={() => addFromInventario(it)}
+                    className="w-full flex items-center justify-between px-3 py-2 hover:bg-white/5 text-left border-b border-border/10 last:border-0"
+                  >
+                    <span className="text-xs font-bold truncate">{it.nombre}</span>
+                    <span className="text-[10px] text-muted-foreground ml-2 flex-shrink-0">
+                      Costo ${(it.precio_fabricante || 0).toFixed(2)} · Venta ${(it.precio_usd || 0).toFixed(2)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Items table */}
+          <div className="rounded-xl border border-border/30 overflow-hidden">
+            <div className="bg-muted/20 px-3 py-2 flex items-center justify-between">
+              <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Productos</p>
+              <button onClick={addBlank} className="text-[10px] font-bold text-green-400 hover:text-green-300 flex items-center gap-1">
+                <Plus className="w-3 h-3" /> Agregar fila manual
+              </button>
+            </div>
+            {items.length === 0 ? (
+              <div className="py-8 text-center text-muted-foreground/40 text-xs">
+                Busca un producto arriba o agrega una fila manual
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-muted/10 text-[9px] uppercase text-muted-foreground font-bold">
+                      <th className="px-2 py-2 text-left">Producto</th>
+                      <th className="px-2 py-2 text-center w-16">Cant.</th>
+                      <th className="px-2 py-2 text-right w-24">Costo Fab.</th>
+                      <th className="px-2 py-2 text-right w-24">Reventa</th>
+                      <th className="px-2 py-2 text-right w-24">Ganancia</th>
+                      <th className="px-2 py-2 w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/10">
+                    {items.map((it, idx) => (
+                      <tr key={idx}>
+                        <td className="px-2 py-1.5">
+                          <input
+                            value={it.nombre}
+                            onChange={e => updateItem(idx, { nombre: e.target.value })}
+                            placeholder="Nombre del producto"
+                            className="w-full bg-background/50 border border-border/40 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-green-500"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <input
+                            type="number" min={1} value={it.cantidad}
+                            onChange={e => updateItem(idx, { cantidad: parseInt(e.target.value) || 1 })}
+                            className="w-full text-center bg-background/50 border border-border/40 rounded px-1 py-1 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-green-500"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <input
+                            type="number" step="0.01" min={0} value={it.precio_fabricante}
+                            onChange={e => updateItem(idx, { precio_fabricante: parseFloat(e.target.value) || 0 })}
+                            className="w-full text-right bg-background/50 border border-amber-500/30 rounded px-1 py-1 text-xs font-bold text-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <input
+                            type="number" step="0.01" min={0} value={it.precio_venta}
+                            onChange={e => updateItem(idx, { precio_venta: parseFloat(e.target.value) || 0 })}
+                            className="w-full text-right bg-background/50 border border-border/40 rounded px-1 py-1 text-xs font-bold focus:outline-none focus:ring-1 focus:ring-green-500"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-black text-green-400">
+                          ${((it.precio_venta - it.precio_fabricante) * it.cantidad).toFixed(2)}
+                        </td>
+                        <td className="px-2 py-1.5 text-center">
+                          <button onClick={() => removeItem(idx)} className="text-muted-foreground hover:text-red-400">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Totales */}
+          {items.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {[
+                { label: 'Costo total', value: `$${totalCosto.toFixed(2)}`, color: 'text-amber-400' },
+                { label: 'Total reventa', value: `$${totalVenta.toFixed(2)}`, color: 'text-foreground' },
+                { label: 'Ganancia', value: `$${totalGanancia.toFixed(2)}`, color: 'text-green-400' },
+                { label: 'Margen', value: `${margenPct.toFixed(1)}%`, color: 'text-emerald-400' },
+              ].map(s => (
+                <div key={s.label} className="text-center p-2 rounded-xl bg-background/40 border border-border/20">
+                  <p className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider">{s.label}</p>
+                  <p className={cn('text-sm font-black mt-0.5', s.color)}>{s.value}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <Label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Observaciones (opcional)</Label>
+            <textarea
+              value={observaciones}
+              onChange={e => setObservaciones(e.target.value)}
+              rows={2}
+              className="w-full px-3 py-2 rounded-xl border border-border/40 bg-background/50 text-xs resize-none focus:outline-none focus:ring-1 focus:ring-green-500"
+            />
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-400">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" /> {error}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between px-5 py-4 border-t border-border/20 bg-muted/10 flex-shrink-0">
+          <button onClick={onClose} className="px-4 py-2 rounded-xl text-xs font-bold hover:bg-white/5 transition-all border border-border/30">
+            Cancelar
+          </button>
+          <Button
+            onClick={handleSave}
+            disabled={!canSave || loading}
+            className="gap-2 bg-green-600 hover:bg-green-700 text-white font-black h-10 px-6 shadow-lg shadow-green-500/20"
+          >
+            {loading ? (<><Loader2 className="w-4 h-4 animate-spin" /> Guardando...</>) : (<><CheckCircle2 className="w-4 h-4" /> Guardar Nota</>)}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── GANANCIAS: Detalle ──────────────────────────────────────────────────────
+
+function GananciaDetailModal({ row, onClose, tasaBCV }: {
+  row: GananciaRow; onClose: () => void; tasaBCV: number;
+}) {
+  const items = row.origen === 'manual'
+    ? (row.nota?.items || []).map(i => ({
+        nombre: i.nombre, codigo: i.codigo, cantidad: i.cantidad,
+        costo: i.precio_fabricante, venta: i.precio_venta,
+      }))
+    : (row.distribucion?.items || []).map(i => ({
+        nombre: i.nombre, codigo: i.codigo, cantidad: i.cantidad,
+        costo: i.precio_fabricante || 0, venta: i.precio_usd || 0,
+      }));
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto glass-panel">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-lg">
+            <Wallet className="w-5 h-5 text-green-400" />
+            {row.numero_nota}
+            <span className={cn('text-[9px] font-black uppercase px-2 py-0.5 rounded-full border',
+              row.origen === 'manual' ? 'text-green-400 bg-green-500/10 border-green-500/30' : 'text-indigo-400 bg-indigo-500/10 border-indigo-500/30')}>
+              {row.origen === 'manual' ? 'Manual' : 'Distribución'}
+            </span>
+          </DialogTitle>
+          <DialogDescription>
+            {new Date(row.fecha + 'T12:00:00').toLocaleDateString('es-VE', { day: '2-digit', month: 'long', year: 'numeric' })}
+            {' · '}{row.cliente}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 mt-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {[
+              { label: 'Costo Fab.', value: `$${row.total_costo.toFixed(2)}`, color: 'text-amber-400' },
+              { label: 'Reventa', value: `$${row.total_venta.toFixed(2)}`, color: 'text-foreground' },
+              { label: 'Ganancia', value: `$${row.total_ganancia.toFixed(2)}`, color: 'text-green-400' },
+              { label: 'Margen', value: `${row.margen_pct.toFixed(1)}%`, color: 'text-emerald-400' },
+            ].map(s => (
+              <div key={s.label} className="text-center p-2 rounded-xl bg-background/40 border border-border/20">
+                <p className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider">{s.label}</p>
+                <p className={cn('text-sm font-black mt-0.5', s.color)}>{s.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="rounded-xl border border-border/30 overflow-hidden">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-muted/10 border-b border-border/20 text-[9px] uppercase text-muted-foreground font-bold">
+                  <th className="px-3 py-2 text-left">Producto</th>
+                  <th className="px-3 py-2 text-center">Cant.</th>
+                  <th className="px-3 py-2 text-right">Costo</th>
+                  <th className="px-3 py-2 text-right">Reventa</th>
+                  <th className="px-3 py-2 text-right">Ganancia</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/10">
+                {items.map((it, i) => (
+                  <tr key={i}>
+                    <td className="px-3 py-2">
+                      <p className="font-bold">{it.nombre}</p>
+                      {it.codigo && <p className="text-[9px] text-muted-foreground">{it.codigo}</p>}
+                    </td>
+                    <td className="px-3 py-2 text-center font-black">{it.cantidad}</td>
+                    <td className="px-3 py-2 text-right text-amber-400">${it.costo.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right">${it.venta.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right font-bold text-green-400">${((it.venta - it.costo) * it.cantidad).toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {row.origen === 'manual' && row.nota && (
+            <Button
+              onClick={() => generateNotaGananciaPDF(row.nota!, tasaBCV)}
+              className="w-full gap-2 bg-green-600 hover:bg-green-700 text-white font-bold"
+            >
+              <Download className="w-4 h-4" /> Descargar Nota de Ganancia PDF
+            </Button>
+          )}
+          {row.origen === 'distribucion' && row.distribucion && (
+            <Button
+              onClick={() => generateNotaEntregaPDF(row.distribucion!, tasaBCV)}
+              variant="outline"
+              className="w-full gap-2 font-bold"
+            >
+              <Download className="w-4 h-4" /> Descargar Nota de Entrega (distribución)
+            </Button>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── GANANCIAS: Tab ──────────────────────────────────────────────────────────
+
+function GananciasTab({ inventario, currentSede, userName, tasaBCV }: {
+  inventario: InventarioItem[];
+  currentSede: { id: string; nombre: string } | null;
+  userName: string;
+  tasaBCV: number;
+}) {
+  const [distribuciones, setDistribuciones] = useState<Distribucion[]>([]);
+  const [notas, setNotas] = useState<NotaGanancia[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showWizard, setShowWizard] = useState(false);
+  const [selected, setSelected] = useState<GananciaRow | null>(null);
+
+  const [filterSearch, setFilterSearch] = useState('');
+  const [filterFecha, setFilterFecha] = useState('');
+  const [filterOrigen, setFilterOrigen] = useState<'all' | 'distribucion' | 'manual'>('all');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [dist, ng] = await Promise.all([
+        fetchGananciasDistribuciones(),
+        fetchNotasGanancia(),
+      ]);
+      if (dist) setDistribuciones(dist as Distribucion[]);
+      if (ng) setNotas(ng as NotaGanancia[]);
+    } catch (e) {
+      console.error('Error loading ganancias:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const costMap = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const i of inventario) m[i.id] = i.precio_fabricante || 0;
+    return m;
+  }, [inventario]);
+
+  const rows = useMemo(
+    () => buildGananciaRows(distribuciones, notas, costMap),
+    [distribuciones, notas, costMap]
+  );
+
+  const today = getVzlaDate();
+  const mesPrefix = today.slice(0, 7); // YYYY-MM
+
+  const rowsHoy = rows.filter(r => r.fecha === today);
+  const rowsMes = rows.filter(r => r.fecha.startsWith(mesPrefix));
+  const gananciaHoy = rowsHoy.reduce((s, r) => s + r.total_ganancia, 0);
+  const gananciaMes = rowsMes.reduce((s, r) => s + r.total_ganancia, 0);
+  const ventaMes = rowsMes.reduce((s, r) => s + r.total_venta, 0);
+  const costoMes = rowsMes.reduce((s, r) => s + r.total_costo, 0);
+  const margenMes = ventaMes > 0 ? (gananciaMes / ventaMes) * 100 : 0;
+
+  const filtered = useMemo(() => rows.filter(r => {
+    const mOrigen = filterOrigen === 'all' || r.origen === filterOrigen;
+    const mFecha = !filterFecha || r.fecha === filterFecha;
+    const q = filterSearch.toLowerCase();
+    const mSearch = !q || r.numero_nota.toLowerCase().includes(q) ||
+      r.cliente.toLowerCase().includes(q) || r.responsable.toLowerCase().includes(q);
+    return mOrigen && mFecha && mSearch;
+  }), [rows, filterOrigen, filterFecha, filterSearch]);
+
+  return (
+    <div className="space-y-6">
+      {/* Header actions */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-black flex items-center gap-2" style={{ fontFamily: 'Syne, sans-serif' }}>
+            <Wallet className="w-6 h-6 text-green-400" /> Ganancias
+          </h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Fabricante (costo) vs reventa a Lycos y otros talleres. Información confidencial.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={load} disabled={loading} className="gap-2">
+            <RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} /> Actualizar
+          </Button>
+          <Button onClick={() => setShowWizard(true)} className="gap-2 bg-green-600 hover:bg-green-700 text-white font-bold shadow-lg shadow-green-500/20">
+            <Plus className="w-4 h-4" /> Nueva Nota de Ganancia
+          </Button>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard label="Ganancia Hoy" value={`$${gananciaHoy.toFixed(2)}`} sub={`${rowsHoy.length} registros`} icon={DollarSign} color="bg-green-500/5 border-green-500/20 text-green-400" />
+        <StatCard label="Ganancia del Mes" value={`$${gananciaMes.toFixed(2)}`} sub={`${rowsMes.length} registros`} icon={TrendingUp} color="bg-emerald-500/5 border-emerald-500/20 text-emerald-400" />
+        <StatCard label="Costo Fabricante (mes)" value={`$${costoMes.toFixed(2)}`} sub={`Reventa $${ventaMes.toFixed(2)}`} icon={Factory} color="bg-amber-500/5 border-amber-500/20 text-amber-400" />
+        <StatCard label="Margen del Mes" value={`${margenMes.toFixed(1)}%`} sub="ganancia / reventa" icon={Percent} color="bg-purple-500/5 border-purple-500/20 text-purple-400" />
+      </div>
+
+      {/* Filters */}
+      <Card className="glass-panel border-border/50 bg-card/40">
+        <CardContent className="p-3">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input placeholder="Buscar por nota, cliente o responsable..." value={filterSearch} onChange={e => setFilterSearch(e.target.value)} className="pl-9 bg-background/50 h-9 text-sm" />
+            </div>
+            <select value={filterOrigen} onChange={e => setFilterOrigen(e.target.value as any)} className="h-9 px-3 rounded-lg border border-border/50 bg-background/50 text-sm focus:outline-none focus:ring-1 focus:ring-green-500">
+              <option value="all">Todos los orígenes</option>
+              <option value="distribucion">Distribuciones (auto)</option>
+              <option value="manual">Notas manuales</option>
+            </select>
+            <input type="date" value={filterFecha} onChange={e => setFilterFecha(e.target.value)} className="h-9 px-3 rounded-lg border border-border/50 bg-background/50 text-sm focus:outline-none focus:ring-1 focus:ring-green-500" />
+            {(filterSearch || filterFecha || filterOrigen !== 'all') && (
+              <button onClick={() => { setFilterSearch(''); setFilterFecha(''); setFilterOrigen('all'); }} className="h-9 px-3 rounded-lg border border-border/30 text-xs text-muted-foreground hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5 transition-all flex items-center gap-1.5">
+                <X className="w-3.5 h-3.5" /> Limpiar
+              </button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Table */}
+      <Card className="glass-panel border-border/50 bg-card/40 overflow-hidden">
+        <CardHeader className="pb-2 px-5 pt-4">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+              <FileText className="w-4 h-4 text-green-400" /> Registro de Ganancias
+            </CardTitle>
+            <span className="text-xs text-muted-foreground">{filtered.length} registros</span>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-20 gap-3">
+              <RefreshCw className="w-10 h-10 text-primary/20 animate-spin" />
+              <span className="text-sm text-muted-foreground animate-pulse">Cargando ganancias...</span>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 gap-3 opacity-30">
+              <Wallet className="w-12 h-12" />
+              <p className="text-sm font-medium">{rows.length === 0 ? 'Aún no hay datos de ganancia' : 'Sin coincidencias con los filtros'}</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/30 text-[10px] uppercase tracking-widest text-muted-foreground font-bold">
+                  <tr>
+                    <th className="px-5 py-3 text-left">N° Nota</th>
+                    <th className="px-5 py-3 text-left">Fecha</th>
+                    <th className="px-5 py-3 text-left">Cliente / Destino</th>
+                    <th className="px-5 py-3 text-center">Origen</th>
+                    <th className="px-5 py-3 text-right">Costo Fab.</th>
+                    <th className="px-5 py-3 text-right">Reventa</th>
+                    <th className="px-5 py-3 text-right">Ganancia</th>
+                    <th className="px-5 py-3 text-center">Margen</th>
+                    <th className="px-5 py-3 text-right">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/20">
+                  {filtered.map(r => (
+                    <tr key={r.id} className="group hover:bg-white/3 transition-colors">
+                      <td className="px-5 py-3 font-mono font-black text-sm text-green-300">{r.numero_nota}</td>
+                      <td className="px-5 py-3 text-sm">{new Date(r.fecha + 'T12:00:00').toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                      <td className="px-5 py-3 font-bold text-sm">{r.cliente}</td>
+                      <td className="px-5 py-3 text-center">
+                        <span className={cn('inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-black uppercase border',
+                          r.origen === 'manual' ? 'text-green-400 bg-green-500/10 border-green-500/30' : 'text-indigo-400 bg-indigo-500/10 border-indigo-500/30')}>
+                          {r.origen === 'manual' ? 'Manual' : 'Auto'}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 text-right text-amber-400 font-bold">${r.total_costo.toFixed(2)}</td>
+                      <td className="px-5 py-3 text-right">${r.total_venta.toFixed(2)}</td>
+                      <td className="px-5 py-3 text-right font-black text-green-400">${r.total_ganancia.toFixed(2)}</td>
+                      <td className="px-5 py-3 text-center font-bold text-emerald-400">{r.margen_pct.toFixed(0)}%</td>
+                      <td className="px-5 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button onClick={() => setSelected(r)} className="h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-green-400 hover:bg-green-500/10 border border-transparent hover:border-green-500/20 transition-all" title="Ver detalle">
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                          {r.origen === 'manual' && r.nota && (
+                            <button onClick={() => generateNotaGananciaPDF(r.nota!, tasaBCV)} className="h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-green-400 hover:bg-green-500/10 border border-transparent hover:border-green-500/20 transition-all" title="Descargar PDF">
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {showWizard && (
+        <NuevaNotaGananciaWizard
+          inventario={inventario}
+          currentSede={currentSede}
+          userName={userName}
+          tasaBCV={tasaBCV}
+          onClose={() => setShowWizard(false)}
+          onSuccess={() => { setShowWizard(false); load(); }}
+        />
+      )}
+      {selected && (
+        <GananciaDetailModal row={selected} onClose={() => setSelected(null)} tasaBCV={tasaBCV} />
+      )}
+    </div>
+  );
+}
+
 // ─── MAIN PAGE ───────────────────────────────────────────────────────────────
 
 export default function DistribuidorPage() {
@@ -826,6 +1539,21 @@ export default function DistribuidorPage() {
     const sedeData = availableSedes.find(s => s.id === currentSede.id);
     return sedeData?.es_principal === true;
   }, [currentSede, availableSedes]);
+
+  // Dueño/admin en San Antonio: puede ver Ganancias (no distribuir)
+  const isAdmin = user?.rol === 'admin';
+  const isSanAntonio = useMemo(
+    () => (currentSede?.nombre || '').toLowerCase().includes('san antonio'),
+    [currentSede]
+  );
+  const canDistribute = isCarrizal;                       // creación de distribuciones (solo Carrizal)
+  const canAccess = isCarrizal || (isAdmin && isSanAntonio); // acceso al módulo
+  const [activeTab, setActiveTab] = useState<'distribucion' | 'ganancias'>('distribucion');
+
+  // El dueño en San Antonio entra directo a Ganancias
+  useEffect(() => {
+    if (!canDistribute && canAccess) setActiveTab('ganancias');
+  }, [canDistribute, canAccess]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -890,7 +1618,7 @@ export default function DistribuidorPage() {
   if (!mounted) return null;
 
   // ─── ACCESO RESTRINGIDO ────────────────────────────────────────────────────
-  if (!isCarrizal) {
+  if (!canAccess) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[70vh] space-y-6">
         <div className="w-24 h-24 rounded-3xl bg-red-500/10 border-2 border-red-500/20 flex items-center justify-center animate-pulse">
@@ -901,8 +1629,10 @@ export default function DistribuidorPage() {
             Módulo Restringido
           </h2>
           <p className="text-muted-foreground text-sm leading-relaxed">
-            El módulo <strong>Distribuidor</strong> está disponible exclusivamente para la sede{' '}
-            <strong className="text-indigo-400">Carrizal</strong> (sede principal).
+            El módulo <strong>Distribuidor</strong> está disponible para la sede{' '}
+            <strong className="text-indigo-400">Carrizal</strong> (sede principal). Las{' '}
+            <strong className="text-green-400">Ganancias</strong> también puede verlas el dueño/administrador
+            desde <strong>San Antonio</strong>.
           </p>
           <div className="flex items-center justify-center gap-2 mt-4 px-4 py-2 rounded-xl bg-muted/30 border border-border/30 text-sm">
             <MapPin className="w-4 h-4 text-muted-foreground" />
@@ -930,19 +1660,60 @@ export default function DistribuidorPage() {
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={loadData} disabled={loading} className="gap-2">
-            <RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} /> Actualizar
-          </Button>
-          <Button
-            onClick={() => setShowWizard(true)}
-            className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-500/20 font-bold"
-          >
-            <Plus className="w-4 h-4" /> Nueva Distribución
-          </Button>
-        </div>
+        {activeTab === 'distribucion' && (
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={loadData} disabled={loading} className="gap-2">
+              <RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} /> Actualizar
+            </Button>
+            {canDistribute && (
+              <Button
+                onClick={() => setShowWizard(true)}
+                className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-500/20 font-bold"
+              >
+                <Plus className="w-4 h-4" /> Nueva Distribución
+              </Button>
+            )}
+          </div>
+        )}
       </div>
 
+      {/* Tabs */}
+      <div className="flex items-center gap-1 border-b border-border/30">
+        <button
+          onClick={() => setActiveTab('distribucion')}
+          className={cn(
+            'px-4 py-2.5 text-sm font-bold border-b-2 -mb-px transition-all flex items-center gap-2',
+            activeTab === 'distribucion'
+              ? 'border-indigo-500 text-indigo-400'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          )}
+        >
+          <Truck className="w-4 h-4" /> Distribución
+        </button>
+        <button
+          onClick={() => setActiveTab('ganancias')}
+          className={cn(
+            'px-4 py-2.5 text-sm font-bold border-b-2 -mb-px transition-all flex items-center gap-2',
+            activeTab === 'ganancias'
+              ? 'border-green-500 text-green-400'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          )}
+        >
+          <Wallet className="w-4 h-4" /> Ganancias
+        </button>
+      </div>
+
+      {activeTab === 'ganancias' && (
+        <GananciasTab
+          inventario={inventario}
+          currentSede={currentSede}
+          userName={user?.nombre || 'Sistema'}
+          tasaBCV={tasaBCV}
+        />
+      )}
+
+      {activeTab === 'distribucion' && (
+      <>
       {/* Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard
@@ -1165,6 +1936,8 @@ export default function DistribuidorPage() {
           onClose={() => setSelectedDist(null)}
           tasaBCV={tasaBCV}
         />
+      )}
+      </>
       )}
     </div>
   );

@@ -100,11 +100,13 @@ export default function Sidebar() {
         const sedeName = currentSede?.nombre?.toLowerCase() || '';
         if (!sedeName.includes('san antonio')) return false;
       }
-      // Distribuidor: only visible for Carrizal (principal) sede
+      // Distribuidor: visible for Carrizal (principal) sede; y para el dueño/admin
+      // desde San Antonio (solo accede a la pestaña Ganancias dentro del módulo).
       if (item.label === 'Distribuidor' && mounted) {
         const { currentSede, availableSedes } = useSedeStore.getState();
         const sedeName = currentSede?.nombre?.toLowerCase() || '';
         if (sedeName.includes('carrizal')) return true;
+        if (isAdmin && sedeName.includes('san antonio')) return true;
         const sedeData = availableSedes.find(s => s.id === currentSede?.id);
         if (!sedeData?.es_principal) return false;
       }

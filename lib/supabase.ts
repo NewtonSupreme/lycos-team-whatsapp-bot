@@ -590,6 +590,7 @@ export async function createDistribucion(payload: {
     stock_antes: number;
     stock_despues: number;
     precio_usd: number;
+    precio_fabricante?: number;
     unidad: string;
   }>;
   total_items: number;
@@ -795,6 +796,86 @@ export async function updateDistribucionEstado(
   return data;
 }
 
+// ─── Ganancias (Fabricante → Distribuidor → Reventa) ────────────────────────
+
+/**
+ * Trae TODAS las distribuciones con origen Carrizal (sede principal), SIN filtro de sede,
+ * para que el dueño pueda ver las ganancias desde San Antonio.
+ * Uso restringido a admin/dueño (el gating se hace en la UI).
+ */
+export async function fetchGananciasDistribuciones(limit = 300) {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('distribuciones')
+    .select('*')
+    .order('fecha', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Genera el siguiente número de nota de ganancia en formato NG-YYYY-XXXX
+ */
+export async function generateNumeroNotaGanancia(): Promise<string> {
+  if (!supabase) {
+    const anio = new Date().getFullYear();
+    return `NG-${anio}-${String(Date.now()).slice(-4)}`;
+  }
+  try {
+    const { data, error } = await supabase.rpc('generar_numero_nota_ganancia');
+    if (error || !data) {
+      const anio = new Date().getFullYear();
+      const { count } = await supabase
+        .from('notas_ganancia')
+        .select('*', { count: 'exact', head: true });
+      const correlativo = ((count || 0) + 1);
+      return `NG-${anio}-${String(correlativo).padStart(4, '0')}`;
+    }
+    return data as string;
+  } catch {
+    const anio = new Date().getFullYear();
+    const rand = Math.floor(Math.random() * 9000) + 1000;
+    return `NG-${anio}-${rand}`;
+  }
+}
+
+/**
+ * Crea una nota de ganancia manual.
+ */
+export async function createNotaGanancia(nota: Record<string, any>) {
+  if (!supabase) return null;
+  const { data, error } = await withSedeFilter(supabase.from('notas_ganancia'))
+    .insert(withSedeInsert(nota))
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Lista las notas de ganancia manuales. SIN filtro de sede para que el dueño las vea
+ * desde San Antonio (el gating se hace en la UI).
+ */
+export async function fetchNotasGanancia(limit = 300) {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('notas_ganancia')
+    .select('*')
+    .order('fecha', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteNotaGanancia(id: string) {
+  if (!supabase) return null;
+  const { error } = await supabase.from('notas_ganancia').delete().eq('id', id);
+  if (error) throw error;
+}
+
 // ─── Facturas (Sistema Centralizado) ────────────────────────────────────────
 
 /**
@@ -830,8 +911,8 @@ export async function generateCorrelativoFactura(): Promise<string> {
  * Registra una factura en la tabla centralizada con correlativo auto-generado
  */
 export async function registrarFactura(factura: {
-  tipo: 'venta' | 'servicio' | 'nota_entrega' | 'presupuesto' | 'egreso' | 'cierre';
-  modulo_origen: 'ventas_pos' | 'silenciadores' | 'servicios' | 'reportes' | 'presupuestos' | 'distribuidor' | 'bot';
+  tipo: 'venta' | 'servicio' | 'nota_entrega' | 'presupuesto' | 'egreso' | 'cierre' | 'nota_ganancia';
+  modulo_origen: 'ventas_pos' | 'silenciadores' | 'servicios' | 'reportes' | 'presupuestos' | 'distribuidor' | 'bot' | 'ganancias';
   referencia_id?: string;
   referencia_tabla?: string;
   cliente: string;

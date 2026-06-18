@@ -77,6 +77,7 @@ export default function InventarioPage() {
     marca: '',
     precio_usd: 0,
     precio_bs: 0,
+    precio_fabricante: 0,
     stock: 0,
     stock_minimo: 1,
     unidad: 'unidad',
@@ -190,6 +191,7 @@ export default function InventarioPage() {
       marca: '',
       precio_usd: 0,
       precio_bs: 0,
+      precio_fabricante: 0,
       stock: 0,
       stock_minimo: 1,
       unidad: 'unidad',
@@ -210,6 +212,7 @@ export default function InventarioPage() {
       marca: item.marca || '',
       precio_usd: item.precio_usd || 0,
       precio_bs: item.precio_bs || 0,
+      precio_fabricante: item.precio_fabricante || 0,
       stock: item.stock,
       stock_minimo: item.stock_minimo,
       unidad: item.unidad || 'unidad',
@@ -835,6 +838,32 @@ export default function InventarioPage() {
                   />
                 </div>
               </div>
+              {user?.rol === 'admin' && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="precio_fabricante" className="text-xs font-bold uppercase text-amber-500/80 flex items-center gap-1">
+                    Costo Fabricante <span className="text-[9px] font-normal normal-case text-muted-foreground">(confidencial)</span>
+                  </Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-bold">$</span>
+                    <Input
+                      id="precio_fabricante"
+                      type="number"
+                      step="0.01"
+                      value={form.precio_fabricante}
+                      onChange={e => setForm({...form, precio_fabricante: parseFloat(e.target.value) || 0})}
+                      className="pl-7 bg-background/50 font-bold text-amber-500 border-amber-500/20"
+                      placeholder="0.00"
+                    />
+                  </div>
+                  {form.precio_fabricante > 0 && form.precio_usd > 0 && (
+                    <p className="text-[10px] text-green-500 font-bold">
+                      Ganancia: ${(form.precio_usd - form.precio_fabricante).toFixed(2)} / und
+                      {' · '}
+                      Margen: {(((form.precio_usd - form.precio_fabricante) / form.precio_usd) * 100).toFixed(0)}%
+                    </p>
+                  )}
+                </div>
+              )}
               <div className="space-y-1.5">
                 <Label htmlFor="precio_bs" className="text-xs font-bold uppercase text-muted-foreground">Dólares BCV</Label>
                 <div className="relative">

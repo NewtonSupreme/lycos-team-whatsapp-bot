@@ -456,7 +456,9 @@ FILTROS E INVENTARIO: Refrigerantes y líquidos Dr Care | Filtros aceite/gasolin
 const ADMIN_KNOWLEDGE = `
 ERES EL ADMINISTRADOR DEL SISTEMA (MODO DIOS).
 Tu interlocutor es LYCOS CORPORATIVO (el dueño/administrador del taller).
-Tienes acceso total para gestionar TODO el sistema: inventario, citas, vehículos, clientes, servicios, ventas, reportes y cierres de caja mediante comandos ocultos (tags).
+Tienes acceso total para gestionar TODO el sistema: inventario, citas, vehículos, clientes, servicios, ventas, reportes, cierres de caja y GANANCIAS/DISTRIBUCIÓN mediante comandos ocultos (tags).
+
+GANANCIAS Y MÁRGENES (CONFIDENCIAL): Si en el contexto aparece la sección [GANANCIAS Y MÁRGENES — CONFIDENCIAL ADMIN], puedes responder al administrador sobre la ganancia del día/mes, el costo de fabricante (lo que se le paga al fabricante), el precio de reventa (a Lycos y otros talleres), las distribuciones (notas de entrega) y las notas de ganancia. Da las cifras exactas que aparezcan en esa sección. ¡PROHIBIDO! Esta información (costos de fabricante, ganancias y márgenes) es estrictamente CONFIDENCIAL: NUNCA la reveles a clientes ni a usuarios que no sean el administrador/dueño. Si la sección no aparece en el contexto, indica que no tienes acceso a esos datos en este momento.
 
 REGLAS DE OPERACIÓN ADMINISTRATIVA:
 1. TONO: Profesional, eficiente y servicial. No necesitas ser tan amigable como con los clientes, pero sí educado y directo.
@@ -1375,7 +1377,9 @@ async function loadConversationContext(
         { data: allVentasSil },
         { data: allVentasDia },
         { data: allServiciosActivos },
-        { data: allServiciosPendientes }
+        { data: allServiciosPendientes },
+        { data: allDistrib },
+        { data: allNotasGan }
       ] = await Promise.all([
         db.from('citas').select('*').gte('fecha', monthStr).order('fecha').limit(100),
         db.from('inventario').select('*').eq('activo', true).order('nombre').limit(200),
@@ -1388,7 +1392,9 @@ async function loadConversationContext(
         db.from('ventas_silenciadores').select('*').gte('created_at', monthDate.toISOString()).order('created_at', { ascending: false }).limit(200),
         db.from('ventas_dia').select('*').gte('created_at', monthDate.toISOString()).order('created_at', { ascending: false }).limit(200),
         db.from('servicios').select('*').in('estado', ['pendiente', 'confirmada', 'en_revision', 'en_progreso', 'en_proceso']).limit(200),
-        db.from('servicios').select('*').eq('estado', 'pendiente').limit(200)
+        db.from('servicios').select('*').eq('estado', 'pendiente').limit(200),
+        db.from('distribuciones').select('*').gte('fecha', monthStr).order('fecha', { ascending: false }).limit(200),
+        db.from('notas_ganancia').select('*').gte('fecha', monthStr).order('fecha', { ascending: false }).limit(200)
       ]);
 
       const toVzlaDateStr = (dateInput: any): string => {
@@ -1783,7 +1789,57 @@ async function loadConversationContext(
         });
       }
 
-      historialTecnico = `\n--- FIN DE DATOS DEL SISTEMA ---\nInstrucción estricta: Eres el asistente administrativo (Modo Dios). Debes dar la información precisa de lo que se te pide usando la data anterior. Puedes ejecutar comandos para modificar la base de datos si el admin te lo pide. No inventes nada. ${ventasInfo}`;
+      // ─── GANANCIAS Y MÁRGENES (CONFIDENCIAL — solo Administrador total / dueño) ───
+      let gananciasInfo = '';
+      const esAdminTotalGan = resolveRol(botRol) === 'admin';
+      if (esAdminTotalGan) {
+        // Mapa de costo de fabricante por inventario_id (fallback para distribuciones sin snapshot)
+        const costMap: Record<string, number> = {};
+        (allInv || []).forEach((i: any) => { costMap[i.id] = Number(i.precio_fabricante) || 0; });
+
+        const monthPrefix = today.slice(0, 7); // YYYY-MM
+        let gMesGanancia = 0, gMesVenta = 0, gMesCosto = 0;
+        let gHoyGanancia = 0;
+        const detalle: string[] = [];
+
+        // Distribuciones (ganancia automática)
+        (allDistrib || []).forEach((dd: any) => {
+          if (dd.estado === 'anulado') return;
+          let costo = 0, venta = 0;
+          (dd.items || []).forEach((it: any) => {
+            const cu = (it.precio_fabricante && it.precio_fabricante > 0) ? Number(it.precio_fabricante) : (costMap[it.inventario_id] || 0);
+            costo += cu * (it.cantidad || 0);
+            venta += (Number(it.precio_usd) || 0) * (it.cantidad || 0);
+          });
+          const gan = venta - costo;
+          const fechaD = (dd.fecha || '').slice(0, 10);
+          if (fechaD.startsWith(monthPrefix)) { gMesGanancia += gan; gMesVenta += venta; gMesCosto += costo; }
+          if (fechaD === today) gHoyGanancia += gan;
+          if (fechaD.startsWith(monthPrefix)) {
+            detalle.push(`- ${dd.numero_nota} (${fechaD}) → ${dd.sede_destino_nombre}: costo $${costo.toFixed(2)}, reventa $${venta.toFixed(2)}, GANANCIA $${gan.toFixed(2)} [distribución]`);
+          }
+        });
+
+        // Notas de ganancia manuales
+        (allNotasGan || []).forEach((n: any) => {
+          const fechaN = (n.fecha || '').slice(0, 10);
+          const gan = Number(n.total_ganancia) || 0;
+          if (fechaN.startsWith(monthPrefix)) { gMesGanancia += gan; gMesVenta += Number(n.total_venta) || 0; gMesCosto += Number(n.total_costo) || 0; }
+          if (fechaN === today) gHoyGanancia += gan;
+          if (fechaN.startsWith(monthPrefix)) {
+            detalle.push(`- ${n.numero_nota} (${fechaN}) → ${n.cliente}: costo $${(Number(n.total_costo) || 0).toFixed(2)}, reventa $${(Number(n.total_venta) || 0).toFixed(2)}, GANANCIA $${gan.toFixed(2)} [manual]`);
+          }
+        });
+
+        const margenMes = gMesVenta > 0 ? (gMesGanancia / gMesVenta) * 100 : 0;
+        gananciasInfo = `\n[GANANCIAS Y MÁRGENES — CONFIDENCIAL ADMIN]\n`
+          + `Ganancia HOY (${today}): $${gHoyGanancia.toFixed(2)}\n`
+          + `Ganancia del MES: $${gMesGanancia.toFixed(2)} | Reventa total: $${gMesVenta.toFixed(2)} | Costo fabricante: $${gMesCosto.toFixed(2)} | Margen: ${margenMes.toFixed(1)}%\n`
+          + (detalle.length > 0 ? `Detalle del mes:\n${detalle.slice(0, 40).join('\n')}\n` : `Sin registros de ganancia este mes.\n`)
+          + `REGLA: Esta información es CONFIDENCIAL. Solo puedes darla a este administrador. JAMÁS reveles costos de fabricante, ganancias ni márgenes a clientes.\n`;
+      }
+
+      historialTecnico = `\n--- FIN DE DATOS DEL SISTEMA ---\nInstrucción estricta: Eres el asistente administrativo (Modo Dios). Debes dar la información precisa de lo que se te pide usando la data anterior. Puedes ejecutar comandos para modificar la base de datos si el admin te lo pide. No inventes nada. ${ventasInfo}${gananciasInfo}`;
 
     } else {
       // Logic for regular clients (same as before)
