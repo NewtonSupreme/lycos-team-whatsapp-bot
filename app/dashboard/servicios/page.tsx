@@ -106,6 +106,7 @@ export default function ServiciosPage() {
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<'kanban' | 'list'>('kanban');
   const [dateFilter, setDateFilter] = useState<'hoy' | 'semana' | 'mes' | 'todos'>('hoy');
+  const [specificDateFilter, setSpecificDateFilter] = useState('');
   
   // Modals
   const [showNewModal, setShowNewModal] = useState(false);
@@ -287,15 +288,21 @@ export default function ServiciosPage() {
 
     // 2. Filtro de Fecha
     if (!matchText) return false;
-    if (dateFilter === 'todos') return true;
 
     const rawDateStr = c.fecha || c.created_at;
     if (!rawDateStr) return false;
     
+    // Para 'hoy' y fecha específica, usamos substring para no pelear con zonas horarias
+    const citaIsoDate = rawDateStr.split('T')[0];
+
+    if (specificDateFilter) {
+      return citaIsoDate === specificDateFilter;
+    }
+
+    if (dateFilter === 'todos') return true;
+    
     // Convert to Date object safely
     const citaDate = new Date(rawDateStr);
-    // Para 'hoy', usamos substring para no pelear con zonas horarias
-    const citaIsoDate = rawDateStr.split('T')[0];
     
     if (dateFilter === 'hoy') {
       return citaIsoDate === getLocalISODate();
@@ -379,24 +386,54 @@ export default function ServiciosPage() {
             />
           </div>
 
-          <div className="flex items-center bg-white/5 border border-white/10 rounded-2xl p-1 gap-1">
-            {[
-              { id: 'hoy', label: 'Hoy' },
-              { id: 'semana', label: '7d' },
-              { id: 'mes', label: '30d' },
-              { id: 'todos', label: 'Todo' },
-            ].map(f => (
-              <button
-                key={f.id}
-                onClick={() => setDateFilter(f.id as any)}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center bg-white/5 border border-white/10 rounded-2xl p-1 gap-1">
+              {[
+                { id: 'hoy', label: 'Hoy' },
+                { id: 'semana', label: '7d' },
+                { id: 'mes', label: '30d' },
+                { id: 'todos', label: 'Todo' },
+              ].map(f => (
+                <button
+                  key={f.id}
+                  onClick={() => {
+                    setDateFilter(f.id as any);
+                    setSpecificDateFilter('');
+                  }}
+                  className={cn(
+                    "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                    dateFilter === f.id && !specificDateFilter ? "bg-primary/20 text-primary shadow-inner" : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative flex items-center">
+              <input
+                type="date"
+                value={specificDateFilter}
+                onChange={(e) => {
+                  setSpecificDateFilter(e.target.value);
+                  if (e.target.value) setDateFilter('todos');
+                }}
                 className={cn(
-                  "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
-                  dateFilter === f.id ? "bg-primary/20 text-primary shadow-inner" : "text-muted-foreground hover:text-foreground"
+                  "pl-3 pr-8 py-2 rounded-xl border text-xs font-bold transition-all focus:outline-none focus:ring-2 focus:ring-primary/40",
+                  specificDateFilter ? "bg-primary/10 border-primary/30 text-primary" : "bg-white/5 border-white/10 text-muted-foreground hover:bg-white/10"
                 )}
-              >
-                {f.label}
-              </button>
-            ))}
+                title="Filtrar por fecha específica"
+              />
+              {specificDateFilter && (
+                <button 
+                  onClick={() => setSpecificDateFilter('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 bg-foreground/10 hover:bg-foreground/20 rounded-full flex items-center justify-center transition-all"
+                  title="Limpiar fecha"
+                >
+                  <X className="w-3 h-3 text-foreground" />
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center bg-white/5 border border-white/10 rounded-2xl p-1">

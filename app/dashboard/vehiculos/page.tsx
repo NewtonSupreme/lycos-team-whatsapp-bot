@@ -36,6 +36,12 @@ export default function VehiculosPage() {
   const [plateOwner, setPlateOwner] = useState('');
   const plateTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
+  const [clientSearch, setClientSearch] = useState('');
+  const [filteredClientes, setFilteredClientes] = useState<Cliente[]>([]);
+  const [showClientResults, setShowClientResults] = useState(false);
+  const [isCustomMarca, setIsCustomMarca] = useState(false);
+  const [customMarca, setCustomMarca] = useState('');
+
   // Filtering & Sorting
   const [sortBy, setSortBy] = useState('recent');
   const [dateFilter, setDateFilter] = useState<Date | undefined>(undefined);
@@ -64,6 +70,18 @@ export default function VehiculosPage() {
       setLoadingServicios(false);
     })();
   }, [viewVehiculo?.id]);
+
+  React.useEffect(() => {
+    if (clientSearch.length > 1) {
+      const results = clientes.filter(c =>
+        `${c.nombre} ${c.apellido}`.toLowerCase().includes(clientSearch.toLowerCase())
+      );
+      setFilteredClientes(results);
+      setShowClientResults(results.length > 0);
+    } else {
+      setShowClientResults(false);
+    }
+  }, [clientSearch, clientes]);
 
   if (!mounted) return null;
 
@@ -157,19 +175,31 @@ export default function VehiculosPage() {
     setEditVehiculo(null);
     setForm({ cliente_id:'', marca:'', modelo:'', anio:'', placa:'', color:'', kilometraje:'', vin:'', estado:'activo', notas:'' });
     setPlateStatus('idle'); setPlateOwner('');
+    setClientSearch('');
+    setIsCustomMarca(false);
+    setCustomMarca('');
     setShowModal(true);
   };
   const openEdit = (v: Vehiculo) => {
     setEditVehiculo(v);
-    setForm({ cliente_id:v.cliente_id, marca:v.marca, modelo:v.modelo, anio:v.anio.toString(), placa:v.placa, color:v.color||'', kilometraje:v.kilometraje?.toString()||'', vin:v.vin||'', estado:v.estado, notas:v.notas||'' });
+    const isCustom = !MARCAS.includes(v.marca);
+    setForm({ cliente_id:v.cliente_id, marca: isCustom ? 'Otro' : v.marca, modelo:v.modelo, anio:v.anio.toString(), placa:v.placa, color:v.color||'', kilometraje:v.kilometraje?.toString()||'', vin:v.vin||'', estado:v.estado, notas:v.notas||'' });
     setPlateStatus('available'); setPlateOwner('');
+    
+    const cliente = clientes.find(c => c.id === v.cliente_id);
+    setClientSearch(cliente ? `${cliente.nombre} ${cliente.apellido}` : '');
+    setIsCustomMarca(isCustom);
+    setCustomMarca(isCustom ? v.marca : '');
+
     setShowModal(true);
   };
 
   const handleSave = async () => {
     try {
+      const finalMarca = isCustomMarca ? customMarca.trim() : form.marca;
       const data = { 
         ...form, 
+        marca: finalMarca,
         anio: Number(form.anio), 
         kilometraje: Number(form.kilometraje || 0),
         estado: form.estado as Vehiculo['estado']
@@ -409,89 +439,214 @@ export default function VehiculosPage() {
       )}
 
       {/* Modal */}
-      <Dialog open={showModal} onOpenChange={setShowModal}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{editVehiculo ? 'Editar Vehículo' : 'Nuevo Vehículo'}</DialogTitle>
-          </DialogHeader>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5 col-span-2">
-              <label className="text-xs font-medium text-muted-foreground">Cliente *</label>
-              <Select value={form.cliente_id} onValueChange={v => setForm(p => ({ ...p, cliente_id: v }))}>
-                <SelectTrigger><SelectValue placeholder="Seleccionar cliente" /></SelectTrigger>
-                <SelectContent>
-                  {clientes.map(c => <SelectItem key={c.id} value={c.id}>{c.nombre} {c.apellido}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Marca *</label>
-              <Select value={form.marca} onValueChange={v => setForm(p => ({ ...p, marca: v }))}>
-                <SelectTrigger><SelectValue placeholder="Marca" /></SelectTrigger>
-                <SelectContent>{MARCAS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Modelo *</label>
-              <Input value={form.modelo} onChange={e => setForm(p => ({ ...p, modelo: e.target.value }))} placeholder="Ej: Corolla" />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Año *</label>
-              <Input type="number" value={form.anio} onChange={e => setForm(p => ({ ...p, anio: e.target.value }))} placeholder="2020" min="1990" max="2026" />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Placa *</label>
-              <div className="relative">
-                <Input
-                  value={form.placa}
-                  onChange={e => {
-                    const val = e.target.value.toUpperCase();
-                    setForm(p => ({ ...p, placa: val }));
-                    clearTimeout(plateTimerRef.current);
-                    plateTimerRef.current = setTimeout(() => checkPlate(val, editVehiculo?.id), 500);
-                  }}
-                  placeholder="ABC-123"
-                  className={plateStatus === 'taken' ? 'border-red-500 pr-8' : plateStatus === 'available' ? 'border-green-500 pr-8' : 'pr-8'}
-                />
-                <div className="absolute right-2 top-1/2 -translate-y-1/2">
-                  {plateStatus === 'checking' && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
-                  {plateStatus === 'available' && <CheckCircle2 className="w-4 h-4 text-green-500" />}
-                  {plateStatus === 'taken' && <XCircle className="w-4 h-4 text-red-500" />}
+      {showModal && (
+        <div className="fixed inset-0 z-[110] flex justify-center items-start sm:items-center bg-black/60 backdrop-blur-xl p-4 overflow-y-auto">
+          <div className="bg-card border border-border w-full max-w-xl shadow-2xl flex flex-col my-auto sm:my-0 rounded-[24px] sm:rounded-[32px] overflow-hidden sm:max-h-[90vh]">
+            <div className="p-4 sm:p-6 border-b border-border flex items-center justify-between bg-gradient-to-br from-primary/5 to-transparent shrink-0">
+              <div className="flex items-center gap-3 sm:gap-4">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-primary/10 flex items-center justify-center border border-primary/20 shrink-0">
+                  {editVehiculo ? <Edit className="w-5 h-5 sm:w-6 sm:h-6 text-primary" /> : <Car className="w-5 h-5 sm:w-6 sm:h-6 text-primary" />}
+                </div>
+                <div>
+                  <h3 className="text-lg sm:text-xl font-black text-foreground tracking-tight" style={{ fontFamily: 'Syne, sans-serif' }}>
+                    {editVehiculo ? 'Editar Vehículo' : 'Nuevo Vehículo'}
+                  </h3>
+                  <p className="text-[9px] sm:text-[10px] text-muted-foreground font-bold uppercase tracking-widest mt-0.5">Gestión de Taller Lycos Team</p>
                 </div>
               </div>
-              {plateStatus === 'taken' && (
-                <p className="text-[11px] text-red-400 flex items-center gap-1">
-                  Placa ya registrada — Propietario: <span className="font-semibold">{plateOwner}</span>
-                </p>
-              )}
-              {plateStatus === 'available' && (
-                <p className="text-[11px] text-green-400">Placa disponible</p>
-              )}
+              <button onClick={() => setShowModal(false)} className="w-10 h-10 rounded-2xl hover:bg-muted/50 flex items-center justify-center transition-all shrink-0"><XCircle className="w-5 h-5 text-muted-foreground" /></button>
             </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Color</label>
-              <Input value={form.color} onChange={e => setForm(p => ({ ...p, color: e.target.value }))} placeholder="Blanco" />
+
+            <div className="p-4 sm:p-8 flex-1 overflow-y-auto custom-scrollbar">
+              <div className="grid grid-cols-2 gap-4 sm:gap-6">
+                
+                {/* Cliente */}
+                <div className="col-span-2 space-y-2 relative">
+                  <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Cliente Propietario *</label>
+                  <div className="relative">
+                    <Search className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 w-3.5 h-3.5 sm:w-4 sm:h-4 text-muted-foreground" />
+                    <input 
+                      className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl pl-10 pr-4 py-2.5 sm:pl-12 sm:pr-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
+                      placeholder="Buscar por nombre o apellido..."
+                      value={clientSearch}
+                      onChange={e => {
+                        setClientSearch(e.target.value);
+                        setForm({...form, cliente_id: ''}); // clear selected on type
+                      }}
+                      onBlur={() => setTimeout(() => setShowClientResults(false), 200)}
+                      onFocus={() => clientSearch.length > 1 && setShowClientResults(true)}
+                    />
+                  </div>
+                  {showClientResults && (
+                    <div className="absolute top-[65px] left-0 right-0 z-[150] bg-popover border border-border rounded-xl sm:rounded-2xl shadow-2xl max-h-48 overflow-y-auto custom-scrollbar py-1">
+                      {filteredClientes.map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => {
+                            setForm({...form, cliente_id: c.id});
+                            setClientSearch(`${c.nombre} ${c.apellido}`);
+                            setShowClientResults(false);
+                          }}
+                          className="w-full text-left px-4 py-2.5 hover:bg-muted transition-colors group flex items-center justify-between"
+                        >
+                          <div>
+                            <p className="text-sm font-bold text-foreground group-hover:text-primary transition-colors">{c.nombre} {c.apellido}</p>
+                            <p className="text-[10px] text-muted-foreground">{c.telefono}</p>
+                          </div>
+                          <Plus className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-all" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Marca & Modelo */}
+                <div className="col-span-2 sm:col-span-1 space-y-2">
+                  <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Marca *</label>
+                  <select 
+                    className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all appearance-none"
+                    value={isCustomMarca ? 'Otro' : form.marca}
+                    onChange={e => {
+                      if (e.target.value === 'Otro') {
+                        setIsCustomMarca(true);
+                      } else {
+                        setIsCustomMarca(false);
+                        setForm({...form, marca: e.target.value});
+                      }
+                    }}
+                  >
+                    <option value="" disabled>Selecciona...</option>
+                    {MARCAS.map(m => <option key={m} value={m} className="bg-card">{m}</option>)}
+                  </select>
+                  {isCustomMarca && (
+                    <input 
+                      className="w-full mt-2 bg-muted/50 border border-primary/30 rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all animate-in fade-in slide-in-from-top-2"
+                      placeholder="Escribe la marca..."
+                      value={customMarca}
+                      onChange={e => setCustomMarca(e.target.value)}
+                    />
+                  )}
+                </div>
+                <div className="col-span-2 sm:col-span-1 space-y-2">
+                  <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Modelo *</label>
+                  <input 
+                    className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
+                    placeholder="Ej: Corolla"
+                    value={form.modelo}
+                    onChange={e => setForm({...form, modelo: e.target.value})}
+                  />
+                </div>
+
+                {/* Placa & Año */}
+                <div className="col-span-2 sm:col-span-1 space-y-2">
+                  <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Placa *</label>
+                  <div className="relative">
+                    <input
+                      className={cn(
+                        "w-full bg-muted/50 border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all pr-10 uppercase",
+                        plateStatus === 'taken' ? "border-red-500/50 focus:ring-red-500/30" : 
+                        plateStatus === 'available' ? "border-green-500/50 focus:ring-green-500/30" : "border-border"
+                      )}
+                      placeholder="ABC-123"
+                      value={form.placa}
+                      onChange={e => {
+                        const val = e.target.value.toUpperCase();
+                        setForm({...form, placa: val});
+                        clearTimeout(plateTimerRef.current);
+                        plateTimerRef.current = setTimeout(() => checkPlate(val, editVehiculo?.id), 500);
+                      }}
+                    />
+                    <div className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2">
+                      {plateStatus === 'checking' && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+                      {plateStatus === 'available' && <CheckCircle2 className="w-4 h-4 text-green-500" />}
+                      {plateStatus === 'taken' && <XCircle className="w-4 h-4 text-red-500" />}
+                    </div>
+                  </div>
+                  {plateStatus === 'taken' && (
+                    <p className="text-[10px] text-red-400 mt-1 flex items-center gap-1 animate-in fade-in">
+                      Ocupada por: <span className="font-semibold">{plateOwner}</span>
+                    </p>
+                  )}
+                  {plateStatus === 'available' && form.placa.length >= 3 && (
+                    <p className="text-[10px] text-green-400 mt-1 animate-in fade-in">Placa disponible</p>
+                  )}
+                </div>
+                <div className="col-span-2 sm:col-span-1 space-y-2">
+                  <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Año *</label>
+                  <input 
+                    type="number"
+                    className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
+                    placeholder="2020"
+                    min="1980" max="2026"
+                    value={form.anio}
+                    onChange={e => setForm({...form, anio: e.target.value})}
+                  />
+                </div>
+
+                {/* Color & Km */}
+                <div className="col-span-2 sm:col-span-1 space-y-2">
+                  <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Color</label>
+                  <input 
+                    className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
+                    placeholder="Ej: Blanco"
+                    value={form.color}
+                    onChange={e => setForm({...form, color: e.target.value})}
+                  />
+                </div>
+                <div className="col-span-2 sm:col-span-1 space-y-2">
+                  <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Kilometraje</label>
+                  <input 
+                    type="number"
+                    className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
+                    placeholder="50000"
+                    value={form.kilometraje}
+                    onChange={e => setForm({...form, kilometraje: e.target.value})}
+                  />
+                </div>
+
+                {/* Estado dinámico */}
+                <div className="col-span-2 space-y-3 mt-2">
+                  <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Estado del Vehículo</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {ESTADOS_V.map(e => (
+                      <button
+                        key={e.v}
+                        type="button"
+                        onClick={() => setForm({...form, estado: e.v})}
+                        className={cn(
+                          "px-3 py-2.5 rounded-xl sm:rounded-2xl border text-xs font-bold tracking-tight transition-all text-center",
+                          form.estado === e.v 
+                            ? "border-primary bg-primary/10 text-primary scale-[1.02] shadow-md shadow-primary/5" 
+                            : "border-border/50 bg-muted/30 text-muted-foreground hover:bg-muted/50 hover:border-border"
+                        )}
+                      >
+                        {e.l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Kilometraje</label>
-              <Input type="number" value={form.kilometraje} onChange={e => setForm(p => ({ ...p, kilometraje: e.target.value }))} placeholder="50000" />
-            </div>
-            <div className="space-y-1.5 col-span-2">
-              <label className="text-xs font-medium text-muted-foreground">Estado</label>
-              <Select value={form.estado} onValueChange={v => setForm(p => ({ ...p, estado: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{ESTADOS_V.map(e => <SelectItem key={e.v} value={e.v}>{e.l}</SelectItem>)}</SelectContent>
-              </Select>
+
+            <div className="p-4 sm:p-6 border-t border-border bg-muted/10 flex flex-col-reverse sm:flex-row justify-end gap-3 shrink-0">
+              <button 
+                onClick={() => setShowModal(false)} 
+                className="w-full sm:w-auto px-5 py-2.5 sm:px-6 sm:py-3 rounded-2xl text-xs sm:text-sm font-bold text-muted-foreground hover:bg-muted/50 transition-all text-center"
+              >
+                Cancelar
+              </button>
+              <Button 
+                onClick={handleSave} 
+                disabled={!form.cliente_id || (!isCustomMarca && !form.marca) || (isCustomMarca && !customMarca.trim()) || !form.modelo || !form.placa || plateStatus === 'taken' || plateStatus === 'checking'}
+                className="w-full sm:w-auto rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground font-black px-6 sm:px-10 h-11 sm:h-12 text-xs sm:text-sm shadow-2xl shadow-primary/20 gap-2 flex items-center justify-center"
+              >
+                {editVehiculo ? 'Guardar Cambios' : 'Registrar Vehículo'}
+              </Button>
             </div>
           </div>
-          <DialogFooter className="gap-2 mt-2">
-            <Button variant="outline" onClick={() => setShowModal(false)}>Cancelar</Button>
-            <Button onClick={handleSave} disabled={!form.cliente_id || !form.marca || !form.modelo || !form.placa || plateStatus === 'taken' || plateStatus === 'checking'}>
-              {editVehiculo ? 'Guardar Cambios' : 'Registrar Vehículo'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </div>
+      )}
 
       {/* View modal */}
       <Dialog open={!!viewVehiculo} onOpenChange={() => setViewVehiculo(null)}>
