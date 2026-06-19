@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAppStore } from '@/lib/store';
+import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 import { logActivity } from '@/lib/activity';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
@@ -63,6 +64,7 @@ export default function IAPage() {
   const skipLoadRef = useRef(false);
   
   const { user } = useAppStore();
+  const { can } = useRolePermissions();
   const { currentSede } = useSedeStore();
   
   const allowedSedes = ['San Antonio de los Altos', 'El cementerio (Caracas)', 'Caracas El Paraíso', 'El Paraíso (Caracas)', 'El Paraiso (Caracas)', 'Caracas El Paraiso'];
@@ -169,6 +171,7 @@ export default function IAPage() {
 
   const deleteConversation = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!can('ia_asistente', 'eliminar')) { alert('No tienes permisos para eliminar conversaciones.'); return; }
     if (!supabase || !confirm('¿Eliminar esta conversación?')) return;
     try {
       await supabase.from('ai_conversations').delete().eq('id', id);
@@ -525,12 +528,14 @@ export default function IAPage() {
                     <MessageSquare className={cn("w-3.5 h-3.5 flex-shrink-0", activeConversationId === conv.id ? "text-primary" : "text-muted-foreground")} />
                     <span className="text-xs truncate">{conv.titulo}</span>
                   </div>
-                  <button 
-                    onClick={(e) => deleteConversation(conv.id, e)}
-                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/10 hover:text-red-400 rounded-md transition-all"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
+                  {can('ia_asistente', 'eliminar') && (
+                    <button
+                      onClick={(e) => deleteConversation(conv.id, e)}
+                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/10 hover:text-red-400 rounded-md transition-all"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  )}
                 </div>
               ))
             )}

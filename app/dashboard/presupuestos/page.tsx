@@ -19,6 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { useAppStore } from '@/lib/store';
+import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -63,6 +64,7 @@ const ESTADO_COLORS: Record<EstadoPresupuesto, string> = {
 export default function PresupuestosPage() {
   const { currentSede } = useSedeStore();
   const { user } = useAppStore();
+  const { can } = useRolePermissions();
 
   // Wizard step
   const [step, setStep] = useState<Step>(1);
@@ -403,6 +405,7 @@ export default function PresupuestosPage() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!can('presupuestos', 'eliminar')) return alert('No tienes permisos para eliminar presupuestos.');
     if (!confirm('¿Eliminar este presupuesto permanentemente?')) return;
     try {
       await deletePresupuesto(id);
@@ -1360,7 +1363,7 @@ export default function PresupuestosPage() {
                             </>
                           )}
 
-                          {(p.estado === 'borrador' || p.estado === 'enviado') && (
+                          {can('presupuestos', 'eliminar') && (p.estado === 'borrador' || p.estado === 'enviado') && (
                             <Button
                               size="sm"
                               variant="outline"

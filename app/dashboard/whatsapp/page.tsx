@@ -12,6 +12,7 @@ import { cn, formatRelativeTime } from '@/lib/utils';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { useAppStore } from '@/lib/store';
+import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 
 const QUICK_REPLIES = [
   '¡Hola! ¿En qué le puedo ayudar? 😊',
@@ -266,6 +267,7 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
 // ── Main Component ────────────────────────────────────────────
 export default function WhatsAppPage() {
   const { user } = useAppStore();
+  const { can } = useRolePermissions();
   const [convs, setConvs] = useState<RawConv[]>([]);
   const [replyingTo, setReplyingTo] = useState<RawMsg | null>(null);
   const [selected, setSelected] = useState<RawConv | null>(null);
@@ -410,6 +412,7 @@ export default function WhatsAppPage() {
   }, []);
 
   const deleteMsg = async (msg: RawMsg) => {
+    if (!can('whatsapp', 'eliminar')) return alert('No tienes permisos para eliminar mensajes.');
     if (!confirm('¿Seguro que deseas eliminar este mensaje? Pasará a la papelera de auditoría.')) return;
     
     // 1. Log to logs_actividad for traceability
@@ -1684,9 +1687,11 @@ export default function WhatsAppPage() {
                                     <RefreshCw className="w-3.5 h-3.5" />
                                   </button>
                                 )}
-                                <button onClick={() => deleteMsg(msg)} className="p-1.5 hover:bg-red-500/20 rounded-full text-red-500/60 hover:text-red-500" title="Eliminar">
-                                  <Trash className="w-3.5 h-3.5" />
-                                </button>
+                                {can('whatsapp', 'eliminar') && (
+                                  <button onClick={() => deleteMsg(msg)} className="p-1.5 hover:bg-red-500/20 rounded-full text-red-500/60 hover:text-red-500" title="Eliminar">
+                                    <Trash className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                               </div>
                             )}
                             {msg.es_ia && (

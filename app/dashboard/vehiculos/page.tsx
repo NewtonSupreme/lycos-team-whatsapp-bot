@@ -18,6 +18,7 @@ import { es } from 'date-fns/locale';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import TransferVehiculoModal from '@/components/TransferVehiculoModal';
 import { useAppStore } from '@/lib/store';
+import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 
 const MARCAS = ['Toyota','Ford','Chevrolet','Honda','Nissan','Hyundai','Kia','Mazda','Volkswagen','Mercedes','BMW','Audi','Mitsubishi','Jeep','Otro'];
 const ESTADOS_V = [{ v:'activo',l:'Activo'},{v:'en_servicio',l:'En Servicio'},{v:'listo',l:'Listo'},{v:'inactivo',l:'Inactivo'}];
@@ -33,6 +34,7 @@ export default function VehiculosPage() {
   const [viewVehiculo, setViewVehiculo] = useState<Vehiculo | null>(null);
   const [transferVehiculoTarget, setTransferVehiculoTarget] = useState<Vehiculo | null>(null);
   const { user } = useAppStore();
+  const { can } = useRolePermissions();
   const [vehiculoServicios, setVehiculoServicios] = useState<any[]>([]);
   const [loadingServicios, setLoadingServicios] = useState(false);
   const [form, setForm] = useState({ cliente_id: '', marca: '', modelo: '', anio: '', placa: '', color: '', kilometraje: '', vin: '', estado: 'activo', notas: '' });
@@ -221,6 +223,7 @@ export default function VehiculosPage() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!can('vehiculos', 'eliminar')) return alert('No tienes permisos para eliminar vehículos.');
     if (confirm('¿Estás seguro de eliminar este vehículo?')) {
       try {
         await deleteVehiculo(id);
@@ -398,7 +401,9 @@ export default function VehiculosPage() {
                       <button onClick={() => setViewVehiculo(vehiculo)} className="w-6 h-6 rounded-md hover:bg-white/10 flex items-center justify-center"><Eye className="w-3.5 h-3.5 text-muted-foreground" /></button>
                       <button onClick={() => openEdit(vehiculo)} className="w-6 h-6 rounded-md hover:bg-white/10 flex items-center justify-center"><Edit className="w-3.5 h-3.5 text-muted-foreground" /></button>
                       <button onClick={() => setTransferVehiculoTarget(vehiculo)} title="Transferir a otro cliente" className="w-6 h-6 rounded-md hover:bg-primary/10 flex items-center justify-center"><ArrowRightLeft className="w-3.5 h-3.5 text-muted-foreground" /></button>
-                      <button onClick={() => handleDelete(vehiculo.id)} className="w-6 h-6 rounded-md hover:bg-red-500/10 flex items-center justify-center"><Trash2 className="w-3.5 h-3.5 text-red-400" /></button>
+                      {can('vehiculos', 'eliminar') && (
+                        <button onClick={() => handleDelete(vehiculo.id)} className="w-6 h-6 rounded-md hover:bg-red-500/10 flex items-center justify-center"><Trash2 className="w-3.5 h-3.5 text-red-400" /></button>
+                      )}
                     </div>
                   </div>
 

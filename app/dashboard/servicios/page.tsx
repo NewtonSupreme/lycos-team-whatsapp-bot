@@ -624,6 +624,7 @@ function KanbanColumn({ estado, items, onEdit, onDelete, onTracking, onInvoice, 
 }
 
 function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onBudget, onMove, isSelected, onSelect }: any) {
+  const { can } = useRolePermissions();
   const lastUpdate = cita.seguimiento?.[cita.seguimiento.length - 1];
 
   const currentIndex = ESTADOS.indexOf(cita.estado);
@@ -717,9 +718,11 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onBudget, 
           <button onClick={() => onEdit(cita)} className="p-1.5 rounded-lg hover:bg-white/10 text-muted-foreground hover:text-white transition-colors">
             <Edit3 className="w-3.5 h-3.5" />
           </button>
-          <button onClick={() => onDelete(cita.id)} className="p-1.5 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-colors">
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
+          {can('servicios', 'eliminar') && (
+            <button onClick={() => onDelete(cita.id)} className="p-1.5 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-colors">
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 

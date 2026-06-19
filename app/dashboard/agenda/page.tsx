@@ -740,9 +740,11 @@ Te esperamos puntual. Cualquier cambio avísanos con tiempo. 😊
                           <button onClick={() => openEdit(cita)} className="w-7 h-7 rounded-lg hover:bg-muted/50 flex items-center justify-center">
                             <Clock className="w-3.5 h-3.5 text-muted-foreground" />
                           </button>
-                          <button onClick={() => handleDelete(cita.id)} className="w-7 h-7 rounded-lg hover:bg-red-500/10 flex items-center justify-center">
-                            <X className="w-3.5 h-3.5 text-red-400" />
-                          </button>
+                          {can('agenda', 'eliminar') && (
+                            <button onClick={() => handleDelete(cita.id)} className="w-7 h-7 rounded-lg hover:bg-red-500/10 flex items-center justify-center">
+                              <X className="w-3.5 h-3.5 text-red-400" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

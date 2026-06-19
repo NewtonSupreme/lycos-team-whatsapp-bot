@@ -33,6 +33,7 @@ import { generateNotaEntregaPDF } from '@/lib/distribucion-pdf';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { useAppStore } from '@/lib/store';
+import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 import { Distribucion } from '@/types';
 
 // ── Types ──────────────────────────────────────────────────────
@@ -2214,7 +2215,9 @@ export default function ReportesPage() {
   const [currentTasa, setCurrentTasa] = useState(518.0);
   const { currentSede } = useSedeStore();
   const { user } = useAppStore();
+  const { can } = useRolePermissions();
   const isAdmin = user?.rol === 'admin';
+  const canDeleteVentas = can('ventas', 'eliminar');
 
   useEffect(() => {
     setMounted(true);
@@ -2652,6 +2655,7 @@ export default function ReportesPage() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!canDeleteVentas) return alert('No tienes permisos para eliminar ventas.');
     const sale = ventas.find(v => v.id === id);
     if (!sale) return;
 
@@ -2770,6 +2774,7 @@ export default function ReportesPage() {
 
   const handlePurgeVenta = async (logId: string) => {
     if (!supabase) return;
+    if (!isAdmin) return alert('Solo un administrador puede eliminar permanentemente de la papelera.');
     if (confirm('¿Estás seguro de eliminar PERMANENTEMENTE esta venta de la papelera? Esta acción no se puede deshacer.')) {
       try {
         setActioningId(logId);
@@ -3250,6 +3255,7 @@ export default function ReportesPage() {
                               >
                                 <Pencil className="w-3.5 h-3.5" />
                               </button>
+                              {canDeleteVentas && (
                               <button
                                 onClick={() => handleDelete(v.id)}
                                 disabled={deleting === v.id}
@@ -3261,6 +3267,7 @@ export default function ReportesPage() {
                                   : <Trash2 className="w-3.5 h-3.5" />
                                 }
                               </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -3529,13 +3536,15 @@ export default function ReportesPage() {
                               >
                                 <Pencil className="w-3.5 h-3.5" />
                               </button>
+                              {canDeleteVentas && (
                               <button
-                                onClick={async () => { if(confirm('¿Eliminar egreso?')) { await withSedeFilter(supabase?.from('egresos')).delete().eq('id', e.id); loadData(); } }}
+                                onClick={async () => { if(!canDeleteVentas) return; if(confirm('¿Eliminar egreso?')) { await withSedeFilter(supabase?.from('egresos')).delete().eq('id', e.id); loadData(); } }}
                                 className="w-7 h-7 rounded-lg hover:bg-destructive/10 text-destructive flex items-center justify-center"
                                 title="Eliminar"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
+                              )}
                             </div>
                           </td>
                         </tr>

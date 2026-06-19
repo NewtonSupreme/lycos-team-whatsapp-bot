@@ -204,6 +204,7 @@ export default function FacturasPage() {
 
   // ── Handle anular ──
   const handleAnular = async (factura: Factura) => {
+    if (!can('ventas', 'eliminar')) return alert('No tienes permisos para anular facturas.');
     if (!confirm(`¿Seguro que deseas ANULAR la factura ${factura.correlativo}? Esta acción no se puede deshacer.`)) return;
     setAnulando(factura.id);
     try {

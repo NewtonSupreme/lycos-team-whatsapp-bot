@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
+import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 
 interface PapeleraItem {
   id: string;
@@ -53,6 +54,7 @@ const CATEGORIES: { value: string; label: string }[] = [
 
 export default function InventarioPapeleraPage() {
   const { user } = useAppStore();
+  const { isAdmin } = useRolePermissions();
   const [items, setItems] = useState<PapeleraItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -119,6 +121,7 @@ export default function InventarioPapeleraPage() {
 
   const handleEliminarPermanente = async () => {
     if (!selectedItem) return;
+    if (!isAdmin) return alert('Solo un administrador puede eliminar permanentemente de la papelera.');
     setIsSubmitting(true);
     try {
       await eliminarPermanentePapelera(selectedItem.id);
@@ -344,15 +347,17 @@ export default function InventarioPapeleraPage() {
                         >
                           <RotateCcw className="w-4 h-4" />
                         </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          className="h-8 w-8 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 border border-transparent hover:border-red-500/20" 
-                          onClick={() => openEliminarModal(item)}
-                          title="Eliminar permanentemente"
-                        >
-                          <XCircle className="w-4 h-4" />
-                        </Button>
+                        {isAdmin && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 border border-transparent hover:border-red-500/20"
+                            onClick={() => openEliminarModal(item)}
+                            title="Eliminar permanentemente (solo admin)"
+                          >
+                            <XCircle className="w-4 h-4" />
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>
