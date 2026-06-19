@@ -394,28 +394,21 @@ export default function WhatsAppPage() {
   }, []);
 
   // ── OPTIMIZED: Load messages newest-first, show immediately ──
-  // Loads DESC (newest first), reverses for display → user sees newest right away
-  // convSedeId: la sede de la conversación (puede diferir de la sede activa del usuario)
-  const loadInitialMsgs = useCallback(async (telefono: string, convSedeId?: string | null) => {
+  // Filtra SOLO por número de teléfono — nunca por sede_id.
+  // Los mensajes en BD tienen sede_id inconsistente (el bot los graba con la sede
+  // de su configuración, no la de la conversación), así que filtrar por sede
+  // corta el historial. El teléfono identifica unívocamente la conversación.
+  const loadInitialMsgs = useCallback(async (telefono: string, _convSedeId?: string | null) => {
     if (!supabase) return;
     setLoadingMsgs(true);
     setHasMoreAbove(false);
 
-    // Siempre cargar por sede de la CONVERSACIÓN, no del usuario logueado.
-    // Si convSedeId está disponible lo usamos; si no, buscamos sin filtro de sede
-    // para no perder mensajes de otras sedes nunca.
-    let query = supabase.from('mensajes_whatsapp')
+    const { data } = await supabase.from('mensajes_whatsapp')
       .select('*')
       .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .limit(60);
-
-    if (convSedeId) {
-      query = query.eq('sede_id', convSedeId);
-    }
-
-    const { data } = await query;
 
     setLoadingMsgs(false);
     if (!data) return;
@@ -424,7 +417,6 @@ export default function WhatsAppPage() {
     setMsgs(sorted);
     setHasMoreAbove(data.length === 60);
 
-    // Scroll to bottom AFTER paint
     requestAnimationFrame(() => {
       const el = chatScrollRef.current;
       if (el) el.scrollTop = el.scrollHeight;
@@ -494,21 +486,15 @@ export default function WhatsAppPage() {
     setLoadingMore(true);
 
     const oldest = msgs[0].created_at;
-    const convSedeId = (selected as any).sede_id as string | null | undefined;
 
-    let query = supabase.from('mensajes_whatsapp')
+    // Sin filtro de sede_id — los mensajes tienen sede inconsistente en BD
+    const { data } = await supabase.from('mensajes_whatsapp')
       .select('*')
       .or(`from_number.eq.${selected.telefono},to_number.eq.${selected.telefono}`)
       .is('deleted_at', null)
       .lt('created_at', oldest)
       .order('created_at', { ascending: false })
       .limit(40);
-
-    if (convSedeId) {
-      query = query.eq('sede_id', convSedeId);
-    }
-
-    const { data } = await query;
 
     setLoadingMore(false);
 
@@ -543,25 +529,20 @@ export default function WhatsAppPage() {
   }, [handleScroll, hasMoreAbove, loadingMore, loadOlderMsgs]);
 
   // ── Incremental: only fetch messages NEWER than last ──────────
-  const fetchNewMsgs = useCallback(async (telefono: string, convSedeId?: string | null) => {
+  const fetchNewMsgs = useCallback(async (telefono: string, _convSedeId?: string | null) => {
     if (!supabase) return;
     const latest = msgsRef.current;
     const realMsgs = latest.filter(m => !m.id.startsWith('tmp-'));
     const lastTs = realMsgs.length ? realMsgs[realMsgs.length - 1].created_at : new Date(0).toISOString();
 
-    let query = supabase.from('mensajes_whatsapp')
+    // Sin filtro de sede_id — los mensajes tienen sede inconsistente en BD
+    const { data } = await supabase.from('mensajes_whatsapp')
       .select('*')
       .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
       .is('deleted_at', null)
       .gt('created_at', lastTs)
       .order('created_at', { ascending: true })
       .limit(20);
-
-    if (convSedeId) {
-      query = query.eq('sede_id', convSedeId);
-    }
-
-    const { data } = await query;
 
     if (data && data.length > 0) {
       setMsgs(prev => mergeMessages(prev, data as RawMsg[]));
