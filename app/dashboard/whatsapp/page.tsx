@@ -395,30 +395,27 @@ export default function WhatsAppPage() {
 
   // ── OPTIMIZED: Load messages newest-first, show immediately ──
   // Loads DESC (newest first), reverses for display → user sees newest right away
-  const loadInitialMsgs = useCallback(async (telefono: string) => {
+  // convSedeId: la sede de la conversación (puede diferir de la sede activa del usuario)
+  const loadInitialMsgs = useCallback(async (telefono: string, convSedeId?: string | null) => {
     if (!supabase) return;
     setLoadingMsgs(true);
     setHasMoreAbove(false);
 
-    // 1. Try with sede filter
-    let { data } = await withSedeFilter(supabase.from('mensajes_whatsapp'))
+    // Siempre cargar por sede de la CONVERSACIÓN, no del usuario logueado.
+    // Si convSedeId está disponible lo usamos; si no, buscamos sin filtro de sede
+    // para no perder mensajes de otras sedes nunca.
+    let query = supabase.from('mensajes_whatsapp')
       .select('*')
       .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .limit(60);
 
-    // 2. Fallback to San Antonio
-    if (!data || data.length === 0) {
-      const { data: fallback } = await supabase.from('mensajes_whatsapp')
-        .select('*')
-        .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
-        .eq('sede_id', '310595c5-5258-47fa-9b69-5ad9932685a7')
-        .is('deleted_at', null)
-        .order('created_at', { ascending: false })
-        .limit(60);
-      data = fallback;
+    if (convSedeId) {
+      query = query.eq('sede_id', convSedeId);
     }
+
+    const { data } = await query;
 
     setLoadingMsgs(false);
     if (!data) return;
@@ -482,7 +479,7 @@ export default function WhatsAppPage() {
     if (!error) {
       setAuditMsgs(prev => prev.filter(m => m.id !== id));
       if (selected && msgs.some(m => m.id === id)) {
-         loadInitialMsgs(selected.telefono);
+         loadInitialMsgs(selected.telefono, (selected as any).sede_id);
       }
     }
   };
@@ -497,13 +494,21 @@ export default function WhatsAppPage() {
     setLoadingMore(true);
 
     const oldest = msgs[0].created_at;
-    const { data } = await withSedeFilter(supabase.from('mensajes_whatsapp'))
+    const convSedeId = (selected as any).sede_id as string | null | undefined;
+
+    let query = supabase.from('mensajes_whatsapp')
       .select('*')
       .or(`from_number.eq.${selected.telefono},to_number.eq.${selected.telefono}`)
       .is('deleted_at', null)
       .lt('created_at', oldest)
       .order('created_at', { ascending: false })
       .limit(40);
+
+    if (convSedeId) {
+      query = query.eq('sede_id', convSedeId);
+    }
+
+    const { data } = await query;
 
     setLoadingMore(false);
 
@@ -538,14 +543,13 @@ export default function WhatsAppPage() {
   }, [handleScroll, hasMoreAbove, loadingMore, loadOlderMsgs]);
 
   // ── Incremental: only fetch messages NEWER than last ──────────
-  const fetchNewMsgs = useCallback(async (telefono: string) => {
+  const fetchNewMsgs = useCallback(async (telefono: string, convSedeId?: string | null) => {
     if (!supabase) return;
     const latest = msgsRef.current;
     const realMsgs = latest.filter(m => !m.id.startsWith('tmp-'));
     const lastTs = realMsgs.length ? realMsgs[realMsgs.length - 1].created_at : new Date(0).toISOString();
 
-    // 1. Try with sede filter
-    let { data } = await withSedeFilter(supabase.from('mensajes_whatsapp'))
+    let query = supabase.from('mensajes_whatsapp')
       .select('*')
       .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
       .is('deleted_at', null)
@@ -553,18 +557,11 @@ export default function WhatsAppPage() {
       .order('created_at', { ascending: true })
       .limit(20);
 
-    // 2. Fallback to San Antonio
-    if (!data || data.length === 0) {
-      const { data: fallback } = await supabase.from('mensajes_whatsapp')
-        .select('*')
-        .or(`from_number.eq.${telefono},to_number.eq.${telefono}`)
-        .eq('sede_id', '310595c5-5258-47fa-9b69-5ad9932685a7')
-        .is('deleted_at', null)
-        .gt('created_at', lastTs)
-        .order('created_at', { ascending: true })
-        .limit(20);
-      data = fallback;
+    if (convSedeId) {
+      query = query.eq('sede_id', convSedeId);
     }
+
+    const { data } = await query;
 
     if (data && data.length > 0) {
       setMsgs(prev => mergeMessages(prev, data as RawMsg[]));
@@ -621,9 +618,10 @@ export default function WhatsAppPage() {
         const cur = selectedRef.current;
         if (cur) {
           const phone = cur.telefono;
+          const convSedeId = (cur as any).sede_id as string | null | undefined;
           // Match incoming (from client) OR outgoing bot reply (to_number = phone, from_number = 'system')
           if (newMsg.from_number === phone || newMsg.to_number === phone) {
-            fetchNewMsgs(phone);
+            fetchNewMsgs(phone, convSedeId);
           }
         }
         loadConvs(showAllSedesRef.current);
@@ -662,8 +660,8 @@ export default function WhatsAppPage() {
     // Poll as fallback for Realtime silence or connection issues (every 5s)
     const poll = setInterval(() => {
       const cur = selectedRef.current;
-      if (cur) fetchNewMsgs(cur.telefono);
-      loadConvs();
+      if (cur) fetchNewMsgs(cur.telefono, (cur as any).sede_id);
+      loadConvs(showAllSedesRef.current);
     }, 5000);
 
     return () => {
@@ -678,7 +676,8 @@ export default function WhatsAppPage() {
     setShowMobileChat(true);
     setMsgs([]);
     setIsScrolledUp(false);
-    await loadInitialMsgs(conv.telefono);
+    const convSedeId = (conv as any).sede_id as string | null | undefined;
+    await loadInitialMsgs(conv.telefono, convSedeId);
     
     // Fetch vehicles
     if (conv.cliente_id) {
@@ -691,7 +690,7 @@ export default function WhatsAppPage() {
       withSedeFilter(supabase.from('conversaciones'))
         .update({ mensajes_sin_leer: 0 })
         .eq('telefono', conv.telefono)
-        .then(() => loadConvs());
+        .then(() => loadConvs(showAllSedesRef.current));
     }
   };
 
@@ -771,7 +770,7 @@ export default function WhatsAppPage() {
       }
 
       setReplyingTo(null);
-      await fetchNewMsgs(selected.telefono);
+      await fetchNewMsgs(selected.telefono, (selected as any).sede_id);
       // Clear files after success
       files.forEach(f => URL.revokeObjectURL(f.url));
       setFiles([]);
@@ -782,7 +781,7 @@ export default function WhatsAppPage() {
     } finally {
       setSending(false);
       setMsgs(prev => prev.filter(m => !m.id.startsWith('tmp-')));
-      await fetchNewMsgs(selected.telefono);
+      await fetchNewMsgs(selected.telefono, (selected as any).sede_id);
       await loadConvs();
     }
   };
@@ -906,11 +905,11 @@ export default function WhatsAppPage() {
       const data = await res.json();
       if (res.ok && data.success) {
         setRetryStatus('✅ Imagen analizada y respondida por IA');
-        await fetchNewMsgs(selected!.telefono);
+        await fetchNewMsgs(selected!.telefono, (selected as any).sede_id);
         await loadConvs();
       } else if (res.status === 207) {
         setRetryStatus('⚠️ Imagen descrita pero IA falló al responder');
-        await fetchNewMsgs(selected!.telefono);
+        await fetchNewMsgs(selected!.telefono, (selected as any).sede_id);
       } else {
         setRetryStatus(`❌ ${data.error || 'Error al re-analizar imagen'}`);
       }
@@ -936,12 +935,12 @@ export default function WhatsAppPage() {
       const data = await res.json();
       if (res.ok && data.success) {
         setRetryStatus(`✅ Audio transcrito: "${(data.transcript || '').substring(0, 50)}..."`);
-        await fetchNewMsgs(selected!.telefono);
+        await fetchNewMsgs(selected!.telefono, (selected as any).sede_id);
         await loadConvs();
       } else if (res.status === 207) {
         // Partial: transcription OK but AI failed
         setRetryStatus(`⚠️ Transcrito pero IA falló. Transcripción: "${(data.transcript || '').substring(0, 40)}"`);
-        await fetchNewMsgs(selected!.telefono);
+        await fetchNewMsgs(selected!.telefono, (selected as any).sede_id);
       } else {
         setRetryStatus(`❌ ${data.error || 'Error al retranscribir'}`);
       }
@@ -976,7 +975,7 @@ export default function WhatsAppPage() {
       const data = await res.json();
       if (data.succeeded > 0) {
         setRetryStatus(`✅ ${data.succeeded} mensaje${data.succeeded > 1 ? 's' : ''} respondido${data.succeeded > 1 ? 's' : ''}`);
-        await fetchNewMsgs(selected!.telefono);
+        await fetchNewMsgs(selected!.telefono, (selected as any).sede_id);
         await loadConvs();
       } else if (data.still_pending > 0) {
         setRetryStatus('⏳ IA sigue no disponible, se reintentará');
@@ -1007,11 +1006,11 @@ export default function WhatsAppPage() {
       if (res.ok && data.success) {
         const label = msg.media_type === 'audio' ? 'Audio reprocesado' : msg.media_type === 'image' ? 'Imagen re-analizada' : msg.media_type === 'video' ? 'Video re-analizado' : 'Mensaje reprocesado';
         setRetryStatus(`✅ ${label} y respondido por IA`);
-        await fetchNewMsgs(selected!.telefono);
+        await fetchNewMsgs(selected!.telefono, (selected as any).sede_id);
         await loadConvs();
       } else if (res.status === 207) {
         setRetryStatus(`⚠️ ${data.warning || 'Procesado pero IA falló al responder'}`);
-        await fetchNewMsgs(selected!.telefono);
+        await fetchNewMsgs(selected!.telefono, (selected as any).sede_id);
       } else {
         setRetryStatus(`❌ ${data.error || 'Error al reprocesar'}`);
       }
@@ -1049,7 +1048,7 @@ export default function WhatsAppPage() {
     } catch (e) {
       console.error('Error reaccionando:', e);
       // En caso de error crítico, refrescamos para sincronizar
-      fetchNewMsgs(selected.telefono);
+      fetchNewMsgs(selected.telefono, (selected as any).sede_id);
     }
   };
 
@@ -1114,7 +1113,7 @@ export default function WhatsAppPage() {
         });
 
         if (res2.ok) {
-          await fetchNewMsgs(selected.telefono);
+          await fetchNewMsgs(selected.telefono, (selected as any).sede_id);
           await loadConvs();
         } else {
           const errData = await res2.json();
@@ -1147,7 +1146,7 @@ export default function WhatsAppPage() {
         }),
       });
       if (res.ok) {
-        await fetchNewMsgs(selected.telefono);
+        await fetchNewMsgs(selected.telefono, (selected as any).sede_id);
         await loadConvs();
         scrollToBottom(true);
       } else {
@@ -1304,7 +1303,7 @@ export default function WhatsAppPage() {
       });
       if (res.ok) {
         // Refresh to get the real message from DB
-        await fetchNewMsgs(selected.telefono);
+        await fetchNewMsgs(selected.telefono, (selected as any).sede_id);
         await loadConvs();
       } else {
         const errData = await res.json();
