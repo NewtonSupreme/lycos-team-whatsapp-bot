@@ -4,7 +4,7 @@ import {
   MessageSquare, Send, Bot, User,
   Smile, CheckCheck, Check, X, RefreshCw, UserCheck, Wifi, WifiOff, Search, Clock,
   Image as ImageIcon, Video, Volume2, FileText, ChevronDown, ChevronLeft, Car, Calendar, Hash, Info,
-  Copy, Trash, Zap, Paperclip, Mic, UserPlus, Trash2, RotateCcw, MapPin, Navigation
+  Copy, Trash, Zap, Paperclip, Mic, UserPlus, Trash2, RotateCcw, MapPin, Navigation, Globe, Building2
 } from 'lucide-react';
 import { supabase, syncClientData } from '@/lib/supabase';
 import { Vehiculo } from '@/types';
@@ -264,6 +264,16 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
   );
 }
 
+// ── Sede label map ────────────────────────────────────────────
+const SEDE_LABEL_MAP: Record<string, { label: string; color: string; bg: string }> = {
+  '310595c5-5258-47fa-9b69-5ad9932685a7': { label: 'San Antonio', color: '#34d399', bg: 'rgba(52,211,153,0.12)' },
+  'c5e6f95a-cdb8-4999-9210-ae3f6d4a7d44': { label: 'El Paraíso', color: '#60a5fa', bg: 'rgba(96,165,250,0.12)' },
+};
+function getSedeLabel(sedeId?: string | null) {
+  if (!sedeId) return null;
+  return SEDE_LABEL_MAP[sedeId] ?? { label: 'Otra sede', color: '#a78bfa', bg: 'rgba(167,139,250,0.12)' };
+}
+
 // ── Main Component ────────────────────────────────────────────
 export default function WhatsAppPage() {
   const { user } = useAppStore();
@@ -298,6 +308,9 @@ export default function WhatsAppPage() {
   const [viewMode, setViewMode] = useState<'chat' | 'audit'>('chat');
   const [auditMsgs, setAuditMsgs] = useState<any[]>([]);
   const [loadingAudit, setLoadingAudit] = useState(false);
+  const [showAllSedes, setShowAllSedes] = useState(false);
+  const showAllSedesRef = useRef(false);
+  useEffect(() => { showAllSedesRef.current = showAllSedes; }, [showAllSedes]);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
@@ -342,23 +355,34 @@ export default function WhatsAppPage() {
   }, [msgs, scrollToBottom]);
 
   // ── Load conversations ──────────────────────────────────────
-  const loadConvs = useCallback(async () => {
+  const loadConvs = useCallback(async (allSedes = false) => {
     if (!supabase) return;
     
-    // 1. Try with sede filter (architecture standard)
-    let { data } = await withSedeFilter(supabase.from('conversaciones'))
-      .select('*, clientes(id, nombre, apellido, telefono)')
-      .order('ultimo_mensaje_at', { ascending: false })
-      .limit(1000);
-    
-    // 2. Fallback: if no conversations for current branch, try San Antonio (primary branch)
-    if (!data || data.length === 0) {
-      const { data: fallback } = await supabase.from('conversaciones')
+    let data;
+    if (allSedes) {
+      // Cargar conversaciones de TODAS las sedes sin filtro
+      const { data: allData } = await supabase.from('conversaciones')
         .select('*, clientes(id, nombre, apellido, telefono)')
-        .eq('sede_id', '310595c5-5258-47fa-9b69-5ad9932685a7')
         .order('ultimo_mensaje_at', { ascending: false })
         .limit(1000);
-      data = fallback;
+      data = allData;
+    } else {
+      // 1. Try with sede filter (architecture standard)
+      const { data: sedeData } = await withSedeFilter(supabase.from('conversaciones'))
+        .select('*, clientes(id, nombre, apellido, telefono)')
+        .order('ultimo_mensaje_at', { ascending: false })
+        .limit(1000);
+      data = sedeData;
+      
+      // 2. Fallback: if no conversations for current branch, try San Antonio (primary branch)
+      if (!data || data.length === 0) {
+        const { data: fallback } = await supabase.from('conversaciones')
+          .select('*, clientes(id, nombre, apellido, telefono)')
+          .eq('sede_id', '310595c5-5258-47fa-9b69-5ad9932685a7')
+          .order('ultimo_mensaje_at', { ascending: false })
+          .limit(1000);
+        data = fallback;
+      }
     }
     
     if (!data) return;
@@ -559,8 +583,8 @@ export default function WhatsAppPage() {
 
   // ── Initial setup ────────────────────────────────────────────
   useEffect(() => {
-    loadConvs();
-  }, [loadConvs]);
+    loadConvs(showAllSedes);
+  }, [loadConvs, showAllSedes]);
 
   // ── 24h WhatsApp timer ────────────────────────────────────────
   useEffect(() => {
@@ -603,7 +627,7 @@ export default function WhatsAppPage() {
             fetchNewMsgs(phone);
           }
         }
-        loadConvs();
+        loadConvs(showAllSedesRef.current);
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'mensajes_whatsapp' }, (payload) => {
         // Handle reactions, transcription updates, etc.
@@ -618,10 +642,10 @@ export default function WhatsAppPage() {
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'conversaciones' }, () => {
-        loadConvs();
+        loadConvs(showAllSedesRef.current);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'clientes' }, () => {
-        loadConvs();
+        loadConvs(showAllSedesRef.current);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'vehiculos' }, (payload) => {
         const cur = selectedRef.current;
@@ -1365,8 +1389,22 @@ export default function WhatsAppPage() {
             {viewMode === 'audit' ? <MessageSquare className="w-3.5 h-3.5" /> : <Trash2 className="w-3.5 h-3.5" />}
             {viewMode === 'audit' ? 'Volver al Chat' : 'Papelera'}
           </button>
-          <button onClick={loadConvs} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg hover:bg-white/5">
+          <button onClick={() => loadConvs(showAllSedes)} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg hover:bg-white/5">
             <RefreshCw className="w-3.5 h-3.5" /> Actualizar
+          </button>
+          {/* Toggle todas las sedes */}
+          <button
+            onClick={() => setShowAllSedes(v => !v)}
+            className={cn(
+              'flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-all font-semibold border',
+              showAllSedes
+                ? 'bg-blue-500/20 text-blue-400 border-blue-500/30 shadow-sm shadow-blue-500/10'
+                : 'bg-white/5 text-muted-foreground border-transparent hover:border-white/10 hover:text-foreground'
+            )}
+            title={showAllSedes ? 'Mostrando todas las sedes · Click para filtrar por sede actual' : 'Ver conversaciones de todas las sedes'}
+          >
+            <Globe className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{showAllSedes ? 'Todas las sedes' : 'Mi sede'}</span>
           </button>
         </div>
       </div>
@@ -1396,6 +1434,14 @@ export default function WhatsAppPage() {
             </div>
           </div>
 
+          {/* Banner todas las sedes */}
+          {showAllSedes && (
+            <div className="px-3 py-2 flex items-center gap-2" style={{ background: 'rgba(96,165,250,0.08)', borderBottom: '1px solid rgba(96,165,250,0.15)' }}>
+              <Globe className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#60a5fa' }} />
+              <span className="text-[11px] font-semibold" style={{ color: '#60a5fa' }}>Todas las sedes · {filtered.length} chats</span>
+            </div>
+          )}
+
           <div className="flex-1 overflow-y-auto">
             {filtered.length === 0 && (
               <div className="flex flex-col items-center justify-center h-40 text-center p-4">
@@ -1407,6 +1453,7 @@ export default function WhatsAppPage() {
               const isActive = selected?.id === conv.id;
               const estado = conv.estado || 'activa';
               const dotColor = estado === 'bot' ? '#a78bfa' : estado === 'humano' ? '#fb923c' : estado === 'activa' ? '#34d399' : '#6b7280';
+              const sedeInfo = showAllSedes ? getSedeLabel((conv as any).sede_id) : null;
               return (
                 <div
                   key={conv.id}
@@ -1437,6 +1484,13 @@ export default function WhatsAppPage() {
                         </span>
                       )}
                     </div>
+                    {/* Etiqueta de sede cuando se ven todas las sedes */}
+                    {sedeInfo && (
+                      <div className="mt-1 flex items-center gap-1 w-fit rounded-full px-2 py-0.5" style={{ background: sedeInfo.bg }}>
+                        <Building2 className="w-2.5 h-2.5 flex-shrink-0" style={{ color: sedeInfo.color }} />
+                        <span className="text-[10px] font-semibold leading-none" style={{ color: sedeInfo.color }}>{sedeInfo.label}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -1499,7 +1553,18 @@ export default function WhatsAppPage() {
                           <User className="w-3.5 h-3.5" />
                         </button>
                       </div>
-                      <p className="text-[12px] opacity-50 text-[#8696a0] tabular-nums">{selected.telefono}</p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-[12px] opacity-50 text-[#8696a0] tabular-nums">{selected.telefono}</p>
+                        {showAllSedes && (() => {
+                          const si = getSedeLabel((selected as any).sede_id);
+                          return si ? (
+                            <span className="flex items-center gap-1 rounded-full px-1.5 py-0.5" style={{ background: si.bg }}>
+                              <Building2 className="w-2.5 h-2.5" style={{ color: si.color }} />
+                              <span className="text-[10px] font-bold" style={{ color: si.color }}>{si.label}</span>
+                            </span>
+                          ) : null;
+                        })()}
+                      </div>
                     </div>
                   </div>
 
