@@ -181,6 +181,25 @@ export default function FacturasPage() {
     loadData();
   }, [loadData]);
 
+  // ── Auto-sincronización: asegura que toda venta de ventas_dia tenga su factura ──
+  // Se ejecuta UNA sola vez al entrar al módulo. Es idempotente (no duplica).
+  const [autoSynced, setAutoSynced] = useState(false);
+  useEffect(() => {
+    if (autoSynced || !supabase) return;
+    setAutoSynced(true);
+    (async () => {
+      try {
+        const res = await fetch('/api/migrate-facturas');
+        const data = await res.json();
+        if (data?.success && data.migrated > 0) {
+          // Si se crearon facturas faltantes, recargar para mostrarlas
+          loadData(true);
+        }
+      } catch { /* silencioso: el botón "Importar ventas" queda como respaldo manual */ }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSynced]);
+
   // ── Realtime subscription ──
   useEffect(() => {
     if (!supabase) return;
@@ -326,7 +345,7 @@ export default function FacturasPage() {
                   const res = await fetch('/api/migrate-facturas');
                   const data = await res.json();
                   if (data.success) {
-                    alert(`Importación completa:\n• Ventas POS importadas: ${data.migratedDia}\n• Ventas/silenciadores importadas: ${data.migratedSil}\n• Total facturas ahora: ${data.totalFacturasNow}`);
+                    alert(`Importación completa:\n• Ventas importadas a facturas: ${data.migrated}\n• Ya tenían factura: ${data.yaConFactura}\n• Total ventas: ${data.totalVentasDia}`);
                   } else {
                     alert('Error: ' + (data.error || 'No se pudo importar'));
                   }
