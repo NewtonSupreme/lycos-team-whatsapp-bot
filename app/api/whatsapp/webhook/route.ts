@@ -2951,14 +2951,60 @@ async function handleCompletedServiceSale(
       estado: 'pagado',
     };
 
+    let ventaDiaId: string | null = null;
     if (existingVD) {
       const { error: vdErr } = await db.from('ventas_dia').update(vdData).eq('id', existingVD.id);
       if (vdErr) throw new Error(`ventas_dia update: ${vdErr.message}`);
+      ventaDiaId = existingVD.id;
       console.log(`✅ ventas_dia ACTUALIZADO (${refTag})`);
     } else {
-      const { error: vdErr } = await db.from('ventas_dia').insert(vdData);
+      const { data: newVD, error: vdErr } = await db.from('ventas_dia').insert(vdData).select('id').single();
       if (vdErr) throw new Error(`ventas_dia insert: ${vdErr.message}`);
+      ventaDiaId = newVD?.id || null;
       console.log(`✅ ventas_dia INSERTADO (${refTag})`);
+    }
+
+    // ─── 3. factura centralizada (para que aparezca en el módulo Facturas) ─────
+    // Se referencia la venta_dia para deduplicar (1 factura por venta).
+    if (ventaDiaId) {
+      const { data: existingFac } = await db.from('facturas')
+        .select('id')
+        .eq('referencia_id', ventaDiaId)
+        .limit(1)
+        .maybeSingle();
+
+      if (!existingFac) {
+        let correlativo: string | null = null;
+        try {
+          const { data: corr } = await db.rpc('generar_correlativo_factura');
+          correlativo = (corr as string) || null;
+        } catch { /* fallback abajo */ }
+        if (!correlativo) correlativo = `FAC-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000) + 1000}`;
+
+        const { error: facErr } = await db.from('facturas').insert({
+          correlativo,
+          tipo: 'venta',
+          modulo_origen: 'servicios',
+          referencia_id: ventaDiaId,
+          referencia_tabla: 'ventas_dia',
+          cliente: clienteNombre || 'Consumidor Final',
+          vehiculo: vehiculoStr,
+          total: precio,
+          moneda: 'USD',
+          tasa_cambio: rates?.bcv || null,
+          total_bs: rates?.bcv ? precio * rates.bcv : null,
+          items: desglose,
+          metodos_pago: { divisas: precio },
+          con_iva: false,
+          estado: 'pagado',
+          notas: notesFinal,
+          emitido_por: registradoPor,
+          fecha_emision: fechaStr,
+          sede_id: sedeId,
+        });
+        if (facErr) console.error(`⚠️ factura (bot) insert: ${facErr.message}`);
+        else console.log(`🧾 Factura creada para venta del bot (${refTag})`);
+      }
     }
 
   } catch (err) {

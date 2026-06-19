@@ -316,6 +316,34 @@ export default function FacturasPage() {
               <RefreshCw className={cn("w-3 h-3", refreshing && "animate-spin")} />
               Sync
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={async () => {
+                if (!confirm('¿Importar a Facturas todas las ventas de Reportes que aún no tengan factura? (no duplica las ya existentes)')) return;
+                setRefreshing(true);
+                try {
+                  const res = await fetch('/api/migrate-facturas');
+                  const data = await res.json();
+                  if (data.success) {
+                    alert(`Importación completa:\n• Ventas POS importadas: ${data.migratedDia}\n• Ventas/silenciadores importadas: ${data.migratedSil}\n• Total facturas ahora: ${data.totalFacturasNow}`);
+                  } else {
+                    alert('Error: ' + (data.error || 'No se pudo importar'));
+                  }
+                  loadData(true);
+                } catch (e) {
+                  alert('Error al importar ventas');
+                } finally {
+                  setRefreshing(false);
+                }
+              }}
+              disabled={refreshing}
+              className="h-8 px-2 rounded-xl text-[10px] font-black uppercase tracking-widest gap-1"
+              title="Importar a Facturas las ventas de Reportes que no tengan factura"
+            >
+              <TrendingUp className={cn("w-3 h-3", refreshing && "animate-spin")} />
+              Importar ventas
+            </Button>
           </div>
         </div>
       </div>

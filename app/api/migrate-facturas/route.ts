@@ -46,23 +46,43 @@ export async function GET() {
     if (!error) migratedDia++;
   }
 
+  // Helper: extrae el total desde las notas si no hay campo estructurado
+  const extractTotal = (notas: string): number => {
+    if (!notas) return 0;
+    const m =
+      notas.match(/\[Total:\s*\$?\s*([\d]+(?:[.,][\d]+)?)/i) ||
+      notas.match(/[Tt]otal(?:\s+a\s+pagar)?\s*(?:[Cc]ashea|USD|BCV)?\s*[:=]?\s*\$?\s*([\d]+(?:[.,][\d]+)?)/i) ||
+      notas.match(/USD\s+([\d]+(?:[.,][\d]+)?)/i);
+    return m ? parseFloat(m[1].replace(',', '.')) : 0;
+  };
+
   // 2. Migrar ventas_silenciadores
   const { data: ventasSil } = await supabase.from('ventas_silenciadores').select('*');
-  const ventasSilToMigrate = (ventasSil || []).filter(v => !existingRefs.has(v.id)).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-  
+  const ventasSilToMigrate = (ventasSil || [])
+    .filter(v => !existingRefs.has(v.id))
+    // ⚠️ Omitir los "espejos" que crea el bot al completar un servicio: esas ventas ya
+    // quedan representadas por la factura de ventas_dia (evita facturas duplicadas).
+    .filter(v => !/\[(servicioid|citaid):/i.test(v.notas || ''))
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
   let migratedSil = 0;
   for (const venta of ventasSilToMigrate) {
     const { data: correlativo } = await supabase.rpc('generar_correlativo_factura');
-    
+
+    // Total robusto: campo estructurado → precio registrado → extraído de notas
+    const totalSil = Number(venta.total ?? venta.precio_registrado ?? 0) || extractTotal(venta.notas || '');
+    const cliMatch = (venta.notas || '').match(/[Cc]liente[:\s]+([^|\n,]+)/);
+    const clienteSil = venta.cliente || (cliMatch ? cliMatch[1].trim() : null) || 'Consumidor Final';
+
     const insertData = {
       correlativo: correlativo || `FAC-2026-${Math.floor(Math.random() * 9000) + 1000}`,
       tipo: 'venta',
       modulo_origen: 'silenciadores',
       referencia_id: venta.id,
       referencia_tabla: 'ventas_silenciadores',
-      cliente: venta.cliente || 'Consumidor Final',
-      vehiculo: venta.vehiculo,
-      total: venta.total,
+      cliente: clienteSil,
+      vehiculo: venta.vehiculo || venta.modelo || null,
+      total: totalSil,
       moneda: 'USD',
       items: venta.servicios || [],
       metodos_pago: venta.metodos_pago || {},
@@ -70,11 +90,11 @@ export async function GET() {
       notas: venta.notas,
       sede_id: venta.sede_id,
       emitido_por: venta.registrado_por || 'Admin',
-      fecha_emision: venta.fecha ? venta.fecha.split('T')[0] : venta.created_at.split('T')[0],
+      fecha_emision: venta.fecha ? String(venta.fecha).split('T')[0] : venta.created_at.split('T')[0],
       created_at: venta.created_at,
       updated_at: venta.created_at
     };
-    
+
     const { error } = await supabase.from('facturas').insert(insertData);
     if (!error) migratedSil++;
   }
