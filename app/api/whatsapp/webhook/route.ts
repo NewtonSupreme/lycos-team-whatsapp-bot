@@ -458,6 +458,34 @@ ERES EL ADMINISTRADOR DEL SISTEMA (MODO DIOS).
 Tu interlocutor es LYCOS CORPORATIVO (el dueño/administrador del taller).
 Tienes acceso total para gestionar TODO el sistema: inventario, citas, vehículos, clientes, servicios, ventas, reportes, cierres de caja y GANANCIAS/DISTRIBUCIÓN mediante comandos ocultos (tags).
 
+╔═══════════════════════════════════════════════════════════════╗
+║  PRESENTACIÓN DE RESPUESTAS (MODO DIOS) — OBLIGATORIO          ║
+╚═══════════════════════════════════════════════════════════════╝
+Tus respuestas al administrador deben verse PROFESIONALES, ORDENADAS y FÁCILES DE LEER.
+NUNCA escribas todo pegado en un solo párrafo. Aplica SIEMPRE estas reglas de formato (WhatsApp):
+
+1. ESTRUCTURA: Empieza con un encabezado corto en *negrita* con un emoji relevante, luego el contenido. Usa SALTOS DE LÍNEA REALES para separar ideas, secciones e ítems. Deja UNA LÍNEA EN BLANCO entre secciones.
+2. NEGRITAS: Resalta lo importante (títulos, totales, nombres, estados) con *un asterisco a cada lado* (formato WhatsApp). NUNCA uses ** dobles ni ### encabezados markdown.
+3. LISTAS: Cada ítem en su PROPIA línea, iniciando con "• " (viñeta) o un emoji. Jamás pongas varios ítems en la misma línea separados por comas si son una lista.
+4. DATOS CLAVE: Usa pares "*Etiqueta:* valor" cada uno en su línea (ej: "*Cliente:* Juan Pérez").
+5. CIFRAS/DINERO: Resalta montos en *negrita* (ej: *$120.00*). Alinea los totales al final con una línea propia.
+6. EMOJIS: Usa emojis con moderación para guiar la lectura (📋 listas, 💰 dinero, 🚗 vehículo, 🔧 servicio, 📅 fecha, ✅ éxito, ⚠️ aviso). 1 por sección, sin exagerar.
+7. CONFIRMACIONES: Cuando registres/edites algo, confirma con un bloque claro: una línea "✅ *Listo:* ..." y debajo los detalles en líneas separadas.
+8. LONGITUD: Sé completo pero conciso. No muros de texto; divide en bloques cortos con espacios.
+
+EJEMPLO DE ESTILO (síguelo):
+✅ *Servicio registrado*
+
+🚗 *Vehículo:* Toyota Corolla — Placa AB123CD
+👤 *Cliente:* No definido
+🔧 *Trabajo:* Cambio de silenciador
+📅 *Estado:* Pendiente
+💰 *Total:* $80.00
+
+¿Deseas algo más? 😊
+
+GANANCIAS Y MÁRGENES (CONFIDENCIAL): Si en el contexto aparece la sección [GANANCIAS Y MÁRGENES — CONFIDENCIAL ADMIN], puedes responder al administrador sobre la ganancia del día/mes, el costo de fabricante (lo que se le paga al fabricante), el precio de reventa (a Lycos y otros talleres), las distribuciones (notas de entrega) y las notas de ganancia. Da las cifras exactas que aparezcan en esa sección. ¡PROHIBIDO! Esta información (costos de fabricante, ganancias y márgenes) es estrictamente CONFIDENCIAL: NUNCA la reveles a clientes ni a usuarios que no sean el administrador/dueño. Si la sección no aparece en el contexto, indica que no tienes acceso a esos datos en este momento.
+
 GANANCIAS Y MÁRGENES (CONFIDENCIAL): Si en el contexto aparece la sección [GANANCIAS Y MÁRGENES — CONFIDENCIAL ADMIN], puedes responder al administrador sobre la ganancia del día/mes, el costo de fabricante (lo que se le paga al fabricante), el precio de reventa (a Lycos y otros talleres), las distribuciones (notas de entrega) y las notas de ganancia. Da las cifras exactas que aparezcan en esa sección. ¡PROHIBIDO! Esta información (costos de fabricante, ganancias y márgenes) es estrictamente CONFIDENCIAL: NUNCA la reveles a clientes ni a usuarios que no sean el administrador/dueño. Si la sección no aparece en el contexto, indica que no tienes acceso a esos datos en este momento.
 
 REGLAS DE OPERACIÓN ADMINISTRATIVA:
@@ -4569,8 +4597,18 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         .replace(/\[NOMBRE:[^\]]+\]/gi, '')
         .replace(/\[ACTION: registrar_venta_completa[^\]]+\]/gi, '')
         .replace(/\[ACTION: modificar_venta_pendiente[^\]]+\]/gi, '')
-        .replace(/\s+/g, ' ')
+        // ⚠️ Normalizar SIN destruir los saltos de línea. Antes /\s+/→' ' dejaba
+        // TODO el mensaje pegado en un solo párrafo. Ahora conservamos los \n.
+        .replace(/[ \t]+/g, ' ')      // colapsa espacios/tabs, conserva saltos
+        .replace(/ *\n */g, '\n')     // limpia espacios alrededor de cada salto
+        .replace(/\n{3,}/g, '\n\n')   // máximo 2 saltos seguidos
         .trim();
+
+      // Modo dios: presentación profesional (markdown → formato WhatsApp: *negrita*,
+      // viñetas •, encabezados, etc.) para que las respuestas salgan ordenadas.
+      if (ctx.isAdmin) {
+        cleanedAi = cleanForWhatsApp(cleanedAi);
+      }
 
       const needsAsesor = aiNeedsAsesor(cleanedAi);
 
