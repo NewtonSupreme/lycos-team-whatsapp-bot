@@ -555,6 +555,7 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
     - El tipo de servicio debe ser uno de: 'mecanica', 'electronica', 'cerrajeria', 'diagnostico', 'motor', 'emergencia', 'otro'.
     - Si es un tipo personalizado, usa 'otro' como tipo y coloca el nombre en 'tipo_personalizado'.
     - Siempre incluye nombre_cliente, vehiculo_info y descripcion para que el servicio se vea completo en el sistema.
+    - ⚠️ EVITAR DOBLE REGISTRO: Antes de registrar, revisa [SERVICIOS RECIENTES] / [SERVICIOS ACTIVOS] del contexto. Si ya existe un servicio ACTIVO (pendiente/en revisión/en proceso) para esa MISMA placa o vehículo+cliente, NO lo registres de nuevo: avísale al admin que ese vehículo ya está en servicio y ofrécele ACTUALIZAR el servicio existente o cambiar su estado. (El sistema además bloquea automáticamente los duplicados por placa.)
     - Si el admin pregunta por servicios existentes, muestra el listado completo de [SERVICIOS RECIENTES] con su estado, costo y seguimiento.
     - ⛔ REGLA DE ORO INQUEBRANTABLE: Si vas a decir "registré", "quedó registrado", "listo", "agregué el servicio" o cualquier confirmación de registro, DEBES incluir OBLIGATORIAMENTE el tag [SERVICIO_UPSERT: ...] al final de ESE MISMO mensaje. Decir que lo registraste SIN imprimir el tag es un ERROR GRAVE: el servicio NO se guarda y el sistema queda inconsistente. NUNCA confirmes un registro sin su tag.
     - Si te faltan datos para registrar (no hay vehículo ni placa ni servicio claro), NO digas que registraste: pregunta lo que falta. Solo confirma registro cuando emitas el tag.
@@ -2792,6 +2793,65 @@ async function logActivityAdmin(db: any, usuario: string, accion: string, detall
   } catch (e) { console.error('❌ Error logActivityAdmin:', e); }
 }
 
+// Estados que indican que un vehículo YA está "en servicio" (orden de taller abierta).
+// Si existe uno activo para la misma placa/vehículo, no se debe duplicar el registro.
+const ACTIVE_SERVICE_STATES = ['pendiente', 'confirmada', 'en_revision', 'en_progreso', 'en_proceso', 'en_espera'];
+
+/**
+ * Busca un servicio ACTIVO existente para evitar registrar dos veces el mismo vehículo.
+ * Prioriza la coincidencia por placa (lo más confiable). Si no hay placa válida, intenta
+ * por vehículo + nombre de cliente. Devuelve el servicio existente o null.
+ */
+async function findActiveServiceDuplicate(
+  db: any,
+  opts: { placa?: string | null; vehiculoInfo?: string | null; nombreCliente?: string | null }
+): Promise<any | null> {
+  if (!db) return null;
+  try {
+    const placaNorm = (opts.placa || '').toUpperCase().replace(/[-\s]/g, '');
+    const placaValida = placaNorm && !['SINPLACA', 'SIN-PLACA', 'SIN', 'NA', 'N/A', ''].includes(placaNorm);
+
+    // 1) Coincidencia por placa (la señal más fuerte)
+    if (placaValida) {
+      const { data } = await db
+        .from('servicios')
+        .select('id, nombre_cliente, vehiculo_info, placa, estado, descripcion, sede_id, created_at')
+        .in('estado', ACTIVE_SERVICE_STATES)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      const match = (data || []).find((s: any) =>
+        (s.placa || '').toUpperCase().replace(/[-\s]/g, '') === placaNorm
+      );
+      if (match) return match;
+      return null; // si hay placa válida, la placa es la autoridad: no buscar por nombre
+    }
+
+    // 2) Sin placa: intentar por vehículo + cliente
+    const veh = (opts.vehiculoInfo || '').trim().toLowerCase();
+    const cli = (opts.nombreCliente || '').trim().toLowerCase();
+    if (!veh && !cli) return null;
+    const { data } = await db
+      .from('servicios')
+      .select('id, nombre_cliente, vehiculo_info, placa, estado, descripcion, sede_id, created_at')
+      .in('estado', ACTIVE_SERVICE_STATES)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    const match = (data || []).find((s: any) => {
+      const sVeh = (s.vehiculo_info || '').trim().toLowerCase();
+      const sCli = (s.nombre_cliente || '').trim().toLowerCase();
+      const vehMatch = veh && sVeh && (sVeh === veh || sVeh.includes(veh) || veh.includes(sVeh));
+      const cliMatch = cli && sCli && sCli === cli;
+      // Si tenemos ambos, exigir vehículo + cliente; si solo uno, basta ese
+      if (veh && cli) return vehMatch && cliMatch;
+      return vehMatch || cliMatch;
+    });
+    return match || null;
+  } catch (e) {
+    console.error('❌ Error findActiveServiceDuplicate:', e);
+    return null;
+  }
+}
+
 // Registers a completed service/cita as a sale in BOTH ventas_silenciadores AND ventas_dia.
 // sourceType: 'cita' or 'servicio' — determines the ref tag used for deduplication.
 // rates: optional exchange rates for tasa_cambio in ventas_dia.
@@ -3337,6 +3397,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       // perder el registro. servicioOK = se guardó OK; servicioFalló = hubo error.
       let servicioOK = false;
       let servicioFallo = false;
+      let servicioDuplicado: any | null = null; // servicio activo ya existente (evita doble registro)
 
       // Gating por ROL: cada comando de escritura requiere el permiso correspondiente.
       // La eliminación definitiva es exclusiva del admin. Si no hay permisos resueltos
@@ -3497,10 +3558,10 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             let finalClientId = clientId;
             let finalVehId = vehId;
 
-            // Default name to admin's name if client name not provided
+            // NUNCA usar el nombre del admin (modo dios) como cliente: si no hay
+            // nombre de cliente, se deja sin definir y NO se crea un cliente falso.
             const adminName = ctx.memoria?.nombre || ctx.adminName || 'Administrador';
-            const defaultName = adminName;
-            const nameToUse = nombreCliente || defaultName;
+            const nameToUse = nombreCliente || null;
 
             // Verify clientId actually exists in DB (AI may put sede UUID in client field)
             if (finalClientId && db) {
@@ -3529,7 +3590,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
             if (finalClientId && !finalVehId && (vehiculoInfo || placa)) {
               const { vehicleId: newVId } = await getOrCreateClientAndVehicle(
-                db, phoneParam, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
+                db, phoneParam, nameToUse || '', vehiculoInfo || '', placa || '', undefined, undefined, sedeId
               );
               finalVehId = newVId || null;
             }
@@ -3552,7 +3613,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               descripcion: desc,
               telefono: phoneParam,
               sede_id: sedeId,
-              nombre_cliente: resolvedClientName || nameToUse,
+              nombre_cliente: resolvedClientName || nameToUse || 'No definido',
               registrado_por: adminName,
               vehiculo_info: vehiculoInfo || null,
               placa: placa || null
@@ -3754,13 +3815,23 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 if (newServ?.id) await handleCompletedServiceSale(db, newServ.id, servObj, 'servicio', rates);
               }
             } else if (db) {
-              const { data: newServ, error: insErr } = await db.from('servicios').insert(servObj).select('id').single();
-              if (insErr) throw insErr;
-              servicioOK = true;
-              console.log(`🔧 ADMIN: Nuevo servicio creado: ${newServ?.id}`);
-              await logActivityAdmin(db, adminName, 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot`, sedeId);
-              // Auto-register sale if completada/finalizado
-              if (newServ?.id) await handleCompletedServiceSale(db, newServ.id, servObj, 'servicio', rates);
+              // ⚠️ Verificar que el vehículo NO esté ya en servicio (evitar doble registro)
+              const dup = await findActiveServiceDuplicate(db, {
+                placa, vehiculoInfo, nombreCliente: resolvedClientName || nombreCliente,
+              });
+              if (dup) {
+                servicioDuplicado = dup;
+                console.log(`⛔ SERVICIO duplicado evitado: ${dup.id} (placa=${dup.placa}, estado=${dup.estado})`);
+                await logActivityAdmin(db, adminName, 'Registro de servicio bloqueado (duplicado)', `Ya existe servicio activo ${dup.id} para placa ${dup.placa || 'N/D'} (${dup.estado})`, sedeId);
+              } else {
+                const { data: newServ, error: insErr } = await db.from('servicios').insert(servObj).select('id').single();
+                if (insErr) throw insErr;
+                servicioOK = true;
+                console.log(`🔧 ADMIN: Nuevo servicio creado: ${newServ?.id}`);
+                await logActivityAdmin(db, adminName, 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot`, sedeId);
+                // Auto-register sale if completada/finalizado
+                if (newServ?.id) await handleCompletedServiceSale(db, newServ.id, servObj, 'servicio', rates);
+              }
             }
           } catch (e) {
             servicioFallo = true;
@@ -4191,7 +4262,16 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         // Solo recuperamos cuando la IA dijo que registró pero NO se guardó, o cuando
         // el tag existió pero falló. NO disparamos por simple intención del mensaje:
         // si la IA legítimamente pidió confirmación, no debemos registrar a la fuerza.
-        if (canBotWrite('servicios') && !servicioOK && (servicioFallo || aiClaimsRegistro)) {
+        if (servicioDuplicado) {
+          // El vehículo YA está en servicio: no se registra de nuevo. Avisar con claridad.
+          const d = servicioDuplicado;
+          const vehTxt = [d.vehiculo_info, d.placa && d.placa !== 'SIN-PLACA' ? `Placa ${d.placa}` : '']
+            .filter(Boolean).join(' — ');
+          const cliTxt = d.nombre_cliente && d.nombre_cliente !== 'No definido' ? ` (Cliente: ${d.nombre_cliente})` : '';
+          const estadoTxt = String(d.estado || '').replace(/_/g, ' ');
+          // Quitar cualquier falsa confirmación de la IA y poner el aviso real
+          cleanedAi = `⚠️ Este vehículo YA tiene un servicio activo en el sistema, no lo registré de nuevo para no duplicarlo.\n\n🚗 ${vehTxt || 'Vehículo'}${cliTxt}\n🔧 ${d.descripcion || 'Servicio en curso'}\n📌 Estado actual: ${estadoTxt}\n\nSi necesitas, puedo actualizar ese servicio existente o cambiar su estado.`.trim();
+        } else if (canBotWrite('servicios') && !servicioOK && (servicioFallo || aiClaimsRegistro)) {
           try {
             // Texto combinado: mensaje actual + última descripción de imagen reciente del historial
             const imgHist = [...(ctx.historia || [])].reverse().find(h =>
@@ -4243,39 +4323,51 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 timeZone: 'America/Caracas', hour: '2-digit', minute: '2-digit', hour12: false,
               }).format(nowFb);
 
-              const servFbObj: any = {
-                cliente_id: null,
-                vehiculo_id: null,
-                nombre_cliente: ctx.memoria?.nombre || 'No definido',
-                telefono: '00000000000',
-                vehiculo_info: vehiculoFb || 'Vehículo (de imagen)',
-                placa: placaFb || 'SIN-PLACA',
-                tipo: 'otro',
-                tipo_personalizado: null,
-                descripcion: descFb,
-                estado: estadoFb,
-                costo_estimado: costoFb,
-                registrado_por: adminNameFb,
-                fecha: getVzlaDateString(),
-                hora: vzlaTimeFb,
-                seguimiento: [{
-                  fecha: nowFb.toISOString(),
-                  accion: 'Registrado vía WhatsApp Admin (recuperación automática)',
-                  usuario: adminNameFb,
-                  tipo: 'sistema',
-                  progreso: 0,
-                }],
-                sede_id: sedeFb,
-              };
+              // ⚠️ Evitar doble registro: si el vehículo ya está en servicio, no recuperar.
+              const dupFb = await findActiveServiceDuplicate(db, { placa: placaFb, vehiculoInfo: vehiculoFb });
+              if (dupFb) {
+                servicioDuplicado = dupFb;
+                const vehTxt = [dupFb.vehiculo_info, dupFb.placa && dupFb.placa !== 'SIN-PLACA' ? `Placa ${dupFb.placa}` : ''].filter(Boolean).join(' — ');
+                const estadoTxt = String(dupFb.estado || '').replace(/_/g, ' ');
+                cleanedAi = `⚠️ Este vehículo YA tiene un servicio activo, no lo registré de nuevo para no duplicarlo.\n\n🚗 ${vehTxt || 'Vehículo'}\n🔧 ${dupFb.descripcion || 'Servicio en curso'}\n📌 Estado actual: ${estadoTxt}\n\nSi quieres puedo actualizar ese servicio o cambiar su estado.`.trim();
+                console.log(`⛔ FALLBACK SERVICIO duplicado evitado: ${dupFb.id} (placa=${dupFb.placa})`);
+                await logActivityAdmin(db, adminNameFb, 'Registro de servicio bloqueado (duplicado)', `Ya existe servicio activo ${dupFb.id} para placa ${dupFb.placa || 'N/D'}`, sedeFb);
+              } else {
+                // Sin datos del cliente en la recuperación: NUNCA usar el nombre del admin (modo dios).
+                const servFbObj: any = {
+                  cliente_id: null,
+                  vehiculo_id: null,
+                  nombre_cliente: 'No definido',
+                  telefono: '00000000000',
+                  vehiculo_info: vehiculoFb || 'Vehículo (de imagen)',
+                  placa: placaFb || 'SIN-PLACA',
+                  tipo: 'otro',
+                  tipo_personalizado: null,
+                  descripcion: descFb,
+                  estado: estadoFb,
+                  costo_estimado: costoFb,
+                  registrado_por: adminNameFb,
+                  fecha: getVzlaDateString(),
+                  hora: vzlaTimeFb,
+                  seguimiento: [{
+                    fecha: nowFb.toISOString(),
+                    accion: 'Registrado vía WhatsApp Admin (recuperación automática)',
+                    usuario: adminNameFb,
+                    tipo: 'sistema',
+                    progreso: 0,
+                  }],
+                  sede_id: sedeFb,
+                };
 
-              const { data: fbServ, error: fbErr } = await db.from('servicios').insert(servFbObj).select('id').single();
-              if (fbErr) throw fbErr;
-              servicioOK = true;
-              servicioFallo = false;
-              console.log(`🛟 FALLBACK SERVICIO: registro recuperado ${fbServ?.id} (placa=${placaFb}, veh=${vehiculoFb})`);
-              await logActivityAdmin(db, adminNameFb, 'Creó servicio', `Servicio recuperado vía ChatBot (fallback ${vehiculoFb} ${placaFb})`, sedeFb);
-              // Confirmar al admin con datos reales para que tenga certeza
-              cleanedAi = `${cleanedAi}\n\n✅ Servicio registrado correctamente:\n🚗 ${vehiculoFb || 'Vehículo'}${placaFb ? ' — Placa ' + placaFb : ''}\n🔧 ${descFb}\n📌 Estado: ${estadoFb}`.trim();
+                const { data: fbServ, error: fbErr } = await db.from('servicios').insert(servFbObj).select('id').single();
+                if (fbErr) throw fbErr;
+                servicioOK = true;
+                servicioFallo = false;
+                console.log(`🛟 FALLBACK SERVICIO: registro recuperado ${fbServ?.id} (placa=${placaFb}, veh=${vehiculoFb})`);
+                await logActivityAdmin(db, adminNameFb, 'Creó servicio', `Servicio recuperado vía ChatBot (fallback ${vehiculoFb} ${placaFb})`, sedeFb);
+                // Confirmar al admin con datos reales para que tenga certeza
+                cleanedAi = `${cleanedAi}\n\n✅ Servicio registrado correctamente:\n🚗 ${vehiculoFb || 'Vehículo'}${placaFb ? ' — Placa ' + placaFb : ''}\n🔧 ${descFb}\n📌 Estado: ${estadoFb}`.trim();
+              }
             } else if (servicioFallo) {
               // No pudimos recuperar datos suficientes pero el tag falló: avisar honestamente
               cleanedAi = `${cleanedAi}\n\n⚠️ No pude completar el registro del servicio automáticamente. Por favor confírmame el vehículo (marca/modelo) y la placa para registrarlo correctamente.`.trim();

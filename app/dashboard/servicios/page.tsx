@@ -64,18 +64,28 @@ const SERVICIO_LABELS: Record<string, string> = {
 // ── Main Component ───────────────────────────────────────────
 // Helper para formatear nombre de cliente y omitir "WHATSAPP" o "ADMIN IA"
 const getDisplayName = (cita: any) => {
-  const relName = cita.vehiculos?.clientes 
-    ? `${cita.vehiculos.clientes.nombre} ${cita.vehiculos.clientes.apellido}`.trim() 
+  const relName = cita.vehiculos?.clientes
+    ? `${cita.vehiculos.clientes.nombre} ${cita.vehiculos.clientes.apellido}`.trim()
     : '';
-  
+
   let raw = relName;
   if (cita.nombre_cliente && cita.nombre_cliente.trim() !== relName && cita.nombre_cliente.trim() !== '') {
      raw = cita.nombre_cliente;
   }
-  
+
   if (!raw) return 'NO DEFINIDO';
   const upper = raw.toUpperCase();
-  if (upper.includes('WHATSAPP') || upper.includes('ADMIN IA')) return 'NO DEFINIDO';
+  // Marcadores de "sin cliente" o registros automáticos
+  if (
+    upper.includes('WHATSAPP') || upper.includes('ADMIN IA') ||
+    upper === 'NO DEFINIDO' || upper === 'SIN DEFINIR' || upper === 'CONSUMIDOR FINAL'
+  ) return 'NO DEFINIDO';
+  // Si NO hay cliente real vinculado y el "nombre" coincide con quien lo registró
+  // (modo dios / admin), entonces no es un cliente: mostrar NO DEFINIDO.
+  const reg = (cita.registrado_por || '').trim().toUpperCase();
+  if (!cita.cliente_id && !cita.vehiculos?.clientes && reg && upper === reg) {
+    return 'NO DEFINIDO';
+  }
   return raw;
 };
 
@@ -2454,7 +2464,16 @@ function InvoiceEditor({
 function BudgetModal({ cita, inventory, onClose }: { cita: CitaServicio; inventory: any[]; onClose: () => void }) {
   const getDisplayName = (c: CitaServicio) => {
     if (c.vehiculos?.clientes) return `${c.vehiculos.clientes.nombre} ${c.vehiculos.clientes.apellido}`;
-    return c.nombre_cliente || 'Consumidor Final';
+    const raw = (c.nombre_cliente || '').trim();
+    const upper = raw.toUpperCase();
+    const reg = ((c as any).registrado_por || '').trim().toUpperCase();
+    // Sin cliente real: marcadores automáticos o coincidencia con quien lo registró (modo dios)
+    if (!raw || upper === 'NO DEFINIDO' || upper === 'SIN DEFINIR' ||
+        upper.includes('WHATSAPP') || upper.includes('ADMIN IA') ||
+        (!(c as any).cliente_id && reg && upper === reg)) {
+      return 'Consumidor Final';
+    }
+    return raw;
   };
 
   const [clientName, setClientName] = useState(getDisplayName(cita) || 'Consumidor Final');
