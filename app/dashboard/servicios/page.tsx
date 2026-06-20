@@ -19,6 +19,7 @@ import { generatePresupuestoPDF } from '@/lib/presupuesto-pdf';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 import { cn, getLocalISODate, parseDescripcionItems } from '@/lib/utils';
+import AsignacionTecnicos, { type JobSpec } from '@/components/nomina/AsignacionTecnicos';
 
 // ── Types ─────────────────────────────────────────────────────
 interface CitaServicio {
@@ -907,6 +908,9 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
     }, []);
   });
   const [staffSuggestions, setStaffSuggestions] = useState<{ nombre: string; rol: string }[]>([]);
+  // Nómina: técnico(s) encargado(s) + mano de obra para generar la comisión.
+  const [jobSpecs, setJobSpecs] = useState<JobSpec[]>([]);
+  const sedeNomina = useSedeStore(s => s.currentSede);
   const [staffSearch, setStaffSearch] = useState('');
   const [showStaffResults, setShowStaffResults] = useState(false);
   const [selectedClienteId, setSelectedClienteId] = useState<string | null>(cita?.cliente_id || null);
@@ -1296,8 +1300,35 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
         if (!payload.tipo_personalizado) delete payload.tipo_personalizado;
         if (!payload.placa) delete payload.placa;
         if (!payload.telefono) delete payload.telefono;
-        const { error } = await withSedeFilter(supabase!.from('servicios')).insert(withSedeInsert(payload));
+
+        // Nómina: exige técnico encargado o marcar "lo hizo el taller".
+        const specsValidos = jobSpecs.filter(s => s.empleado_id || s.es_taller);
+        if (specsValidos.length === 0) {
+          throw new Error('Indica el técnico encargado o marca "Lo hizo el taller" en la sección Comisión / Nómina.');
+        }
+
+        const { data: nuevoServicio, error } = await withSedeFilter(supabase!.from('servicios')).insert(withSedeInsert(payload)).select().single();
         if (error) throw error;
+
+        // Registra trabajos + comisiones vinculados (no bloquea la creación si falla).
+        try {
+          await fetch('/api/nomina/jobs', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sede: sedeNomina?.id || null,
+              jobs: specsValidos.map(s => ({
+                ...s,
+                tipo_trabajo: finalTipoServicio,
+                descripcion: formData.descripcion || (isCustomServicio ? customServicio.trim() : formData.tipo),
+                referencia_tabla: 'servicios',
+                referencia_id: nuevoServicio?.id || null,
+                fecha: getLocalISODate(),
+              })),
+            }),
+          });
+        } catch (nominaErr) {
+          console.error('No se pudo registrar la comisión de nómina:', nominaErr);
+        }
 
         // Sync client name to CRM if edited
         if (finalClienteId && formData.nombre_cliente.trim() !== '') {
@@ -1648,6 +1679,24 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
                 )}
               </div>
             </div>
+
+            {!cita && (
+              <div className="col-span-2 space-y-2 rounded-2xl border border-amber-300/40 dark:border-amber-700/30 bg-amber-50/30 dark:bg-amber-950/10 p-3">
+                <div className="flex items-center gap-1.5">
+                  <Banknote className="w-3.5 h-3.5 text-amber-500" />
+                  <label className="text-[10px] text-amber-700 dark:text-amber-400 uppercase font-black tracking-widest">Comisión / Nómina</label>
+                </div>
+                <AsignacionTecnicos
+                  value={jobSpecs}
+                  onChange={setJobSpecs}
+                  sedeId={sedeNomina?.id || null}
+                  defaultZona="mecanica"
+                  ingresoTotal={parseFloat(formData.costo_estimado) || 0}
+                  moneda="USD"
+                />
+              </div>
+            )}
+
             <div className="col-span-2 space-y-2">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Descripci&oacute;n de la Falla / Trabajo</label>
               <textarea 

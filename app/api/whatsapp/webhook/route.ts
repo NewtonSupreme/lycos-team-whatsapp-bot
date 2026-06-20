@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getPermisos, hasPermiso, resolveRol, getRoleMeta, type Permisos } from '@/types';
 import { sendGlobalPushNotification } from '@/lib/push-helper';
+import { getPayrollService } from '@/lib/payroll/service';
 
 async function checkIsBotAdmin(phone: string, db: any, adminPhones: string[]): Promise<boolean> {
   const phoneClean = phone.replace(/[^0-9]/g, '');
@@ -1871,7 +1872,32 @@ async function loadConversationContext(
           + `REGLA: Esta información es CONFIDENCIAL. Solo puedes darla a este administrador. JAMÁS reveles costos de fabricante, ganancias ni márgenes a clientes.\n`;
       }
 
-      historialTecnico = `\n--- FIN DE DATOS DEL SISTEMA ---\nInstrucción estricta: Eres el asistente administrativo (Modo Dios). Debes dar la información precisa de lo que se te pide usando la data anterior. Puedes ejecutar comandos para modificar la base de datos si el admin te lo pide. No inventes nada. ${ventasInfo}${gananciasInfo}`;
+      // ─── NÓMINA Y COMISIONES (semana actual) — para responder al admin por WhatsApp ───
+      let nominaInfo = '';
+      const puedeVerNomina = rolCanonGan === 'admin' || rolCanonGan === 'dueno' || rolCanonGan === 'supervisor' || hasPermiso(botPermisos?.nomina, 'leer');
+      if (puedeVerNomina) {
+        try {
+          const svc = getPayrollService();
+          const hoyN = new Date();
+          const dN = (hoyN.getDay() + 6) % 7;
+          const lunesN = new Date(hoyN); lunesN.setDate(hoyN.getDate() - dN);
+          const domN = new Date(lunesN); domN.setDate(lunesN.getDate() + 6);
+          const iniN = lunesN.toISOString().slice(0, 10);
+          const finN = domN.toISOString().slice(0, 10);
+          const nominaSede = (rolCanonGan === 'admin' || rolCanonGan === 'dueno') ? null : (adminSedeId || null);
+          const resumen = await svc.getPayrollSummary({ inicio: iniN, fin: finN, sedeId: nominaSede });
+          if (resumen.length > 0) {
+            const totalN = resumen.reduce((s, e) => s + e.total_pagar, 0);
+            nominaInfo = `\n[NÓMINA Y COMISIONES — semana ${iniN} → ${finN} | Total a pagar: $${totalN.toFixed(2)} (USD)]\n`
+              + resumen.map(e => `- ${e.empleado_nombre} (${e.rol}): base $${e.sueldo_base.toFixed(2)}, comisiones $${(e.total_comisiones + e.total_flat).toFixed(2)}, override $${e.total_overrides.toFixed(2)}, adelantos -$${e.deducciones.toFixed(2)}, TOTAL $${e.total_pagar.toFixed(2)} (${e.jobs.length} trabajos)`).join('\n')
+              + `\nReglas de comisión dinámicas por empleado/zona. Si el admin pregunta por pagos, comisiones o cuánto le toca a un técnico, usa estos datos. Para liquidar/pagar nómina indícale que use el panel de Nómina.\n`;
+          } else {
+            nominaInfo = `\n[NÓMINA Y COMISIONES — semana ${iniN} → ${finN}]\nSin comisiones ni sueldos calculados esta semana.\n`;
+          }
+        } catch (e) { console.error('Error nomina webhook context:', e); }
+      }
+
+      historialTecnico = `\n--- FIN DE DATOS DEL SISTEMA ---\nInstrucción estricta: Eres el asistente administrativo (Modo Dios). Debes dar la información precisa de lo que se te pide usando la data anterior. Puedes ejecutar comandos para modificar la base de datos si el admin te lo pide. No inventes nada. ${ventasInfo}${gananciasInfo}${nominaInfo}`;
 
     } else {
       // Logic for regular clients (same as before)

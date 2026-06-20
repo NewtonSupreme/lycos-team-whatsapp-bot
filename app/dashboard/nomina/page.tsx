@@ -1,0 +1,818 @@
+'use client';
+
+import { useEffect, useMemo, useState, useCallback } from 'react';
+import { supabase } from '@/lib/supabase';
+import { useAppStore } from '@/lib/store';
+import { useSedeStore } from '@/lib/store/useSedeStore';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import {
+  Banknote, Loader2, Wallet, TrendingUp, Users, Calendar, RefreshCw, Plus,
+  CheckCircle2, FileText, AlertTriangle, Settings2, ChevronRight, Building2, Download, X, Coins,
+} from 'lucide-react';
+import {
+  getPermisos, hasPermiso, resolveRol, getRoleMeta, ZONAS_TRABAJO,
+  type EmployeeEarnings, type CommissionRule, type FlatRate, type PayrollLedger, type JobAssignment,
+} from '@/types';
+import { generateReciboNominaPDF } from '@/lib/recibo-nomina-pdf';
+import AsignacionTecnicos, { type JobSpec } from '@/components/nomina/AsignacionTecnicos';
+
+type Tab = 'resumen' | 'trabajos' | 'reglas' | 'adelantos' | 'historial';
+
+const money = (n: number) => `$${(n ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const zonaLabel = (z: string) => ZONAS_TRABAJO.find(x => x.key === z)?.label || z;
+
+// ── Períodos ────────────────────────────────────────────────────────────────
+function isoWeekStart(d: Date) { const x = new Date(d); const day = (x.getDay() + 6) % 7; x.setDate(x.getDate() - day); return x.toISOString().slice(0, 10); }
+function addDays(iso: string, n: number) { const x = new Date(iso + 'T00:00:00'); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); }
+function monthStart(d: Date) { return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10); }
+function monthEnd(d: Date) { return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10); }
+
+const PRESETS = [
+  { key: 'semana', label: 'Esta semana' },
+  { key: 'semana_pasada', label: 'Semana pasada' },
+  { key: 'mes', label: 'Este mes' },
+  { key: 'mes_pasado', label: 'Mes pasado' },
+  { key: 'custom', label: 'Personalizado' },
+];
+
+function presetRange(key: string): { inicio: string; fin: string } {
+  const hoy = new Date();
+  if (key === 'semana') { const i = isoWeekStart(hoy); return { inicio: i, fin: addDays(i, 6) }; }
+  if (key === 'semana_pasada') { const i = addDays(isoWeekStart(hoy), -7); return { inicio: i, fin: addDays(i, 6) }; }
+  if (key === 'mes') return { inicio: monthStart(hoy), fin: monthEnd(hoy) };
+  if (key === 'mes_pasado') { const p = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 15); return { inicio: monthStart(p), fin: monthEnd(p) }; }
+  const i = isoWeekStart(hoy); return { inicio: i, fin: addDays(i, 6) };
+}
+
+export default function NominaPage() {
+  const { user } = useAppStore();
+  const roleDefaults = useAppStore(s => s.roleDefaults);
+  const { currentSede } = useSedeStore();
+  const sedeId = currentSede?.id || null;
+
+  const rol = resolveRol(user?.rol);
+  const isAdmin = rol === 'admin';
+  const permisos = getPermisos(user?.rol || 'mecanico', user?.permisos, roleDefaults);
+  const canEdit = isAdmin || hasPermiso(permisos.nomina, 'editar');
+  const canLiquidar = isAdmin || rol === 'supervisor';
+  const esTecnico = !!getRoleMeta(rol)?.esTecnico && !isAdmin;
+
+  const [mounted, setMounted] = useState(false);
+  const [tab, setTab] = useState<Tab>('resumen');
+  const [preset, setPreset] = useState('semana');
+  const [range, setRange] = useState(presetRange('semana'));
+  const [summary, setSummary] = useState<EmployeeEarnings[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [liquidarTarget, setLiquidarTarget] = useState<EmployeeEarnings | null>(null);
+  const [registrarOpen, setRegistrarOpen] = useState(false);
+  const [detalle, setDetalle] = useState<EmployeeEarnings | null>(null);
+
+  useEffect(() => { setMounted(true); }, []);
+
+  const loadSummary = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true); else setRefreshing(true);
+    try {
+      const qs = new URLSearchParams({ inicio: range.inicio, fin: range.fin });
+      if (sedeId) qs.set('sede', sedeId);
+      const r = await fetch(`/api/nomina/summary?${qs}`);
+      const d = await r.json();
+      if (r.ok) setSummary(d.summary || []);
+      else setSummary([]);
+    } catch { setSummary([]); }
+    finally { setLoading(false); setRefreshing(false); }
+  }, [range, sedeId]);
+
+  useEffect(() => { if (mounted) loadSummary(); }, [mounted, loadSummary]);
+
+  // Tiempo real: cualquier cambio en trabajos o liquidaciones refresca el resumen.
+  useEffect(() => {
+    if (!supabase || !mounted) return;
+    const ch = supabase.channel('nomina-rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'job_assignments' }, () => loadSummary(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payroll_ledger' }, () => loadSummary(true))
+      .subscribe();
+    return () => { supabase?.removeChannel(ch); };
+  }, [mounted, loadSummary]);
+
+  const onPreset = (k: string) => {
+    setPreset(k);
+    if (k !== 'custom') setRange(presetRange(k));
+  };
+
+  const totales = useMemo(() => summary.reduce((a, e) => ({
+    base: a.base + e.sueldo_base, com: a.com + e.total_comisiones + e.total_flat,
+    over: a.over + e.total_overrides, ded: a.ded + e.deducciones, pagar: a.pagar + e.total_pagar,
+  }), { base: 0, com: 0, over: 0, ded: 0, pagar: 0 }), [summary]);
+
+  if (!mounted) return null;
+
+  const tabs: { key: Tab; label: string; show: boolean }[] = [
+    { key: 'resumen', label: esTecnico ? 'Mi Resumen' : 'Resumen', show: true },
+    { key: 'trabajos', label: 'Trabajos', show: true },
+    { key: 'reglas', label: 'Reglas & Tarifas', show: canEdit },
+    { key: 'adelantos', label: 'Adelantos', show: canLiquidar },
+    { key: 'historial', label: 'Historial de Pagos', show: true },
+  ];
+
+  return (
+    <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-5">
+      {/* Header */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
+            <Banknote className="h-7 w-7 text-emerald-600" /> Nómina & Comisiones
+          </h1>
+          <p className="text-sm text-slate-500 mt-1 flex items-center gap-1.5">
+            <Building2 className="w-3.5 h-3.5" /> {currentSede?.nombre || 'Todas las sedes'} · cálculo dinámico en tiempo real
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {canEdit && (
+            <Button onClick={() => setRegistrarOpen(true)} className="bg-amber-500 hover:bg-amber-600 text-white">
+              <Plus className="w-4 h-4 mr-1.5" /> Registrar trabajo
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => loadSummary(true)} disabled={refreshing}>
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+          </Button>
+        </div>
+      </div>
+
+      {/* Período */}
+      <Card className="border-slate-200 dark:border-slate-800">
+        <CardContent className="p-3 flex flex-wrap items-center gap-2">
+          <Calendar className="w-4 h-4 text-slate-400" />
+          {PRESETS.map(p => (
+            <button key={p.key} onClick={() => onPreset(p.key)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${preset === p.key ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'}`}>
+              {p.label}
+            </button>
+          ))}
+          {preset === 'custom' && (
+            <div className="flex items-center gap-2 ml-2">
+              <input type="date" value={range.inicio} onChange={e => setRange(r => ({ ...r, inicio: e.target.value }))}
+                className="h-8 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-sm" />
+              <span className="text-slate-400">→</span>
+              <input type="date" value={range.fin} onChange={e => setRange(r => ({ ...r, fin: e.target.value }))}
+                className="h-8 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-sm" />
+            </div>
+          )}
+          <span className="ml-auto text-xs text-slate-400">{range.inicio} → {range.fin}</span>
+        </CardContent>
+      </Card>
+
+      {/* Tabs */}
+      <div className="flex gap-1 overflow-x-auto border-b border-slate-200 dark:border-slate-800">
+        {tabs.filter(t => t.show).map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${tab === t.key ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-emerald-500" /></div>
+      ) : (
+        <>
+          {tab === 'resumen' && (
+            esTecnico
+              ? <MiResumen earnings={summary[0]} />
+              : <ResumenAdmin summary={summary} totales={totales} canLiquidar={canLiquidar}
+                  onLiquidar={setLiquidarTarget} onDetalle={setDetalle} />
+          )}
+          {tab === 'trabajos' && <TrabajosTab range={range} sedeId={sedeId} canEdit={canEdit} canLiquidar={canLiquidar} esTecnico={esTecnico} userId={user?.id} />}
+          {tab === 'reglas' && canEdit && <ReglasTab sedeId={sedeId} isAdmin={isAdmin} />}
+          {tab === 'adelantos' && canLiquidar && <AdelantosTab sedeId={sedeId} onChange={() => loadSummary(true)} />}
+          {tab === 'historial' && <HistorialTab sedeId={sedeId} isAdmin={isAdmin} />}
+        </>
+      )}
+
+      {liquidarTarget && (
+        <LiquidarModal target={liquidarTarget} range={range} sedeId={sedeId} sedeNombre={currentSede?.nombre}
+          onClose={() => setLiquidarTarget(null)} onDone={() => { setLiquidarTarget(null); loadSummary(true); }} />
+      )}
+      {registrarOpen && (
+        <RegistrarTrabajoModal sedeId={sedeId} onClose={() => setRegistrarOpen(false)}
+          onDone={() => { setRegistrarOpen(false); loadSummary(true); }} />
+      )}
+      {detalle && <DetalleEmpleadoModal earnings={detalle} onClose={() => setDetalle(null)} />}
+    </div>
+  );
+}
+
+// ════════════════════ RESUMEN ADMIN (tabla maestra) ════════════════════
+function ResumenAdmin({ summary, totales, canLiquidar, onLiquidar, onDetalle }: {
+  summary: EmployeeEarnings[]; totales: any; canLiquidar: boolean;
+  onLiquidar: (e: EmployeeEarnings) => void; onDetalle: (e: EmployeeEarnings) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatMini icon={Users} label="Empleados" value={String(summary.length)} color="text-blue-500" />
+        <StatMini icon={Coins} label="Comisiones" value={money(totales.com)} color="text-amber-500" />
+        <StatMini icon={Wallet} label="Sueldos base" value={money(totales.base)} color="text-violet-500" />
+        <StatMini icon={TrendingUp} label="Total a pagar" value={money(totales.pagar)} color="text-emerald-500" highlight />
+      </div>
+
+      <Card className="border-slate-200 dark:border-slate-800 overflow-hidden">
+        <CardContent className="p-0 overflow-x-auto">
+          {summary.length === 0 ? (
+            <div className="text-center py-12 text-slate-400">
+              <Banknote className="w-10 h-10 mx-auto mb-2 opacity-40" />
+              No hay nómina que calcular en este período.
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 text-xs uppercase tracking-wider">
+                <tr>
+                  <th className="text-left px-4 py-3">Empleado</th>
+                  <th className="text-right px-3 py-3">Sueldo base</th>
+                  <th className="text-right px-3 py-3">Comisiones</th>
+                  <th className="text-right px-3 py-3">Override</th>
+                  <th className="text-right px-3 py-3">Deducciones</th>
+                  <th className="text-right px-3 py-3">Total a pagar</th>
+                  <th className="text-right px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {summary.map(e => (
+                  <tr key={e.empleado_id} className="hover:bg-slate-50 dark:hover:bg-slate-900/40 cursor-pointer" onClick={() => onDetalle(e)}>
+                    <td className="px-4 py-3">
+                      <div className="font-semibold text-slate-700 dark:text-slate-200">{e.empleado_nombre}</div>
+                      <div className="text-[11px] text-slate-400">{getRoleMeta(e.rol)?.label || e.rol} · {e.jobs.length} trabajo(s)</div>
+                    </td>
+                    <td className="text-right px-3 py-3 text-slate-600 dark:text-slate-300">{money(e.sueldo_base)}</td>
+                    <td className="text-right px-3 py-3 text-amber-600 font-medium">{money(e.total_comisiones + e.total_flat)}</td>
+                    <td className="text-right px-3 py-3 text-violet-600">{money(e.total_overrides)}</td>
+                    <td className="text-right px-3 py-3 text-red-500">{e.deducciones ? `- ${money(e.deducciones)}` : '—'}</td>
+                    <td className="text-right px-3 py-3 font-bold text-emerald-600">{money(e.total_pagar)}</td>
+                    <td className="text-right px-4 py-3" onClick={ev => ev.stopPropagation()}>
+                      {canLiquidar
+                        ? <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white h-8" onClick={() => onLiquidar(e)} disabled={e.total_pagar === 0 && e.jobs.length === 0}>
+                            <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Liquidar
+                          </Button>
+                        : <ChevronRight className="w-4 h-4 text-slate-300 inline" />}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-slate-50 dark:bg-slate-900/50 font-bold text-slate-700 dark:text-slate-200">
+                <tr>
+                  <td className="px-4 py-3">TOTAL</td>
+                  <td className="text-right px-3 py-3">{money(totales.base)}</td>
+                  <td className="text-right px-3 py-3 text-amber-600">{money(totales.com)}</td>
+                  <td className="text-right px-3 py-3 text-violet-600">{money(totales.over)}</td>
+                  <td className="text-right px-3 py-3 text-red-500">{money(totales.ded)}</td>
+                  <td className="text-right px-3 py-3 text-emerald-600">{money(totales.pagar)}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ════════════════════ MI RESUMEN (técnico) ════════════════════
+function MiResumen({ earnings }: { earnings?: EmployeeEarnings }) {
+  if (!earnings) return <div className="text-center py-12 text-slate-400">Sin datos en este período.</div>;
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatMini icon={Wallet} label="Sueldo base" value={money(earnings.sueldo_base)} color="text-violet-500" />
+        <StatMini icon={Coins} label="Comisiones" value={money(earnings.total_comisiones + earnings.total_flat)} color="text-amber-500" />
+        <StatMini icon={TrendingUp} label="Override" value={money(earnings.total_overrides)} color="text-blue-500" />
+        <StatMini icon={Banknote} label="Pendiente por cobrar" value={money(earnings.total_pagar)} color="text-emerald-500" highlight />
+      </div>
+      <Card className="border-slate-200 dark:border-slate-800">
+        <CardHeader><CardTitle className="text-base">Mis trabajos del período</CardTitle></CardHeader>
+        <CardContent className="p-0 overflow-x-auto">
+          <JobsTable jobs={earnings.jobs} />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function JobsTable({ jobs }: { jobs: JobAssignment[] }) {
+  if (!jobs || jobs.length === 0) return <div className="text-center py-8 text-slate-400 text-sm">Sin trabajos registrados.</div>;
+  return (
+    <table className="w-full text-sm">
+      <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 text-xs uppercase">
+        <tr><th className="text-left px-4 py-2">Fecha</th><th className="text-left px-3 py-2">Zona</th><th className="text-left px-3 py-2">Detalle</th><th className="text-right px-3 py-2">Mano obra</th><th className="text-right px-4 py-2">Comisión</th></tr>
+      </thead>
+      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+        {jobs.map(j => (
+          <tr key={j.id} className={j.es_override ? 'bg-violet-50/40 dark:bg-violet-950/10' : ''}>
+            <td className="px-4 py-2 text-slate-500">{j.fecha}</td>
+            <td className="px-3 py-2"><span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800">{zonaLabel(j.zona)}</span></td>
+            <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{j.es_override ? '↳ Override (cascada)' : (j.descripcion || j.tipo_trabajo || '—')}</td>
+            <td className="text-right px-3 py-2 text-slate-500">{money(j.mano_obra_usd)}</td>
+            <td className="text-right px-4 py-2 font-semibold text-emerald-600">{money(j.comision_usd)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function StatMini({ icon: Icon, label, value, color, highlight }: any) {
+  return (
+    <div className={`rounded-xl border p-3 ${highlight ? 'border-emerald-200 dark:border-emerald-900 bg-emerald-50/40 dark:bg-emerald-950/10' : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/30'}`}>
+      <div className="flex items-center gap-1.5 text-[11px] text-slate-400 uppercase tracking-wider"><Icon className={`w-3.5 h-3.5 ${color}`} /> {label}</div>
+      <div className={`text-lg font-bold mt-1 ${highlight ? 'text-emerald-600' : 'text-slate-700 dark:text-slate-200'}`}>{value}</div>
+    </div>
+  );
+}
+
+// ════════════════════ DETALLE EMPLEADO (modal) ════════════════════
+function DetalleEmpleadoModal({ earnings, onClose }: { earnings: EmployeeEarnings; onClose: () => void }) {
+  return (
+    <ModalShell onClose={onClose} title={`Detalle · ${earnings.empleado_nombre}`}>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+        <MiniKV k="Sueldo base" v={money(earnings.sueldo_base)} />
+        <MiniKV k="Comisiones" v={money(earnings.total_comisiones + earnings.total_flat)} />
+        <MiniKV k="Override" v={money(earnings.total_overrides)} />
+        <MiniKV k="Total a pagar" v={money(earnings.total_pagar)} hl />
+      </div>
+      <JobsTable jobs={earnings.jobs} />
+      {earnings.adelantos.length > 0 && (
+        <div className="mt-4">
+          <div className="text-xs font-bold uppercase text-slate-400 mb-1">Adelantos / deducciones</div>
+          {earnings.adelantos.map(a => (
+            <div key={a.id} className="flex justify-between text-sm py-1 border-b border-slate-100 dark:border-slate-800">
+              <span className="text-slate-500">{a.fecha} · {a.motivo || 'Adelanto'}</span>
+              <span className="text-red-500">- {money(a.monto_usd)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </ModalShell>
+  );
+}
+
+function MiniKV({ k, v, hl }: { k: string; v: string; hl?: boolean }) {
+  return <div className={`rounded-lg border p-2 ${hl ? 'border-emerald-200 bg-emerald-50/40 dark:border-emerald-900 dark:bg-emerald-950/10' : 'border-slate-200 dark:border-slate-800'}`}>
+    <div className="text-[10px] text-slate-400 uppercase">{k}</div>
+    <div className={`text-base font-bold ${hl ? 'text-emerald-600' : 'text-slate-700 dark:text-slate-200'}`}>{v}</div>
+  </div>;
+}
+
+// ════════════════════ LIQUIDAR (modal) ════════════════════
+function LiquidarModal({ target, range, sedeId, sedeNombre, onClose, onDone }: {
+  target: EmployeeEarnings; range: { inicio: string; fin: string }; sedeId: string | null; sedeNombre?: string;
+  onClose: () => void; onDone: () => void;
+}) {
+  const [metodo, setMetodo] = useState('Efectivo USD');
+  const [nota, setNota] = useState('');
+  const [extra, setExtra] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+  const totalFinal = Math.max(0, target.total_pagar - extra);
+
+  const liquidar = async () => {
+    setSaving(true); setErr('');
+    try {
+      const r = await fetch('/api/nomina/liquidate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ empleado_id: target.empleado_id, inicio: range.inicio, fin: range.fin, sede: sedeId, metodo_pago: metodo, nota, deduccionesExtra: extra }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      // Genera recibo PDF
+      generateReciboNominaPDF({
+        recibo_numero: d.ledger.recibo_numero, empleado_nombre: target.empleado_nombre, rol: target.rol,
+        periodo_inicio: range.inicio, periodo_fin: range.fin, sede_nombre: sedeNombre,
+        sueldo_base: d.ledger.sueldo_base, total_comisiones: d.ledger.total_comisiones,
+        total_overrides: d.ledger.total_overrides, total_flat: d.ledger.total_flat,
+        bruto: d.ledger.bruto, deducciones: d.ledger.deducciones, total_pagar: d.ledger.total_pagar,
+        metodo_pago: metodo, pagado_por: d.ledger.pagado_por, nota,
+        jobs: target.jobs.map(j => ({ fecha: j.fecha, zona: j.zona, tipo_trabajo: j.tipo_trabajo, descripcion: j.descripcion, comision_usd: j.comision_usd, es_override: j.es_override })),
+      });
+      onDone();
+    } catch (e: any) { setErr(e.message); } finally { setSaving(false); }
+  };
+
+  return (
+    <ModalShell onClose={onClose} title={`Liquidar nómina · ${target.empleado_nombre}`}>
+      <div className="space-y-3">
+        <div className="rounded-lg bg-slate-50 dark:bg-slate-900/50 p-3 space-y-1.5 text-sm">
+          <Row k="Sueldo base" v={money(target.sueldo_base)} />
+          <Row k="Comisiones" v={money(target.total_comisiones + target.total_flat)} />
+          <Row k="Override (cascada)" v={money(target.total_overrides)} />
+          <Row k="Adelantos" v={`- ${money(target.deducciones)}`} red />
+          <div className="border-t border-slate-200 dark:border-slate-700 pt-1.5"><Row k="Total a pagar" v={money(totalFinal)} bold /></div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-slate-500">Método de pago</label>
+            <select value={metodo} onChange={e => setMetodo(e.target.value)} className="w-full h-9 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-sm mt-1">
+              {['Efectivo USD', 'Efectivo Bs', 'Pago Móvil', 'Zelle', 'Binance', 'Transferencia'].map(m => <option key={m}>{m}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-slate-500">Deducción extra ($)</label>
+            <input type="number" step="0.01" value={extra || ''} onChange={e => setExtra(parseFloat(e.target.value) || 0)}
+              className="w-full h-9 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-sm mt-1" />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs text-slate-500">Nota (opcional)</label>
+          <input value={nota} onChange={e => setNota(e.target.value)} className="w-full h-9 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-sm mt-1" />
+        </div>
+        {err && <div className="text-sm text-red-500 flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> {err}</div>}
+        <div className="flex gap-2 pt-2">
+          <Button variant="outline" className="flex-1" onClick={onClose}>Cancelar</Button>
+          <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={liquidar} disabled={saving}>
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <><FileText className="w-4 h-4 mr-1.5" /> Liquidar y generar recibo</>}
+          </Button>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function Row({ k, v, red, bold }: { k: string; v: string; red?: boolean; bold?: boolean }) {
+  return <div className="flex justify-between"><span className="text-slate-500">{k}</span><span className={`${red ? 'text-red-500' : bold ? 'text-emerald-600 font-bold text-base' : 'text-slate-700 dark:text-slate-200'}`}>{v}</span></div>;
+}
+
+// ════════════════════ REGISTRAR TRABAJO (modal) ════════════════════
+function RegistrarTrabajoModal({ sedeId, onClose, onDone }: { sedeId: string | null; onClose: () => void; onDone: () => void }) {
+  const [specs, setSpecs] = useState<JobSpec[]>([]);
+  const [moneda, setMoneda] = useState('USD');
+  const [descripcion, setDescripcion] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const guardar = async () => {
+    setSaving(true); setErr('');
+    try {
+      const jobs = specs.map(s => ({ ...s, moneda, descripcion: s.descripcion || descripcion, referencia_tabla: 'manual' }));
+      const invalid = jobs.find(j => !j.empleado_id && !j.es_taller);
+      if (invalid) throw new Error('Cada fila requiere un técnico o marcar "lo hizo el taller".');
+      const r = await fetch('/api/nomina/jobs', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobs, sede: sedeId }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      onDone();
+    } catch (e: any) { setErr(e.message); } finally { setSaving(false); }
+  };
+
+  return (
+    <ModalShell onClose={onClose} title="Registrar trabajo y comisión">
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-slate-500">Moneda del cobro</label>
+            <select value={moneda} onChange={e => setMoneda(e.target.value)} className="w-full h-9 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-sm mt-1">
+              <option value="USD">USD ($)</option><option value="EUR">EUR (€)</option><option value="VES">Bolívares (Bs)</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-slate-500">Descripción general</label>
+            <input value={descripcion} onChange={e => setDescripcion(e.target.value)} placeholder="Ej: Cambio de silenciador"
+              className="w-full h-9 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-sm mt-1" />
+          </div>
+        </div>
+        <AsignacionTecnicos value={specs} onChange={setSpecs} sedeId={sedeId} moneda={moneda} />
+        {err && <div className="text-sm text-red-500 flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> {err}</div>}
+        <div className="flex gap-2 pt-1">
+          <Button variant="outline" className="flex-1" onClick={onClose}>Cancelar</Button>
+          <Button className="flex-1 bg-amber-500 hover:bg-amber-600 text-white" onClick={guardar} disabled={saving}>
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Registrar y calcular comisión'}
+          </Button>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+// ════════════════════ TRABAJOS TAB ════════════════════
+function TrabajosTab({ range, sedeId, canEdit, canLiquidar, esTecnico, userId }: any) {
+  const [jobs, setJobs] = useState<JobAssignment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const load = useCallback(async () => {
+    setLoading(true);
+    const qs = new URLSearchParams({ inicio: range.inicio, fin: range.fin });
+    if (sedeId) qs.set('sede', sedeId);
+    const r = await fetch(`/api/nomina/jobs?${qs}`); const d = await r.json();
+    setJobs(d.jobs || []); setLoading(false);
+  }, [range, sedeId]);
+  useEffect(() => { load(); }, [load]);
+
+  const anular = async (id: string) => {
+    if (!confirm('¿Anular este trabajo y sus comisiones asociadas?')) return;
+    const r = await fetch(`/api/nomina/jobs/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ estado: 'anulado' }) });
+    if (r.ok) load(); else alert((await r.json()).error);
+  };
+
+  if (loading) return <div className="flex justify-center py-12"><Loader2 className="w-7 h-7 animate-spin text-emerald-500" /></div>;
+  return (
+    <Card className="border-slate-200 dark:border-slate-800 overflow-hidden">
+      <CardContent className="p-0 overflow-x-auto">
+        {jobs.length === 0 ? <div className="text-center py-12 text-slate-400">Sin trabajos en este período.</div> : (
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 text-xs uppercase">
+              <tr><th className="text-left px-4 py-2">Fecha</th><th className="text-left px-3 py-2">Técnico</th><th className="text-left px-3 py-2">Zona</th><th className="text-right px-3 py-2">Ingreso</th><th className="text-right px-3 py-2">Mano obra</th><th className="text-right px-3 py-2">Comisión</th><th className="text-center px-3 py-2">Estado</th>{canLiquidar && <th className="px-3 py-2"></th>}</tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {jobs.map(j => (
+                <tr key={j.id} className={j.estado === 'anulado' ? 'opacity-40' : j.es_override ? 'bg-violet-50/40 dark:bg-violet-950/10' : ''}>
+                  <td className="px-4 py-2 text-slate-500">{j.fecha}</td>
+                  <td className="px-3 py-2 font-medium text-slate-700 dark:text-slate-200">{j.es_taller ? '🏢 Taller' : j.empleado_nombre}{j.es_override && <span className="text-[10px] text-violet-500 ml-1">override</span>}</td>
+                  <td className="px-3 py-2"><span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800">{zonaLabel(j.zona)}</span></td>
+                  <td className="text-right px-3 py-2 text-slate-500">{money(j.ingreso_usd)}</td>
+                  <td className="text-right px-3 py-2 text-slate-500">{money(j.mano_obra_usd)}</td>
+                  <td className="text-right px-3 py-2 font-semibold text-emerald-600">{money(j.comision_usd)}</td>
+                  <td className="text-center px-3 py-2"><EstadoBadge estado={j.estado} /></td>
+                  {canLiquidar && <td className="px-3 py-2 text-right">{j.estado === 'pendiente' && <button onClick={() => anular(j.id)} className="text-slate-400 hover:text-red-500"><X className="w-4 h-4" /></button>}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function EstadoBadge({ estado }: { estado: string }) {
+  const map: any = { pendiente: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30', liquidado: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30', anulado: 'bg-slate-100 text-slate-500 dark:bg-slate-800' };
+  return <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${map[estado] || ''}`}>{estado}</span>;
+}
+
+// ════════════════════ REGLAS TAB ════════════════════
+function ReglasTab({ sedeId, isAdmin }: { sedeId: string | null; isAdmin: boolean }) {
+  const [rules, setRules] = useState<CommissionRule[]>([]);
+  const [flats, setFlats] = useState<FlatRate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [seedOpen, setSeedOpen] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const qs = sedeId ? `?sede=${sedeId}` : '';
+    const [r1, r2] = await Promise.all([fetch(`/api/nomina/rules${qs}`), fetch(`/api/nomina/flat-rates${qs}`)]);
+    setRules((await r1.json()).rules || []); setFlats((await r2.json()).flatRates || []);
+    setLoading(false);
+  }, [sedeId]);
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) return <div className="flex justify-center py-12"><Loader2 className="w-7 h-7 animate-spin text-emerald-500" /></div>;
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <p className="text-sm text-slate-500">Reglas dinámicas vinculadas a cada empleado. El cálculo nunca usa nombres fijos.</p>
+        {isAdmin && <Button onClick={() => setSeedOpen(true)} variant="outline"><Settings2 className="w-4 h-4 mr-1.5" /> Aplicar plantillas</Button>}
+      </div>
+      <Card className="border-slate-200 dark:border-slate-800 overflow-hidden">
+        <CardHeader className="py-3"><CardTitle className="text-base">Reglas de comisión ({rules.length})</CardTitle></CardHeader>
+        <CardContent className="p-0 overflow-x-auto">
+          {rules.length === 0 ? <div className="text-center py-8 text-slate-400 text-sm">Sin reglas. Aplica las plantillas para empezar.</div> : (
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 text-xs uppercase">
+                <tr><th className="text-left px-4 py-2">Empleado</th><th className="text-left px-3 py-2">Zona</th><th className="text-left px-3 py-2">Tipo</th><th className="text-right px-3 py-2">Valor</th><th className="text-left px-3 py-2">Base</th><th className="text-left px-3 py-2">Descripción</th></tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {rules.map(r => (
+                  <tr key={r.id}>
+                    <td className="px-4 py-2"><EmpName id={r.empleado_id} /></td>
+                    <td className="px-3 py-2">{zonaLabel(r.zona)}</td>
+                    <td className="px-3 py-2"><span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30">{r.tipo_regla}</span></td>
+                    <td className="text-right px-3 py-2 font-medium">{r.tipo_regla === 'fijo_semanal' ? money(r.valor) : `${r.valor}%`}{r.proveedor_pct ? <span className="text-[10px] text-orange-500 ml-1">+prov {r.proveedor_pct}%</span> : ''}</td>
+                    <td className="px-3 py-2 text-slate-500">{r.base}</td>
+                    <td className="px-3 py-2 text-slate-500 text-xs">{r.descripcion}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </CardContent>
+      </Card>
+      <Card className="border-slate-200 dark:border-slate-800 overflow-hidden">
+        <CardHeader className="py-3"><CardTitle className="text-base">Tarifas a destajo ({flats.length})</CardTitle></CardHeader>
+        <CardContent className="p-0 overflow-x-auto">
+          {flats.length === 0 ? <div className="text-center py-8 text-slate-400 text-sm">Sin tarifas flat.</div> : (
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 text-xs uppercase">
+                <tr><th className="text-left px-4 py-2">Empleado</th><th className="text-left px-3 py-2">Servicio</th><th className="text-left px-3 py-2">Zona</th><th className="text-right px-4 py-2">Monto</th></tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {flats.map(f => (
+                  <tr key={f.id}><td className="px-4 py-2"><EmpName id={f.empleado_id} /></td><td className="px-3 py-2">{f.label}</td><td className="px-3 py-2">{zonaLabel(f.zona)}</td><td className="text-right px-4 py-2 font-medium text-emerald-600">{money(f.monto)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </CardContent>
+      </Card>
+      {seedOpen && <SeedModal sedeId={sedeId} onClose={() => setSeedOpen(false)} onDone={() => { setSeedOpen(false); load(); }} />}
+    </div>
+  );
+}
+
+function EmpName({ id }: { id: string | null }) {
+  const [name, setName] = useState<string>('—');
+  useEffect(() => {
+    if (!id) { setName('— (global)'); return; }
+    let active = true;
+    fetch(`/api/nomina/technicians`).then(r => r.json()).then(d => {
+      const t = (d.technicians || []).find((x: any) => x.id === id);
+      if (active) setName(t?.nombre || id.slice(0, 8));
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [id]);
+  return <span className="font-medium text-slate-700 dark:text-slate-200">{name}</span>;
+}
+
+// ════════════════════ SEED (plantillas) ════════════════════
+function SeedModal({ sedeId, onClose, onDone }: { sedeId: string | null; onClose: () => void; onDone: () => void }) {
+  const [techs, setTechs] = useState<any[]>([]);
+  const [map, setMap] = useState<Record<string, string>>({});
+  const [proveedor, setProveedor] = useState('Proveedor Puente Alineación');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+  const plantillas = [
+    { key: 'rafael', label: 'Rafael — Alineación 25%/20%+puente · Mecánica 40% · Revisión $2' },
+    { key: 'roger', label: 'Roger — Fijo $40/sem · Mecánica 40%' },
+    { key: 'jim', label: 'Jim — Override 7% jefe taller · Mecánica propia 40%' },
+    { key: 'acevedo', label: 'Acevedo — Almacén fijo $40/sem' },
+    { key: 'freddy', label: 'Freddy — Escapes a destajo (5/5/5/1/1/1)' },
+  ];
+  useEffect(() => { fetch(`/api/nomina/technicians${sedeId ? `?sede=${sedeId}` : ''}`).then(r => r.json()).then(d => setTechs(d.technicians || [])); }, [sedeId]);
+
+  const aplicar = async () => {
+    setSaving(true); setErr('');
+    try {
+      const r = await fetch('/api/nomina/seed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sede_id: sedeId, proveedor_nombre: proveedor, assignments: map }) });
+      const d = await r.json(); if (!r.ok) throw new Error(d.error);
+      onDone();
+    } catch (e: any) { setErr(e.message); } finally { setSaving(false); }
+  };
+
+  return (
+    <ModalShell onClose={onClose} title="Aplicar plantillas de comisión">
+      <p className="text-xs text-slate-500 mb-3">Asigna cada plantilla a un empleado. Esto reemplaza sus reglas previas en esta sede.</p>
+      <div className="space-y-2">
+        {plantillas.map(p => (
+          <div key={p.key} className="flex flex-col sm:flex-row sm:items-center gap-2 p-2 rounded-lg border border-slate-200 dark:border-slate-700">
+            <span className="text-xs flex-1 text-slate-600 dark:text-slate-300">{p.label}</span>
+            <select value={map[p.key] || ''} onChange={e => setMap(m => ({ ...m, [p.key]: e.target.value }))}
+              className="h-8 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-sm sm:w-48">
+              <option value="">— No asignar —</option>
+              {techs.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+            </select>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3">
+        <label className="text-xs text-slate-500">Nombre del proveedor del puente (alineación)</label>
+        <input value={proveedor} onChange={e => setProveedor(e.target.value)} className="w-full h-9 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-sm mt-1" />
+      </div>
+      {err && <div className="text-sm text-red-500 mt-2">{err}</div>}
+      <div className="flex gap-2 pt-4">
+        <Button variant="outline" className="flex-1" onClick={onClose}>Cancelar</Button>
+        <Button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" onClick={aplicar} disabled={saving}>{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Aplicar plantillas'}</Button>
+      </div>
+    </ModalShell>
+  );
+}
+
+// ════════════════════ ADELANTOS TAB ════════════════════
+function AdelantosTab({ sedeId, onChange }: { sedeId: string | null; onChange: () => void }) {
+  const [advances, setAdvances] = useState<any[]>([]);
+  const [techs, setTechs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState({ empleado_id: '', monto: '', moneda: 'USD', motivo: '' });
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const qs = sedeId ? `?sede=${sedeId}` : '';
+    const [r1, r2] = await Promise.all([fetch(`/api/nomina/advances${qs}`), fetch(`/api/nomina/technicians${qs}`)]);
+    setAdvances((await r1.json()).advances || []); setTechs((await r2.json()).technicians || []);
+    setLoading(false);
+  }, [sedeId]);
+  useEffect(() => { load(); }, [load]);
+
+  const add = async () => {
+    if (!form.empleado_id || !form.monto) return;
+    setSaving(true);
+    const r = await fetch('/api/nomina/advances', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, monto: parseFloat(form.monto), sede: sedeId }) });
+    setSaving(false);
+    if (r.ok) { setForm({ empleado_id: '', monto: '', moneda: 'USD', motivo: '' }); load(); onChange(); } else alert((await r.json()).error);
+  };
+  const anular = async (id: string) => { if (!confirm('¿Anular adelanto?')) return; const r = await fetch(`/api/nomina/advances/${id}`, { method: 'DELETE' }); if (r.ok) { load(); onChange(); } else alert((await r.json()).error); };
+
+  return (
+    <div className="space-y-4">
+      <Card className="border-slate-200 dark:border-slate-800">
+        <CardHeader className="py-3"><CardTitle className="text-base">Registrar adelanto / deducción</CardTitle></CardHeader>
+        <CardContent className="flex flex-wrap items-end gap-2">
+          <select value={form.empleado_id} onChange={e => setForm(f => ({ ...f, empleado_id: e.target.value }))} className="h-9 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-sm flex-1 min-w-[160px]">
+            <option value="">— Empleado —</option>{techs.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+          </select>
+          <input type="number" step="0.01" placeholder="Monto" value={form.monto} onChange={e => setForm(f => ({ ...f, monto: e.target.value }))} className="h-9 w-28 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-sm" />
+          <select value={form.moneda} onChange={e => setForm(f => ({ ...f, moneda: e.target.value }))} className="h-9 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-sm"><option>USD</option><option>EUR</option><option>VES</option></select>
+          <input placeholder="Motivo" value={form.motivo} onChange={e => setForm(f => ({ ...f, motivo: e.target.value }))} className="h-9 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-sm flex-1 min-w-[120px]" />
+          <Button onClick={add} disabled={saving} className="bg-blue-600 hover:bg-blue-700 text-white">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}</Button>
+        </CardContent>
+      </Card>
+      <Card className="border-slate-200 dark:border-slate-800 overflow-hidden">
+        <CardContent className="p-0 overflow-x-auto">
+          {loading ? <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-slate-400" /></div> :
+            advances.length === 0 ? <div className="text-center py-8 text-slate-400 text-sm">Sin adelantos.</div> : (
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 text-xs uppercase"><tr><th className="text-left px-4 py-2">Fecha</th><th className="text-left px-3 py-2">Empleado</th><th className="text-left px-3 py-2">Motivo</th><th className="text-right px-3 py-2">Monto</th><th className="text-center px-3 py-2">Estado</th><th className="px-3 py-2"></th></tr></thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {advances.map(a => (
+                  <tr key={a.id} className={a.estado === 'anulado' ? 'opacity-40' : ''}>
+                    <td className="px-4 py-2 text-slate-500">{a.fecha}</td><td className="px-3 py-2 font-medium">{a.empleado_nombre}</td><td className="px-3 py-2 text-slate-500">{a.motivo || '—'}</td>
+                    <td className="text-right px-3 py-2 text-red-500">- {money(a.monto_usd)}</td><td className="text-center px-3 py-2"><EstadoBadge estado={a.estado} /></td>
+                    <td className="px-3 py-2 text-right">{a.estado === 'pendiente' && <button onClick={() => anular(a.id)} className="text-slate-400 hover:text-red-500"><X className="w-4 h-4" /></button>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ════════════════════ HISTORIAL TAB ════════════════════
+function HistorialTab({ sedeId, isAdmin }: { sedeId: string | null; isAdmin: boolean }) {
+  const [ledgers, setLedgers] = useState<PayrollLedger[]>([]);
+  const [loading, setLoading] = useState(true);
+  const load = useCallback(async () => {
+    setLoading(true);
+    const qs = sedeId ? `?sede=${sedeId}` : '';
+    const r = await fetch(`/api/nomina/ledger${qs}`); setLedgers((await r.json()).ledgers || []); setLoading(false);
+  }, [sedeId]);
+  useEffect(() => { load(); }, [load]);
+
+  const reimprimir = async (l: PayrollLedger) => {
+    const r = await fetch(`/api/nomina/ledger/${l.id}`); const d = await r.json();
+    if (!r.ok) return alert(d.error);
+    generateReciboNominaPDF({
+      recibo_numero: l.recibo_numero || '', empleado_nombre: l.empleado_nombre || '', periodo_inicio: l.periodo_inicio, periodo_fin: l.periodo_fin,
+      sueldo_base: l.sueldo_base, total_comisiones: l.total_comisiones, total_overrides: l.total_overrides, total_flat: l.total_flat,
+      bruto: l.bruto, deducciones: l.deducciones, total_pagar: l.total_pagar, metodo_pago: l.metodo_pago, pagado_por: l.pagado_por, nota: l.nota,
+      jobs: (d.jobs || []).map((j: any) => ({ fecha: j.fecha, zona: j.zona, tipo_trabajo: j.tipo_trabajo, descripcion: j.descripcion, comision_usd: j.comision_usd, es_override: j.es_override })),
+    });
+  };
+  const anular = async (id: string) => { if (!confirm('¿Anular esta liquidación? Los trabajos volverán a pendiente.')) return; const r = await fetch(`/api/nomina/ledger/${id}`, { method: 'PATCH' }); if (r.ok) load(); else alert((await r.json()).error); };
+
+  if (loading) return <div className="flex justify-center py-12"><Loader2 className="w-7 h-7 animate-spin text-emerald-500" /></div>;
+  return (
+    <Card className="border-slate-200 dark:border-slate-800 overflow-hidden">
+      <CardContent className="p-0 overflow-x-auto">
+        {ledgers.length === 0 ? <div className="text-center py-12 text-slate-400">Sin pagos registrados.</div> : (
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 text-xs uppercase"><tr><th className="text-left px-4 py-2">Recibo</th><th className="text-left px-3 py-2">Empleado</th><th className="text-left px-3 py-2">Período</th><th className="text-right px-3 py-2">Total</th><th className="text-center px-3 py-2">Estado</th><th className="text-right px-4 py-2">Acciones</th></tr></thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {ledgers.map(l => (
+                <tr key={l.id} className={l.estado === 'anulado' ? 'opacity-40' : ''}>
+                  <td className="px-4 py-2 font-mono text-xs">{l.recibo_numero}</td>
+                  <td className="px-3 py-2 font-medium">{l.empleado_nombre}</td>
+                  <td className="px-3 py-2 text-slate-500 text-xs">{l.periodo_inicio} → {l.periodo_fin}</td>
+                  <td className="text-right px-3 py-2 font-bold text-emerald-600">{money(l.total_pagar)}</td>
+                  <td className="text-center px-3 py-2"><EstadoBadge estado={l.estado} /></td>
+                  <td className="text-right px-4 py-2">
+                    <div className="flex items-center justify-end gap-1">
+                      <button onClick={() => reimprimir(l)} className="text-slate-400 hover:text-blue-500 p-1" title="Descargar recibo"><Download className="w-4 h-4" /></button>
+                      {isAdmin && l.estado !== 'anulado' && <button onClick={() => anular(l.id)} className="text-slate-400 hover:text-red-500 p-1" title="Anular"><X className="w-4 h-4" /></button>}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ════════════════════ SHELL DE MODAL ════════════════════
+function ModalShell({ children, onClose, title }: { children: React.ReactNode; onClose: () => void; title: string }) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={onClose}>
+      <Card className="w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-200" onClick={(e: any) => e.stopPropagation()}>
+        <CardHeader className="py-3 border-b border-slate-200 dark:border-slate-800 flex flex-row items-center justify-between shrink-0">
+          <CardTitle className="text-lg">{title}</CardTitle>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+        </CardHeader>
+        <CardContent className="p-4 overflow-y-auto custom-scrollbar">{children}</CardContent>
+      </Card>
+    </div>
+  );
+}
