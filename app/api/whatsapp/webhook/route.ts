@@ -2412,6 +2412,32 @@ async function processIntents(
   return { clientId, vehicleId };
 }
 
+// ─── ¿El teléfono pertenece a un operador Dueño/Administrador? ──────────────────
+// Para estos roles, en Modo Dios, NUNCA debe sobrescribirse el nombre de contacto
+// de su propio perfil: cuando registran clientes/servicios el nombre es del CLIENTE,
+// no de ellos. Devuelve true si el número está en `usuarios` con rol admin o dueño.
+async function isOwnerOrAdminPhone(db: ReturnType<typeof getDb>, phone: string): Promise<boolean> {
+  const phoneClean = (phone || '').replace(/[^0-9]/g, '');
+  if (!phoneClean) return false;
+  // Admins maestros por lista fija (pueden no estar en la tabla usuarios).
+  if (ADMIN_PHONES.includes(phone) || ADMIN_PHONES.includes(phoneClean)) return true;
+  if (!db) return false;
+  try {
+    const { data: user } = await db.from('usuarios')
+      .select('rol')
+      .eq('telefono', phoneClean)
+      .eq('activo', true)
+      .maybeSingle();
+    if (!user?.rol) return false;
+    const raw = String(user.rol).trim().toLowerCase();
+    const canonical = resolveRol(raw);
+    return canonical === 'admin' || canonical === 'dueno'
+      || raw === 'administrador' || raw === 'dueño' || raw === 'owner';
+  } catch {
+    return false;
+  }
+}
+
 async function getOrCreateClientAndVehicle(
   db: ReturnType<typeof getDb>,
   phone: string,
@@ -2543,17 +2569,27 @@ async function getOrCreateClientAndVehicle(
 
     // 3. Link back to conversation
     if (clientId) {
-      // Sync names to conversation metadata
-      const { data: clientData } = await db.from('clientes').select('nombre, apellido').eq('id', clientId).single();
-      const fullName = clientData ? `${clientData.nombre || ''} ${clientData.apellido || ''}`.trim() : name;
+      // ⚠️ MODO DIOS: si el teléfono es de un Dueño/Administrador, NO tocar el nombre
+      // de contacto de su propio perfil ni vincular su conversación a un cliente.
+      // Ellos registran clientes a nombre de terceros, así que su conversación nunca
+      // debe renombrarse con el nombre del cliente (ej.: "Jin" no debe pasar a llamarse
+      // como el cliente que acaba de registrar).
+      const esOperador = await isOwnerOrAdminPhone(db, phone);
+      if (esOperador) {
+        console.log(`🛡️ Modo Dios (Dueño/Admin): se omite renombrar/vincular el perfil de ${phone}`);
+      } else {
+        // Sync names to conversation metadata
+        const { data: clientData } = await db.from('clientes').select('nombre, apellido').eq('id', clientId).single();
+        const fullName = clientData ? `${clientData.nombre || ''} ${clientData.apellido || ''}`.trim() : name;
 
-      await db.from('conversaciones').update({
-        cliente_id: clientId,
-        datos_cliente: {
-          nombre: fullName || name,
-          wa_name: waProfileName || undefined
-        }
-      }).eq('telefono', phone).eq('sede_id', sedeId || DEFAULT_SEDE_ID);
+        await db.from('conversaciones').update({
+          cliente_id: clientId,
+          datos_cliente: {
+            nombre: fullName || name,
+            wa_name: waProfileName || undefined
+          }
+        }).eq('telefono', phone).eq('sede_id', sedeId || DEFAULT_SEDE_ID);
+      }
     }
 
   } catch (e) { console.error('Error in getOrCreateClientAndVehicle:', e); }
@@ -2597,7 +2633,12 @@ async function updateConversation(db: ReturnType<typeof getDb>, from: string, la
         memoria,
         sede_id: effectiveSedeId
       };
-      if (linkedClientId) updateData.cliente_id = linkedClientId;
+      // ⚠️ MODO DIOS: no vincular la conversación de un Dueño/Administrador a un cliente.
+      // Si se vinculara, el CRM mostraría el nombre del cliente (join por cliente_id) como
+      // nombre de contacto del operador. Su perfil debe permanecer intacto.
+      if (linkedClientId && !(await isOwnerOrAdminPhone(db, from))) {
+        updateData.cliente_id = linkedClientId;
+      }
 
       await db.from('conversaciones').upsert(updateData, { onConflict: 'telefono' });
     } catch (e) { console.error('Error update conversacion:', e); }
