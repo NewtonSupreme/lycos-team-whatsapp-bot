@@ -423,6 +423,73 @@ export default function PresupuestosPage() {
     }
   };
 
+  // ── Duplicar presupuesto ──────────────────────────────────────
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
+
+  const handleDuplicate = async (p: any) => {
+    if (!supabase) return;
+    if (!can('presupuestos', 'crear')) {
+      alert('No tienes permisos para crear/duplicar presupuestos.');
+      return;
+    }
+    setDuplicatingId(p.id);
+    try {
+      const full = await fetchPresupuesto(p.id);
+      if (!full) {
+        alert('No se pudo cargar el presupuesto a duplicar.');
+        return;
+      }
+
+      // Limpiar el formulario antes de precargar los datos copiados
+      resetForm();
+
+      // Datos del cliente
+      setSelectedCliente(full.cliente_id ? (clientes.find(c => c.id === full.cliente_id) || null) : null);
+      setClienteNombre(full.cliente_nombre || '');
+      setClienteTelefono(full.cliente_telefono || '');
+      setClienteCedula(full.cliente_cedula || '');
+      setClienteDireccion(full.cliente_direccion || '');
+      setSelectedVehiculo(full.vehiculo_id ? (vehiculos.find(v => v.id === full.vehiculo_id) || null) : null);
+      setVehiculoInfo(full.vehiculo_info || '');
+
+      // Moneda
+      setMonedaGlobal((full.moneda as Moneda) || 'USD');
+
+      // Items (regeneramos ids para evitar colisiones de keys en el carrito)
+      const rawItems: any[] = typeof full.items === 'string' ? JSON.parse(full.items) : (full.items || []);
+      const loadedItems: CartItem[] = rawItems.map((i: any, idx: number) => ({
+        id: `dup-${Date.now()}-${idx}`,
+        tipo: (i.tipo as CartItem['tipo']) || 'otro',
+        descripcion: i.descripcion,
+        cantidad: Number(i.cantidad) || 1,
+        precio_unitario: Number(i.precio_unitario) || 0,
+        moneda: (i.moneda as Moneda) || (full.moneda as Moneda) || 'USD',
+        total: Number(i.total) || (Number(i.cantidad) || 1) * (Number(i.precio_unitario) || 0),
+        inventario_id: i.inventario_id || undefined,
+        categoria: i.categoria || undefined,
+      }));
+      setItems(loadedItems);
+
+      // Ajustes (descuento, IVA, notas, condiciones, validez)
+      setDescuento(Number(full.descuento) || 0);
+      setDescuentoTipo((full.descuento_tipo as 'porcentaje' | 'monto') || 'porcentaje');
+      setConIva(Number(full.iva) > 0);
+      setNotas(full.notas || '');
+      setCondiciones(full.condiciones || '');
+      setValidezDias(Number(full.validez_dias) || 15);
+
+      // Saltar al asistente en el paso de revisión para que el usuario confirme/ajuste y genere la copia
+      setViewingPresupuesto(null);
+      setView('nuevo');
+      setStep(3);
+    } catch (err: any) {
+      console.error('Error al duplicar presupuesto:', err);
+      alert('Error al duplicar: ' + err.message);
+    } finally {
+      setDuplicatingId(null);
+    }
+  };
+
   const resetForm = () => {
     setStep(1);
     setSelectedCliente(null);
@@ -1333,6 +1400,24 @@ export default function PresupuestosPage() {
                           >
                             <Download className="w-3 h-3" /> PDF
                           </Button>
+
+                          {/* Duplicar: precarga este presupuesto en el asistente para crear una copia nueva.
+                             Requiere permiso 'crear' (respeta panel de Permisos por Rol y de Empleados). */}
+                          {can('presupuestos', 'crear') && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={duplicatingId === p.id}
+                              className="h-7 rounded-lg text-[9px] font-bold gap-1 text-primary border-primary/30 hover:bg-primary/10"
+                              onClick={(e) => { e.stopPropagation(); handleDuplicate(p); }}
+                            >
+                              {duplicatingId === p.id ? (
+                                <><Loader2 className="w-3 h-3 animate-spin" /> Duplicando...</>
+                              ) : (
+                                <><Copy className="w-3 h-3" /> Duplicar</>
+                              )}
+                            </Button>
+                          )}
 
                           {p.estado === 'borrador' && (
                             <Button
