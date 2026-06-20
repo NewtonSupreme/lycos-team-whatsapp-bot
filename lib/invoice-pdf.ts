@@ -1,7 +1,7 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-interface InvoiceData {
+export interface InvoiceData {
   id?: string;
   correlativo?: string;
   fecha: string;
@@ -26,8 +26,17 @@ interface InvoiceData {
   // Abono / Pending fields
   tiene_abono?: boolean;
   abono?: number;
+  total_abonado?: number;
   saldo_pendiente?: number;
   estado?: 'pagado' | 'pendiente';
+  // Historial de abonos (para mostrar todos los pagos parciales)
+  abonos?: Array<{
+    monto: number;
+    metodo_pago?: string;
+    created_at?: string;
+    saldo_despues?: number;
+  }>;
+  es_abono?: boolean; // si esta factura representa un abono individual
 }
 
 export interface PrintOptions {
@@ -36,8 +45,10 @@ export interface PrintOptions {
   currencyMode?: 'usd' | 'dual' | 'auto';
 }
 
+export type InvoicePDFItem = InvoiceData & { iva_aplicado?: boolean; tasa_bcv?: number; total_ves?: number };
+
 export const generateInvoicePDF = (
-  dataList: (InvoiceData & { iva_aplicado?: boolean; tasa_bcv?: number; total_ves?: number })[],
+  dataList: InvoicePDFItem[],
   options: PrintOptions = { mode: 'dual', currencyMode: 'dual' }
 ) => {
   // Orientation: Landscape (l), Unit: mm, Format: a4 (297x210)
@@ -252,26 +263,56 @@ export const generateInvoicePDF = (
       infoY += 5;
     }
 
-    // Abono / Pending info
-    if (data.estado === 'pendiente') {
+    // Abono / Pending info — con historial completo de abonos
+    if (data.estado === 'pendiente' || data.es_abono || (data.abonos && data.abonos.length > 0)) {
       if (data.notas || data.tiene_abono) infoY += 2;
-      doc.setFillColor(245, 158, 11, 0.12);
-      doc.roundedRect(margin, infoY, rightAlign - margin, 18, 2, 2, 'F');
-      
-      doc.setTextColor(245, 158, 11);
+
+      const abonosList = data.abonos || [];
+      const totalAbonado = data.total_abonado ?? data.abono ?? (abonosList.reduce((s: number, a: any) => s + Number(a.monto || 0), 0));
+      const saldo = data.saldo_pendiente ?? Math.max(0, Number(data.total) - totalAbonado);
+      const pendiente = data.estado === 'pendiente' && saldo > 0.001;
+
+      // Altura dinámica según cantidad de abonos
+      const baseH = 11;
+      const rowH = 4;
+      const boxH = baseH + (abonosList.length > 0 ? abonosList.length * rowH + 4 : 0);
+
+      doc.setFillColor(pendiente ? 245 : 34, pendiente ? 158 : 197, pendiente ? 11 : 94, 0.12);
+      doc.roundedRect(margin, infoY, rightAlign - margin, boxH, 2, 2, 'F');
+
+      doc.setTextColor(pendiente ? 245 : 22, pendiente ? 158 : 163, pendiente ? 11 : 74);
       doc.setFontSize(8);
       doc.setFont('helvetica', 'bold');
-      doc.text('PENDIENTE POR PAGAR', margin + 3, infoY + 7);
-      
+      doc.text(pendiente ? 'PENDIENTE POR PAGAR' : 'VENTA SALDADA', margin + 3, infoY + 6);
+
+      // Resumen lado derecho
       doc.setTextColor(...grayDark);
       doc.setFontSize(7);
       doc.setFont('helvetica', 'normal');
-      const abonoText = data.abono ? `Abono: $${Number(data.abono).toFixed(2)}` : '';
-      const saldoText = data.saldo_pendiente ? `Saldo pendiente: $${Number(data.saldo_pendiente).toFixed(2)}` : '';
-      const statusText = [abonoText, saldoText].filter(Boolean).join(' | ');
-      if (statusText) doc.text(statusText, rightAlign - 3, infoY + 7, { align: 'right' });
-      
-      infoY += 20;
+      const resumen = `Abonado: $${Number(totalAbonado).toFixed(2)}  |  Restante: $${Number(saldo).toFixed(2)}`;
+      doc.text(resumen, rightAlign - 3, infoY + 6, { align: 'right' });
+
+      // Detalle de cada abono
+      if (abonosList.length > 0) {
+        let ay = infoY + 11;
+        doc.setFontSize(6.5);
+        doc.setTextColor(...grayLight);
+        doc.text('HISTORIAL DE ABONOS:', margin + 3, ay);
+        ay += 4;
+        doc.setTextColor(...grayDark);
+        abonosList.forEach((a: any, i: number) => {
+          const fecha = a.created_at ? new Date(a.created_at).toLocaleDateString('es-VE') : '';
+          const metodo = a.metodo_pago ? a.metodo_pago.replace(/_/g, ' ') : '';
+          const linea = `Abono ${i + 1}: $${Number(a.monto).toFixed(2)}${fecha ? `  ·  ${fecha}` : ''}${metodo ? `  ·  ${metodo}` : ''}`;
+          doc.text(linea, margin + 5, ay);
+          if (a.saldo_despues != null) {
+            doc.text(`Saldo: $${Number(a.saldo_despues).toFixed(2)}`, rightAlign - 3, ay, { align: 'right' });
+          }
+          ay += rowH;
+        });
+      }
+
+      infoY += boxH + 2;
     }
 
     // Notes if exists

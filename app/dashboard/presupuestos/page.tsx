@@ -413,18 +413,78 @@ export default function PresupuestosPage() {
   const handleEstadoChange = async (id: string, nuevoEstado: EstadoPresupuesto) => {
     if (!supabase) return;
     try {
+      // Al APROBAR un presupuesto → generar venta pendiente por pagar
+      if (nuevoEstado === 'aprobado') {
+        const full = presupuestos.find(p => p.id === id);
+        if (full) {
+          // Evitar duplicar si ya tiene venta asociada
+          if (full.venta_id) {
+            alert('Este presupuesto ya tiene una venta asociada.');
+          } else {
+            const total = Number(full.total) || 0;
+            const vehiculoInfo = full.vehiculo_info || '';
+            // Items del presupuesto → desglose de la venta
+            const desglose = (full.items || []).map((it: any) => ({
+              nombre: it.descripcion || it.nombre || 'Item',
+              cantidad: Number(it.cantidad) || 1,
+              precio: Number(it.precio_unitario ?? it.precio) || 0,
+              total: Number(it.total) || 0,
+            }));
+
+            const { data: ventaDia, error: ventaErr } = await withSedeFilter(supabase.from('ventas_dia'))
+              .insert(withSedeInsert({
+                fecha: new Date().toISOString().split('T')[0],
+                cliente: full.cliente_nombre,
+                total_ingresos: total,
+                total_servicios: desglose.length,
+                total_clientes: 1,
+                clientes_atendidos: 1,
+                desglose,
+                moneda: full.moneda,
+                tasa_cambio: full.tasa_cambio || 0,
+                con_iva: Number(full.iva) > 0,
+                iva: Number(full.iva) || 0,
+                notas: `Presupuesto ${full.numero}${vehiculoInfo ? ` | Vehículo: ${vehiculoInfo}` : ''} | Pendiente por pagar`,
+                tiene_abono: false,
+                abono: 0,
+                total_abonado: 0,
+                saldo_pendiente: total,
+                por_cobrar: total,
+                estado: 'pendiente',
+                presupuesto_id: full.id,
+                presupuesto_numero: full.numero,
+                creado_por: user?.nombre || 'Sistema',
+              }))
+              .select()
+              .single();
+
+            if (ventaErr) throw ventaErr;
+
+            // Vincular presupuesto ↔ venta
+            await supabase.from('presupuestos')
+              .update({ venta_id: ventaDia.id })
+              .eq('id', id);
+          }
+        }
+      }
+
       await updatePresupuestoEstado(id, nuevoEstado);
       await logActivity({
         usuario: user?.nombre || 'Sistema',
         modulo: 'presupuestos',
         accion: `Cambiar estado a ${nuevoEstado}`,
-        detalles: `Presupuesto ID: ${id}`,
+        detalles: nuevoEstado === 'aprobado'
+          ? `Presupuesto ${id} aprobado y convertido en venta pendiente por pagar`
+          : `Presupuesto ID: ${id}`,
         referencia_id: id,
         referencia_tabla: 'presupuestos',
       });
       fetchData();
       if (viewingPresupuesto?.id === id) {
         setViewingPresupuesto({ ...viewingPresupuesto, estado: nuevoEstado });
+      }
+      if (nuevoEstado === 'aprobado') {
+        alert('Presupuesto aprobado. Se generó una venta PENDIENTE POR PAGAR en el módulo de Ventas, lista para recibir abonos.');
       }
     } catch (err: any) {
       alert('Error: ' + err.message);

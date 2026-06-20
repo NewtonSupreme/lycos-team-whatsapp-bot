@@ -27,7 +27,7 @@ import {
 import { supabase, registrarFactura } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
 import { cn, getLocalISODate, parseDescripcionItems } from '@/lib/utils';
-import { generateInvoicePDF, generateEgresoPDF } from '@/lib/invoice-pdf';
+import { generateInvoicePDF, generateEgresoPDF, type InvoicePDFItem } from '@/lib/invoice-pdf';
 import { generateCierrePDF, type CierreData } from '@/lib/cierre-pdf';
 import { generateNotaEntregaPDF } from '@/lib/distribucion-pdf';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
@@ -56,6 +56,14 @@ interface VentaDia {
   pago_ves?: number;
   tasa_cambio?: number;
   con_iva?: boolean;
+  tiene_abono?: boolean;
+  abono?: number;
+  total_abonado?: number;
+  saldo_pendiente?: number;
+  estado?: string;
+  referencia_tabla?: string;
+  presupuesto_id?: string;
+  presupuesto_numero?: string;
   metodos_pago?: {
     pago_movil?: number;
     zelle?: number;
@@ -1718,7 +1726,17 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
         }
       } catch { /* non-blocking */ }
 
-      const dataList = [{
+      // Cargar historial de abonos si la venta tiene pagos parciales
+      let abonosVenta: any[] = [];
+      if (venta.tiene_abono || venta.estado === 'pendiente') {
+        try {
+          const { data: ab } = await supabase!.from('abonos')
+            .select('*').eq('venta_id', venta.id).order('created_at', { ascending: true });
+          abonosVenta = ab || [];
+        } catch { abonosVenta = []; }
+      }
+
+      const dataList: InvoicePDFItem[] = [{
         id: venta.id,
         correlativo: correlativo || undefined,
         fecha: venta.fecha,
@@ -1730,7 +1748,18 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
         pago_ves: venta.pago_ves,
         tasa_cambio: venta.tasa_cambio,
         iva_aplicado: venta.con_iva,
-        metodos_pago: venta.metodos_pago
+        metodos_pago: venta.metodos_pago,
+        estado: (venta.estado === 'pendiente' ? 'pendiente' : 'pagado') as 'pagado' | 'pendiente',
+        tiene_abono: venta.tiene_abono,
+        abono: venta.abono,
+        total_abonado: venta.total_abonado,
+        saldo_pendiente: venta.saldo_pendiente,
+        abonos: abonosVenta.map((a: any) => ({
+          monto: Number(a.monto),
+          metodo_pago: a.metodo_pago,
+          created_at: a.created_at,
+          saldo_despues: Number(a.saldo_despues),
+        })),
       }];
 
       if (printMode === 'dual') {
@@ -3193,6 +3222,24 @@ export default function ReportesPage() {
                               {(v.isBinance || (v.notas && /binance|usdt/i.test(v.notas))) && (
                                 <span className="text-[8px] font-black text-black bg-yellow-500 px-1.5 py-0.5 rounded-full uppercase tracking-tighter">
                                   BINANCE
+                                </span>
+                              )}
+
+                              {(v.tiene_abono || v.referencia_tabla === 'abonos' || (v.notas && /\babono\b/i.test(v.notas))) && (
+                                <span className="text-[8px] font-black text-green-400 bg-green-500/10 px-1.5 py-0.5 rounded-full border border-green-500/20 uppercase tracking-tighter">
+                                  ABONO
+                                </span>
+                              )}
+
+                              {v.estado === 'pendiente' && (
+                                <span className="text-[8px] font-black text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded-full border border-amber-500/20 uppercase tracking-tighter">
+                                  PENDIENTE
+                                </span>
+                              )}
+
+                              {v.presupuesto_numero && (
+                                <span className="text-[8px] font-black text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded-full border border-blue-500/20 uppercase tracking-tighter">
+                                  PRESUP.
                                 </span>
                               )}
                             </div>
