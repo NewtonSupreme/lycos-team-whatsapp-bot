@@ -5,7 +5,7 @@ import {
   FileSpreadsheet, Plus, Trash2, Search, CheckCircle, AlertCircle, Loader2,
   ArrowRight, ArrowLeft, Printer, UserPlus, Car, DollarSign, Euro,
   Percent, Receipt, History, Clock, Send, X, Edit3, Eye, Ban,
-  Check, RefreshCw, Save, FileText, Copy, Calendar, Wallet,
+  Check, RefreshCw, Save, FileText, Calendar, Wallet,
   Package, Wrench, MoreHorizontal, Download
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
@@ -289,12 +289,30 @@ export default function PresupuestosPage() {
 
     setSaving(true);
     try {
-      const numero = await generateNumeroPresupuesto();
-      const expDate = new Date();
+      const isEdit = !!editingPresupuesto;
+
+      // En edición conservamos el número y la fecha de creación originales;
+      // recalculamos la expiración sobre la fecha de creación real.
+      const numero = isEdit ? editingPresupuesto.numero : await generateNumeroPresupuesto();
+      const estadoActual: EstadoPresupuesto = isEdit ? (editingPresupuesto.estado || 'borrador') : 'borrador';
+      const createdAt = isEdit && editingPresupuesto.created_at ? editingPresupuesto.created_at : new Date().toISOString();
+      const expDate = new Date(createdAt);
       expDate.setDate(expDate.getDate() + validezDias);
 
-      const payload = {
-        numero,
+      const itemsPayload = items.map(i => ({
+        id: i.id,
+        tipo: i.tipo,
+        descripcion: i.descripcion,
+        cantidad: i.cantidad,
+        precio_unitario: i.precio_unitario,
+        moneda: i.moneda,
+        total: i.total,
+        inventario_id: i.inventario_id || null,
+        categoria: i.categoria || null,
+      }));
+
+      // Campos comunes (lo editable). En edición NO tocamos numero/estado/creado_por.
+      const commonPayload = {
         cliente_id: selectedCliente?.id || null,
         cliente_nombre: clienteNombre.trim(),
         cliente_telefono: clienteTelefono.trim() || null,
@@ -304,17 +322,7 @@ export default function PresupuestosPage() {
         vehiculo_info: vehiculoInfo.trim() || null,
         moneda: monedaGlobal,
         tasa_cambio: monedaGlobal !== 'VES' ? tasaCambio : null,
-        items: items.map(i => ({
-          id: i.id,
-          tipo: i.tipo,
-          descripcion: i.descripcion,
-          cantidad: i.cantidad,
-          precio_unitario: i.precio_unitario,
-          moneda: i.moneda,
-          total: i.total,
-          inventario_id: i.inventario_id || null,
-          categoria: i.categoria || null,
-        })),
+        items: itemsPayload,
         subtotal,
         descuento,
         descuento_tipo: descuentoTipo,
@@ -322,28 +330,47 @@ export default function PresupuestosPage() {
         total,
         notas: notas.trim() || null,
         condiciones: condiciones.trim() || null,
-        estado: 'borrador',
         validez_dias: validezDias,
         fecha_expiracion: expDate.toISOString(),
-        creado_por: user?.nombre || 'Sistema',
-        creado_por_id: user?.id || null,
       };
 
-      const result = await createPresupuesto(payload);
-      if (!result) throw new Error('Error al crear presupuesto');
+      if (isEdit) {
+        const result = await updatePresupuesto(editingPresupuesto.id, commonPayload);
+        if (!result) throw new Error('Error al actualizar presupuesto');
 
-      await logActivity({
-        usuario: user?.nombre || 'Sistema',
-        modulo: 'presupuestos',
-        accion: 'Crear presupuesto',
-        detalles: `Presupuesto #${numero} - ${clienteNombre.trim()} - Total: ${MONEDA_SYMBOLS[monedaGlobal]}${total.toFixed(2)}`,
-        referencia_id: result.id,
-        referencia_tabla: 'presupuestos',
-      });
+        await logActivity({
+          usuario: user?.nombre || 'Sistema',
+          modulo: 'presupuestos',
+          accion: 'Editar presupuesto',
+          detalles: `Presupuesto #${numero} - ${clienteNombre.trim()} - Total: ${MONEDA_SYMBOLS[monedaGlobal]}${total.toFixed(2)}`,
+          referencia_id: editingPresupuesto.id,
+          referencia_tabla: 'presupuestos',
+        });
+      } else {
+        const payload = {
+          numero,
+          ...commonPayload,
+          estado: 'borrador',
+          creado_por: user?.nombre || 'Sistema',
+          creado_por_id: user?.id || null,
+        };
+
+        const result = await createPresupuesto(payload);
+        if (!result) throw new Error('Error al crear presupuesto');
+
+        await logActivity({
+          usuario: user?.nombre || 'Sistema',
+          modulo: 'presupuestos',
+          accion: 'Crear presupuesto',
+          detalles: `Presupuesto #${numero} - ${clienteNombre.trim()} - Total: ${MONEDA_SYMBOLS[monedaGlobal]}${total.toFixed(2)}`,
+          referencia_id: result.id,
+          referencia_tabla: 'presupuestos',
+        });
+      }
 
       generatePresupuestoPDF({
         numero,
-        created_at: new Date().toISOString(),
+        created_at: createdAt,
         fecha_expiracion: expDate.toISOString(),
         cliente_nombre: clienteNombre.trim(),
         cliente_telefono: clienteTelefono.trim() || null,
@@ -367,11 +394,11 @@ export default function PresupuestosPage() {
         total,
         notas: notas.trim() || null,
         condiciones: condiciones.trim() || null,
-        estado: 'borrador',
+        estado: estadoActual,
         validez_dias: validezDias,
       });
 
-      alert(`¡Presupuesto #${numero} creado con éxito!`);
+      alert(isEdit ? `¡Presupuesto #${numero} actualizado con éxito!` : `¡Presupuesto #${numero} creado con éxito!`);
       resetForm();
       setView('historial');
       fetchData();
@@ -423,24 +450,27 @@ export default function PresupuestosPage() {
     }
   };
 
-  // ── Duplicar presupuesto ──────────────────────────────────────
-  const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
+  // ── Editar presupuesto ────────────────────────────────────────
+  // editingPresupuesto = registro en edición (null => modo creación).
+  // loadingEditId = id de la card que está cargando para editar (spinner).
+  const [editingPresupuesto, setEditingPresupuesto] = useState<any>(null);
+  const [loadingEditId, setLoadingEditId] = useState<string | null>(null);
 
-  const handleDuplicate = async (p: any) => {
+  const handleEdit = async (p: any) => {
     if (!supabase) return;
-    if (!can('presupuestos', 'crear')) {
-      alert('No tienes permisos para crear/duplicar presupuestos.');
+    if (!can('presupuestos', 'editar')) {
+      alert('No tienes permisos para editar presupuestos.');
       return;
     }
-    setDuplicatingId(p.id);
+    setLoadingEditId(p.id);
     try {
       const full = await fetchPresupuesto(p.id);
       if (!full) {
-        alert('No se pudo cargar el presupuesto a duplicar.');
+        alert('No se pudo cargar el presupuesto a editar.');
         return;
       }
 
-      // Limpiar el formulario antes de precargar los datos copiados
+      // Limpiar el formulario antes de precargar los datos existentes
       resetForm();
 
       // Datos del cliente
@@ -455,10 +485,10 @@ export default function PresupuestosPage() {
       // Moneda
       setMonedaGlobal((full.moneda as Moneda) || 'USD');
 
-      // Items (regeneramos ids para evitar colisiones de keys en el carrito)
+      // Items (regeneramos ids internos para el carrito; los datos son los reales)
       const rawItems: any[] = typeof full.items === 'string' ? JSON.parse(full.items) : (full.items || []);
       const loadedItems: CartItem[] = rawItems.map((i: any, idx: number) => ({
-        id: `dup-${Date.now()}-${idx}`,
+        id: i.id || `edit-${Date.now()}-${idx}`,
         tipo: (i.tipo as CartItem['tipo']) || 'otro',
         descripcion: i.descripcion,
         cantidad: Number(i.cantidad) || 1,
@@ -478,19 +508,21 @@ export default function PresupuestosPage() {
       setCondiciones(full.condiciones || '');
       setValidezDias(Number(full.validez_dias) || 15);
 
-      // Saltar al asistente en el paso de revisión para que el usuario confirme/ajuste y genere la copia
+      // Activar modo edición y abrir el asistente en el paso de revisión
+      setEditingPresupuesto(full);
       setViewingPresupuesto(null);
       setView('nuevo');
       setStep(3);
     } catch (err: any) {
-      console.error('Error al duplicar presupuesto:', err);
-      alert('Error al duplicar: ' + err.message);
+      console.error('Error al cargar presupuesto para editar:', err);
+      alert('Error al editar: ' + err.message);
     } finally {
-      setDuplicatingId(null);
+      setLoadingEditId(null);
     }
   };
 
   const resetForm = () => {
+    setEditingPresupuesto(null);
     setStep(1);
     setSelectedCliente(null);
     setSelectedVehiculo(null);
@@ -592,7 +624,11 @@ export default function PresupuestosPage() {
             <span className="text-gradient hover-glow italic">Presupuestos</span>
             <FileSpreadsheet className="w-8 h-8 text-primary animate-float" />
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">Crea presupuestos profesionales paso a paso.</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            {view === 'nuevo' && editingPresupuesto
+              ? `Editando presupuesto ${editingPresupuesto.numero}`
+              : 'Crea presupuestos profesionales paso a paso.'}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center bg-card/40 rounded-xl p-1 border border-border/50">
@@ -1162,7 +1198,7 @@ export default function PresupuestosPage() {
                         onClick={() => setStep(4)}
                         className="flex-1 h-11 rounded-xl bg-primary hover:bg-primary/90 text-white font-bold gap-2 text-xs"
                       >
-                        Generar Presupuesto <ArrowRight className="w-4 h-4" />
+                        {editingPresupuesto ? 'Revisar Cambios' : 'Generar Presupuesto'} <ArrowRight className="w-4 h-4" />
                       </Button>
                     </div>
                   </CardContent>
@@ -1183,8 +1219,14 @@ export default function PresupuestosPage() {
                   </div>
 
                   <div>
-                    <h2 className="text-xl font-black mb-2">Resumen Final</h2>
-                    <p className="text-sm text-muted-foreground">Revisa los datos antes de generar el presupuesto.</p>
+                    <h2 className="text-xl font-black mb-2">
+                      {editingPresupuesto ? `Editar ${editingPresupuesto.numero}` : 'Resumen Final'}
+                    </h2>
+                    <p className="text-sm text-muted-foreground">
+                      {editingPresupuesto
+                        ? 'Revisa los cambios antes de actualizar el presupuesto.'
+                        : 'Revisa los datos antes de generar el presupuesto.'}
+                    </p>
                   </div>
 
                   <div className="bg-background/50 rounded-xl p-6 space-y-3 text-left border border-border/30">
@@ -1250,6 +1292,8 @@ export default function PresupuestosPage() {
                     >
                       {saving ? (
                         <><Loader2 className="w-4 h-4 animate-spin" /> Guardando...</>
+                      ) : editingPresupuesto ? (
+                        <><Save className="w-4 h-4" /> Guardar Cambios y PDF</>
                       ) : (
                         <><Save className="w-4 h-4" /> Guardar y Generar PDF</>
                       )}
@@ -1401,20 +1445,20 @@ export default function PresupuestosPage() {
                             <Download className="w-3 h-3" /> PDF
                           </Button>
 
-                          {/* Duplicar: precarga este presupuesto en el asistente para crear una copia nueva.
-                             Requiere permiso 'crear' (respeta panel de Permisos por Rol y de Empleados). */}
-                          {can('presupuestos', 'crear') && (
+                          {/* Editar: precarga este presupuesto en el asistente y al guardar ACTUALIZA el mismo registro.
+                             Requiere permiso 'editar' (respeta panel de Permisos por Rol y de Empleados). */}
+                          {can('presupuestos', 'editar') && (p.estado === 'borrador' || p.estado === 'enviado') && (
                             <Button
                               size="sm"
                               variant="outline"
-                              disabled={duplicatingId === p.id}
-                              className="h-7 rounded-lg text-[9px] font-bold gap-1 text-primary border-primary/30 hover:bg-primary/10"
-                              onClick={(e) => { e.stopPropagation(); handleDuplicate(p); }}
+                              disabled={loadingEditId === p.id}
+                              className="h-7 rounded-lg text-[9px] font-bold gap-1 text-amber-400 border-amber-400/30 hover:bg-amber-500/10"
+                              onClick={(e) => { e.stopPropagation(); handleEdit(p); }}
                             >
-                              {duplicatingId === p.id ? (
-                                <><Loader2 className="w-3 h-3 animate-spin" /> Duplicando...</>
+                              {loadingEditId === p.id ? (
+                                <><Loader2 className="w-3 h-3 animate-spin" /> Cargando...</>
                               ) : (
-                                <><Copy className="w-3 h-3" /> Duplicar</>
+                                <><Edit3 className="w-3 h-3" /> Editar</>
                               )}
                             </Button>
                           )}
