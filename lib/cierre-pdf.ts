@@ -4,7 +4,7 @@ import autoTable from 'jspdf-autotable';
 export interface CierreData {
   id?: string;
   sede_nombre: string;
-  periodo: 'dia' | 'mes';
+  periodo: 'dia' | 'mes' | 'semana';
   fecha: string;             // DD/MM/YYYY for display
   fecha_inicio?: string;
   fecha_fin?: string;
@@ -132,7 +132,7 @@ export function generateCierrePDF(data: CierreData) {
   doc.setLineWidth(0.8);
   doc.roundedRect(pageW - margin - 80, y, 80, 22, 2, 2, 'S');
   
-  const periodoLabel = data.periodo === 'mes' ? `CIERRE MENSUAL` : `CIERRE DIARIO`;
+  const periodoLabel = data.periodo === 'mes' ? `CIERRE MENSUAL` : data.periodo === 'semana' ? `CIERRE SEMANAL` : `CIERRE DIARIO`;
   doc.setTextColor(...C.orange);
   doc.setFontSize(9);
   doc.setFont('helvetica', 'bold');
@@ -140,7 +140,7 @@ export function generateCierrePDF(data: CierreData) {
   
   doc.setTextColor(...C.dark);
   doc.setFontSize(8);
-  doc.text(data.periodo === 'mes'
+  doc.text((data.periodo === 'mes' || data.periodo === 'semana')
     ? `${data.fecha_inicio} — ${data.fecha_fin}`
     : data.fecha,
     pageW - margin - 4, y + 13, { align: 'right' });
@@ -454,7 +454,7 @@ export function generateCierrePDF(data: CierreData) {
     doc.setTextColor(...C.light);
     doc.setFontSize(6);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Lycos Team · ${data.sede_nombre} · Cierre ${data.periodo === 'mes' ? 'mensual' : 'diario'} · ${data.fecha}`, margin, pageH - 6);
+    doc.text(`Lycos Team · ${data.sede_nombre} · Cierre ${data.periodo === 'mes' ? 'mensual' : data.periodo === 'semana' ? 'semanal' : 'diario'} · ${data.fecha}`, margin, pageH - 6);
     doc.text(`Pág. ${pg} / ${totalPages}`, pageW - margin, pageH - 6, { align: 'right' });
 
     // Signature line
@@ -477,6 +477,8 @@ export function generateCierrePDF(data: CierreData) {
   // Save
   const label = data.periodo === 'mes'
     ? `Cierre_Mensual_${data.sede_nombre.replace(/\s/g, '_')}_${data.fecha_inicio?.replace(/\//g, '-') || data.fecha}`
+    : data.periodo === 'semana'
+    ? `Cierre_Semanal_${data.sede_nombre.replace(/\s/g, '_')}_${data.fecha_inicio?.replace(/\//g, '-') || data.fecha}`
     : `Cierre_Diario_${data.sede_nombre.replace(/\s/g, '_')}_${data.fecha.replace(/\//g, '-')}`;
   doc.save(`${label}.pdf`);
 }

@@ -183,7 +183,7 @@ function CierreWizard({ ventas, onClose, onSaved }: {
 }) {
   const { currentSede } = useSedeStore();
   const [step, setStep] = React.useState(1);
-  const [periodo, setPeriodo] = React.useState<'dia' | 'mes'>('dia');
+  const [periodo, setPeriodo] = React.useState<'dia' | 'semana' | 'mes'>('dia');
   const [fechaDia, setFechaDia] = React.useState(new Date().toISOString().split('T')[0]);
   const [fechaInicio, setFechaInicio] = React.useState(() => {
     const d = new Date(); d.setDate(1); return d.toISOString().split('T')[0];
@@ -256,8 +256,8 @@ function CierreWizard({ ventas, onClose, onSaved }: {
         fecha: periodo === 'dia'
           ? new Date(fechaDia + 'T12:00:00').toLocaleDateString('es-VE')
           : new Date(fechaInicio + 'T12:00:00').toLocaleDateString('es-VE'),
-        fecha_inicio: periodo === 'mes' ? fechaInicio.split('-').reverse().join('/') : undefined,
-        fecha_fin: periodo === 'mes' ? fechaFin.split('-').reverse().join('/') : undefined,
+        fecha_inicio: (periodo === 'mes' || periodo === 'semana') ? fechaInicio.split('-').reverse().join('/') : undefined,
+        fecha_fin: (periodo === 'mes' || periodo === 'semana') ? fechaFin.split('-').reverse().join('/') : undefined,
         total_ingresos_usd: totalUSD,
         total_bs: totalBS,
         tasa_bcv: tasaBCV,
@@ -301,8 +301,8 @@ function CierreWizard({ ventas, onClose, onSaved }: {
         const { error } = await supabase.from('cierres_caja').insert(withSedeInsert({
           fecha: fechaDia || fechaInicio,
           periodo,
-          fecha_inicio: periodo === 'mes' ? fechaInicio : null,
-          fecha_fin: periodo === 'mes' ? fechaFin : null,
+          fecha_inicio: (periodo === 'mes' || periodo === 'semana') ? fechaInicio : null,
+          fecha_fin: (periodo === 'mes' || periodo === 'semana') ? fechaFin : null,
           total_ingresos_usd: totalUSD,
           total_bs: totalBS,
           tasa_bcv: tasaBCV,
@@ -318,7 +318,7 @@ function CierreWizard({ ventas, onClose, onSaved }: {
         await logActivity({
           usuario: userName,
           modulo: 'Reportes',
-          accion: `Generó cierre de caja ${periodo === 'dia' ? 'diario' : 'mensual'}`,
+          accion: `Generó cierre de caja ${periodo === 'dia' ? 'diario' : periodo === 'semana' ? 'semanal' : 'mensual'}`,
           detalles: `Fecha: ${fechaDia || fechaInicio}, Total: $${totalUSD.toFixed(2)}`,
           referencia_tabla: 'cierres_caja'
         });
@@ -375,12 +375,12 @@ function CierreWizard({ ventas, onClose, onSaved }: {
             <div className="space-y-4">
               <p className="text-xs text-muted-foreground">Selecciona el tipo de cierre y el período a reportar.</p>
               <div className="flex gap-3">
-                {(['dia', 'mes'] as const).map(p => (
+                {(['dia', 'semana', 'mes'] as const).map(p => (
                   <button key={p} onClick={() => setPeriodo(p)}
                     className={cn("flex-1 p-4 rounded-2xl border-2 text-sm font-black uppercase transition-all",
                       periodo === p ? "border-orange-500 bg-orange-600/10 text-orange-500" :
                       "border-border text-muted-foreground hover:border-orange-500/40")}>
-                    {p === 'dia' ? '📅 Por Día' : '📆 Por Mes'}
+                    {p === 'dia' ? '📅 Por Día' : p === 'semana' ? '🗓️ Por Semana' : '📆 Por Mes'}
                   </button>
                 ))}
               </div>
