@@ -2441,6 +2441,9 @@ export default function ReportesPage() {
     );
 
     setVentas(allVentas);
+    if (eRes.error) {
+      console.error('Error fetching egresos:', eRes.error);
+    }
     setEgresos((eRes.data as Egreso[]) || []);
     setCierresOficiales((cRes.data as CierreOficial[])?.map((c, i) => ({ ...c, id: c.id || `c-${i}-${Date.now()}` })) || []);
     setPapeleraVentas(papRes.data || []);
@@ -2609,9 +2612,11 @@ export default function ReportesPage() {
     if (!supabase) return;
     const payload = { ...data, updated_at: new Date().toISOString() };
     if (editandoEgreso) {
-      await withSedeFilter(supabase.from('egresos')).update(payload).eq('id', editandoEgreso.id);
+      const { error } = await withSedeFilter(supabase.from('egresos')).update(payload).eq('id', editandoEgreso.id);
+      if (error) throw new Error(error.message || 'Error al actualizar egreso');
     } else {
-      await withSedeFilter(supabase.from('egresos')).insert(withSedeInsert({ ...payload, creado_por: 'Admin' }));
+      const { error } = await withSedeFilter(supabase.from('egresos')).insert(withSedeInsert({ ...payload, creado_por: 'Admin' }));
+      if (error) throw new Error(error.message || 'Error al guardar egreso');
 
       // Log Activity
       await logActivity({
