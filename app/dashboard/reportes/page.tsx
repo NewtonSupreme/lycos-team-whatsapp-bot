@@ -207,6 +207,28 @@ function CierreWizard({ ventas, onClose, onSaved }: {
     }
   }, []);
 
+  React.useEffect(() => {
+    const today = new Date();
+    if (periodo === 'mes') {
+      const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+      setFechaInicio(firstDay.toISOString().split('T')[0]);
+      setFechaFin(today.toISOString().split('T')[0]);
+    } else if (periodo === 'semana') {
+      const day = today.getDay();
+      const diffToMonday = today.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(today);
+      monday.setDate(diffToMonday);
+      setFechaInicio(monday.toISOString().split('T')[0]);
+      
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      
+      const todayEnd = new Date();
+      const end = sunday > todayEnd ? todayEnd : sunday;
+      setFechaFin(end.toISOString().split('T')[0]);
+    }
+  }, [periodo]);
+
   const ventasFiltradas = React.useMemo(() => {
     if (periodo === 'dia') return ventas.filter(v => v.fecha === fechaDia);
     return ventas.filter(v => v.fecha >= fechaInicio && v.fecha <= fechaFin);
