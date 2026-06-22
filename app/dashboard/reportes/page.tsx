@@ -1771,6 +1771,8 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
         tasa_cambio: venta.tasa_cambio,
         iva_aplicado: venta.con_iva,
         metodos_pago: venta.metodos_pago,
+        comprobante_url: venta.comprobante_url || undefined,
+        comprobante_referencia: venta.comprobante_referencia || undefined,
         estado: (venta.estado === 'pendiente' ? 'pendiente' : 'pagado') as 'pagado' | 'pendiente',
         tiene_abono: venta.tiene_abono,
         abono: venta.abono,
@@ -1832,7 +1834,9 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
           pago_ves: secondVenta.pago_ves,
           tasa_cambio: secondVenta.tasa_cambio,
           iva_aplicado: secondVenta.con_iva,
-          metodos_pago: secondVenta.metodos_pago
+          metodos_pago: secondVenta.metodos_pago,
+          comprobante_url: secondVenta.comprobante_url || undefined,
+          comprobante_referencia: secondVenta.comprobante_referencia || undefined
         });
       }
 

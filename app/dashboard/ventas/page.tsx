@@ -18,6 +18,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
+import { ComprobanteInput, emptyComprobante, type ComprobanteValue } from '@/components/ventas/ComprobanteInput';
+import { uploadComprobante, comprobanteFields } from '@/lib/comprobante';
 import { Calendar as CalendarUI } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { format } from "date-fns";
@@ -50,6 +52,7 @@ export default function VentasPage() {
   const [showAbonoSection, setShowAbonoSection] = useState(false);
   const [showNotasSection, setShowNotasSection] = useState(false);
   const [abono, setAbono] = useState(0);
+  const [comprobante, setComprobante] = useState<ComprobanteValue>(emptyComprobante());
   const [tabVenta, setTabVenta] = useState<'nueva' | 'pendientes'>('nueva');
   const [ventasPendientes, setVentasPendientes] = useState<any[]>([]);
   const [loadingPendientes, setLoadingPendientes] = useState(false);
@@ -429,11 +432,16 @@ export default function VentasPage() {
       const tieneAbono = showAbonoSection && abonoAmount > 0 && saldoRestante > 0;
       const estadoVenta = saldoRestante > 0 ? 'pendiente' : 'pagado';
 
+      // Subir comprobante de pago (si se adjuntó imagen) → URL pública
+      const comprobanteUrl = await uploadComprobante(comprobante.file);
+      const comprobanteRef = comprobante.referencia.trim() || null;
+
       // 1. Register in ventas_dia (Accounting)
       const { data: ventaDia, error: ventaError } = await withSedeFilter(supabase.from('ventas_dia'))
         .insert(withSedeInsert({
           fecha: format(selectedDate, 'yyyy-MM-dd'),
           cliente: clienteNombre || 'Consumidor Final',
+          ...comprobanteFields(comprobanteUrl, comprobanteRef),
           total_ingresos: subtotal, // Store subtotal here, report logic handles IVA
           desglose: cart.map(item => ({
             descripcion: item.nombre,
@@ -498,7 +506,9 @@ export default function VentasPage() {
         tiene_abono: tieneAbono,
         abono: abonoAmount,
         saldo_pendiente: saldoRestante,
-        estado: estadoVenta
+        estado: estadoVenta,
+        comprobante_url: comprobanteUrl || undefined,
+        comprobante_referencia: comprobanteRef || undefined
       };
 
       const dataList: any[] = [data1];
@@ -543,6 +553,8 @@ export default function VentasPage() {
           emitido_por: 'Admin',
           fecha_emision: format(selectedDate, 'yyyy-MM-dd'),
           sede_id: currentSede?.id || undefined,
+          comprobante_url: comprobanteUrl || undefined,
+          comprobante_referencia: comprobanteRef || undefined,
         });
         if (facturaRegistro?.correlativo) correlativoVenta = facturaRegistro.correlativo;
       } catch (facErr) {
@@ -564,6 +576,7 @@ export default function VentasPage() {
       setNotas('');
       setAbono(0);
       setShowAbonoSection(false);
+      setComprobante(emptyComprobante());
       fetchData();
     } catch (err: any) {
       console.error('Error finalizing sale:', err);
@@ -1112,9 +1125,13 @@ export default function VentasPage() {
                 </div>
               </div>
 
+              <div className="pt-2">
+                <ComprobanteInput value={comprobante} onChange={setComprobante} compact />
+              </div>
+
               <div className="flex gap-2 pt-2">
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   className="flex-1 h-12 rounded-xl border-primary/30 text-primary font-bold gap-2"
                   onClick={() => {
                     if (cart.length === 0) return;

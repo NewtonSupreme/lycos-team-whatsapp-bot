@@ -16,6 +16,8 @@ import { useSedeStore } from "@/lib/store/useSedeStore";
 import { Button } from '@/components/ui/button';
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
 import { generatePresupuestoPDF } from '@/lib/presupuesto-pdf';
+import { ComprobanteInput, emptyComprobante, type ComprobanteValue } from '@/components/ventas/ComprobanteInput';
+import { uploadComprobante, comprobanteFields } from '@/lib/comprobante';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 import { cn, getLocalISODate, parseDescripcionItems } from '@/lib/utils';
@@ -42,6 +44,8 @@ interface CitaServicio {
   seguimiento?: any[] | null;
   registrado_por?: string | null;
   notas?: string | null;
+  comprobante_url?: string | null;
+  comprobante_referencia?: string | null;
   vehiculos?: { marca: string; modelo: string; placa: string; anio?: number; clientes?: { nombre: string; apellido: string; telefono: string } | null } | null;
 }
 
@@ -1993,6 +1997,9 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
   const [printMode, setPrintMode] = useState<'single' | 'dual' | 'diferente'>('dual');
   const [printSide, setPrintSide] = useState<'left' | 'right'>('left');
   const [existingCorrelativo, setExistingCorrelativo] = useState('');
+  // Comprobante de pago (referencia + imagen) al convertir el servicio en venta
+  const [comprobante, setComprobante] = useState<ComprobanteValue>(emptyComprobante());
+  const [comprobanteSavedUrl, setComprobanteSavedUrl] = useState<string | null>(null);
 
   // Load correlativo from facturas table for already-registered services
   useEffect(() => {
@@ -2001,20 +2008,22 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
       .then(({ data }) => { if (data?.correlativo) setExistingCorrelativo(data.correlativo); });
   }, [cita?.id]);
 
-  const handleDownload = (correlativo?: string) => {
+  const handleDownload = (correlativo?: string, comp?: { url?: string | null; ref?: string | null }) => {
     const data1 = {
       id: cita.id,
       correlativo: correlativo || existingCorrelativo || undefined,
-      fecha: cita.fecha, 
-      cliente: clientName, 
-      vehiculo: vehicleStr, 
-      items, 
-      total, 
+      fecha: cita.fecha,
+      cliente: clientName,
+      vehiculo: vehicleStr,
+      items,
+      total,
       iva_aplicado: withIva,
       tasa_bcv: rates.bcv || globalBcvRate || 518.0,
       total_ves: totalVes,
       notas: cita.descripcion || undefined,
-      metodos_pago: payments
+      metodos_pago: payments,
+      comprobante_url: comp?.url || comprobanteSavedUrl || cita.comprobante_url || undefined,
+      comprobante_referencia: comp?.ref || comprobante.referencia.trim() || cita.comprobante_referencia || undefined
     };
 
     const dataList: any[] = [data1];
@@ -2054,6 +2063,11 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
       const sedeIdFinal = cita.sede_id || useSedeStore.getState().currentSede?.id;
       if (!sedeIdFinal) throw new Error('No se puede registrar la venta: sede del servicio no encontrada');
 
+      // Subir comprobante de pago (si se adjuntó) → URL pública
+      const comprobanteUrl = (await uploadComprobante(comprobante.file)) || cita.comprobante_url || null;
+      const comprobanteRef = comprobante.referencia.trim() || cita.comprobante_referencia || null;
+      setComprobanteSavedUrl(comprobanteUrl);
+
       const { data: existingVD } = await supabase.from('ventas_dia')
         .select('id').like('notas', `%${vdRefTag}%`).limit(1).maybeSingle();
 
@@ -2071,6 +2085,7 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
         creado_por: 'Admin',
         sede_id: sedeIdFinal,
         estado: 'pagado',
+        ...comprobanteFields(comprobanteUrl, comprobanteRef),
       };
 
       let ventaDia: any = null;
@@ -2086,7 +2101,10 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
         ventaDia = ins;
       }
 
-      const { error: citaError } = await withSedeFilter(supabase.from('servicios')).update({ estado: 'completada' }).eq('id', cita.id);
+      const { error: citaError } = await withSedeFilter(supabase.from('servicios')).update({
+        estado: 'completada',
+        ...comprobanteFields(comprobanteUrl, comprobanteRef),
+      }).eq('id', cita.id);
       if (citaError) throw citaError;
 
       // ventas_dia is the authoritative accounting table for dashboard-originated sales.
@@ -2113,6 +2131,8 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
           emitido_por: useAppStore.getState().user?.nombre || 'Admin',
           fecha_emision: getLocalISODate(),
           sede_id: cita.sede_id || useSedeStore.getState().currentSede?.id,
+          comprobante_url: comprobanteUrl || undefined,
+          comprobante_referencia: comprobanteRef || undefined,
         });
         if (facturaRegistro?.correlativo) finalCorrelativo = facturaRegistro.correlativo;
       } catch (e) {
@@ -2120,7 +2140,7 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
       }
 
       logActivity({ usuario: useAppStore.getState().user?.nombre || 'Admin', modulo: 'Servicios', accion: 'Venta Finalizada', detalles: `Venta para ${clientName} por $${total.toFixed(2)}` });
-      handleDownload(finalCorrelativo);
+      handleDownload(finalCorrelativo, { url: comprobanteUrl, ref: comprobanteRef });
       alert('¡Entrega procesada con éxito!');
       onClose();
       const btn = document.getElementById('refresh-btn');
@@ -2324,6 +2344,12 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
             )}
           </div>
         </div>
+
+        {cita.estado !== 'completada' && (
+          <div className="px-4 sm:px-8 pt-4">
+            <ComprobanteInput value={comprobante} onChange={setComprobante} compact />
+          </div>
+        )}
 
         <div className="p-4 sm:p-8 bg-gray-50 border-t border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-4">
            <div className="hidden sm:flex items-center gap-4 text-slate-400">
