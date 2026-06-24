@@ -825,6 +825,23 @@ export async function POST(request: NextRequest) {
     const lastMsgIdxByFrom: Record<string, number> = {};
     (value.messages as any[]).forEach((m: any, idx: number) => { if (m?.from) lastMsgIdxByFrom[m.from] = idx; });
 
+    // ── Global bot activation check ─────────────────────────────────────────
+    let botGlobalActivo = true;
+    const globalDb = getDb();
+    if (globalDb) {
+      try {
+        const { data: configData } = await globalDb.from('configuracion_sistema')
+          .select('valor')
+          .eq('clave', 'ia_bot')
+          .single();
+        if (configData && configData.valor) {
+          botGlobalActivo = configData.valor.bot_whatsapp_global_activo !== false;
+        }
+      } catch (e) {
+        console.error('Error leyendo configuracion global del bot:', e);
+      }
+    }
+
     for (let __msgIdx = 0; __msgIdx < value.messages.length; __msgIdx++) {
       const message = value.messages[__msgIdx];
       const from: string = message.from;
@@ -1135,8 +1152,11 @@ export async function POST(request: NextRequest) {
           const phoneClean = from.replace(/[^0-9]/g, '');
           let isSenderAdmin = await checkIsBotAdmin(from, db, ADMIN_PHONES);
 
-          if (convData?.estado === 'humano' && !isSenderAdmin) {
-            console.log(`👤 [${from}] Conversación en control humano — bot silenciado.`);
+          const isBotDisabledForThisUser = !botGlobalActivo || (convData?.estado === 'humano' && !isSenderAdmin);
+
+          if (isBotDisabledForThisUser) {
+            const motivo = !botGlobalActivo ? 'Bot Desactivado Globalmente' : 'Conversación en control humano';
+            console.log(`👤 [${from}] ${motivo} — bot silenciado.`);
             // Update last message in CRM so admin sees it, incrementing unread count properly
             const { data: convUnread } = await db.from('conversaciones').select('mensajes_sin_leer').eq('telefono', from).eq('sede_id', effectiveSedeId).maybeSingle();
             const currentUnread = (convUnread?.mensajes_sin_leer ?? 0) + 1;
