@@ -2979,6 +2979,69 @@ const ACTIVE_SERVICE_STATES = ['pendiente', 'confirmada', 'en_revision', 'en_pro
  * Prioriza la coincidencia por placa (lo más confiable). Si no hay placa válida, intenta
  * por vehículo + nombre de cliente. Devuelve el servicio existente o null.
  */
+// Estados/tipos válidos según las CHECK constraints de la tabla `servicios`.
+const SERVICIO_ESTADOS_VALIDOS = ['pendiente', 'confirmada', 'en_revision', 'en_proceso', 'completada', 'finalizado', 'cancelada', 'cancelado'];
+const SERVICIO_TIPOS_VALIDOS = ['mecanica', 'electronica', 'cerrajeria', 'diagnostico', 'motor', 'emergencia', 'otro'];
+
+// Cliente genérico "Consumidor Final" por sede, para vehículos sin dueño identificado
+// (los vehículos requieren cliente_id NOT NULL). Se crea una sola vez por sede.
+async function getOrCreateClienteTaller(db: any, sedeId: string): Promise<string | null> {
+  if (!db) return null;
+  try {
+    const sede = sedeId || DEFAULT_SEDE_ID;
+    const { data: found } = await db.from('clientes')
+      .select('id').eq('nombre', 'Consumidor Final').eq('sede_id', sede).limit(1).maybeSingle();
+    if (found?.id) return found.id;
+    const { data: created, error } = await db.from('clientes').insert({
+      nombre: 'Consumidor Final', apellido: 'Taller',
+      telefono: 'TALLER-' + String(sede).slice(0, 8), sede_id: sede,
+    }).select('id').single();
+    if (error) { console.error('getOrCreateClienteTaller:', error.message); return null; }
+    return created?.id || null;
+  } catch (e) { console.error('getOrCreateClienteTaller:', e); return null; }
+}
+
+// 🔧 Garantiza un vehiculo_id VÁLIDO (servicios.vehiculo_id es NOT NULL con FK).
+// Busca el vehículo por placa; si no existe lo crea (con un cliente genérico cuando
+// no hay dueño). Esto evita que el registro de servicios falle por falta de vehículo.
+async function ensureVehiculoId(db: any, opts: {
+  placa?: string | null; vehiculoInfo?: string | null; anio?: string | number | null;
+  sedeId: string; clienteId?: string | null;
+}): Promise<string | null> {
+  if (!db) return null;
+  try {
+    const placaNorm = (opts.placa || '').toUpperCase().replace(/[-\s]/g, '');
+    const placaValida = !!placaNorm && !['SINPLACA', 'SIN', 'NA', 'N/A'].includes(placaNorm);
+    if (placaValida) {
+      const { data: byPlaca } = await db.from('vehiculos').select('id').eq('placa', placaNorm).limit(1).maybeSingle();
+      if (byPlaca?.id) return byPlaca.id;
+    }
+    const parts = String(opts.vehiculoInfo || '').trim().split(/\s+/).filter(Boolean);
+    const marca = parts[0] || 'Desconocida';
+    const modelo = parts.slice(1).join(' ').replace(/\b(19|20)\d{2}\b/, '').trim() || 'Modelo';
+    let anioNum = parseInt(String(opts.anio || '').replace(/[^0-9]/g, '')) || new Date().getFullYear();
+    if (anioNum < 1950 || anioNum > 2030) anioNum = new Date().getFullYear();
+    const sede = opts.sedeId || DEFAULT_SEDE_ID;
+
+    let clienteId = opts.clienteId || null;
+    if (clienteId) {
+      const { data: cliExists } = await db.from('clientes').select('id').eq('id', clienteId).maybeSingle();
+      if (!cliExists) clienteId = null;
+    }
+    if (!clienteId) clienteId = await getOrCreateClienteTaller(db, sede);
+    if (!clienteId) return null;
+
+    const { data: created, error } = await db.from('vehiculos').insert({
+      cliente_id: clienteId, marca, modelo, anio: anioNum,
+      placa: placaValida ? placaNorm : `SP${String(Date.now()).slice(-7)}`,
+      estado: 'activo', sede_id: sede,
+    }).select('id').single();
+    if (error) { console.error('ensureVehiculoId insert:', error.message); return null; }
+    console.log(`🚗 Vehículo asegurado: ${created?.id} (${marca} ${modelo} ${placaNorm || 'S/P'})`);
+    return created?.id || null;
+  } catch (e) { console.error('ensureVehiculoId:', e); return null; }
+}
+
 // Combina nombres de registrantes en "A y B y C" sin duplicar (case-insensitive).
 function combineRegistrantes(...names: (string | null | undefined)[]): string {
   const out: string[] = [];
@@ -4080,6 +4143,24 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               finalVehId = newVId || null;
             }
 
+            // 🔧 GARANTÍA CRÍTICA: servicios.vehiculo_id es NOT NULL. Si el admin registró
+            // sin cliente (o no se pudo resolver), creamos el vehículo ahora (con cliente
+            // genérico). Sin esto, el insert del servicio falla SIEMPRE.
+            if (!finalVehId) {
+              finalVehId = await ensureVehiculoId(db, {
+                placa, vehiculoInfo, sedeId: sedeId || DEFAULT_SEDE_ID, clienteId: finalClientId,
+              });
+            }
+
+            // Normalizar estado/tipo a valores permitidos por las CHECK constraints.
+            if (!SERVICIO_ESTADOS_VALIDOS.includes(estado)) {
+              estado = estado === 'en_progreso' ? 'en_proceso' : 'pendiente';
+            }
+            if (!SERVICIO_TIPOS_VALIDOS.includes(tipo)) {
+              if (tipo && tipo !== 'otro') tipoPersonalizado = tipoPersonalizado || tipo;
+              tipo = 'otro';
+            }
+
             // Resolve client display name from DB if we have an ID but no explicit name
             let resolvedClientName = nombreCliente || '';
             if (finalClientId && !nombreCliente) {
@@ -4594,8 +4675,14 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         // tag [SERVICIO_UPSERT] (o este fallaba), dejando al admin con la falsa
         // impresión de que quedó guardado. Aquí lo detectamos y NO perdemos el
         // registro: lo creamos a partir del contexto combinado (imagen + audio/texto).
-        // La IA AFIRMA haber registrado (texto de confirmación) — debe existir un tag.
-        const aiClaimsRegistro = /(registr[aoóe]|qued[oó]\s|guard[aeóo]|anot[aeéó]|agregu[eé]|✅).{0,40}(servicio|orden|veh[ií]culo|carro|registro)|(servicio|orden|registro).{0,40}(registr|guard|cread|anot)/i.test(cleanedAi);
+        // La IA AFIRMA haber registrado (texto de CONFIRMACIÓN, no una pregunta).
+        // ⚠️ Solo participio/pasado o ✅ — NUNCA el infinitivo "registrar" (que aparece
+        // en preguntas como "¿Deseas registrar un servicio?" y NO es una confirmación).
+        const askingToRegister = /(deseas|quieres|prefieres|gustar[ií]a|puedo)\s+(?:que\s+)?(registr|agend|cre)/i.test(cleanedAi);
+        const aiClaimsRegistro = (
+          /\b(registrad[oa]s?|registr[eé]|qued[oó]\s+registrad|guardad[oa]s?|guard[eé]|anotad[oa]s?|anot[eé]|agregad[oa]s?|agregu[eé]|cread[oa]s?)\b/i.test(cleanedAi)
+          || (/✅/.test(cleanedAi) && /\b(servicio|orden|veh[ií]culo|registr)/i.test(cleanedAi))
+        ) && !askingToRegister;
 
         // Solo recuperamos cuando la IA dijo que registró pero NO se guardó, o cuando
         // el tag existió pero falló. NO disparamos por simple intención del mensaje:
@@ -4672,10 +4759,14 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 console.log(`⛔ FALLBACK SERVICIO duplicado evitado: ${dupFb.id} (placa=${dupFb.placa})`);
                 await logActivityAdmin(db, adminNameFb, 'Registro de servicio bloqueado (duplicado)', `Ya existe servicio activo ${dupFb.id} para placa ${dupFb.placa || 'N/D'}`, sedeFb);
               } else {
+                // 🔧 Asegurar vehiculo_id (NOT NULL) creando el vehículo con cliente genérico.
+                const vehIdFb = await ensureVehiculoId(db, {
+                  placa: placaFb, vehiculoInfo: vehiculoFb, anio: anioFb, sedeId: sedeFb,
+                });
                 // Sin datos del cliente en la recuperación: NUNCA usar el nombre del admin (modo dios).
                 const servFbObj: any = {
                   cliente_id: null,
-                  vehiculo_id: null,
+                  vehiculo_id: vehIdFb,
                   nombre_cliente: 'No definido',
                   telefono: '00000000000',
                   vehiculo_info: vehiculoFb || 'Vehículo (de imagen)',

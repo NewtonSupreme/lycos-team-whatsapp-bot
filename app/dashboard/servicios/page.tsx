@@ -23,6 +23,35 @@ import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 import { cn, getLocalISODate, parseDescripcionItems } from '@/lib/utils';
 
 // ── Types ─────────────────────────────────────────────────────
+interface ServicioItem {
+  descripcion: string;
+  cantidad: number;
+  precio_unitario: number;
+  total: number;
+}
+
+// Desglosa una descripción (incluyendo las registradas por el bot, que pueden venir
+// multilínea "Nombre: trabajo" o con " + " / comas) en ítems separados para la factura.
+function parseServicioItemsFromText(descripcion: string, totalPrecio = 0): ServicioItem[] {
+  const raw = (descripcion || '').trim();
+  if (!raw) return [];
+  // 1) Multilínea (bot: "Rafael: ...\nJin: ...") → cada línea es un ítem.
+  let pedazos = raw.split(/\n+/).map(s => s.trim()).filter(Boolean);
+  // 2) Si es una sola línea, intentar separar por " + " o " , " / ";"
+  if (pedazos.length === 1) {
+    pedazos = pedazos[0]
+      .split(/\s\+\s|\s*;\s*|\s*\|\s*/)
+      .map(s => s.trim())
+      .filter(Boolean);
+  }
+  if (pedazos.length === 0) pedazos = [raw];
+  // Quitar prefijo "Nombre: " de cada pedazo dejando el trabajo legible (conservando el nombre).
+  return pedazos.map((p, i) => {
+    const precio = i === 0 ? totalPrecio : 0; // el costo total se asigna al primero por defecto
+    return { descripcion: p, cantidad: 1, precio_unitario: precio, total: precio };
+  });
+}
+
 interface CitaServicio {
   id: string;
   fecha: string;
@@ -44,6 +73,7 @@ interface CitaServicio {
   seguimiento?: any[] | null;
   registrado_por?: string | null;
   notas?: string | null;
+  items?: ServicioItem[] | null;
   comprobante_url?: string | null;
   comprobante_referencia?: string | null;
   vehiculos?: { marca: string; modelo: string; placa: string; anio?: number; clientes?: { nombre: string; apellido: string; telefono: string } | null } | null;
@@ -148,7 +178,7 @@ export default function ServiciosPage() {
         .select(`
           id, fecha, hora, tipo, tipo_personalizado, descripcion, estado,
           nombre_cliente, vehiculo_info, placa, telefono, created_at,
-          cliente_id, vehiculo_id, sede_id, seguimiento, notas,
+          cliente_id, vehiculo_id, sede_id, seguimiento, notas, items,
           costo_estimado, costo_final, registrado_por,
           vehiculos (marca, modelo, placa, anio, clientes (nombre, apellido, telefono))
         `)
@@ -900,6 +930,21 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
     descripcion: cita?.descripcion || '',
     costo_estimado: cita?.costo_estimado?.toString() || '',
   });
+  // Servicios desglosados (ítems con precio para la factura). Se autollenan desde la
+  // descripción (incluida la registrada por el bot) si no hay ítems guardados.
+  const [items, setItems] = useState<ServicioItem[]>(() => {
+    const existing = (cita?.items as ServicioItem[] | undefined) || [];
+    if (Array.isArray(existing) && existing.length > 0) {
+      return existing.map(i => ({
+        descripcion: i.descripcion || '',
+        cantidad: Number(i.cantidad) || 1,
+        precio_unitario: Number(i.precio_unitario) || 0,
+        total: Number(i.total) || (Number(i.cantidad) || 1) * (Number(i.precio_unitario) || 0),
+      }));
+    }
+    const total = Number(cita?.costo_final ?? cita?.costo_estimado ?? 0);
+    return parseServicioItemsFromText(cita?.descripcion || '', total);
+  });
   const [encargados, setEncargados] = useState<{ nombre: string; rol: 'mecanico' | 'jefe_taller' }[]>(() => {
     if (!cita?.notas) return [];
     const match = cita.notas.match(/^Encargados?: (.+)/);
@@ -1034,6 +1079,109 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
     } catch { setPlateStatus('idle'); }
   };
 
+  // ── Ítems desglosados ──
+  const itemsTotal = items.reduce((s, i) => s + (Number(i.total) || 0), 0);
+  const addItem = () => setItems([...items, { descripcion: '', cantidad: 1, precio_unitario: 0, total: 0 }]);
+  const removeItem = (idx: number) => setItems(items.filter((_, i) => i !== idx));
+  const updateItem = (idx: number, field: keyof ServicioItem, value: string | number) => {
+    setItems(items.map((it, i) => {
+      if (i !== idx) return it;
+      const next: ServicioItem = { ...it, [field]: field === 'descripcion' ? String(value) : (Number(value) || 0) };
+      next.total = (Number(next.cantidad) || 1) * (Number(next.precio_unitario) || 0);
+      return next;
+    }));
+  };
+  // Repuebla los ítems desde la descripción actual (botón "Desglosar").
+  const autoDesglosar = () => {
+    const total = parseFloat(formData.costo_estimado) || itemsTotal || 0;
+    setItems(parseServicioItemsFromText(formData.descripcion || '', total));
+  };
+
+  // ── Resolver robusto: encuentra o CREA (sin duplicar) cliente + vehículo ──
+  // Funciona igual al crear y al EDITAR. Esto evita tener que ir a Clientes y luego a
+  // Vehículos por separado: con poner el nombre/teléfono/placa, el sistema lo asocia todo.
+  const resolveClienteYVehiculo = async (): Promise<{ clienteId: string | null; vehiculoId: string | null }> => {
+    let clienteId = selectedClienteId || cita?.cliente_id || null;
+    let vehiculoId = selectedVehiculoId || null;
+    const nombreFull = formData.nombre_cliente.trim();
+    const tel = formData.telefono.trim();
+    const placaNorm = formData.placa.trim().toUpperCase().replace(/[-\s]/g, '');
+    const placaValida = !!placaNorm && !['SINPLACA', 'SIN', 'NA', 'N/A'].includes(placaNorm);
+
+    // CLIENTE: actualizar el existente, o buscar duplicado (tel → nombre), o crear.
+    if (nombreFull) {
+      const parts = nombreFull.split(/\s+/);
+      const nombre = parts[0];
+      const apellido = parts.slice(1).join(' ') || '—';
+      // Si el cliente actual es el GENÉRICO de taller (compartido), no lo renombramos:
+      // tratamos como "sin cliente" para crear/asociar el cliente REAL y re-vincular.
+      if (clienteId) {
+        const { data: cur } = await supabase!.from('clientes').select('nombre, apellido').eq('id', clienteId).maybeSingle();
+        const esGenerico = !!cur && String(cur.nombre || '').trim().toLowerCase() === 'consumidor final';
+        const mismoNombre = !!cur && `${cur.nombre || ''} ${cur.apellido || ''}`.trim().toLowerCase() === nombreFull.toLowerCase();
+        if (esGenerico && !mismoNombre) {
+          clienteId = null;
+        }
+      }
+      if (clienteId) {
+        await supabase!.from('clientes').update({ nombre, apellido, ...(tel ? { telefono: tel } : {}) }).eq('id', clienteId);
+      } else {
+        let existing: any = null;
+        if (tel) {
+          const { data } = await withSedeFilter(supabase!.from('clientes')).select('id').eq('telefono', tel).limit(1).maybeSingle();
+          existing = data;
+        }
+        if (!existing) {
+          const { data } = await withSedeFilter(supabase!.from('clientes')).select('id').ilike('nombre', nombre).ilike('apellido', apellido).limit(1).maybeSingle();
+          existing = data;
+        }
+        if (existing) clienteId = existing.id;
+        else {
+          const { data: created, error } = await withSedeFilter(supabase!.from('clientes'))
+            .insert(withSedeInsert({ nombre, apellido, telefono: tel || 'S/N', notas: 'Registrado desde Orden de Servicio' }))
+            .select('id').single();
+          if (error) throw error;
+          clienteId = created.id;
+        }
+      }
+    }
+
+    // VEHÍCULO: por placa (sin duplicar) → si no existe, crear bajo el cliente.
+    if (!vehiculoId && placaValida) {
+      const { data: existingVeh } = await supabase!.from('vehiculos').select('id, cliente_id').ilike('placa', placaNorm).limit(1).maybeSingle();
+      if (existingVeh) {
+        vehiculoId = existingVeh.id;
+        if (clienteId && existingVeh.cliente_id !== clienteId) {
+          await supabase!.from('vehiculos').update({ cliente_id: clienteId }).eq('id', existingVeh.id);
+        } else if (!clienteId) clienteId = existingVeh.cliente_id;
+      }
+    }
+    if (!vehiculoId && clienteId && (formData.vehiculo_info.trim() || placaValida)) {
+      const vparts = formData.vehiculo_info.trim().split(/\s+/);
+      const marca = vparts[0] || 'Desconocida';
+      const modelo = vparts.slice(1).join(' ').replace(/\b(19|20)\d{2}\b/, '').trim() || '—';
+      const yearMatch = formData.vehiculo_info.match(/\b(19\d\d|20\d\d)\b/);
+      let anio = yearMatch ? parseInt(yearMatch[0]) : new Date().getFullYear();
+      if (anio < 1950 || anio > 2030) anio = new Date().getFullYear();
+      const { data: created, error } = await withSedeFilter(supabase!.from('vehiculos'))
+        .insert(withSedeInsert({ cliente_id: clienteId, marca, modelo, placa: placaValida ? placaNorm : `SP${String(Date.now()).slice(-7)}`, anio, estado: 'en_servicio' }))
+        .select('id').single();
+      if (error) throw error;
+      vehiculoId = created.id;
+    }
+    if (!vehiculoId && cita?.vehiculo_id) vehiculoId = cita.vehiculo_id;
+
+    // Asegurar que el vehículo quede vinculado al cliente resuelto (p.ej. al pasar del
+    // cliente genérico al real). Solo si difiere, para no tocar de más.
+    if (vehiculoId && clienteId) {
+      const { data: vcur } = await supabase!.from('vehiculos').select('cliente_id').eq('id', vehiculoId).maybeSingle();
+      if (vcur && vcur.cliente_id !== clienteId) {
+        await supabase!.from('vehiculos').update({ cliente_id: clienteId }).eq('id', vehiculoId);
+      }
+    }
+    return { clienteId, vehiculoId };
+  };
+
   const handleSave = async () => {
     if (!supabase) return;
     if (!formData.nombre_cliente || !formData.vehiculo_info) {
@@ -1075,102 +1223,23 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
       });
       await Promise.all(newEncargadosPromises);
 
-      if (!cita?.id) {
-        // Automatic registration for NEW orders
-        // 1. Manage Client
-        if (!finalClienteId) {
-          const names = formData.nombre_cliente.trim().split(' ');
-          const nombre = names[0];
-          const apellido = names.slice(1).join(' ') || '—';
-          
-          const { data: newClient, error: clientErr } = await withSedeFilter(supabase.from('clientes'))
-            .insert(withSedeInsert({
-              nombre,
-              apellido,
-              telefono: formData.telefono,
-              notas: 'Auto-registrado desde Orden de Servicio'
-            }))
-            .select()
-            .single();
-          
-          if (clientErr) throw clientErr;
-          finalClienteId = newClient.id;
-        }
-
-        // 2. Manage Vehicle - check if exists by placa first
-        if (!finalVehiculoId && formData.placa) {
-          const { data: existingVeh } = await supabase.from('vehiculos')
-            .select('id, cliente_id')
-            .eq('placa', formData.placa)
-            .maybeSingle();
-
-          if (existingVeh) {
-            finalVehiculoId = existingVeh.id;
-            if (!finalClienteId) finalClienteId = existingVeh.cliente_id;
-          } else if (finalClienteId) {
-            const names = formData.vehiculo_info.trim().split(' ');
-            const marca = names[0];
-            const modelo = names.slice(1).join(' ') || '—';
-            const yearMatch = formData.vehiculo_info.match(/\b(19\d\d|20\d\d)\b/);
-            const anio = yearMatch ? parseInt(yearMatch[0]) : 2025;
-
-            const { data: newVehiculo, error: vehErr } = await withSedeFilter(supabase.from('vehiculos'))
-              .insert(withSedeInsert({
-                cliente_id: finalClienteId,
-                marca,
-                modelo,
-                placa: formData.placa,
-                anio,
-                estado: 'en_servicio'
-              }))
-              .select()
-              .single();
-            
-            if (vehErr) throw vehErr;
-            finalVehiculoId = newVehiculo.id;
-          }
-        }
+      // ── Cliente + Vehículo: encontrar o crear (SIN duplicar), crear y editar ──
+      {
+        const resolved = await resolveClienteYVehiculo();
+        finalClienteId = resolved.clienteId;
+        finalVehiculoId = resolved.vehiculoId;
       }
 
-      // ── Ensure vehicle exists for both CREATE and UPDATE ───────
-      if (!finalVehiculoId && formData.placa) {
-        const { data: existingVeh } = await supabase.from('vehiculos')
-          .select('id, cliente_id')
-          .eq('placa', formData.placa)
-          .maybeSingle();
-
-        if (existingVeh) {
-          finalVehiculoId = existingVeh.id;
-          if (!finalClienteId) finalClienteId = existingVeh.cliente_id;
-        } else if (finalClienteId || cita?.cliente_id) {
-          const ownerId = finalClienteId || cita?.cliente_id;
-          const names = formData.vehiculo_info.trim().split(' ');
-          const marca = names[0] || 'No especificado';
-          const modelo = names.slice(1).join(' ') || '—';
-          const yearMatch = formData.vehiculo_info.match(/\b(19\d\d|20\d\d)\b/);
-          const anio = yearMatch ? parseInt(yearMatch[0]) : 2025;
-
-          const { data: newVehiculo, error: vehErr } = await withSedeFilter(supabase.from('vehiculos'))
-            .insert(withSedeInsert({
-              cliente_id: ownerId,
-              marca,
-              modelo,
-              placa: formData.placa || 'SIN-PLACA',
-              anio,
-              estado: 'en_servicio'
-            }))
-            .select()
-            .single();
-
-          if (vehErr) throw vehErr;
-          finalVehiculoId = newVehiculo.id;
-        }
-      }
-
-      // ── Last-resort fallback: if still null and editing, keep the original ──
-      if (!finalVehiculoId && cita?.vehiculo_id) {
-        finalVehiculoId = cita.vehiculo_id;
-      }
+      // Datos desglosados para guardar (ítems + total).
+      const itemsToSave = items
+        .filter(i => (i.descripcion || '').trim() !== '')
+        .map(i => ({
+          descripcion: i.descripcion.trim(),
+          cantidad: Number(i.cantidad) || 1,
+          precio_unitario: Number(i.precio_unitario) || 0,
+          total: Number(i.total) || (Number(i.cantidad) || 1) * (Number(i.precio_unitario) || 0),
+        }));
+      const costoFinalCalc = itemsToSave.length > 0 ? itemsTotal : (parseFloat(formData.costo_estimado) || 0);
 
       if (cita?.id) {
         // UPDATE
@@ -1186,7 +1255,8 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           tipo: finalTipo,
           tipo_personalizado: isCustomServicio ? customServicio.trim() : null,
           descripcion: formData.descripcion || '',
-          costo_estimado: parseFloat(formData.costo_estimado) || 0,
+          items: itemsToSave,
+          costo_estimado: costoFinalCalc,
           notas: encargados.length > 0
             ? `Encargados: ${encargados.map(e => `${e.nombre} (${e.rol === 'jefe_taller' ? 'Jefe' : 'Mecánico'})`).join(', ')}`
             : (cita?.notas || ''),
@@ -1273,11 +1343,12 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           tipo: finalTipoServicio,
           tipo_personalizado: isCustomServicio ? customServicio.trim() : null,
           descripcion: formData.descripcion || '',
+          items: itemsToSave,
           registrado_por: user?.nombre || 'Admin',
           fecha: getLocalISODate(),
           hora: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
           estado: 'pendiente',
-          costo_estimado: parseFloat(formData.costo_estimado) || 0,
+          costo_estimado: costoFinalCalc,
           notas: encargados.length > 0 
             ? `Encargados: ${encargados.map(e => `${e.nombre} (${e.rol === 'jefe_taller' ? 'Jefe' : 'Mecánico'})`).join(', ')}`
             : '',
@@ -1661,6 +1732,65 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
                 onChange={e => setFormData({...formData, descripcion: e.target.value})}
               />
             </div>
+
+            {/* ── Servicios desglosados (para imprimir la factura por ítems) ── */}
+            <div className="col-span-2 space-y-2">
+              <div className="flex items-center justify-between ml-1">
+                <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest">
+                  Servicios desglosados <span className="normal-case opacity-60">(para la factura)</span>
+                </label>
+                <div className="flex items-center gap-3">
+                  <button type="button" onClick={autoDesglosar} className="text-[10px] font-black uppercase tracking-widest text-primary hover:underline">
+                    Auto-desglosar
+                  </button>
+                  <button type="button" onClick={addItem} className="text-[10px] font-black uppercase tracking-widest text-primary flex items-center gap-1">
+                    <Plus className="w-3 h-3" /> Agregar
+                  </button>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-border/60 bg-muted/20 p-2 sm:p-3 space-y-2">
+                {items.length === 0 && (
+                  <p className="text-[10px] text-muted-foreground italic px-1 py-2">
+                    Sin ítems. Usa <b>Auto-desglosar</b> para separar la descripción en líneas, o <b>Agregar</b> una manual.
+                  </p>
+                )}
+                {items.map((it, idx) => (
+                  <div key={idx} className="flex items-center gap-1.5 sm:gap-2">
+                    <input
+                      value={it.descripcion}
+                      onChange={e => updateItem(idx, 'descripcion', e.target.value)}
+                      placeholder="Trabajo / repuesto"
+                      className="flex-1 min-w-0 bg-background/60 border border-border rounded-lg px-2.5 py-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                    <input
+                      type="number" min="1" value={it.cantidad}
+                      onChange={e => updateItem(idx, 'cantidad', e.target.value)}
+                      title="Cantidad"
+                      className="w-12 bg-background/60 border border-border rounded-lg px-1.5 py-2 text-xs text-center font-bold focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                    <div className="relative">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">$</span>
+                      <input
+                        type="number" step="0.01" value={it.precio_unitario}
+                        onChange={e => updateItem(idx, 'precio_unitario', e.target.value)}
+                        placeholder="0.00" title="Precio unitario"
+                        className="w-20 bg-background/60 border border-border rounded-lg pl-5 pr-2 py-2 text-xs text-right font-bold focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      />
+                    </div>
+                    <span className="w-16 text-right text-xs font-black text-primary tabular-nums">${Number(it.total).toFixed(2)}</span>
+                    <button type="button" onClick={() => removeItem(idx)} className="p-1 text-muted-foreground hover:text-red-400 transition-colors shrink-0" title="Quitar">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+                {items.length > 0 && (
+                  <div className="flex items-center justify-end gap-3 pt-2 mt-1 border-t border-border/40">
+                    <span className="text-[10px] uppercase font-black tracking-widest text-muted-foreground">Total</span>
+                    <span className="text-sm font-black text-primary tabular-nums">${itemsTotal.toFixed(2)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1906,6 +2036,16 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
   const [showSelector, setShowSelector] = useState(false);
 
   const [items, setItems] = useState(() => {
+    // Preferir los ítems desglosados guardados en la orden (cada uno con su precio).
+    const saved = (cita.items as ServicioItem[] | undefined) || [];
+    if (Array.isArray(saved) && saved.length > 0) {
+      return saved.map(i => ({
+        descripcion: i.descripcion || 'Servicio',
+        cantidad: Number(i.cantidad) || 1,
+        precio_unitario: Number(i.precio_unitario) || 0,
+        total: Number(i.total) || (Number(i.cantidad) || 1) * (Number(i.precio_unitario) || 0),
+      }));
+    }
     const match = inventory.find((i: any) =>
       (cita.descripcion || '').toLowerCase().includes(i.nombre.toLowerCase().trim()) ||
       i.nombre.toLowerCase().trim().includes((cita.descripcion || '').toLowerCase().trim()) ||
@@ -1913,7 +2053,9 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
     );
     const price = match?.precio_usd || cita.costo_estimado || 0;
     const rawDesc = cita.descripcion || cita.tipo_personalizado || SERVICIO_LABELS[cita.tipo] || 'Servicio General';
-    return parseDescripcionItems(rawDesc, price);
+    // Desglose tolerante (multilínea del bot, " + ", ";", "|").
+    const parsed = parseServicioItemsFromText(rawDesc, price);
+    return parsed.length > 0 ? parsed : parseDescripcionItems(rawDesc, price);
   });
 
   const [secondItems, setSecondItems] = useState<any[]>([]);
