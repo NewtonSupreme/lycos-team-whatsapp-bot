@@ -276,6 +276,37 @@ function getVzlaDate(): Date {
 }
 function getVzlaDateString(): string { return getVzlaDate().toISOString().split('T')[0]; }
 function getVzlaDayOfWeek(): number { return getVzlaDate().getDay(); }
+
+// Formatea una fecha/hora ISO a hora de Venezuela (siempre America/Caracas).
+function formatVzlaFechaHora(iso?: string | null): string {
+  if (!iso) return 'N/D';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return 'N/D';
+  return new Intl.DateTimeFormat('es-VE', {
+    timeZone: 'America/Caracas', day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true,
+  }).format(d);
+}
+
+// Tiempo transcurrido entre `desdeIso` y AHORA, en formato legible.
+// Es la diferencia absoluta entre dos instantes → independiente de la zona horaria.
+// Ej: "2 días 5 horas", "6 horas 12 min", "45 min", "recién ingresado".
+function formatTiempoEnTaller(desdeIso?: string | null): string {
+  if (!desdeIso) return 'N/D';
+  const inicio = new Date(desdeIso).getTime();
+  if (isNaN(inicio)) return 'N/D';
+  let ms = Date.now() - inicio;
+  if (ms < 0) ms = 0; // tolerancia de reloj: nunca negativo
+  const totalMin = Math.floor(ms / 60000);
+  if (totalMin < 1) return 'recién ingresado (menos de 1 min)';
+  const dias = Math.floor(totalMin / 1440);
+  const horas = Math.floor((totalMin % 1440) / 60);
+  const mins = totalMin % 60;
+  const plural = (n: number, s: string) => `${n} ${s}${n === 1 ? '' : 's'}`;
+  if (dias > 0) return horas > 0 ? `${plural(dias, 'día')} ${plural(horas, 'hora')}` : plural(dias, 'día');
+  if (horas > 0) return mins > 0 ? `${plural(horas, 'hora')} ${mins} min` : plural(horas, 'hora');
+  return `${mins} min`;
+}
 function formatVzlaDateTime(): string {
   return new Intl.DateTimeFormat('es-VE', {
     timeZone: 'America/Caracas', weekday: 'long', year: 'numeric',
@@ -607,7 +638,8 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
       • Servicio/Trabajo (tipo + descripción completa)
       • Estado actual
       • Costo / presupuesto
-      • 🗓️ Fecha Y HORA de ingreso del vehículo (campo "Ingresado:") — SIEMPRE incluye la hora, no solo la fecha.
+      • 🗓️ Fecha Y HORA EXACTA de ingreso en hora de Venezuela (campo "Ingresó (hora Venezuela):") — SIEMPRE incluye la hora, no solo la fecha.
+      • ⏱️ CUÁNTO TIEMPO LLEVA EN EL TALLER: usa TAL CUAL el valor del campo "Tiempo en taller:" que ya viene calculado en los datos (ej. "2 días 5 horas", "6 horas 12 min"). ⚠️ NUNCA calcules tú el tiempo ni inventes horas/días: copia EXACTAMENTE ese valor. Si el servicio no está activo (completado/finalizado/cancelado) no habrá ese campo → no reportes tiempo en taller.
       • 👤 Quién lo registró (campo "Registrado por:")
       • Seguimiento / historial de acciones
       NUNCA omitas la hora de ingreso ni quién lo registró si están disponibles en los datos. Si un dato no existe, indícalo como "No especificado".
@@ -1249,6 +1281,7 @@ interface Memoria {
     servicioId: string;
     nuevaDescripcion: string;
     nuevoRegistrante: string;
+    reintentos?: number;
     vehiculoInfo?: string;
     placa?: string;
     vehiculoId?: string | null;
@@ -1453,10 +1486,10 @@ async function loadConversationContext(
           if (vServs.length > 0 || vRevs.length > 0) {
             historialTecnico += `VEHÍCULO: ${v.marca} ${v.modelo} (Placa: ${v.placa || 'N/A'})\n`;
             vServs.forEach(s => {
-              const ingreso = s.created_at
-                ? new Date(s.created_at).toLocaleString('es-VE', { timeZone: 'America/Caracas', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })
-                : 'N/D';
-              historialTecnico += `  - SERVICIO [${s.fecha || ''}]: ${s.tipo || ''}${s.tipo_personalizado ? ' (' + s.tipo_personalizado + ')' : ''} - ${s.descripcion || ''} (Estado: ${s.estado}) | Costo: $${s.costo_estimado ?? s.costo_final ?? 0} | Ingresado: ${ingreso} | Registrado por: ${s.registrado_por || 'N/D'}\n`;
+              const ingreso = formatVzlaFechaHora(s.created_at);
+              const activo = ['pendiente', 'confirmada', 'en_revision', 'en_proceso', 'en_progreso'].includes(s.estado);
+              const tiempo = activo ? ` | Tiempo en taller: ${formatTiempoEnTaller(s.created_at)}` : '';
+              historialTecnico += `  - SERVICIO [${s.fecha || ''}]: ${s.tipo || ''}${s.tipo_personalizado ? ' (' + s.tipo_personalizado + ')' : ''} - ${s.descripcion || ''} (Estado: ${s.estado}) | Costo: $${s.costo_estimado ?? s.costo_final ?? 0} | Ingresó: ${ingreso}${tiempo} | Registrado por: ${s.registrado_por || 'N/D'}\n`;
             });
             vRevs.forEach(r => {
               const date = new Date(r.created_at).toISOString().split('T')[0];
@@ -1767,13 +1800,13 @@ async function loadConversationContext(
           const vehStr = veh ? `${veh.marca} ${veh.modelo} (${veh.placa || 'S/P'})` : (s.vehiculo_info || '—');
           const estadoActual = s.estado || '—';
           const fechaStr = s.fecha || s.created_at.split('T')[0];
-          const ingreso = s.created_at
-            ? new Date(s.created_at).toLocaleString('es-VE', { timeZone: 'America/Caracas', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })
-            : 'N/D';
+          const ingreso = formatVzlaFechaHora(s.created_at);
+          const activo = ['pendiente', 'confirmada', 'en_revision', 'en_proceso', 'en_progreso'].includes(estadoActual);
+          const tiempo = activo ? ` | Tiempo en taller: ${formatTiempoEnTaller(s.created_at)}` : '';
           const seguimientoStr = s.seguimiento?.length
             ? s.seguimiento.map((e: any) => `${e.accion}${e.fecha ? ' [' + e.fecha.split('T')[0] + ']' : ''}`).join(' → ')
             : 'Sin seguimiento';
-          return `ID: ${s.id} | Sede: ${s.sede?.nombre || 'General'} | Fecha servicio: ${fechaStr} ${s.hora || ''} | Ingresado: ${ingreso} | Registrado por: ${s.registrado_por || 'N/D'} | Cliente: ${clienteNombre} ${clienteApellido}${s.telefono ? ' (Tel:' + s.telefono + ')' : ''} | Vehículo: ${vehStr} | Tipo: ${s.tipo}${s.tipo_personalizado ? ` (${s.tipo_personalizado})` : ''} | Descripción: ${s.descripcion || '—'} | Estado: ${estadoActual} | Costo: $${s.costo_estimado ?? s.costo_final ?? 0} | Seguimiento: ${seguimientoStr}`;
+          return `ID: ${s.id} | Sede: ${s.sede?.nombre || 'General'} | Fecha servicio: ${fechaStr} ${s.hora || ''} | Ingresó (hora Venezuela): ${ingreso}${tiempo} | Registrado por: ${s.registrado_por || 'N/D'} | Cliente: ${clienteNombre} ${clienteApellido}${s.telefono ? ' (Tel:' + s.telefono + ')' : ''} | Vehículo: ${vehStr} | Tipo: ${s.tipo}${s.tipo_personalizado ? ` (${s.tipo_personalizado})` : ''} | Descripción: ${s.descripcion || '—'} | Estado: ${estadoActual} | Costo: $${s.costo_estimado ?? s.costo_final ?? 0} | Seguimiento: ${seguimientoStr}`;
         }).join('\n');
       }
 
@@ -3106,48 +3139,48 @@ async function decidirRespuestaDuplicado(
 
 async function findActiveServiceDuplicate(
   db: any,
-  opts: { placa?: string | null; vehiculoInfo?: string | null; nombreCliente?: string | null }
+  opts: { placa?: string | null; vehiculoInfo?: string | null; nombreCliente?: string | null; vehiculoId?: string | null }
 ): Promise<any | null> {
   if (!db) return null;
   try {
     const placaNorm = (opts.placa || '').toUpperCase().replace(/[-\s]/g, '');
-    const placaValida = placaNorm && !['SINPLACA', 'SIN-PLACA', 'SIN', 'NA', 'N/A', ''].includes(placaNorm);
+    const placaValida = !!placaNorm && !['SINPLACA', 'SIN-PLACA', 'SIN', 'NA', 'N/A', ''].includes(placaNorm);
 
-    // 1) Coincidencia por placa (la señal más fuerte)
-    if (placaValida) {
-      const { data } = await db
-        .from('servicios')
-        .select('id, nombre_cliente, vehiculo_info, placa, estado, descripcion, sede_id, created_at, registrado_por, vehiculo_id, cliente_id, tipo, tipo_personalizado')
-        .in('estado', ACTIVE_SERVICE_STATES)
-        .order('created_at', { ascending: false })
-        .limit(50);
-      const match = (data || []).find((s: any) =>
-        (s.placa || '').toUpperCase().replace(/[-\s]/g, '') === placaNorm
-      );
-      if (match) return match;
-      return null; // si hay placa válida, la placa es la autoridad: no buscar por nombre
+    // Consideramos DUPLICADO si el mismo vehículo tiene un servicio ACTIVO, o uno creado
+    // en las últimas 24h (misma visita), aunque ya esté completado. Esto evita registrar
+    // dos veces el mismo vehículo el mismo día (bug: al completarse dejaba de detectarse).
+    const recentIso = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const { data } = await db
+      .from('servicios')
+      .select('id, nombre_cliente, vehiculo_info, placa, estado, descripcion, sede_id, created_at, registrado_por, vehiculo_id, cliente_id, tipo, tipo_personalizado')
+      .or(`estado.in.(${ACTIVE_SERVICE_STATES.join(',')}),created_at.gte.${recentIso}`)
+      .order('created_at', { ascending: false })
+      .limit(300);
+    const rows: any[] = data || [];
+
+    // 1) Coincidencia exacta por vehiculo_id (la más fuerte cuando la conocemos).
+    if (opts.vehiculoId) {
+      const m = rows.find((s: any) => s.vehiculo_id && s.vehiculo_id === opts.vehiculoId);
+      if (m) return m;
     }
-
-    // 2) Sin placa: intentar por vehículo + cliente
+    // 2) Coincidencia por placa (autoridad cuando hay placa válida).
+    if (placaValida) {
+      const m = rows.find((s: any) => (s.placa || '').toUpperCase().replace(/[-\s]/g, '') === placaNorm);
+      return m || null;
+    }
+    // 3) Sin placa: por vehículo + cliente.
     const veh = (opts.vehiculoInfo || '').trim().toLowerCase();
     const cli = (opts.nombreCliente || '').trim().toLowerCase();
     if (!veh && !cli) return null;
-    const { data } = await db
-      .from('servicios')
-      .select('id, nombre_cliente, vehiculo_info, placa, estado, descripcion, sede_id, created_at')
-      .in('estado', ACTIVE_SERVICE_STATES)
-      .order('created_at', { ascending: false })
-      .limit(50);
-    const match = (data || []).find((s: any) => {
+    const m = rows.find((s: any) => {
       const sVeh = (s.vehiculo_info || '').trim().toLowerCase();
       const sCli = (s.nombre_cliente || '').trim().toLowerCase();
       const vehMatch = veh && sVeh && (sVeh === veh || sVeh.includes(veh) || veh.includes(sVeh));
       const cliMatch = cli && sCli && sCli === cli;
-      // Si tenemos ambos, exigir vehículo + cliente; si solo uno, basta ese
       if (veh && cli) return vehMatch && cliMatch;
       return vehMatch || cliMatch;
     });
-    return match || null;
+    return m || null;
   } catch (e) {
     console.error('❌ Error findActiveServiceDuplicate:', e);
     return null;
@@ -3617,15 +3650,44 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
     // (con Rafael involucrado). Esperamos su decisión.
     if (ctx.memoria?.pending_merge_servicio && db) {
       const pm = ctx.memoria.pending_merge_servicio;
-      const ans = bodyClean;
-      const wantsMerge = /\b(s[ií]|sí|actualiz|combin|junt|mismo|agreg|uni[ró]|union|unir|dale|correcto|ok|claro)\b/i.test(ans);
-      const wantsNo = /\b(no|negativo|cancel|dejal|d[eé]jalo|as[ií] est)\b/i.test(ans);
+      // Detección ROBUSTA de SÍ/NO. Los acentos rompían los word-boundaries del regex
+      // (por eso "Sí"/"Actualízalo" NO se reconocían y el bot quedaba en bucle). Aquí:
+      // 1) quitamos acentos ("sí"→"si", "actualízalo"→"actualizalo"),
+      // 2) quitamos el sufijo "(audio transcrito)" y la puntuación,
+      // 3) tokenizamos y comparamos contra listas de afirmación/negación.
+      const norm = bodyClean
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .toLowerCase()
+        .replace(/\(audio transcrito\)/g, ' ')
+        .replace(/[^a-z0-9$ ]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const tokens = norm.split(' ').filter(Boolean);
+      const YES = new Set(['si', 'sii', 'ssi', 'sip', 'simon', 'sisi', 'claro', 'dale', 'ok', 'oki', 'okey', 'okay', 'listo', 'correcto', 'confirmo', 'confirmar', 'confirmado', 'positivo', 'afirmativo', 'hazlo', 'procede', 'adelante', 'actualiza', 'actualizalo', 'actualizar', 'actualicelo', 'combina', 'combinalo', 'combinar', 'agrega', 'agregalo', 'agregar', 'unelo', 'unir', 'junta', 'juntalo', 'vale', 'va', 'vamos', 'exacto', 'eso']);
+      const NO = new Set(['no', 'nel', 'nop', 'negativo', 'cancela', 'cancelalo', 'cancelar', 'dejalo', 'dejar', 'olvidalo', 'omite', 'omitelo', 'aparte']);
+      const hasYes = tokens.some(t => YES.has(t)) || /(actualiz|combin|agreg|confirm)/.test(norm);
+      const hasNo = tokens.some(t => NO.has(t));
+      let decision: 'yes' | 'no' | null = (hasYes && !hasNo) ? 'yes' : ((hasNo && !hasYes) ? 'no' : null);
 
-      if (wantsMerge || wantsNo) {
+      // Anti-bucle: si tras 2 intentos sigue ambiguo pero NO dijo "no", asumimos SÍ
+      // (el admin claramente está gestionando ESTE vehículo). Nunca queda en bucle.
+      if (decision === null) {
+        const intentos = (pm.reintentos || 0) + 1;
+        if (intentos >= 2 && !hasNo) {
+          decision = 'yes';
+        } else {
+          ctx.memoria.pending_merge_servicio = { ...pm, reintentos: intentos };
+          await db.from('conversaciones').update({ memoria: ctx.memoria }).eq('telefono', from);
+          await sendMsg(from, 'Para continuar responde *SÍ* (actualizo ese mismo servicio y queda a nombre de ambos) o *NO* (lo dejo como está). 🙏');
+          return;
+        }
+      }
+
+      {
         delete ctx.memoria.pending_merge_servicio;
         await db.from('conversaciones').update({ memoria: ctx.memoria }).eq('telefono', from);
 
-        if (wantsMerge) {
+        if (decision === 'yes') {
           try {
             const { data: existing } = await db.from('servicios')
               .select('descripcion, registrado_por, seguimiento, estado, vehiculo_info, placa')
@@ -3643,10 +3705,14 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 accion: `Trabajo agregado por ${pm.nuevoRegistrante} (servicio combinado)`,
                 usuario: pm.nuevoRegistrante, tipo: 'sistema',
               }];
+              // Si el servicio ya estaba completado/finalizado y se le agrega trabajo nuevo,
+              // se REABRE a 'en_proceso' (el vehículo volvió a estar en trabajo).
+              const eraCerrado = ['completada', 'completado', 'finalizado', 'finalizada', 'cancelada', 'cancelado'].includes(String(existing.estado || '').toLowerCase());
               await db.from('servicios').update({
                 descripcion: mergedDesc,
                 registrado_por: mergedBy,
                 seguimiento: seg,
+                ...(eraCerrado ? { estado: 'en_proceso' } : {}),
                 updated_at: new Date().toISOString(),
               }).eq('id', pm.servicioId);
               await logActivityAdmin(db, pm.nuevoRegistrante, 'Combinó trabajo en servicio', `Servicio ${pm.servicioId} ahora registrado por ${mergedBy}`, pm.sedeId || ctx.sede_id || DEFAULT_SEDE_ID);
@@ -3664,9 +3730,6 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         }
         return;
       }
-      // Si no respondió claramente, recordamos las opciones.
-      await sendMsg(from, 'Por favor responde *SÍ* para actualizar ese mismo servicio (quedará a nombre de ambos) o *NO* para dejarlo como está. 🙏');
-      return;
     }
 
     // ─── ADMIN SEDE CHOICE ──────────────────────────────────────────
@@ -4242,19 +4305,31 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 // Auto-register sale if now completed
                 await handleCompletedServiceSale(db, id, servObj, 'servicio', rates);
               } else {
-                console.log(`🔧 ADMIN: ID proporcionado pero servicio no encontrado: ${id}. Creando nuevo.`);
-                delete servObj.updated_at;
-                const { data: newServ, error: insErr } = await db.from('servicios').insert(servObj).select('id').single();
-                if (insErr) throw insErr;
-                servicioOK = true;
-                console.log(`🔧 ADMIN: Nuevo servicio creado (fallback): ${newServ?.id}`);
-                await logActivityAdmin(db, adminName, 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot (fallback)`, sedeId);
-                if (newServ?.id) await handleCompletedServiceSale(db, newServ.id, servObj, 'servicio', rates);
+                console.log(`🔧 ADMIN: ID proporcionado pero servicio no encontrado: ${id}. Verificando duplicado antes de crear.`);
+                // ⚠️ Cerrar la brecha: aunque el AI mande un id inexistente, NO crear duplicado.
+                const dup = await findActiveServiceDuplicate(db, {
+                  placa, vehiculoInfo, nombreCliente: resolvedClientName || nombreCliente, vehiculoId: finalVehId,
+                });
+                if (dup) {
+                  servicioDuplicado = dup;
+                  dupNuevaDesc = descripcion || servObj.descripcion || '';
+                  dupNuevoRegistrante = adminName || '';
+                  console.log(`⛔ SERVICIO duplicado evitado (id inexistente): ${dup.id}`);
+                  await logActivityAdmin(db, adminName, 'Registro de servicio bloqueado (duplicado)', `Ya existe servicio ${dup.id} para placa ${dup.placa || 'N/D'} (${dup.estado})`, sedeId);
+                } else {
+                  delete servObj.updated_at;
+                  const { data: newServ, error: insErr } = await db.from('servicios').insert(servObj).select('id').single();
+                  if (insErr) throw insErr;
+                  servicioOK = true;
+                  console.log(`🔧 ADMIN: Nuevo servicio creado (fallback): ${newServ?.id}`);
+                  await logActivityAdmin(db, adminName, 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot (fallback)`, sedeId);
+                  if (newServ?.id) await handleCompletedServiceSale(db, newServ.id, servObj, 'servicio', rates);
+                }
               }
             } else if (db) {
               // ⚠️ Verificar que el vehículo NO esté ya en servicio (evitar doble registro)
               const dup = await findActiveServiceDuplicate(db, {
-                placa, vehiculoInfo, nombreCliente: resolvedClientName || nombreCliente,
+                placa, vehiculoInfo, nombreCliente: resolvedClientName || nombreCliente, vehiculoId: finalVehId,
               });
               if (dup) {
                 servicioDuplicado = dup;

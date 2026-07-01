@@ -427,7 +427,7 @@ export async function GET(req: NextRequest) {
         const cell = totalRow.getCell(c);
         const colLetterStr = colLetter(c);
         if (data.length > 0) {
-          cell.value = { formula: `SUM(${colLetterStr}6:${colLetterStr}${currentRowIdx - 1})` };
+          cell.value = { formula: `SUM(${colLetterStr}6:${colLetterStr}${currentRowIdx - 1})`, date1904: false };
         } else {
           cell.value = 0;
         }

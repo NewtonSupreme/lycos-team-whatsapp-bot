@@ -358,7 +358,7 @@ export async function GET() {
       const cell = sumRow.getCell(ci);
       if (rows.length > 0) {
         const cl = colLetter(ci);
-        cell.value = { formula: `SUM(${cl}${dataStartRow}:${cl}${dataStartRow + rows.length - 1})` };
+        cell.value = { formula: `SUM(${cl}${dataStartRow}:${cl}${dataStartRow + rows.length - 1})`, date1904: false };
       } else {
         cell.value = 0;
       }

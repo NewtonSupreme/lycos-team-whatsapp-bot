@@ -45,11 +45,12 @@ function parseServicioItemsFromText(descripcion: string, totalPrecio = 0): Servi
       .filter(Boolean);
   }
   if (pedazos.length === 0) pedazos = [raw];
-  // Quitar prefijo "Nombre: " de cada pedazo dejando el trabajo legible (conservando el nombre).
-  return pedazos.map((p, i) => {
-    const precio = i === 0 ? totalPrecio : 0; // el costo total se asigna al primero por defecto
-    return { descripcion: p, cantidad: 1, precio_unitario: precio, total: precio };
-  });
+  // Un solo ítem → recibe el costo total. VARIOS ítems → cada uno empieza en $0, para que
+  // el precio se asigne EXACTAMENTE al servicio que corresponde (no se vuelca al primero).
+  if (pedazos.length === 1) {
+    return [{ descripcion: pedazos[0], cantidad: 1, precio_unitario: totalPrecio, total: totalPrecio }];
+  }
+  return pedazos.map(p => ({ descripcion: p, cantidad: 1, precio_unitario: 0, total: 0 }));
 }
 
 interface CitaServicio {
@@ -158,6 +159,8 @@ export default function ServiciosPage() {
   const [trackingCita, setTrackingCita] = useState<CitaServicio | null>(null);
   const [invoiceCita, setInvoiceCita] = useState<CitaServicio | null>(null);
   const [budgetCita, setBudgetCita] = useState<CitaServicio | null>(null);
+  // Cambio de estado pendiente de confirmar (servicio completado que ya es venta).
+  const [pendingEstadoChange, setPendingEstadoChange] = useState<{ cita: CitaServicio; nuevoEstado: string } | null>(null);
   const [inventory, setInventory] = useState<any[]>([]);
   const [selectedForDual, setSelectedForDual] = useState<string[]>([]);
   const [mounted, setMounted] = useState(false);
@@ -238,11 +241,10 @@ export default function ServiciosPage() {
     return { accion: `Cambió estado (${getEstadoLabel(viejo)} → ${getEstadoLabel(nuevo)})`, fmt: `Estado cambiado: ${getEstadoLabel(viejo)} → ${getEstadoLabel(nuevo)}` };
   };
 
-  const updateEstado = async (id: string, nuevoEstado: string) => {
-    if (!can('servicios', 'editar')) return alert('No tienes permisos para cambiar el estado de los servicios.');
-    const cita = citas.find(c => c.id === id);
-    if (!cita || cita.estado === nuevoEstado) return;
-
+  // Aplica el cambio de estado real (y registra venta si pasa a completado).
+  const applyEstadoChange = async (cita: CitaServicio, nuevoEstado: string) => {
+    const COMPLETED_STATES = ['completada', 'finalizado', 'finalizada', 'completado'];
+    const id = cita.id;
     try {
       const info = getTransicionInfo(cita.estado, nuevoEstado);
       const newEntry = {
@@ -272,7 +274,6 @@ export default function ServiciosPage() {
       // ── Auto-register sale in ventas_dia when marking as completada/finalizado ──
       // Dashboard-originated sales go only to ventas_dia. Bot-originated go to ventas_silenciadores.
       // This ensures each service appears exactly once in the combined ventas view.
-      const COMPLETED_STATES = ['completada', 'finalizado', 'finalizada', 'completado'];
       if (COMPLETED_STATES.includes(nuevoEstado) && supabase) {
         const precio = Number(cita.costo_final ?? cita.costo_estimado ?? 0);
         const sedeId = cita.sede_id || currentSede?.id;
@@ -321,6 +322,51 @@ export default function ServiciosPage() {
         referencia_tabla: 'servicios'
       });
     } catch (err: any) { alert('Error: ' + err.message); }
+  };
+
+  // Cambio de estado con verificación: si el servicio sale de "completado" y ya tiene una
+  // VENTA asociada, abre un modal de confirmación (en vez de cambiar directo).
+  const updateEstado = async (id: string, nuevoEstado: string) => {
+    if (!can('servicios', 'editar')) return alert('No tienes permisos para cambiar el estado de los servicios.');
+    const cita = citas.find(c => c.id === id);
+    if (!cita || cita.estado === nuevoEstado) return;
+
+    const COMPLETED_STATES = ['completada', 'finalizado', 'finalizada', 'completado'];
+    if (COMPLETED_STATES.includes(cita.estado) && !COMPLETED_STATES.includes(nuevoEstado) && supabase) {
+      try {
+        const refTag = `[ServicioID: ${id}]`;
+        const [{ data: vd }, { data: vs }] = await Promise.all([
+          supabase.from('ventas_dia').select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
+          supabase.from('ventas_silenciadores').select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
+        ]);
+        if (vd || vs) { setPendingEstadoChange({ cita, nuevoEstado }); return; }
+      } catch { /* si falla la verificación, continuamos con el cambio normal */ }
+    }
+    await applyEstadoChange(cita, nuevoEstado);
+  };
+
+  // Confirmado en el modal: elimina la venta asociada y aplica el cambio de estado.
+  const confirmEstadoChangeConVenta = async () => {
+    if (!pendingEstadoChange || !supabase) return;
+    const { cita, nuevoEstado } = pendingEstadoChange;
+    setPendingEstadoChange(null);
+    try {
+      const refTag = `[ServicioID: ${cita.id}]`;
+      const [{ data: vd }, { data: vs }] = await Promise.all([
+        supabase.from('ventas_dia').select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
+        supabase.from('ventas_silenciadores').select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
+      ]);
+      if (vd) await supabase.from('ventas_dia').delete().eq('id', vd.id);
+      if (vs) await supabase.from('ventas_silenciadores').delete().eq('id', vs.id);
+      logActivity({
+        usuario: user?.nombre || 'Admin', modulo: 'Servicios', accion: 'Eliminó venta por cambio de estado',
+        detalles: `Servicio #${cita.id.slice(0, 5)} salió de completado; venta asociada eliminada.`,
+      });
+    } catch (e: any) {
+      alert('No se pudo eliminar la venta asociada: ' + (e?.message || e));
+      return;
+    }
+    await applyEstadoChange(cita, nuevoEstado);
   };
 
   const filtered = citas.filter(c => {
@@ -608,6 +654,53 @@ export default function ServiciosPage() {
       {trackingCita && <TrackingModal cita={trackingCita} onClose={() => { setTrackingCita(null); loadCitas(); }} />}
       {invoiceCita && <InvoiceModal cita={invoiceCita} citas={citas} inventory={inventory} onClose={() => { setInvoiceCita(null); loadCitas(); }} globalBcvRate={globalBcvRate} />}
       {budgetCita && <BudgetModal cita={budgetCita} inventory={inventory} onClose={() => setBudgetCita(null)} />}
+
+      {/* ⚠️ Confirmación al sacar de "completado" un servicio que ya se convirtió en venta */}
+      {pendingEstadoChange && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl border border-amber-500/30 bg-card shadow-2xl overflow-hidden">
+            <div className="p-5 sm:p-6 bg-amber-500/10 border-b border-amber-500/20 flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-6 h-6 text-amber-500" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-widest text-amber-500">Este servicio ya es una venta</h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Vas a cambiarlo de estado completado.</p>
+              </div>
+            </div>
+            <div className="p-5 sm:p-6 space-y-3">
+              <div className="rounded-2xl border border-border bg-muted/30 p-3 space-y-1.5 text-xs">
+                <p className="font-black text-foreground">
+                  🚗 {getDisplayVehicle(pendingEstadoChange.cita)}
+                </p>
+                <p className="text-muted-foreground">
+                  Cambio: <span className="font-bold uppercase">{String(pendingEstadoChange.cita.estado).replace(/_/g, ' ')}</span>
+                  {' → '}
+                  <span className="font-bold uppercase">{String(pendingEstadoChange.nuevoEstado).replace(/_/g, ' ')}</span>
+                </p>
+              </div>
+              <p className="text-[12px] text-muted-foreground leading-relaxed">
+                Al salir de <b>completado</b> se <b>eliminará la venta asociada</b> del sistema.
+                Podrás volver a marcarlo como <b>Completada</b> más tarde y se <b>registrará como venta de nuevo</b> automáticamente.
+              </p>
+            </div>
+            <div className="p-4 sm:p-5 border-t border-border bg-muted/10 flex flex-col-reverse sm:flex-row justify-end gap-2.5">
+              <button
+                onClick={() => setPendingEstadoChange(null)}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-bold text-muted-foreground hover:bg-muted/50 transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmEstadoChangeConVenta}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest bg-amber-500 hover:bg-amber-600 text-white transition-all"
+              >
+                Cambiar estado y eliminar venta
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -966,6 +1059,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
   const [filteredClientes, setFilteredClientes] = useState<any[]>([]);
   const [showClientResults, setShowClientResults] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [dupAlert, setDupAlert] = useState<any | null>(null); // servicio existente detectado al crear
   const [plateStatus, setPlateStatus] = useState<'idle' | 'checking' | 'found' | 'new'>('idle');
   const [clientVehiculos, setClientVehiculos] = useState<any[]>([]);
   const [showVehiculoSelector, setShowVehiculoSelector] = useState(false);
@@ -1182,12 +1276,38 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
     return { clienteId, vehiculoId };
   };
 
-  const handleSave = async () => {
+  const handleSave = async (force = false) => {
     if (!supabase) return;
     if (!formData.nombre_cliente || !formData.vehiculo_info) {
       alert('Campos obligatorios incompletos');
       return;
     }
+
+    // 🚨 Alerta anti-duplicado (solo al CREAR): si ya existe un servicio ACTIVO o creado
+    // en las últimas 24h para la MISMA placa (o el mismo cliente), avisamos con un modal
+    // en vez de crear un duplicado. El usuario puede cancelar o registrar de todos modos.
+    if (!cita?.id && !force) {
+      const placaNorm = formData.placa.trim().toUpperCase().replace(/[-\s]/g, '');
+      const nombre = formData.nombre_cliente.trim().toLowerCase();
+      if (placaNorm || (nombre && nombre !== 'no definido')) {
+        try {
+          const recentIso = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+          const { data: cands } = await withSedeFilter(supabase.from('servicios'))
+            .select('id, placa, vehiculo_info, nombre_cliente, estado, descripcion, created_at, registrado_por')
+            .or(`estado.in.(pendiente,confirmada,en_revision,en_proceso,en_progreso,en_espera),created_at.gte.${recentIso}`)
+            .order('created_at', { ascending: false })
+            .limit(300);
+          const dup = (cands || []).find((s: any) => {
+            const sp = (s.placa || '').toUpperCase().replace(/[-\s]/g, '');
+            const sc = (s.nombre_cliente || '').trim().toLowerCase();
+            return (placaNorm && sp && sp === placaNorm) ||
+              (nombre && nombre !== 'no definido' && sc && sc === nombre);
+          });
+          if (dup) { setDupAlert(dup); return; }
+        } catch { /* si falla el chequeo, continuamos normal */ }
+      }
+    }
+
     setIsSaving(true);
     try {
       let finalClienteId = selectedClienteId;
@@ -1239,7 +1359,9 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           precio_unitario: Number(i.precio_unitario) || 0,
           total: Number(i.total) || (Number(i.cantidad) || 1) * (Number(i.precio_unitario) || 0),
         }));
-      const costoFinalCalc = itemsToSave.length > 0 ? itemsTotal : (parseFloat(formData.costo_estimado) || 0);
+      // Si los ítems ya tienen precios (suma > 0) el costo = suma de ítems; si aún no
+      // se asignaron precios, se conserva el costo del campo manual (no se pone en 0).
+      const costoFinalCalc = itemsTotal > 0 ? itemsTotal : (parseFloat(formData.costo_estimado) || 0);
 
       if (cita?.id) {
         // UPDATE
@@ -1797,7 +1919,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
         <div className="p-4 sm:p-6 border-t border-border bg-muted/10 flex flex-col-reverse sm:flex-row justify-end gap-3 shrink-0">
           <button onClick={onClose} className="w-full sm:w-auto px-5 py-2.5 sm:px-6 sm:py-3 rounded-2xl text-xs sm:text-sm font-bold text-muted-foreground hover:bg-muted/50 transition-all text-center">Cancelar</button>
           <Button 
-            onClick={handleSave} 
+            onClick={() => handleSave()} 
             disabled={isSaving} 
             className="w-full sm:w-auto rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground font-black px-6 sm:px-10 h-11 sm:h-12 text-xs sm:text-sm shadow-2xl shadow-primary/20 gap-2 flex items-center justify-center"
           >
@@ -1806,6 +1928,59 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           </Button>
         </div>
       </div>
+
+      {/* 🚨 Alerta de servicio duplicado (mismo vehículo/cliente ya registrado) */}
+      {dupAlert && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl border border-amber-500/30 bg-card shadow-2xl overflow-hidden">
+            <div className="p-5 sm:p-6 bg-amber-500/10 border-b border-amber-500/20 flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-6 h-6 text-amber-500" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-widest text-amber-500">Servicio ya registrado</h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Este vehículo/cliente ya tiene un servicio en el sistema.</p>
+              </div>
+            </div>
+            <div className="p-5 sm:p-6 space-y-3">
+              <div className="rounded-2xl border border-border bg-muted/30 p-3 space-y-1.5 text-xs">
+                <p className="font-black text-foreground">
+                  🚗 {dupAlert.vehiculo_info || '—'}{dupAlert.placa && dupAlert.placa !== 'SIN-PLACA' ? ` — ${dupAlert.placa}` : ''}
+                </p>
+                {dupAlert.nombre_cliente && dupAlert.nombre_cliente !== 'No definido' && (
+                  <p className="text-muted-foreground">👤 {dupAlert.nombre_cliente}</p>
+                )}
+                <p className="text-muted-foreground">
+                  📌 Estado: <span className="font-bold uppercase">{String(dupAlert.estado || '').replace(/_/g, ' ')}</span>
+                </p>
+                {dupAlert.descripcion && (
+                  <p className="text-muted-foreground whitespace-pre-line">🔧 {dupAlert.descripcion}</p>
+                )}
+                {dupAlert.registrado_por && (
+                  <p className="text-muted-foreground">✍️ Registrado por: {dupAlert.registrado_por}</p>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Para no duplicar, edita el servicio existente. Si aun así necesitas crear uno nuevo (visita distinta), puedes registrarlo de todos modos.
+              </p>
+            </div>
+            <div className="p-4 sm:p-5 border-t border-border bg-muted/10 flex flex-col-reverse sm:flex-row justify-end gap-2.5">
+              <button
+                onClick={() => setDupAlert(null)}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-bold text-muted-foreground hover:bg-muted/50 transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => { setDupAlert(null); handleSave(true); }}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest bg-amber-500 hover:bg-amber-600 text-white transition-all"
+              >
+                Registrar de todos modos
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
