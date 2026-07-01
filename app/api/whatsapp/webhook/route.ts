@@ -277,6 +277,22 @@ function getVzlaDate(): Date {
 function getVzlaDateString(): string { return getVzlaDate().toISOString().split('T')[0]; }
 function getVzlaDayOfWeek(): number { return getVzlaDate().getDay(); }
 
+// Extrae el "Personal a Cargo (Jefe / Mecánicos)" desde el campo notas del servicio.
+// El panel guarda: "Encargados: Freddy (Mecánico), Juan (Jefe)".
+function extractEncargados(notas?: string | null): string {
+  if (!notas) return '';
+  const m = String(notas).match(/Encargados?:\s*(.+?)(?:\n|$)/i);
+  return m ? m[1].trim() : '';
+}
+
+// Etiqueta del servicio: prioriza la descripción; si no hay, usa el Tipo de Servicio
+// personalizado (ej. "SILENCIADOR") o el tipo estándar. Nunca queda vacío.
+function servicioLabel(s: any): string {
+  const desc = (s?.descripcion || '').trim();
+  if (desc) return desc;
+  return (s?.tipo_personalizado || '').trim() || (s?.tipo || '').trim() || 'Por definir';
+}
+
 // Formatea una fecha/hora ISO a hora de Venezuela (siempre America/Caracas).
 function formatVzlaFechaHora(iso?: string | null): string {
   if (!iso) return 'N/D';
@@ -635,7 +651,9 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
       • Vehículo (marca, modelo, color) y Placa
       • Cliente y teléfono (si hay)
       • Sede
-      • Servicio/Trabajo (tipo + descripción completa)
+      • 🔧 TIPO DE SERVICIO: usa el campo "Tipo de servicio:" (incluye el personalizado entre paréntesis, ej. "otro (SILENCIADOR)"). Si NO hay descripción de la falla/trabajo, usa el Tipo de servicio como el trabajo (ej. si dice "SILENCIADOR", el servicio es cambio/trabajo de silenciador). NUNCA lo omitas.
+      • Servicio/Trabajo (descripción completa; si no hay, el Tipo de servicio)
+      • 👷 PERSONAL A CARGO (Jefe / Mecánicos): usa el campo "Personal a cargo:" si está presente (ej. "Freddy (Mecánico)"). Muéstralo siempre que exista.
       • Estado actual
       • Costo / presupuesto
       • 🗓️ Fecha Y HORA EXACTA de ingreso en hora de Venezuela (campo "Ingresó (hora Venezuela):") — SIEMPRE incluye la hora, no solo la fecha.
@@ -667,6 +685,7 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
          3. ⏳ VEHÍCULOS PENDIENTES — estos son carros en el taller pero aún no se sabe si van a hacer el servicio o están en revisión.
          4. 💰 VENTAS DE HOY
        - Si una categoría dice "No hay", responde que no hay registros, NO inventes.
+       - ⚠️ Si el admin pide específicamente los "VEHÍCULOS QUE INGRESARON HOY" / "reporte de vehículos ingresados hoy" / "qué carros entraron hoy": USA la sección 🚗 VEHÍCULOS INGRESADOS HOY, que trae la lista COMPLETA del día con TODOS los estados (completados, en revisión, en proceso, pendientes). NO la limites solo a pendientes: incluye TODOS, mostrando por cada vehículo: hora de ingreso, cliente, vehículo+placa, el Tipo de servicio (si no hay descripción, usa el Tipo, ej. "SILENCIADOR"), el Estado, y el Personal a cargo si aparece. Si el admin menciona una sede, filtra por esa sede.
 
     B) Si pregunta por un DÍA ESPECÍFICO (ej. "qué pasó el 15 de mayo", "servicios del lunes"):
        - NO uses [⌛ ACTIVIDAD DE HOY].
@@ -1478,7 +1497,7 @@ async function loadConversationContext(
       if (vehs && vehs.length > 0) {
         const vehIds = vehs.map(v => v.id);
         const [servs, revs] = await Promise.all([
-          db.from('servicios').select('id, vehiculo_id, tipo, tipo_personalizado, descripcion, fecha, hora, created_at, registrado_por, costo_estimado, costo_final, estado, nombre_cliente, sede_id').in('vehiculo_id', vehIds).order('created_at', { ascending: false }).limit(10),
+          db.from('servicios').select('id, vehiculo_id, tipo, tipo_personalizado, descripcion, fecha, hora, created_at, registrado_por, costo_estimado, costo_final, estado, nombre_cliente, sede_id, notas').in('vehiculo_id', vehIds).order('created_at', { ascending: false }).limit(10),
           db.from('revisiones').select('id, vehiculo_id, detalles, presupuesto, created_at').in('vehiculo_id', vehIds).order('created_at', { ascending: false }).limit(5)
         ]);
         vehs.forEach(v => {
@@ -1490,7 +1509,8 @@ async function loadConversationContext(
               const ingreso = formatVzlaFechaHora(s.created_at);
               const activo = ['pendiente', 'confirmada', 'en_revision', 'en_proceso', 'en_progreso'].includes(s.estado);
               const tiempo = activo ? ` | Tiempo en taller: ${formatTiempoEnTaller(s.created_at)}` : '';
-              historialTecnico += `  - SERVICIO [${s.fecha || ''}]: ${s.tipo || ''}${s.tipo_personalizado ? ' (' + s.tipo_personalizado + ')' : ''} - ${s.descripcion || ''} (Estado: ${s.estado}) | Costo: $${s.costo_estimado ?? s.costo_final ?? 0} | Ingresó: ${ingreso}${tiempo} | Registrado por: ${s.registrado_por || 'N/D'}\n`;
+              const encargados = extractEncargados(s.notas);
+              historialTecnico += `  - SERVICIO [${s.fecha || ''}]: Tipo de servicio: ${s.tipo || 'otro'}${s.tipo_personalizado ? ' (' + s.tipo_personalizado + ')' : ''} - ${servicioLabel(s)} (Estado: ${s.estado}) | Costo: $${s.costo_estimado ?? s.costo_final ?? 0} | Ingresó: ${ingreso}${tiempo} | Registrado por: ${s.registrado_por || 'N/D'}${encargados ? ` | Personal a cargo: ${encargados}` : ''}\n`;
             });
             vRevs.forEach(r => {
               const date = new Date(r.created_at).toISOString().split('T')[0];
@@ -1724,7 +1744,9 @@ async function loadConversationContext(
           const clienteApellido = veh?.clientes?.apellido || '';
           const vehStr = veh ? `${veh.marca} ${veh.modelo} (${veh.placa || 'S/P'})` : (s.vehiculo_info || '—');
           const fechaReg = s.fecha || s.created_at?.split('T')[0] || '—';
-          return `  • ${clienteNombre} ${clienteApellido} | Veh: ${vehStr} | Servicio: ${s.descripcion || s.tipo || '—'} | Estado: ${s.estado || '—'} | Costo: $${s.costo_estimado ?? s.costo_final ?? 0} | Registrado: ${fechaReg} | Sede: ${s.sede?.nombre || 'General'}`;
+          const tipoStr = s.tipo_personalizado ? `${s.tipo || 'otro'} (${s.tipo_personalizado})` : (s.tipo || '—');
+          const encargados = extractEncargados(s.notas);
+          return `  • ${clienteNombre} ${clienteApellido} | Veh: ${vehStr} | Tipo de servicio: ${tipoStr} | Servicio: ${servicioLabel(s)} | Estado: ${s.estado || '—'}${encargados ? ` | Personal a cargo: ${encargados}` : ''} | Costo: $${s.costo_estimado ?? s.costo_final ?? 0} | Registrado: ${fechaReg} | Sede: ${s.sede?.nombre || 'General'}`;
         }).join('\n');
       } else {
         hoyInfo += `  No hay servicios activos en el taller.\n`;
@@ -1739,10 +1761,33 @@ async function loadConversationContext(
           const clienteApellido = veh?.clientes?.apellido || '';
           const vehStr = veh ? `${veh.marca} ${veh.modelo} (${veh.placa || 'S/P'})` : (s.vehiculo_info || '—');
           const fechaReg = s.fecha || s.created_at?.split('T')[0] || '—';
-          return `  • ${clienteNombre} ${clienteApellido} | Veh: ${vehStr} | Servicio: ${s.descripcion || s.tipo || '—'} | Estado: ${s.estado || '—'} | Costo: $${s.costo_estimado ?? s.costo_final ?? 0} | Registrado: ${fechaReg} | Sede: ${s.sede?.nombre || 'General'}`;
+          const tipoStr = s.tipo_personalizado ? `${s.tipo || 'otro'} (${s.tipo_personalizado})` : (s.tipo || '—');
+          const encargados = extractEncargados(s.notas);
+          return `  • ${clienteNombre} ${clienteApellido} | Veh: ${vehStr} | Tipo de servicio: ${tipoStr} | Servicio: ${servicioLabel(s)} | Estado: ${s.estado || '—'}${encargados ? ` | Personal a cargo: ${encargados}` : ''} | Costo: $${s.costo_estimado ?? s.costo_final ?? 0} | Registrado: ${fechaReg} | Sede: ${s.sede?.nombre || 'General'}`;
         }).join('\n');
       } else {
         hoyInfo += `  No hay vehículos pendientes en el taller.\n`;
+      }
+
+      // 🚗 TODOS los vehículos que INGRESARON HOY — cualquier estado (incluye completados,
+      // en revisión, en proceso, pendientes, cancelados). Esta es la lista COMPLETA del día.
+      const ingresadosHoy = (allServs || []).filter((s: any) => toVzlaDateStr(s.fecha || s.created_at) === today);
+      hoyInfo += `\n🚗 VEHÍCULOS INGRESADOS HOY (TODOS los estados — completados, en revisión, en proceso, pendientes):\n`;
+      if (ingresadosHoy.length > 0) {
+        hoyInfo += ingresadosHoy
+          .slice()
+          .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+          .map((s: any) => {
+            const vehStr = s.vehiculo_info ? `${s.vehiculo_info}${s.placa ? ` (${s.placa})` : ''}` : (s.placa || '—');
+            const hora = s.created_at
+              ? new Intl.DateTimeFormat('es-VE', { timeZone: 'America/Caracas', hour: '2-digit', minute: '2-digit', hour12: true }).format(new Date(s.created_at))
+              : (s.hora || '—');
+            const tipoStr = s.tipo_personalizado ? `${s.tipo || 'otro'} (${s.tipo_personalizado})` : (s.tipo || '—');
+            const encargados = extractEncargados(s.notas);
+            return `  • ${hora} | Cliente: ${s.nombre_cliente || '—'} | Veh: ${vehStr} | Tipo de servicio: ${tipoStr} | Servicio: ${servicioLabel(s)} | Estado: ${s.estado || '—'}${encargados ? ` | Personal a cargo: ${encargados}` : ''} | Registrado por: ${s.registrado_por || '—'} | Sede: ${s.sede?.nombre || 'General'}`;
+          }).join('\n');
+      } else {
+        hoyInfo += `  Ningún vehículo ha ingresado hoy aún.\n`;
       }
 
       // Ventas de hoy (inline filtered from already-loaded data)
@@ -1807,7 +1852,8 @@ async function loadConversationContext(
           const seguimientoStr = s.seguimiento?.length
             ? s.seguimiento.map((e: any) => `${e.accion}${e.fecha ? ' [' + e.fecha.split('T')[0] + ']' : ''}`).join(' → ')
             : 'Sin seguimiento';
-          return `ID: ${s.id} | Sede: ${s.sede?.nombre || 'General'} | Fecha servicio: ${fechaStr} ${s.hora || ''} | Ingresó (hora Venezuela): ${ingreso}${tiempo} | Registrado por: ${s.registrado_por || 'N/D'} | Cliente: ${clienteNombre} ${clienteApellido}${s.telefono ? ' (Tel:' + s.telefono + ')' : ''} | Vehículo: ${vehStr} | Tipo: ${s.tipo}${s.tipo_personalizado ? ` (${s.tipo_personalizado})` : ''} | Descripción: ${s.descripcion || '—'} | Estado: ${estadoActual} | Costo: $${s.costo_estimado ?? s.costo_final ?? 0} | Seguimiento: ${seguimientoStr}`;
+          const encargados = extractEncargados(s.notas);
+          return `ID: ${s.id} | Sede: ${s.sede?.nombre || 'General'} | Fecha servicio: ${fechaStr} ${s.hora || ''} | Ingresó (hora Venezuela): ${ingreso}${tiempo} | Registrado por: ${s.registrado_por || 'N/D'} | Cliente: ${clienteNombre} ${clienteApellido}${s.telefono ? ' (Tel:' + s.telefono + ')' : ''} | Vehículo: ${vehStr} | Tipo de servicio: ${s.tipo}${s.tipo_personalizado ? ` (${s.tipo_personalizado})` : ''} | Servicio/Descripción: ${servicioLabel(s)} | Estado: ${estadoActual}${encargados ? ` | Personal a cargo: ${encargados}` : ''} | Costo: $${s.costo_estimado ?? s.costo_final ?? 0} | Seguimiento: ${seguimientoStr}`;
         }).join('\n');
       }
 
