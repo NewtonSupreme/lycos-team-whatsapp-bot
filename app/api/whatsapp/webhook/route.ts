@@ -277,6 +277,13 @@ function getVzlaDate(): Date {
 function getVzlaDateString(): string { return getVzlaDate().toISOString().split('T')[0]; }
 function getVzlaDayOfWeek(): number { return getVzlaDate().getDay(); }
 
+// Sanea un teléfono: deja SOLO dígitos. Si no tiene al menos 7 dígitos (o trae letras/
+// nombres tipo "ANGEL"/"CARMEN"), se descarta → devuelve ''. Nunca guardamos texto ahí.
+function sanitizeTelefono(raw?: string | null): string {
+  const digits = String(raw || '').replace(/[^\d]/g, '');
+  return digits.length >= 7 ? digits : '';
+}
+
 // Extrae el "Personal a Cargo (Jefe / Mecánicos)" desde el campo notas del servicio.
 // El panel guarda: "Encargados: Freddy (Mecánico), Juan (Jefe)".
 function extractEncargados(notas?: string | null): string {
@@ -735,6 +742,7 @@ REGLA DE TAGS (Imprimir SIEMPRE al final de tu respuesta):
     - ✅ EJEMPLO CORRECTO: [CITA_UPSERT: | 2026-06-02 | 08:00 | | | pendiente | Cambio de aceite | | 45 | Juan Pérez | Chevrolet D-MAX | | ]
    - ⚠️ FORMATO CORRECTO (SOLO valores separados por |, NUNCA incluyas los nombres de los campos): [SERVICIO_UPSERT: | | | Jorge Muñoz | 584146857440 | Chevrolet D-MAX | A46AZOA | otro | Cambio pastillas freno + Aceite 10W30 | pendiente | 45 | 310595c5-5258-47fa-9b69-5ad9932685a7 | Frenos]
    - ⚠️ EJEMPLO INCORRECTO (NO hagas esto — esto rompe el parser): [SERVICIO_UPSERT: nombre_cliente | Jorge Muñoz | telefono | | ...]
+   - 📵 CAMPO TELÉFONO: SOLO números (ej. 584146857440). Si NO tienes el número, déjalo VACÍO. ⛔ JAMÁS pongas un nombre, apellido ni letras (ej. "ANGEL", "CARMEN", "AGÜERO") en el campo de teléfono: el nombre va en nombre_cliente, NUNCA en telefono.
    - ⚠️ REGLA CRITICA: El tag debe contener SOLO los valores separados por |. NUNCA incluyas etiquetas/nombres de campos dentro del tag. El primer campo (id_opcional) se deja vacío para crear un nuevo servicio, o se pone un UUID válido (36 caracteres con guiones) para actualizar uno existente.
    - [CITA_DELETE: id]
    - [CLIENTE_UPSERT: id_opcional | nombre | apellido | telefono | cedula | direccion | sede_id]
@@ -4337,7 +4345,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               cliente_id: finalClientId,
               vehiculo_id: finalVehId,
               nombre_cliente: resolvedClientName || 'No definido',
-              telefono: telefono || '00000000000',
+              telefono: sanitizeTelefono(telefono) || null,
               vehiculo_info: vehiculoInfo || 'Vehículo desconocido',
               placa: placa || 'SIN-PLACA',
               tipo: tipo || 'otro',
@@ -4938,7 +4946,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                   cliente_id: null,
                   vehiculo_id: vehIdFb,
                   nombre_cliente: 'No definido',
-                  telefono: '00000000000',
+                  telefono: null,
                   vehiculo_info: vehiculoFb || 'Vehículo (de imagen)',
                   placa: placaFb || 'SIN-PLACA',
                   tipo: 'otro',

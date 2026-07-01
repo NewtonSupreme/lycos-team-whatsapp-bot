@@ -1016,7 +1016,8 @@ function ListView({ items, onEdit, onDelete, onTracking, onInvoice, onBudget }: 
 function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () => void }) {
   const [formData, setFormData] = useState({
     nombre_cliente: cita?.nombre_cliente || cita?.vehiculos?.clientes?.nombre || '',
-    telefono: cita?.telefono || cita?.vehiculos?.clientes?.telefono || '',
+    // Saneado: solo dígitos/símbolos de teléfono (datos viejos con letras se limpian al abrir).
+    telefono: String(cita?.telefono || cita?.vehiculos?.clientes?.telefono || '').replace(/[^\d+()\s-]/g, '').trim(),
     vehiculo_info: cita?.vehiculo_info || (cita?.vehiculos ? `${cita?.vehiculos.marca} ${cita?.vehiculos.modelo}` : ''),
     placa: cita?.placa || cita?.vehiculos?.placa || '',
     tipo: cita?.tipo || 'otro',
@@ -1198,7 +1199,8 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
     let clienteId = selectedClienteId || cita?.cliente_id || null;
     let vehiculoId = selectedVehiculoId || null;
     const nombreFull = formData.nombre_cliente.trim();
-    const tel = formData.telefono.trim();
+    // Teléfono saneado: solo dígitos/símbolos válidos (nunca letras/nombres).
+    const tel = formData.telefono.replace(/[^\d+()\s-]/g, '').trim();
     const placaNorm = formData.placa.trim().toUpperCase().replace(/[-\s]/g, '');
     const placaValida = !!placaNorm && !['SINPLACA', 'SIN', 'NA', 'N/A'].includes(placaNorm);
 
@@ -1218,7 +1220,9 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
         }
       }
       if (clienteId) {
-        await supabase!.from('clientes').update({ nombre, apellido, ...(tel ? { telefono: tel } : {}) }).eq('id', clienteId);
+        // Actualiza también el teléfono al valor saneado (permite corregir/limpiar datos malos).
+        // clientes.telefono es NOT NULL → si queda vacío usamos 'S/N'.
+        await supabase!.from('clientes').update({ nombre, apellido, telefono: tel || 'S/N' }).eq('id', clienteId);
       } else {
         let existing: any = null;
         if (tel) {
@@ -1387,7 +1391,9 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
         // Avoid sending empty strings for optional fields
         if (!updatePayload.tipo_personalizado) delete updatePayload.tipo_personalizado;
         if (!updatePayload.placa) delete updatePayload.placa;
-        if (!updatePayload.telefono) delete updatePayload.telefono;
+        // El teléfono SÍ se guarda aunque quede vacío (para poder corregir/limpiar datos malos).
+        // Solo se aceptan dígitos/símbolos de teléfono; si queda vacío → null.
+        updatePayload.telefono = (String(updatePayload.telefono || '').replace(/[^\d+()\s-]/g, '').trim()) || null;
 
         const { error } = await withSedeFilter(supabase!.from('servicios'))
           .update(updatePayload)
@@ -1492,7 +1498,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
         };
         if (!payload.tipo_personalizado) delete payload.tipo_personalizado;
         if (!payload.placa) delete payload.placa;
-        if (!payload.telefono) delete payload.telefono;
+        payload.telefono = (String(payload.telefono || '').replace(/[^\d+()\s-]/g, '').trim()) || null;
         const { error } = await withSedeFilter(supabase!.from('servicios')).insert(withSedeInsert(payload));
         if (error) throw error;
 
@@ -1575,11 +1581,13 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
             </div>
             <div className="col-span-2 sm:col-span-1 space-y-2">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Tel&eacute;fono Contacto</label>
-              <input 
+              <input
+                type="tel"
+                inputMode="numeric"
                 className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
                 placeholder="0424 123 4567"
                 value={formData.telefono}
-                onChange={e => setFormData({...formData, telefono: e.target.value})}
+                onChange={e => setFormData({...formData, telefono: e.target.value.replace(/[^\d+()\s-]/g, '')})}
               />
             </div>
             <div className="col-span-2 sm:col-span-1 space-y-2 relative">
