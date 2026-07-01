@@ -585,7 +585,7 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
         * ¡CRÍTICO! NUNCA pidas confirmación, ni solicites datos adicionales, ni pidas la sede. Registra de una vez.
         * Nombre del cliente: Usa el nombre que detectes en el mensaje. Si NO hay ningún nombre de cliente identificable en el mensaje, deja el campo nombre_cliente VACÍO (no uses el nombre del administrador ni ningún nombre genérico). No exijas que se cree un cliente primero.
         * Información del Vehículo: Extrae la marca, modelo y año del texto o de la imagen (ej. "2007 Ricardo chaneton").
-        * Estatus: Mapea a 'completada' por defecto si es un trabajo realizado, o 'en_proceso' si lo especifica, o 'pendiente' si dice "presupuesto por definir" o similar.
+        * Estatus (⚠️ IMPORTANTE): Un vehículo que INGRESA al taller para trabajarlo se registra como 'en_proceso' POR DEFECTO (o 'en_revision' si es diagnóstico/revisión/tren delantero). Si dice "presupuesto por definir" → 'pendiente'. ⛔ NUNCA uses 'completada' al registrar un vehículo que acaba de ingresar: SOLO usa 'completada' si el admin dice EXPLÍCITAMENTE que el trabajo YA está terminado/entregado/listo/pagado.
         * Descripción: Usa el servicio detallado (ej. "Cambio silenciador intermedio"). Si dice "presupuesto por definir", escribe "por definir" en el campo.
         * Costo/Precio: Si indica un precio, inclúyelo. Si dice "presupuesto por definir" o no da precio, deja costo_estimado vacío.
         * Sede: Si el admin menciona una sede en su mensaje ("San Antonio", "Carrizal", etc.), usa esa. Si no, usa la sede del perfil. NUNCA uses [ASK_SEDE].
@@ -1282,6 +1282,7 @@ interface Memoria {
     nuevaDescripcion: string;
     nuevoRegistrante: string;
     reintentos?: number;
+    createdAt?: number;
     vehiculoInfo?: string;
     placa?: string;
     vehiculoId?: string | null;
@@ -3095,12 +3096,14 @@ async function ensureVehiculoId(db: any, opts: {
   } catch (e) { console.error('ensureVehiculoId:', e); return null; }
 }
 
-// Combina nombres de registrantes en "A y B y C" sin duplicar (case-insensitive).
+// Combina nombres de registrantes en "A y B y C" sin duplicar (case-insensitive y
+// tolerante a espacios repetidos: "Juan  Pablo" == "Juan Pablo").
 function combineRegistrantes(...names: (string | null | undefined)[]): string {
   const out: string[] = [];
+  const norm = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
   for (const raw of names) {
-    for (const part of String(raw || '').split(/\s+y\s+|,/i).map(s => s.trim()).filter(Boolean)) {
-      if (!out.some(x => x.toLowerCase() === part.toLowerCase())) out.push(part);
+    for (const part of String(raw || '').split(/\s+y\s+|,/i).map(s => s.trim().replace(/\s+/g, ' ')).filter(Boolean)) {
+      if (!out.some(x => norm(x) === norm(part))) out.push(part);
     }
   }
   return out.join(' y ');
@@ -3122,6 +3125,7 @@ async function decidirRespuestaDuplicado(
     servicioId: dup.id,
     nuevaDescripcion: (newDesc || '').trim(),
     nuevoRegistrante: newBy || 'Otro',
+    createdAt: Date.now(),
     vehiculoInfo: dup.vehiculo_info,
     placa: dup.placa,
     vehiculoId: dup.vehiculo_id ?? null,
@@ -3669,21 +3673,38 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       const hasNo = tokens.some(t => NO.has(t));
       let decision: 'yes' | 'no' | null = (hasYes && !hasNo) ? 'yes' : ((hasNo && !hasYes) ? 'no' : null);
 
-      // Anti-bucle: si tras 2 intentos sigue ambiguo pero NO dijo "no", asumimos SÍ
-      // (el admin claramente está gestionando ESTE vehículo). Nunca queda en bucle.
-      if (decision === null) {
+      // 🧠 Señales de que el usuario NO está respondiendo la pregunta (cambió de tema):
+      //  - la pregunta ya es vieja (stale)  - habla de OTRO vehículo (otra placa)
+      //  - hace otra petición (reporte, inventario, factura, etc.) o pregunta algo.
+      const STALE_MS = 10 * 60 * 1000; // 10 minutos
+      const isStale = pm.createdAt ? (Date.now() - pm.createdAt > STALE_MS) : true;
+      const looksLikeOtherRequest = /\b(reporte|reportes|dame|damelo|muestr|mostrar|ensen|cuant|cuenta|listado|lista|estatus|status|cuales|ingresad|factura|precio|inventario|stock|venta|ventas|cita|citas|agenda|cierre|ganancia|resumen|informe|balance|hora|tiempo)\b/.test(norm) || bodyClean.includes('?');
+      const curPlaca = extractPlate(messageBody).toUpperCase().replace(/[-\s]/g, '');
+      const pmPlaca = (pm.placa || '').toUpperCase().replace(/[-\s]/g, '');
+      const otherVehicle = !!curPlaca && !!pmPlaca && curPlaca !== pmPlaca;
+
+      if (decision === null && (isStale || otherVehicle || looksLikeOtherRequest)) {
+        // ABANDONAR la pregunta pendiente y procesar el mensaje con normalidad.
+        // (NUNCA fusionar un reporte / otro vehículo / mensaje viejo dentro del servicio.)
+        delete ctx.memoria.pending_merge_servicio;
+        await db.from('conversaciones').update({ memoria: ctx.memoria }).eq('telefono', from);
+        console.log(`↩️ [${from}] Combinación abandonada (stale=${isStale}, otroVeh=${otherVehicle}, otraPet=${looksLikeOtherRequest}). Se procesa el mensaje normal.`);
+        // ⬇️ SIN return: el flujo continúa al procesamiento normal (registrar/reportar).
+      } else if (decision === null) {
+        // Ambiguo pero parece intento de responder: reintentar máx. 2 veces; luego CANCELAR.
+        // (Jamás asumir "sí": eso fusionaba trabajo/basura equivocada al servicio.)
         const intentos = (pm.reintentos || 0) + 1;
-        if (intentos >= 2 && !hasNo) {
-          decision = 'yes';
-        } else {
-          ctx.memoria.pending_merge_servicio = { ...pm, reintentos: intentos };
+        if (intentos >= 2) {
+          delete ctx.memoria.pending_merge_servicio;
           await db.from('conversaciones').update({ memoria: ctx.memoria }).eq('telefono', from);
-          await sendMsg(from, 'Para continuar responde *SÍ* (actualizo ese mismo servicio y queda a nombre de ambos) o *NO* (lo dejo como está). 🙏');
+          await sendMsg(from, 'Cancelé esa acción para no confundir el registro. Dime qué necesitas y con gusto te ayudo. 🙏');
           return;
         }
-      }
-
-      {
+        ctx.memoria.pending_merge_servicio = { ...pm, reintentos: intentos };
+        await db.from('conversaciones').update({ memoria: ctx.memoria }).eq('telefono', from);
+        await sendMsg(from, 'Para continuar responde *SÍ* (actualizo ese mismo servicio y queda a nombre de ambos) o *NO* (lo dejo como está). 🙏');
+        return;
+      } else {
         delete ctx.memoria.pending_merge_servicio;
         await db.from('conversaciones').update({ memoria: ctx.memoria }).eq('telefono', from);
 
@@ -4238,6 +4259,14 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             // Normalizar estado/tipo a valores permitidos por las CHECK constraints.
             if (!SERVICIO_ESTADOS_VALIDOS.includes(estado)) {
               estado = estado === 'en_progreso' ? 'en_proceso' : 'pendiente';
+            }
+            // 🛡️ Blindaje: un REGISTRO NUEVO (sin id existente) NO debe quedar en 'completada'
+            // salvo que el admin diga explícitamente que el trabajo ya terminó. Un vehículo que
+            // recién ingresa va 'en_proceso' (o 'en_revision'). Evita el auto-completada erróneo.
+            if (!id && ['completada', 'completado', 'finalizado', 'finalizada'].includes(estado)) {
+              const diceTerminado = /\b(termin|complet|finaliz|list[oa]s?|entrega|ya (esta|está|quedo|quedó)|pagad|cerr[oó]|reparad|arreglad|resuelt)\b/i
+                .test(`${messageBody} ${descripcion || ''}`.normalize('NFD').replace(/[̀-ͯ]/g, ''));
+              if (!diceTerminado) estado = 'en_proceso';
             }
             if (!SERVICIO_TIPOS_VALIDOS.includes(tipo)) {
               if (tipo && tipo !== 'otro') tipoPersonalizado = tipoPersonalizado || tipo;
