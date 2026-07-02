@@ -374,7 +374,7 @@ ES MUY IMPORTANTE QUE SEAS EXTREMADAMENTE BREVE Y DIRECTO (MAX 3 LÍNEAS).
 
 HORARIO:
 - San Antonio de los Altos: Lunes a Sábado 8:00 AM – 5:00 PM.
-- Caracas (El Paraíso) y (El Cementerio): Lunes a Viernes 8:00 AM – 4:00 PM. (¡IMPORTANTE! Las citas en estas sedes solo se pueden agendar hasta las 3:00 PM).
+- Caracas (El Paraíso) y (El Cementerio): Lunes a Viernes 8:00 AM – 4:00 PM y Sábados 8:30 AM – 2:00 PM. (¡IMPORTANTE! Las citas en estas sedes de lunes a viernes se agendan hasta las 3:00 PM y los sábados de 8:30 AM hasta las 2:00 PM).
 DOMINGOS: CERRADO en todas las sedes sin excepciones.
 UBICACION:
 - San Antonio de los Altos: San Antonio de los Altos, Altos Mirandinos, Miranda. (En San Antonio de los Altos, distribuidor de las minas al frente del Frescos Market nos encontramos). 💡 BENEFICIOS EXCLUSIVOS: Si vienes a esta sede tienes revisión totalmente gratuita, instalación de la app del taller gratis y tecnología automotriz profesional.
@@ -494,7 +494,7 @@ REGLA DE ORO ABSOLUTA DE CITAS: ESTÁ TERMINANTEMENTE PROHIBIDO imprimir la etiq
 Si no tienes estos datos, DEBES pedírselos primero sin excepción.
 Si no da la placa, insiste una vez amablemente, si sigue sin darla procede con nombre y modelo.
 Calcula la fecha exacta desde hoy usando FECHA/HORA VENEZUELA. Nunca agendes domingos.
-⚠️ REGLA DE HORARIO DE CITAS: Para las sedes de Caracas (El Paraíso y El Cementerio), la última hora permitida para agendar es a las 03:00 PM (15:00). NO agendes a las 4:00 PM ni después. Para San Antonio, sí puedes agendar hasta las 5:00 PM.
+⚠️ REGLA DE HORARIO DE CITAS: Para las sedes de Caracas (El Paraíso y El Cementerio), de Lunes a Viernes la última hora permitida para agendar es a las 03:00 PM (15:00) y los Sábados es de 8:30 AM a 02:00 PM (14:00). NO agendes después de esas horas. Para San Antonio, sí puedes agendar de 8:00 AM hasta las 5:00 PM de Lunes a Sábado.
 VERIFICA estrictamente si tiene citas registradas o si el horario está ocupado globalmente.
 ORDEN DEL SISTEMA #1 (CITAS): Cuando tú y el cliente ya acordaron de forma exitosa los datos (Nombre, Vehículo y Día), DEBES **OBLIGATORIAMENTE** imprimir la siguiente etiqueta oculta de sistema AL FINAL de tu respuesta (solo UNA vez):
 [CITA: AAAA-MM-DD HH:MM | descripción breve | marca modelo]
@@ -1217,13 +1217,13 @@ export async function POST(request: NextRequest) {
             const motivo = !botGlobalActivo ? 'Bot Desactivado Globalmente' : 'Conversación en control humano';
             console.log(`👤 [${from}] ${motivo} — bot silenciado.`);
             // Update last message in CRM so admin sees it, incrementing unread count properly
-            const { data: convUnread } = await db.from('conversaciones').select('mensajes_sin_leer').eq('telefono', from).eq('sede_id', effectiveSedeId).maybeSingle();
+            const { data: convUnread } = await db.from('conversaciones').select('mensajes_sin_leer').eq('telefono', from).maybeSingle();
             const currentUnread = (convUnread?.mensajes_sin_leer ?? 0) + 1;
             await db.from('conversaciones').update({
               ultimo_mensaje: messageBody.substring(0, 200),
               ultimo_mensaje_at: new Date().toISOString(),
               mensajes_sin_leer: currentUnread,
-            }).eq('telefono', from).eq('sede_id', effectiveSedeId);
+            }).eq('telefono', from);
             // Extra push: human mode means you MUST respond manually
             void sendGlobalPushNotification({
               title: `🆘 Respuesta manual requerida`,
@@ -1244,8 +1244,8 @@ export async function POST(request: NextRequest) {
 
       console.log(`🤖 [${from}] Entering processCoreLogic...`);
       const phone = from.replace(/[^0-9]/g, ''); // Normalize
-      // Update is_processing to true using the correct sede
-      await db.from('conversaciones').update({ is_processing: true }).eq('telefono', phone).eq('sede_id', effectiveSedeId);
+      // Update is_processing to true
+      await db.from('conversaciones').update({ is_processing: true }).eq('telefono', phone);
 
       // Mark any OLD pending messages from THIS user as superseded
       try {
@@ -1258,7 +1258,7 @@ export async function POST(request: NextRequest) {
       try {
         await processCoreLogic(db, phone, messageBody, wa_message_id, waProfileName);
       } finally {
-        await db.from('conversaciones').update({ is_processing: false }).eq('telefono', phone).eq('sede_id', effectiveSedeId);
+        await db.from('conversaciones').update({ is_processing: false }).eq('telefono', phone);
       }
       console.log(`✅ [${phone}] processCoreLogic finished.`);
     } // end for loop
@@ -2604,7 +2604,7 @@ async function processIntents(
   if (memChanged) {
     ctx.memoria = newMemoria; // update in-place for this run
     try {
-      await db.from('conversaciones').upsert({ telefono: from, memoria: newMemoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+      await db.from('conversaciones').upsert({ telefono: from, memoria: newMemoria, sede_id: ctx.sede_id || DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
     } catch (e) { console.error('Error saving memoria:', e); }
   }
 
@@ -2804,7 +2804,7 @@ async function getOrCreateClientAndVehicle(
             nombre: fullName || name,
             wa_name: waProfileName || undefined
           }
-        }).eq('telefono', phone).eq('sede_id', sedeId || DEFAULT_SEDE_ID);
+        }).eq('telefono', phone);
       }
     }
 
@@ -3452,7 +3452,7 @@ async function sendContactCard(to: string, phone: string, displayName: string): 
       await db.from('conversaciones').update({
         ultimo_mensaje: `[Tarjeta de contacto: ${displayName}]`,
         ultimo_mensaje_at: new Date().toISOString()
-      }).eq('telefono', cleanTo).eq('sede_id', DEFAULT_SEDE_ID);
+      }).eq('telefono', cleanTo);
     }
   } catch (e) {
     console.error('❌ sendContactCard:', e);
@@ -4538,7 +4538,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         if (citaDeleteMatch && db) {
           try {
             const target = citaDeleteMatch[1].trim();
-            await db.from('citas').delete().eq('id', target).eq('sede_id', DEFAULT_SEDE_ID);
+            await db.from('citas').delete().eq('id', target);
             console.log(`📅 ADMIN: Cita eliminada: ${target}`);
           } catch (e) { console.error('Error in CITA_DELETE:', e); }
         }
@@ -5193,7 +5193,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
     // Marcar como completado si llegamos hasta aquí con éxito
     if (db && pendingId) {
-      await db.from('mensajes_pendientes_ia').update({ status: 'completed' }).eq('id', pendingId).eq('sede_id', DEFAULT_SEDE_ID);
+      await db.from('mensajes_pendientes_ia').update({ status: 'completed' }).eq('id', pendingId);
     }
 
     await updateConversation(db, from, messageBody, ctx.memoria, r?.clientId);

@@ -96,7 +96,6 @@ export async function POST(request: NextRequest) {
       .from('mensajes_whatsapp')
       .select('id, from_number, media_url, media_type, wa_message_id, body, tipo')
       .eq('id', messageId)
-      .eq('sede_id', DEFAULT_SEDE_ID)
       .single();
 
     if (msgErr || !msg) {
@@ -160,7 +159,7 @@ export async function POST(request: NextRequest) {
     console.log(`✅ [redescribe] Descripción: "${description.substring(0, 80)}"`);
 
     // 4. Actualizar el body del mensaje en la DB
-    await db.from('mensajes_whatsapp').update({ body: newBody }).eq('id', messageId).eq('sede_id', DEFAULT_SEDE_ID);
+    await db.from('mensajes_whatsapp').update({ body: newBody }).eq('id', messageId);
 
     // 5. Ejecutar processCoreLogic para que la IA responda con el contenido real de la imagen
     const fromNumber = msg.from_number;

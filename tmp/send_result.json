@@ -1,0 +1,12 @@
+[
+  "Iniciando script...",
+  "Buscando conversación para 584142289474...",
+  "Conversación encontrada: Teléfono=584142289474, Sede=c5e6f95a-cdb8-4999-9210-ae3f6d4a7d44, Estado=bot",
+  "Enviando mensaje a Meta WhatsApp Cloud API...",
+  "✅ Mensaje enviado a WhatsApp exitosamente. ID: wamid.HBgMNTg0MTQyMjg5NDc0FQIAERgSOTUzOEU1OEMyRTNEOEJEQzk0AA==",
+  "Guardando mensaje en Supabase como si fuera el BOT...",
+  "✅ Registro en mensajes_whatsapp creado con éxito (es_ia: true).",
+  "Actualizando tabla conversaciones...",
+  "✅ Conversación actualizada con éxito (estado: 'bot', is_processing: false).",
+  "¡Todo completado sin errores!"
+]
