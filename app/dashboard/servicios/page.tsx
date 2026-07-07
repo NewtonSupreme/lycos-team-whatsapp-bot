@@ -9,7 +9,7 @@ import {
   TrendingUp, Save, CheckCircle2, XCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase, registrarFactura, createPresupuesto, generateNumeroPresupuesto, syncClientData } from '@/lib/supabase';
+import { supabase, registrarFactura, createPresupuesto, generateNumeroPresupuesto, syncClientData, transferVehiculo } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from "@/lib/store/useSedeStore";
@@ -1061,6 +1061,8 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
   const [showClientResults, setShowClientResults] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [dupAlert, setDupAlert] = useState<any | null>(null); // servicio existente detectado al crear
+  const [vehConflict, setVehConflict] = useState<{ vehiculoId: string; ownerName: string; newClienteId: string; placa: string } | null>(null); // vehículo de otro dueño
+  const [overwriteClient, setOverwriteClient] = useState(false); // renombrar (sobreescribir) el cliente vinculado
   const [plateStatus, setPlateStatus] = useState<'idle' | 'checking' | 'found' | 'new'>('idle');
   const [clientVehiculos, setClientVehiculos] = useState<any[]>([]);
   const [showVehiculoSelector, setShowVehiculoSelector] = useState(false);
@@ -1195,65 +1197,100 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
   // ── Resolver robusto: encuentra o CREA (sin duplicar) cliente + vehículo ──
   // Funciona igual al crear y al EDITAR. Esto evita tener que ir a Clientes y luego a
   // Vehículos por separado: con poner el nombre/teléfono/placa, el sistema lo asocia todo.
-  const resolveClienteYVehiculo = async (): Promise<{ clienteId: string | null; vehiculoId: string | null }> => {
+  const resolveClienteYVehiculo = async (transferVeh = false): Promise<{
+    clienteId: string | null; vehiculoId: string | null;
+    conflict?: { vehiculoId: string; ownerName: string; newClienteId: string; placa: string };
+  }> => {
     let clienteId = selectedClienteId || cita?.cliente_id || null;
-    let vehiculoId = selectedVehiculoId || null;
+    let vehiculoId = selectedVehiculoId || cita?.vehiculo_id || null;
     const nombreFull = formData.nombre_cliente.trim();
     // Teléfono saneado: solo dígitos/símbolos válidos (nunca letras/nombres).
     const tel = formData.telefono.replace(/[^\d+()\s-]/g, '').trim();
     const placaNorm = formData.placa.trim().toUpperCase().replace(/[-\s]/g, '');
     const placaValida = !!placaNorm && !['SINPLACA', 'SIN', 'NA', 'N/A'].includes(placaNorm);
 
-    // CLIENTE: actualizar el existente, o buscar duplicado (tel → nombre), o crear.
+    // ── CLIENTE ──
+    // ⚠️ CLAVE: si el nombre escrito es DISTINTO al del cliente vinculado, NUNCA renombramos
+    // ese cliente (eso sobrescribía a Ricardo/otros). Se trata como OTRO cliente: se busca
+    // o se crea, y se re-vincula. Solo si es el MISMO cliente actualizamos su teléfono.
     if (nombreFull) {
       const parts = nombreFull.split(/\s+/);
       const nombre = parts[0];
       const apellido = parts.slice(1).join(' ') || '—';
-      // Si el cliente actual es el GENÉRICO de taller (compartido), no lo renombramos:
-      // tratamos como "sin cliente" para crear/asociar el cliente REAL y re-vincular.
-      if (clienteId) {
-        const { data: cur } = await supabase!.from('clientes').select('nombre, apellido').eq('id', clienteId).maybeSingle();
-        const esGenerico = !!cur && String(cur.nombre || '').trim().toLowerCase() === 'consumidor final';
-        const mismoNombre = !!cur && `${cur.nombre || ''} ${cur.apellido || ''}`.trim().toLowerCase() === nombreFull.toLowerCase();
-        if (esGenerico && !mismoNombre) {
-          clienteId = null;
-        }
-      }
-      if (clienteId) {
-        // Actualiza también el teléfono al valor saneado (permite corregir/limpiar datos malos).
-        // clientes.telefono es NOT NULL → si queda vacío usamos 'S/N'.
-        await supabase!.from('clientes').update({ nombre, apellido, telefono: tel || 'S/N' }).eq('id', clienteId);
+
+      // 🖊️ SOBREESCRIBIR (botón): el usuario pidió renombrar el cliente vinculado.
+      if (overwriteClient && (cita?.cliente_id || selectedClienteId)) {
+        const targetId = (cita?.cliente_id || selectedClienteId) as string;
+        await supabase!.from('clientes').update({ nombre, apellido, telefono: tel || 'S/N' }).eq('id', targetId);
+        await syncClientData(targetId, nombre, apellido, tel || '');
+        clienteId = targetId;
       } else {
-        let existing: any = null;
-        if (tel) {
-          const { data } = await withSedeFilter(supabase!.from('clientes')).select('id').eq('telefono', tel).limit(1).maybeSingle();
-          existing = data;
+        // Normal (NUNCA renombrar): mismo cliente → solo teléfono; distinto → buscar/crear.
+        if (clienteId) {
+          const { data: cur } = await supabase!.from('clientes').select('nombre, apellido').eq('id', clienteId).maybeSingle();
+          const curFull = cur ? `${cur.nombre || ''} ${cur.apellido || ''}`.trim().toLowerCase() : '';
+          if (curFull !== nombreFull.toLowerCase()) {
+            clienteId = null;      // nombre distinto → es otro cliente (no renombrar el actual)
+            vehiculoId = null;     // re-resolver el vehículo por placa para el nuevo cliente
+          }
         }
-        if (!existing) {
-          const { data } = await withSedeFilter(supabase!.from('clientes')).select('id').ilike('nombre', nombre).ilike('apellido', apellido).limit(1).maybeSingle();
-          existing = data;
-        }
-        if (existing) clienteId = existing.id;
-        else {
-          const { data: created, error } = await withSedeFilter(supabase!.from('clientes'))
-            .insert(withSedeInsert({ nombre, apellido, telefono: tel || 'S/N', notas: 'Registrado desde Orden de Servicio' }))
-            .select('id').single();
-          if (error) throw error;
-          clienteId = created.id;
+        if (clienteId) {
+          // Mismo cliente: solo actualizamos su teléfono (NUNCA renombramos aquí).
+          await supabase!.from('clientes').update({ telefono: tel || 'S/N' }).eq('id', clienteId);
+        } else {
+          // Dedup SOLO por nombre+apellido EXACTO. ⚠️ NO buscamos por teléfono: al editar,
+          // el teléfono suele ser el del cliente anterior y enlazaría al equivocado en vez
+          // de crear el nuevo. Si no existe un cliente con ese nombre exacto → se CREA.
+          const { data: existing } = await withSedeFilter(supabase!.from('clientes'))
+            .select('id').ilike('nombre', nombre).ilike('apellido', apellido).limit(1).maybeSingle();
+          if (existing) {
+            clienteId = existing.id;
+          } else {
+            const { data: created, error } = await withSedeFilter(supabase!.from('clientes'))
+              .insert(withSedeInsert({ nombre, apellido, telefono: tel || 'S/N', notas: 'Registrado desde Orden de Servicio' }))
+              .select('id').single();
+            if (error) throw error;
+            clienteId = created.id;
+          }
         }
       }
     }
 
-    // VEHÍCULO: por placa (sin duplicar) → si no existe, crear bajo el cliente.
+    // ── VEHÍCULO ──
+    // Si no tenemos vehículo aún, buscarlo por placa.
     if (!vehiculoId && placaValida) {
-      const { data: existingVeh } = await supabase!.from('vehiculos').select('id, cliente_id').ilike('placa', placaNorm).limit(1).maybeSingle();
-      if (existingVeh) {
-        vehiculoId = existingVeh.id;
-        if (clienteId && existingVeh.cliente_id !== clienteId) {
-          await supabase!.from('vehiculos').update({ cliente_id: clienteId }).eq('id', existingVeh.id);
-        } else if (!clienteId) clienteId = existingVeh.cliente_id;
+      const { data: ev } = await supabase!.from('vehiculos').select('id').ilike('placa', placaNorm).limit(1).maybeSingle();
+      if (ev) vehiculoId = ev.id;
+    }
+
+    // Verificar la propiedad: si el vehículo pertenece a OTRO cliente, avisar (conflicto)
+    // para preguntar si se traslada la propiedad — NO lo movemos en automático.
+    if (vehiculoId && clienteId) {
+      const { data: vcur } = await supabase!.from('vehiculos').select('cliente_id, placa, clientes(nombre, apellido)').eq('id', vehiculoId).maybeSingle();
+      if (vcur && vcur.cliente_id && vcur.cliente_id !== clienteId) {
+        if (!transferVeh) {
+          const owner: any = (vcur as any).clientes;
+          return {
+            clienteId, vehiculoId,
+            conflict: {
+              vehiculoId, newClienteId: clienteId, placa: vcur.placa || placaNorm,
+              ownerName: owner ? `${owner.nombre || ''} ${owner.apellido || ''}`.trim() : 'otro cliente',
+            },
+          };
+        }
+        // Confirmado por el usuario → trasladar la propiedad (mueve vehículo + su historial).
+        try {
+          await transferVehiculo(vehiculoId, clienteId, { usuario: user?.nombre });
+        } catch {
+          // Fallback: al menos re-vincular el vehículo al nuevo cliente.
+          await supabase!.from('vehiculos').update({ cliente_id: clienteId }).eq('id', vehiculoId);
+        }
+      } else if (vcur && !vcur.cliente_id) {
+        await supabase!.from('vehiculos').update({ cliente_id: clienteId }).eq('id', vehiculoId);
       }
     }
+
+    // Crear el vehículo si no existe (bajo el cliente resuelto).
     if (!vehiculoId && clienteId && (formData.vehiculo_info.trim() || placaValida)) {
       const vparts = formData.vehiculo_info.trim().split(/\s+/);
       const marca = vparts[0] || 'Desconocida';
@@ -1267,20 +1304,11 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
       if (error) throw error;
       vehiculoId = created.id;
     }
-    if (!vehiculoId && cita?.vehiculo_id) vehiculoId = cita.vehiculo_id;
 
-    // Asegurar que el vehículo quede vinculado al cliente resuelto (p.ej. al pasar del
-    // cliente genérico al real). Solo si difiere, para no tocar de más.
-    if (vehiculoId && clienteId) {
-      const { data: vcur } = await supabase!.from('vehiculos').select('cliente_id').eq('id', vehiculoId).maybeSingle();
-      if (vcur && vcur.cliente_id !== clienteId) {
-        await supabase!.from('vehiculos').update({ cliente_id: clienteId }).eq('id', vehiculoId);
-      }
-    }
     return { clienteId, vehiculoId };
   };
 
-  const handleSave = async (force = false) => {
+  const handleSave = async (force = false, transferVeh = false) => {
     if (!supabase) return;
     if (!formData.nombre_cliente || !formData.vehiculo_info) {
       alert('Campos obligatorios incompletos');
@@ -1349,7 +1377,13 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
 
       // ── Cliente + Vehículo: encontrar o crear (SIN duplicar), crear y editar ──
       {
-        const resolved = await resolveClienteYVehiculo();
+        const resolved = await resolveClienteYVehiculo(transferVeh);
+        // Si el vehículo pertenece a OTRO cliente, mostramos el modal de traslado y paramos.
+        if (resolved.conflict) {
+          setVehConflict(resolved.conflict);
+          setIsSaving(false);
+          return;
+        }
         finalClienteId = resolved.clienteId;
         finalVehiculoId = resolved.vehiculoId;
       }
@@ -1400,15 +1434,10 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           .eq('id', cita.id);
         if (error) throw error;
         
-        // Sync client name to CRM if edited
-        if (finalClienteId && formData.nombre_cliente.trim() !== '') {
-          const names = formData.nombre_cliente.trim().split(' ');
-          const cNombre = names[0];
-          const cApellido = names.slice(1).join(' ');
-          await supabase!.from('clientes').update({ nombre: cNombre, apellido: cApellido }).eq('id', finalClienteId);
-          await syncClientData(finalClienteId, cNombre, cApellido, formData.telefono || '');
-        }
-        
+        // ⛔ NO se renombra el cliente automáticamente al editar la orden (eso sobrescribía
+        // clientes existentes). El cliente correcto ya se resolvió/creó en resolveClienteYVehiculo.
+        // El renombrado SOLO ocurre si el usuario activó "Sobreescribir cliente" (se hace en el resolver).
+
         // Sync client name to related factura if changed
         const newNombreCliente = formData.nombre_cliente.trim();
         if (oldNombreCliente && oldNombreCliente !== newNombreCliente) {
@@ -1502,14 +1531,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
         const { error } = await withSedeFilter(supabase!.from('servicios')).insert(withSedeInsert(payload));
         if (error) throw error;
 
-        // Sync client name to CRM if edited
-        if (finalClienteId && formData.nombre_cliente.trim() !== '') {
-          const names = formData.nombre_cliente.trim().split(' ');
-          const cNombre = names[0];
-          const cApellido = names.slice(1).join(' ');
-          await supabase!.from('clientes').update({ nombre: cNombre, apellido: cApellido }).eq('id', finalClienteId);
-          await syncClientData(finalClienteId, cNombre, cApellido, formData.telefono || '');
-        }
+        // (El cliente ya se creó/asoció en resolveClienteYVehiculo — NO se renombra aquí.)
 
         logActivity({
           usuario: user?.nombre || 'Admin',
@@ -1577,6 +1599,25 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
                     </button>
                   ))}
                 </div>
+              )}
+              {/* Sobreescribir: renombra el cliente vinculado en vez de crear/asociar otro. */}
+              {cita?.cliente_id && (
+                <label className="flex items-center gap-2 mt-1 ml-1 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={overwriteClient}
+                    onChange={e => setOverwriteClient(e.target.checked)}
+                    className="w-3.5 h-3.5 accent-orange-500 rounded"
+                  />
+                  <span className={cn('text-[10px] font-bold', overwriteClient ? 'text-orange-500' : 'text-muted-foreground')}>
+                    Sobreescribir este cliente (renombrarlo)
+                  </span>
+                </label>
+              )}
+              {cita?.cliente_id && !overwriteClient && (
+                <p className="text-[9px] text-muted-foreground/70 ml-1 leading-tight">
+                  Si escribes otro nombre se creará/asociará un cliente distinto (no se modifica el actual).
+                </p>
               )}
             </div>
             <div className="col-span-2 sm:col-span-1 space-y-2">
@@ -1984,6 +2025,47 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
                 className="w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest bg-amber-500 hover:bg-amber-600 text-white transition-all"
               >
                 Registrar de todos modos
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🚗 Conflicto: el vehículo pertenece a otro cliente → trasladar propiedad */}
+      {vehConflict && (
+        <div className="fixed inset-0 z-[125] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl border border-orange-500/30 bg-card shadow-2xl overflow-hidden">
+            <div className="p-5 sm:p-6 bg-orange-500/10 border-b border-orange-500/20 flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-orange-500/20 flex items-center justify-center shrink-0">
+                <Car className="w-6 h-6 text-orange-500" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-widest text-orange-500">Vehículo de otro cliente</h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Este vehículo ya está registrado a otro cliente.</p>
+              </div>
+            </div>
+            <div className="p-5 sm:p-6 space-y-3">
+              <div className="rounded-2xl border border-border bg-muted/30 p-3 space-y-1.5 text-xs">
+                <p className="font-black text-foreground">🚗 Placa {vehConflict.placa}</p>
+                <p className="text-muted-foreground">Dueño actual: <span className="font-bold text-foreground">{vehConflict.ownerName || '—'}</span></p>
+                <p className="text-muted-foreground">Nuevo cliente: <span className="font-bold text-foreground">{formData.nombre_cliente}</span></p>
+              </div>
+              <p className="text-[12px] text-muted-foreground leading-relaxed">
+                Si trasladas la propiedad, el vehículo y su historial de servicios pasan a <b>{formData.nombre_cliente}</b>. El dueño anterior deja de tenerlo asociado. ¿Deseas continuar?
+              </p>
+            </div>
+            <div className="p-4 sm:p-5 border-t border-border bg-muted/10 flex flex-col-reverse sm:flex-row justify-end gap-2.5">
+              <button
+                onClick={() => setVehConflict(null)}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-bold text-muted-foreground hover:bg-muted/50 transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => { setVehConflict(null); handleSave(true, true); }}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest bg-orange-500 hover:bg-orange-600 text-white transition-all"
+              >
+                Trasladar propiedad y actualizar
               </button>
             </div>
           </div>
