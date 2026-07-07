@@ -1,7 +1,7 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-interface InvoiceData {
+export interface InvoiceData {
   id?: string;
   correlativo?: string;
   fecha: string;
@@ -26,8 +26,121 @@ interface InvoiceData {
   // Abono / Pending fields
   tiene_abono?: boolean;
   abono?: number;
+  total_abonado?: number;
   saldo_pendiente?: number;
   estado?: 'pagado' | 'pendiente';
+  // Historial de abonos (para mostrar todos los pagos parciales)
+  abonos?: Array<{
+    monto: number;
+    metodo_pago?: string;
+    created_at?: string;
+    saldo_despues?: number;
+  }>;
+  es_abono?: boolean; // si esta factura representa un abono individual
+  // Comprobante de pago (referencia + imagen del pago móvil / transferencia)
+  comprobante_url?: string;
+  comprobante_referencia?: string;
+}
+
+/** Carga una imagen remota o dataURL y la devuelve como dataURL para jsPDF. */
+async function loadImageAsDataURL(url: string): Promise<{ dataUrl: string; width: number; height: number } | null> {
+  try {
+    let dataUrl = url;
+    if (!url.startsWith('data:')) {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+    const dims = await new Promise<{ width: number; height: number }>((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve({ width: img.naturalWidth || 600, height: img.naturalHeight || 800 });
+      img.onerror = () => resolve({ width: 600, height: 800 });
+      img.src = dataUrl;
+    });
+    return { dataUrl, width: dims.width, height: dims.height };
+  } catch {
+    return null;
+  }
+}
+
+/** Dibuja una página de "Comprobante de Pago" con la referencia y la imagen adjunta. */
+async function drawComprobantePage(doc: any, data: any) {
+  if (!data?.comprobante_url && !data?.comprobante_referencia) return;
+  doc.addPage('a4', 'p');
+  const pageW = doc.internal.pageSize.getWidth();
+  const black = [15, 23, 42] as [number, number, number];
+  const grayLight = [148, 163, 184] as [number, number, number];
+  const orange = [249, 115, 22] as [number, number, number];
+
+  doc.setTextColor(...black);
+  doc.setFontSize(22);
+  doc.setFont('helvetica', 'bolditalic');
+  doc.text('LYCOS TEAM', 20, 24);
+  doc.setTextColor(...orange);
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.text('COMPROBANTE DE PAGO', 20, 31);
+
+  doc.setDrawColor(226, 232, 240);
+  doc.line(20, 36, pageW - 20, 36);
+
+  let y = 46;
+  doc.setTextColor(...grayLight);
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  if (data.correlativo || data.id) {
+    doc.text('FACTURA / NOTA:', 20, y);
+    doc.setTextColor(...black);
+    doc.setFontSize(10);
+    doc.text(String(data.correlativo || data.id?.slice(0, 8)?.toUpperCase() || ''), 55, y);
+    y += 7;
+  }
+  if (data.cliente) {
+    doc.setTextColor(...grayLight);
+    doc.setFontSize(8);
+    doc.text('CLIENTE:', 20, y);
+    doc.setTextColor(...black);
+    doc.setFontSize(10);
+    doc.text(String(data.cliente).toUpperCase(), 55, y);
+    y += 7;
+  }
+  if (data.comprobante_referencia) {
+    doc.setTextColor(...grayLight);
+    doc.setFontSize(8);
+    doc.text('REFERENCIA:', 20, y);
+    doc.setTextColor(...orange);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(String(data.comprobante_referencia), 55, y);
+    y += 9;
+  }
+
+  if (data.comprobante_url) {
+    const img = await loadImageAsDataURL(data.comprobante_url);
+    if (img) {
+      const maxW = pageW - 40;
+      const maxH = doc.internal.pageSize.getHeight() - y - 20;
+      const ratio = Math.min(maxW / img.width, maxH / img.height);
+      const w = img.width * ratio;
+      const h = img.height * ratio;
+      const x = (pageW - w) / 2;
+      try {
+        const fmt = img.dataUrl.includes('image/png') ? 'PNG' : 'JPEG';
+        doc.addImage(img.dataUrl, fmt, x, y + 2, w, h, undefined, 'FAST');
+      } catch { /* si falla la imagen, igual queda la referencia */ }
+    } else {
+      doc.setTextColor(...grayLight);
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      doc.text('(No se pudo cargar la imagen del comprobante)', 20, y + 4);
+    }
+  }
 }
 
 export interface PrintOptions {
@@ -36,8 +149,10 @@ export interface PrintOptions {
   currencyMode?: 'usd' | 'dual' | 'auto';
 }
 
-export const generateInvoicePDF = (
-  dataList: (InvoiceData & { iva_aplicado?: boolean; tasa_bcv?: number; total_ves?: number })[],
+export type InvoicePDFItem = InvoiceData & { iva_aplicado?: boolean; tasa_bcv?: number; total_ves?: number };
+
+export const generateInvoicePDF = async (
+  dataList: InvoicePDFItem[],
   options: PrintOptions = { mode: 'dual', currencyMode: 'dual' }
 ) => {
   // Orientation: Landscape (l), Unit: mm, Format: a4 (297x210)
@@ -252,26 +367,56 @@ export const generateInvoicePDF = (
       infoY += 5;
     }
 
-    // Abono / Pending info
-    if (data.estado === 'pendiente') {
+    // Abono / Pending info — con historial completo de abonos
+    if (data.estado === 'pendiente' || data.es_abono || (data.abonos && data.abonos.length > 0)) {
       if (data.notas || data.tiene_abono) infoY += 2;
-      doc.setFillColor(245, 158, 11, 0.12);
-      doc.roundedRect(margin, infoY, rightAlign - margin, 18, 2, 2, 'F');
-      
-      doc.setTextColor(245, 158, 11);
+
+      const abonosList = data.abonos || [];
+      const totalAbonado = data.total_abonado ?? data.abono ?? (abonosList.reduce((s: number, a: any) => s + Number(a.monto || 0), 0));
+      const saldo = data.saldo_pendiente ?? Math.max(0, Number(data.total) - totalAbonado);
+      const pendiente = data.estado === 'pendiente' && saldo > 0.001;
+
+      // Altura dinámica según cantidad de abonos
+      const baseH = 11;
+      const rowH = 4;
+      const boxH = baseH + (abonosList.length > 0 ? abonosList.length * rowH + 4 : 0);
+
+      doc.setFillColor(pendiente ? 245 : 34, pendiente ? 158 : 197, pendiente ? 11 : 94, 0.12);
+      doc.roundedRect(margin, infoY, rightAlign - margin, boxH, 2, 2, 'F');
+
+      doc.setTextColor(pendiente ? 245 : 22, pendiente ? 158 : 163, pendiente ? 11 : 74);
       doc.setFontSize(8);
       doc.setFont('helvetica', 'bold');
-      doc.text('PENDIENTE POR PAGAR', margin + 3, infoY + 7);
-      
+      doc.text(pendiente ? 'PENDIENTE POR PAGAR' : 'VENTA SALDADA', margin + 3, infoY + 6);
+
+      // Resumen lado derecho
       doc.setTextColor(...grayDark);
       doc.setFontSize(7);
       doc.setFont('helvetica', 'normal');
-      const abonoText = data.abono ? `Abono: $${Number(data.abono).toFixed(2)}` : '';
-      const saldoText = data.saldo_pendiente ? `Saldo pendiente: $${Number(data.saldo_pendiente).toFixed(2)}` : '';
-      const statusText = [abonoText, saldoText].filter(Boolean).join(' | ');
-      if (statusText) doc.text(statusText, rightAlign - 3, infoY + 7, { align: 'right' });
-      
-      infoY += 20;
+      const resumen = `Abonado: $${Number(totalAbonado).toFixed(2)}  |  Restante: $${Number(saldo).toFixed(2)}`;
+      doc.text(resumen, rightAlign - 3, infoY + 6, { align: 'right' });
+
+      // Detalle de cada abono
+      if (abonosList.length > 0) {
+        let ay = infoY + 11;
+        doc.setFontSize(6.5);
+        doc.setTextColor(...grayLight);
+        doc.text('HISTORIAL DE ABONOS:', margin + 3, ay);
+        ay += 4;
+        doc.setTextColor(...grayDark);
+        abonosList.forEach((a: any, i: number) => {
+          const fecha = a.created_at ? new Date(a.created_at).toLocaleDateString('es-VE') : '';
+          const metodo = a.metodo_pago ? a.metodo_pago.replace(/_/g, ' ') : '';
+          const linea = `Abono ${i + 1}: $${Number(a.monto).toFixed(2)}${fecha ? `  ·  ${fecha}` : ''}${metodo ? `  ·  ${metodo}` : ''}`;
+          doc.text(linea, margin + 5, ay);
+          if (a.saldo_despues != null) {
+            doc.text(`Saldo: $${Number(a.saldo_despues).toFixed(2)}`, rightAlign - 3, ay, { align: 'right' });
+          }
+          ay += rowH;
+        });
+      }
+
+      infoY += boxH + 2;
     }
 
     // Notes if exists
@@ -325,8 +470,20 @@ export const generateInvoicePDF = (
     drawInvoice(dataList[0], startX);
   }
 
+  // ── Páginas de Comprobante de Pago ──────────────────────────────
+  // Adjunta la imagen/referencia del pago para que se imprima junto con la factura.
+  const seen = new Set<string>();
+  for (const d of dataList) {
+    if (!d) continue;
+    const key = `${d.id || d.correlativo || ''}|${d.comprobante_url || ''}|${d.comprobante_referencia || ''}`;
+    if ((d.comprobante_url || d.comprobante_referencia) && !seen.has(key)) {
+      seen.add(key);
+      await drawComprobantePage(doc, d);
+    }
+  }
+
   // Save
-  const fileName = dataList.length > 1 
+  const fileName = dataList.length > 1
     ? `Dual_Lycos_${dataList[0].id?.slice(0,4)}_${dataList[1].id?.slice(0,4)}.pdf`
     : `Nota_Lycos_${dataList[0].cliente?.replace(/\s/g, '_') || 'Cliente'}.pdf`;
     

@@ -1476,7 +1476,7 @@ TAGS DE ACCIÓN DISPONIBLES:
 • Registrar venta silenciador (legacy): [ACTION: registrar_venta_silenciador | modelo=MODELO | cantidad=N | precio=MONTO | cliente=NOMBRE | fecha=AAAA-MM-DD] — fecha es OPCIONAL, para registrar ventas de días anteriores.
 
 TONO: Profesional, ejecutivo y eficiente. Español venezolano amable.
-HORARIO: L–Sáb 8AM–5PM | Dom: Cerrado | +58 412-334-3519 | lycosteam7@gmail.com
+HORARIO: L–Vier 8AM–5PM | Sáb: 8:30AM–2PM en Caracas (San Antonio 8AM-5PM) | Dom: Cerrado | +58 412-334-3519 | lycosteam7@gmail.com
 
 PRECIOS PRINCIPALES: Silenciadores $40–$140 | Amortiguadores $40 | Alineación $15–$25 | Balanceo $5–$10 | Elevavidrios $40 | OBD I $20 | Catalizador $30 | Flowmaster $140.
 

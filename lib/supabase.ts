@@ -929,6 +929,8 @@ export async function registrarFactura(factura: {
   emitido_por?: string;
   fecha_emision?: string;
   sede_id?: string | null;
+  comprobante_url?: string;
+  comprobante_referencia?: string;
 }) {
   if (!supabase) return null;
 
@@ -965,13 +967,24 @@ export async function registrarFactura(factura: {
     emitido_por: factura.emitido_por || 'Admin',
     fecha_emision: factura.fecha_emision || getLocalISODate(),
     sede_id: factura.sede_id || null,
+    comprobante_url: factura.comprobante_url || null,
+    comprobante_referencia: factura.comprobante_referencia || null,
   };
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('facturas')
     .insert(insertData)
     .select()
     .single();
+
+  // Auto-recuperación: si las columnas de comprobante aún no existen (migración
+  // no aplicada), reintenta sin ellas para no romper el registro de la factura.
+  if (error && (error.code === 'PGRST204' || /comprobante/i.test(`${error.message || ''} ${(error as any).details || ''}`))) {
+    const fallback: any = { ...insertData };
+    delete fallback.comprobante_url;
+    delete fallback.comprobante_referencia;
+    ({ data, error } = await supabase.from('facturas').insert(fallback).select().single());
+  }
 
   if (error) {
     console.error('Error registrando factura:', error);

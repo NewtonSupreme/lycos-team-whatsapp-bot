@@ -9,19 +9,51 @@ import {
   TrendingUp, Save, CheckCircle2, XCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase, registrarFactura, createPresupuesto, generateNumeroPresupuesto, syncClientData } from '@/lib/supabase';
+import { supabase, registrarFactura, createPresupuesto, generateNumeroPresupuesto, syncClientData, transferVehiculo } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from "@/lib/store/useSedeStore";
 import { Button } from '@/components/ui/button';
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
 import { generatePresupuestoPDF } from '@/lib/presupuesto-pdf';
+import { ComprobanteInput, emptyComprobante, type ComprobanteValue } from '@/components/ventas/ComprobanteInput';
+import { uploadComprobante, comprobanteFields } from '@/lib/comprobante';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 import { cn, getLocalISODate, parseDescripcionItems } from '@/lib/utils';
 import AsignacionTecnicos, { type JobSpec } from '@/components/nomina/AsignacionTecnicos';
 
 // ── Types ─────────────────────────────────────────────────────
+interface ServicioItem {
+  descripcion: string;
+  cantidad: number;
+  precio_unitario: number;
+  total: number;
+}
+
+// Desglosa una descripción (incluyendo las registradas por el bot, que pueden venir
+// multilínea "Nombre: trabajo" o con " + " / comas) en ítems separados para la factura.
+function parseServicioItemsFromText(descripcion: string, totalPrecio = 0): ServicioItem[] {
+  const raw = (descripcion || '').trim();
+  if (!raw) return [];
+  // 1) Multilínea (bot: "Rafael: ...\nJin: ...") → cada línea es un ítem.
+  let pedazos = raw.split(/\n+/).map(s => s.trim()).filter(Boolean);
+  // 2) Si es una sola línea, intentar separar por " + " o " , " / ";"
+  if (pedazos.length === 1) {
+    pedazos = pedazos[0]
+      .split(/\s\+\s|\s*;\s*|\s*\|\s*/)
+      .map(s => s.trim())
+      .filter(Boolean);
+  }
+  if (pedazos.length === 0) pedazos = [raw];
+  // Un solo ítem → recibe el costo total. VARIOS ítems → cada uno empieza en $0, para que
+  // el precio se asigne EXACTAMENTE al servicio que corresponde (no se vuelca al primero).
+  if (pedazos.length === 1) {
+    return [{ descripcion: pedazos[0], cantidad: 1, precio_unitario: totalPrecio, total: totalPrecio }];
+  }
+  return pedazos.map(p => ({ descripcion: p, cantidad: 1, precio_unitario: 0, total: 0 }));
+}
+
 interface CitaServicio {
   id: string;
   fecha: string;
@@ -43,6 +75,9 @@ interface CitaServicio {
   seguimiento?: any[] | null;
   registrado_por?: string | null;
   notas?: string | null;
+  items?: ServicioItem[] | null;
+  comprobante_url?: string | null;
+  comprobante_referencia?: string | null;
   vehiculos?: { marca: string; modelo: string; placa: string; anio?: number; clientes?: { nombre: string; apellido: string; telefono: string } | null } | null;
 }
 
@@ -125,6 +160,8 @@ export default function ServiciosPage() {
   const [trackingCita, setTrackingCita] = useState<CitaServicio | null>(null);
   const [invoiceCita, setInvoiceCita] = useState<CitaServicio | null>(null);
   const [budgetCita, setBudgetCita] = useState<CitaServicio | null>(null);
+  // Cambio de estado pendiente de confirmar (servicio completado que ya es venta).
+  const [pendingEstadoChange, setPendingEstadoChange] = useState<{ cita: CitaServicio; nuevoEstado: string } | null>(null);
   const [inventory, setInventory] = useState<any[]>([]);
   const [selectedForDual, setSelectedForDual] = useState<string[]>([]);
   const [mounted, setMounted] = useState(false);
@@ -145,7 +182,7 @@ export default function ServiciosPage() {
         .select(`
           id, fecha, hora, tipo, tipo_personalizado, descripcion, estado,
           nombre_cliente, vehiculo_info, placa, telefono, created_at,
-          cliente_id, vehiculo_id, sede_id, seguimiento, notas,
+          cliente_id, vehiculo_id, sede_id, seguimiento, notas, items,
           costo_estimado, costo_final, registrado_por,
           vehiculos (marca, modelo, placa, anio, clientes (nombre, apellido, telefono))
         `)
@@ -205,11 +242,10 @@ export default function ServiciosPage() {
     return { accion: `Cambió estado (${getEstadoLabel(viejo)} → ${getEstadoLabel(nuevo)})`, fmt: `Estado cambiado: ${getEstadoLabel(viejo)} → ${getEstadoLabel(nuevo)}` };
   };
 
-  const updateEstado = async (id: string, nuevoEstado: string) => {
-    if (!can('servicios', 'editar')) return alert('No tienes permisos para cambiar el estado de los servicios.');
-    const cita = citas.find(c => c.id === id);
-    if (!cita || cita.estado === nuevoEstado) return;
-
+  // Aplica el cambio de estado real (y registra venta si pasa a completado).
+  const applyEstadoChange = async (cita: CitaServicio, nuevoEstado: string) => {
+    const COMPLETED_STATES = ['completada', 'finalizado', 'finalizada', 'completado'];
+    const id = cita.id;
     try {
       const info = getTransicionInfo(cita.estado, nuevoEstado);
       const newEntry = {
@@ -239,7 +275,6 @@ export default function ServiciosPage() {
       // ── Auto-register sale in ventas_dia when marking as completada/finalizado ──
       // Dashboard-originated sales go only to ventas_dia. Bot-originated go to ventas_silenciadores.
       // This ensures each service appears exactly once in the combined ventas view.
-      const COMPLETED_STATES = ['completada', 'finalizado', 'finalizada', 'completado'];
       if (COMPLETED_STATES.includes(nuevoEstado) && supabase) {
         const precio = Number(cita.costo_final ?? cita.costo_estimado ?? 0);
         const sedeId = cita.sede_id || currentSede?.id;
@@ -288,6 +323,51 @@ export default function ServiciosPage() {
         referencia_tabla: 'servicios'
       });
     } catch (err: any) { alert('Error: ' + err.message); }
+  };
+
+  // Cambio de estado con verificación: si el servicio sale de "completado" y ya tiene una
+  // VENTA asociada, abre un modal de confirmación (en vez de cambiar directo).
+  const updateEstado = async (id: string, nuevoEstado: string) => {
+    if (!can('servicios', 'editar')) return alert('No tienes permisos para cambiar el estado de los servicios.');
+    const cita = citas.find(c => c.id === id);
+    if (!cita || cita.estado === nuevoEstado) return;
+
+    const COMPLETED_STATES = ['completada', 'finalizado', 'finalizada', 'completado'];
+    if (COMPLETED_STATES.includes(cita.estado) && !COMPLETED_STATES.includes(nuevoEstado) && supabase) {
+      try {
+        const refTag = `[ServicioID: ${id}]`;
+        const [{ data: vd }, { data: vs }] = await Promise.all([
+          supabase.from('ventas_dia').select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
+          supabase.from('ventas_silenciadores').select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
+        ]);
+        if (vd || vs) { setPendingEstadoChange({ cita, nuevoEstado }); return; }
+      } catch { /* si falla la verificación, continuamos con el cambio normal */ }
+    }
+    await applyEstadoChange(cita, nuevoEstado);
+  };
+
+  // Confirmado en el modal: elimina la venta asociada y aplica el cambio de estado.
+  const confirmEstadoChangeConVenta = async () => {
+    if (!pendingEstadoChange || !supabase) return;
+    const { cita, nuevoEstado } = pendingEstadoChange;
+    setPendingEstadoChange(null);
+    try {
+      const refTag = `[ServicioID: ${cita.id}]`;
+      const [{ data: vd }, { data: vs }] = await Promise.all([
+        supabase.from('ventas_dia').select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
+        supabase.from('ventas_silenciadores').select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
+      ]);
+      if (vd) await supabase.from('ventas_dia').delete().eq('id', vd.id);
+      if (vs) await supabase.from('ventas_silenciadores').delete().eq('id', vs.id);
+      logActivity({
+        usuario: user?.nombre || 'Admin', modulo: 'Servicios', accion: 'Eliminó venta por cambio de estado',
+        detalles: `Servicio #${cita.id.slice(0, 5)} salió de completado; venta asociada eliminada.`,
+      });
+    } catch (e: any) {
+      alert('No se pudo eliminar la venta asociada: ' + (e?.message || e));
+      return;
+    }
+    await applyEstadoChange(cita, nuevoEstado);
   };
 
   const filtered = citas.filter(c => {
@@ -575,6 +655,53 @@ export default function ServiciosPage() {
       {trackingCita && <TrackingModal cita={trackingCita} onClose={() => { setTrackingCita(null); loadCitas(); }} />}
       {invoiceCita && <InvoiceModal cita={invoiceCita} citas={citas} inventory={inventory} onClose={() => { setInvoiceCita(null); loadCitas(); }} globalBcvRate={globalBcvRate} />}
       {budgetCita && <BudgetModal cita={budgetCita} inventory={inventory} onClose={() => setBudgetCita(null)} />}
+
+      {/* ⚠️ Confirmación al sacar de "completado" un servicio que ya se convirtió en venta */}
+      {pendingEstadoChange && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl border border-amber-500/30 bg-card shadow-2xl overflow-hidden">
+            <div className="p-5 sm:p-6 bg-amber-500/10 border-b border-amber-500/20 flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-6 h-6 text-amber-500" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-widest text-amber-500">Este servicio ya es una venta</h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Vas a cambiarlo de estado completado.</p>
+              </div>
+            </div>
+            <div className="p-5 sm:p-6 space-y-3">
+              <div className="rounded-2xl border border-border bg-muted/30 p-3 space-y-1.5 text-xs">
+                <p className="font-black text-foreground">
+                  🚗 {getDisplayVehicle(pendingEstadoChange.cita)}
+                </p>
+                <p className="text-muted-foreground">
+                  Cambio: <span className="font-bold uppercase">{String(pendingEstadoChange.cita.estado).replace(/_/g, ' ')}</span>
+                  {' → '}
+                  <span className="font-bold uppercase">{String(pendingEstadoChange.nuevoEstado).replace(/_/g, ' ')}</span>
+                </p>
+              </div>
+              <p className="text-[12px] text-muted-foreground leading-relaxed">
+                Al salir de <b>completado</b> se <b>eliminará la venta asociada</b> del sistema.
+                Podrás volver a marcarlo como <b>Completada</b> más tarde y se <b>registrará como venta de nuevo</b> automáticamente.
+              </p>
+            </div>
+            <div className="p-4 sm:p-5 border-t border-border bg-muted/10 flex flex-col-reverse sm:flex-row justify-end gap-2.5">
+              <button
+                onClick={() => setPendingEstadoChange(null)}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-bold text-muted-foreground hover:bg-muted/50 transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmEstadoChangeConVenta}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest bg-amber-500 hover:bg-amber-600 text-white transition-all"
+              >
+                Cambiar estado y eliminar venta
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -890,12 +1017,28 @@ function ListView({ items, onEdit, onDelete, onTracking, onInvoice, onBudget }: 
 function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () => void }) {
   const [formData, setFormData] = useState({
     nombre_cliente: cita?.nombre_cliente || cita?.vehiculos?.clientes?.nombre || '',
-    telefono: cita?.telefono || cita?.vehiculos?.clientes?.telefono || '',
+    // Saneado: solo dígitos/símbolos de teléfono (datos viejos con letras se limpian al abrir).
+    telefono: String(cita?.telefono || cita?.vehiculos?.clientes?.telefono || '').replace(/[^\d+()\s-]/g, '').trim(),
     vehiculo_info: cita?.vehiculo_info || (cita?.vehiculos ? `${cita?.vehiculos.marca} ${cita?.vehiculos.modelo}` : ''),
     placa: cita?.placa || cita?.vehiculos?.placa || '',
     tipo: cita?.tipo || 'otro',
     descripcion: cita?.descripcion || '',
     costo_estimado: cita?.costo_estimado?.toString() || '',
+  });
+  // Servicios desglosados (ítems con precio para la factura). Se autollenan desde la
+  // descripción (incluida la registrada por el bot) si no hay ítems guardados.
+  const [items, setItems] = useState<ServicioItem[]>(() => {
+    const existing = (cita?.items as ServicioItem[] | undefined) || [];
+    if (Array.isArray(existing) && existing.length > 0) {
+      return existing.map(i => ({
+        descripcion: i.descripcion || '',
+        cantidad: Number(i.cantidad) || 1,
+        precio_unitario: Number(i.precio_unitario) || 0,
+        total: Number(i.total) || (Number(i.cantidad) || 1) * (Number(i.precio_unitario) || 0),
+      }));
+    }
+    const total = Number(cita?.costo_final ?? cita?.costo_estimado ?? 0);
+    return parseServicioItemsFromText(cita?.descripcion || '', total);
   });
   const [encargados, setEncargados] = useState<{ nombre: string; rol: 'mecanico' | 'jefe_taller' }[]>(() => {
     if (!cita?.notas) return [];
@@ -921,6 +1064,9 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
   const [filteredClientes, setFilteredClientes] = useState<any[]>([]);
   const [showClientResults, setShowClientResults] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [dupAlert, setDupAlert] = useState<any | null>(null); // servicio existente detectado al crear
+  const [vehConflict, setVehConflict] = useState<{ vehiculoId: string; ownerName: string; newClienteId: string; placa: string } | null>(null); // vehículo de otro dueño
+  const [overwriteClient, setOverwriteClient] = useState(false); // renombrar (sobreescribir) el cliente vinculado
   const [plateStatus, setPlateStatus] = useState<'idle' | 'checking' | 'found' | 'new'>('idle');
   const [clientVehiculos, setClientVehiculos] = useState<any[]>([]);
   const [showVehiculoSelector, setShowVehiculoSelector] = useState(false);
@@ -1034,12 +1180,170 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
     } catch { setPlateStatus('idle'); }
   };
 
-  const handleSave = async () => {
+  // ── Ítems desglosados ──
+  const itemsTotal = items.reduce((s, i) => s + (Number(i.total) || 0), 0);
+  const addItem = () => setItems([...items, { descripcion: '', cantidad: 1, precio_unitario: 0, total: 0 }]);
+  const removeItem = (idx: number) => setItems(items.filter((_, i) => i !== idx));
+  const updateItem = (idx: number, field: keyof ServicioItem, value: string | number) => {
+    setItems(items.map((it, i) => {
+      if (i !== idx) return it;
+      const next: ServicioItem = { ...it, [field]: field === 'descripcion' ? String(value) : (Number(value) || 0) };
+      next.total = (Number(next.cantidad) || 1) * (Number(next.precio_unitario) || 0);
+      return next;
+    }));
+  };
+  // Repuebla los ítems desde la descripción actual (botón "Desglosar").
+  const autoDesglosar = () => {
+    const total = parseFloat(formData.costo_estimado) || itemsTotal || 0;
+    setItems(parseServicioItemsFromText(formData.descripcion || '', total));
+  };
+
+  // ── Resolver robusto: encuentra o CREA (sin duplicar) cliente + vehículo ──
+  // Funciona igual al crear y al EDITAR. Esto evita tener que ir a Clientes y luego a
+  // Vehículos por separado: con poner el nombre/teléfono/placa, el sistema lo asocia todo.
+  const resolveClienteYVehiculo = async (transferVeh = false): Promise<{
+    clienteId: string | null; vehiculoId: string | null;
+    conflict?: { vehiculoId: string; ownerName: string; newClienteId: string; placa: string };
+  }> => {
+    let clienteId = selectedClienteId || cita?.cliente_id || null;
+    let vehiculoId = selectedVehiculoId || cita?.vehiculo_id || null;
+    const nombreFull = formData.nombre_cliente.trim();
+    // Teléfono saneado: solo dígitos/símbolos válidos (nunca letras/nombres).
+    const tel = formData.telefono.replace(/[^\d+()\s-]/g, '').trim();
+    const placaNorm = formData.placa.trim().toUpperCase().replace(/[-\s]/g, '');
+    const placaValida = !!placaNorm && !['SINPLACA', 'SIN', 'NA', 'N/A'].includes(placaNorm);
+
+    // ── CLIENTE ──
+    // ⚠️ CLAVE: si el nombre escrito es DISTINTO al del cliente vinculado, NUNCA renombramos
+    // ese cliente (eso sobrescribía a Ricardo/otros). Se trata como OTRO cliente: se busca
+    // o se crea, y se re-vincula. Solo si es el MISMO cliente actualizamos su teléfono.
+    if (nombreFull) {
+      const parts = nombreFull.split(/\s+/);
+      const nombre = parts[0];
+      const apellido = parts.slice(1).join(' ') || '—';
+
+      // 🖊️ SOBREESCRIBIR (botón): el usuario pidió renombrar el cliente vinculado.
+      if (overwriteClient && (cita?.cliente_id || selectedClienteId)) {
+        const targetId = (cita?.cliente_id || selectedClienteId) as string;
+        await supabase!.from('clientes').update({ nombre, apellido, telefono: tel || 'S/N' }).eq('id', targetId);
+        await syncClientData(targetId, nombre, apellido, tel || '');
+        clienteId = targetId;
+      } else {
+        // Normal (NUNCA renombrar): mismo cliente → solo teléfono; distinto → buscar/crear.
+        if (clienteId) {
+          const { data: cur } = await supabase!.from('clientes').select('nombre, apellido').eq('id', clienteId).maybeSingle();
+          const curFull = cur ? `${cur.nombre || ''} ${cur.apellido || ''}`.trim().toLowerCase() : '';
+          if (curFull !== nombreFull.toLowerCase()) {
+            clienteId = null;      // nombre distinto → es otro cliente (no renombrar el actual)
+            vehiculoId = null;     // re-resolver el vehículo por placa para el nuevo cliente
+          }
+        }
+        if (clienteId) {
+          // Mismo cliente: solo actualizamos su teléfono (NUNCA renombramos aquí).
+          await supabase!.from('clientes').update({ telefono: tel || 'S/N' }).eq('id', clienteId);
+        } else {
+          // Dedup SOLO por nombre+apellido EXACTO. ⚠️ NO buscamos por teléfono: al editar,
+          // el teléfono suele ser el del cliente anterior y enlazaría al equivocado en vez
+          // de crear el nuevo. Si no existe un cliente con ese nombre exacto → se CREA.
+          const { data: existing } = await withSedeFilter(supabase!.from('clientes'))
+            .select('id').ilike('nombre', nombre).ilike('apellido', apellido).limit(1).maybeSingle();
+          if (existing) {
+            clienteId = existing.id;
+          } else {
+            const { data: created, error } = await withSedeFilter(supabase!.from('clientes'))
+              .insert(withSedeInsert({ nombre, apellido, telefono: tel || 'S/N', notas: 'Registrado desde Orden de Servicio' }))
+              .select('id').single();
+            if (error) throw error;
+            clienteId = created.id;
+          }
+        }
+      }
+    }
+
+    // ── VEHÍCULO ──
+    // Si no tenemos vehículo aún, buscarlo por placa.
+    if (!vehiculoId && placaValida) {
+      const { data: ev } = await supabase!.from('vehiculos').select('id').ilike('placa', placaNorm).limit(1).maybeSingle();
+      if (ev) vehiculoId = ev.id;
+    }
+
+    // Verificar la propiedad: si el vehículo pertenece a OTRO cliente, avisar (conflicto)
+    // para preguntar si se traslada la propiedad — NO lo movemos en automático.
+    if (vehiculoId && clienteId) {
+      const { data: vcur } = await supabase!.from('vehiculos').select('cliente_id, placa, clientes(nombre, apellido)').eq('id', vehiculoId).maybeSingle();
+      if (vcur && vcur.cliente_id && vcur.cliente_id !== clienteId) {
+        if (!transferVeh) {
+          const owner: any = (vcur as any).clientes;
+          return {
+            clienteId, vehiculoId,
+            conflict: {
+              vehiculoId, newClienteId: clienteId, placa: vcur.placa || placaNorm,
+              ownerName: owner ? `${owner.nombre || ''} ${owner.apellido || ''}`.trim() : 'otro cliente',
+            },
+          };
+        }
+        // Confirmado por el usuario → trasladar la propiedad (mueve vehículo + su historial).
+        try {
+          await transferVehiculo(vehiculoId, clienteId, { usuario: user?.nombre });
+        } catch {
+          // Fallback: al menos re-vincular el vehículo al nuevo cliente.
+          await supabase!.from('vehiculos').update({ cliente_id: clienteId }).eq('id', vehiculoId);
+        }
+      } else if (vcur && !vcur.cliente_id) {
+        await supabase!.from('vehiculos').update({ cliente_id: clienteId }).eq('id', vehiculoId);
+      }
+    }
+
+    // Crear el vehículo si no existe (bajo el cliente resuelto).
+    if (!vehiculoId && clienteId && (formData.vehiculo_info.trim() || placaValida)) {
+      const vparts = formData.vehiculo_info.trim().split(/\s+/);
+      const marca = vparts[0] || 'Desconocida';
+      const modelo = vparts.slice(1).join(' ').replace(/\b(19|20)\d{2}\b/, '').trim() || '—';
+      const yearMatch = formData.vehiculo_info.match(/\b(19\d\d|20\d\d)\b/);
+      let anio = yearMatch ? parseInt(yearMatch[0]) : new Date().getFullYear();
+      if (anio < 1950 || anio > 2030) anio = new Date().getFullYear();
+      const { data: created, error } = await withSedeFilter(supabase!.from('vehiculos'))
+        .insert(withSedeInsert({ cliente_id: clienteId, marca, modelo, placa: placaValida ? placaNorm : `SP${String(Date.now()).slice(-7)}`, anio, estado: 'en_servicio' }))
+        .select('id').single();
+      if (error) throw error;
+      vehiculoId = created.id;
+    }
+
+    return { clienteId, vehiculoId };
+  };
+
+  const handleSave = async (force = false, transferVeh = false) => {
     if (!supabase) return;
     if (!formData.nombre_cliente || !formData.vehiculo_info) {
       alert('Campos obligatorios incompletos');
       return;
     }
+
+    // 🚨 Alerta anti-duplicado (solo al CREAR): si ya existe un servicio ACTIVO o creado
+    // en las últimas 24h para la MISMA placa (o el mismo cliente), avisamos con un modal
+    // en vez de crear un duplicado. El usuario puede cancelar o registrar de todos modos.
+    if (!cita?.id && !force) {
+      const placaNorm = formData.placa.trim().toUpperCase().replace(/[-\s]/g, '');
+      const nombre = formData.nombre_cliente.trim().toLowerCase();
+      if (placaNorm || (nombre && nombre !== 'no definido')) {
+        try {
+          const recentIso = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+          const { data: cands } = await withSedeFilter(supabase.from('servicios'))
+            .select('id, placa, vehiculo_info, nombre_cliente, estado, descripcion, created_at, registrado_por')
+            .or(`estado.in.(pendiente,confirmada,en_revision,en_proceso,en_progreso,en_espera),created_at.gte.${recentIso}`)
+            .order('created_at', { ascending: false })
+            .limit(300);
+          const dup = (cands || []).find((s: any) => {
+            const sp = (s.placa || '').toUpperCase().replace(/[-\s]/g, '');
+            const sc = (s.nombre_cliente || '').trim().toLowerCase();
+            return (placaNorm && sp && sp === placaNorm) ||
+              (nombre && nombre !== 'no definido' && sc && sc === nombre);
+          });
+          if (dup) { setDupAlert(dup); return; }
+        } catch { /* si falla el chequeo, continuamos normal */ }
+      }
+    }
+
     setIsSaving(true);
     try {
       let finalClienteId = selectedClienteId;
@@ -1075,102 +1379,31 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
       });
       await Promise.all(newEncargadosPromises);
 
-      if (!cita?.id) {
-        // Automatic registration for NEW orders
-        // 1. Manage Client
-        if (!finalClienteId) {
-          const names = formData.nombre_cliente.trim().split(' ');
-          const nombre = names[0];
-          const apellido = names.slice(1).join(' ') || '—';
-          
-          const { data: newClient, error: clientErr } = await withSedeFilter(supabase.from('clientes'))
-            .insert(withSedeInsert({
-              nombre,
-              apellido,
-              telefono: formData.telefono,
-              notas: 'Auto-registrado desde Orden de Servicio'
-            }))
-            .select()
-            .single();
-          
-          if (clientErr) throw clientErr;
-          finalClienteId = newClient.id;
+      // ── Cliente + Vehículo: encontrar o crear (SIN duplicar), crear y editar ──
+      {
+        const resolved = await resolveClienteYVehiculo(transferVeh);
+        // Si el vehículo pertenece a OTRO cliente, mostramos el modal de traslado y paramos.
+        if (resolved.conflict) {
+          setVehConflict(resolved.conflict);
+          setIsSaving(false);
+          return;
         }
-
-        // 2. Manage Vehicle - check if exists by placa first
-        if (!finalVehiculoId && formData.placa) {
-          const { data: existingVeh } = await supabase.from('vehiculos')
-            .select('id, cliente_id')
-            .eq('placa', formData.placa)
-            .maybeSingle();
-
-          if (existingVeh) {
-            finalVehiculoId = existingVeh.id;
-            if (!finalClienteId) finalClienteId = existingVeh.cliente_id;
-          } else if (finalClienteId) {
-            const names = formData.vehiculo_info.trim().split(' ');
-            const marca = names[0];
-            const modelo = names.slice(1).join(' ') || '—';
-            const yearMatch = formData.vehiculo_info.match(/\b(19\d\d|20\d\d)\b/);
-            const anio = yearMatch ? parseInt(yearMatch[0]) : 2025;
-
-            const { data: newVehiculo, error: vehErr } = await withSedeFilter(supabase.from('vehiculos'))
-              .insert(withSedeInsert({
-                cliente_id: finalClienteId,
-                marca,
-                modelo,
-                placa: formData.placa,
-                anio,
-                estado: 'en_servicio'
-              }))
-              .select()
-              .single();
-            
-            if (vehErr) throw vehErr;
-            finalVehiculoId = newVehiculo.id;
-          }
-        }
+        finalClienteId = resolved.clienteId;
+        finalVehiculoId = resolved.vehiculoId;
       }
 
-      // ── Ensure vehicle exists for both CREATE and UPDATE ───────
-      if (!finalVehiculoId && formData.placa) {
-        const { data: existingVeh } = await supabase.from('vehiculos')
-          .select('id, cliente_id')
-          .eq('placa', formData.placa)
-          .maybeSingle();
-
-        if (existingVeh) {
-          finalVehiculoId = existingVeh.id;
-          if (!finalClienteId) finalClienteId = existingVeh.cliente_id;
-        } else if (finalClienteId || cita?.cliente_id) {
-          const ownerId = finalClienteId || cita?.cliente_id;
-          const names = formData.vehiculo_info.trim().split(' ');
-          const marca = names[0] || 'No especificado';
-          const modelo = names.slice(1).join(' ') || '—';
-          const yearMatch = formData.vehiculo_info.match(/\b(19\d\d|20\d\d)\b/);
-          const anio = yearMatch ? parseInt(yearMatch[0]) : 2025;
-
-          const { data: newVehiculo, error: vehErr } = await withSedeFilter(supabase.from('vehiculos'))
-            .insert(withSedeInsert({
-              cliente_id: ownerId,
-              marca,
-              modelo,
-              placa: formData.placa || 'SIN-PLACA',
-              anio,
-              estado: 'en_servicio'
-            }))
-            .select()
-            .single();
-
-          if (vehErr) throw vehErr;
-          finalVehiculoId = newVehiculo.id;
-        }
-      }
-
-      // ── Last-resort fallback: if still null and editing, keep the original ──
-      if (!finalVehiculoId && cita?.vehiculo_id) {
-        finalVehiculoId = cita.vehiculo_id;
-      }
+      // Datos desglosados para guardar (ítems + total).
+      const itemsToSave = items
+        .filter(i => (i.descripcion || '').trim() !== '')
+        .map(i => ({
+          descripcion: i.descripcion.trim(),
+          cantidad: Number(i.cantidad) || 1,
+          precio_unitario: Number(i.precio_unitario) || 0,
+          total: Number(i.total) || (Number(i.cantidad) || 1) * (Number(i.precio_unitario) || 0),
+        }));
+      // Si los ítems ya tienen precios (suma > 0) el costo = suma de ítems; si aún no
+      // se asignaron precios, se conserva el costo del campo manual (no se pone en 0).
+      const costoFinalCalc = itemsTotal > 0 ? itemsTotal : (parseFloat(formData.costo_estimado) || 0);
 
       if (cita?.id) {
         // UPDATE
@@ -1186,7 +1419,8 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           tipo: finalTipo,
           tipo_personalizado: isCustomServicio ? customServicio.trim() : null,
           descripcion: formData.descripcion || '',
-          costo_estimado: parseFloat(formData.costo_estimado) || 0,
+          items: itemsToSave,
+          costo_estimado: costoFinalCalc,
           notas: encargados.length > 0
             ? `Encargados: ${encargados.map(e => `${e.nombre} (${e.rol === 'jefe_taller' ? 'Jefe' : 'Mecánico'})`).join(', ')}`
             : (cita?.notas || ''),
@@ -1195,22 +1429,19 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
         // Avoid sending empty strings for optional fields
         if (!updatePayload.tipo_personalizado) delete updatePayload.tipo_personalizado;
         if (!updatePayload.placa) delete updatePayload.placa;
-        if (!updatePayload.telefono) delete updatePayload.telefono;
+        // El teléfono SÍ se guarda aunque quede vacío (para poder corregir/limpiar datos malos).
+        // Solo se aceptan dígitos/símbolos de teléfono; si queda vacío → null.
+        updatePayload.telefono = (String(updatePayload.telefono || '').replace(/[^\d+()\s-]/g, '').trim()) || null;
 
         const { error } = await withSedeFilter(supabase!.from('servicios'))
           .update(updatePayload)
           .eq('id', cita.id);
         if (error) throw error;
         
-        // Sync client name to CRM if edited
-        if (finalClienteId && formData.nombre_cliente.trim() !== '') {
-          const names = formData.nombre_cliente.trim().split(' ');
-          const cNombre = names[0];
-          const cApellido = names.slice(1).join(' ');
-          await supabase!.from('clientes').update({ nombre: cNombre, apellido: cApellido }).eq('id', finalClienteId);
-          await syncClientData(finalClienteId, cNombre, cApellido, formData.telefono || '');
-        }
-        
+        // ⛔ NO se renombra el cliente automáticamente al editar la orden (eso sobrescribía
+        // clientes existentes). El cliente correcto ya se resolvió/creó en resolveClienteYVehiculo.
+        // El renombrado SOLO ocurre si el usuario activó "Sobreescribir cliente" (se hace en el resolver).
+
         // Sync client name to related factura if changed
         const newNombreCliente = formData.nombre_cliente.trim();
         if (oldNombreCliente && oldNombreCliente !== newNombreCliente) {
@@ -1273,11 +1504,12 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           tipo: finalTipoServicio,
           tipo_personalizado: isCustomServicio ? customServicio.trim() : null,
           descripcion: formData.descripcion || '',
+          items: itemsToSave,
           registrado_por: user?.nombre || 'Admin',
           fecha: getLocalISODate(),
           hora: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
           estado: 'pendiente',
-          costo_estimado: parseFloat(formData.costo_estimado) || 0,
+          costo_estimado: costoFinalCalc,
           notas: encargados.length > 0 
             ? `Encargados: ${encargados.map(e => `${e.nombre} (${e.rol === 'jefe_taller' ? 'Jefe' : 'Mecánico'})`).join(', ')}`
             : '',
@@ -1299,7 +1531,7 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
         };
         if (!payload.tipo_personalizado) delete payload.tipo_personalizado;
         if (!payload.placa) delete payload.placa;
-        if (!payload.telefono) delete payload.telefono;
+        payload.telefono = (String(payload.telefono || '').replace(/[^\d+()\s-]/g, '').trim()) || null;
 
         // Nómina: exige técnico encargado o marcar "lo hizo el taller".
         const specsValidos = jobSpecs.filter(s => s.empleado_id || s.es_taller);
@@ -1328,15 +1560,6 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           });
         } catch (nominaErr) {
           console.error('No se pudo registrar la comisión de nómina:', nominaErr);
-        }
-
-        // Sync client name to CRM if edited
-        if (finalClienteId && formData.nombre_cliente.trim() !== '') {
-          const names = formData.nombre_cliente.trim().split(' ');
-          const cNombre = names[0];
-          const cApellido = names.slice(1).join(' ');
-          await supabase!.from('clientes').update({ nombre: cNombre, apellido: cApellido }).eq('id', finalClienteId);
-          await syncClientData(finalClienteId, cNombre, cApellido, formData.telefono || '');
         }
 
         logActivity({
@@ -1406,14 +1629,35 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
                   ))}
                 </div>
               )}
+              {/* Sobreescribir: renombra el cliente vinculado en vez de crear/asociar otro. */}
+              {cita?.cliente_id && (
+                <label className="flex items-center gap-2 mt-1 ml-1 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={overwriteClient}
+                    onChange={e => setOverwriteClient(e.target.checked)}
+                    className="w-3.5 h-3.5 accent-orange-500 rounded"
+                  />
+                  <span className={cn('text-[10px] font-bold', overwriteClient ? 'text-orange-500' : 'text-muted-foreground')}>
+                    Sobreescribir este cliente (renombrarlo)
+                  </span>
+                </label>
+              )}
+              {cita?.cliente_id && !overwriteClient && (
+                <p className="text-[9px] text-muted-foreground/70 ml-1 leading-tight">
+                  Si escribes otro nombre se creará/asociará un cliente distinto (no se modifica el actual).
+                </p>
+              )}
             </div>
             <div className="col-span-2 sm:col-span-1 space-y-2">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Tel&eacute;fono Contacto</label>
-              <input 
+              <input
+                type="tel"
+                inputMode="numeric"
                 className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
                 placeholder="0424 123 4567"
                 value={formData.telefono}
-                onChange={e => setFormData({...formData, telefono: e.target.value})}
+                onChange={e => setFormData({...formData, telefono: e.target.value.replace(/[^\d+()\s-]/g, '')})}
               />
             </div>
             <div className="col-span-2 sm:col-span-1 space-y-2 relative">
@@ -1706,13 +1950,72 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
                 onChange={e => setFormData({...formData, descripcion: e.target.value})}
               />
             </div>
+
+            {/* ── Servicios desglosados (para imprimir la factura por ítems) ── */}
+            <div className="col-span-2 space-y-2">
+              <div className="flex items-center justify-between ml-1">
+                <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest">
+                  Servicios desglosados <span className="normal-case opacity-60">(para la factura)</span>
+                </label>
+                <div className="flex items-center gap-3">
+                  <button type="button" onClick={autoDesglosar} className="text-[10px] font-black uppercase tracking-widest text-primary hover:underline">
+                    Auto-desglosar
+                  </button>
+                  <button type="button" onClick={addItem} className="text-[10px] font-black uppercase tracking-widest text-primary flex items-center gap-1">
+                    <Plus className="w-3 h-3" /> Agregar
+                  </button>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-border/60 bg-muted/20 p-2 sm:p-3 space-y-2">
+                {items.length === 0 && (
+                  <p className="text-[10px] text-muted-foreground italic px-1 py-2">
+                    Sin ítems. Usa <b>Auto-desglosar</b> para separar la descripción en líneas, o <b>Agregar</b> una manual.
+                  </p>
+                )}
+                {items.map((it, idx) => (
+                  <div key={idx} className="flex items-center gap-1.5 sm:gap-2">
+                    <input
+                      value={it.descripcion}
+                      onChange={e => updateItem(idx, 'descripcion', e.target.value)}
+                      placeholder="Trabajo / repuesto"
+                      className="flex-1 min-w-0 bg-background/60 border border-border rounded-lg px-2.5 py-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                    <input
+                      type="number" min="1" value={it.cantidad}
+                      onChange={e => updateItem(idx, 'cantidad', e.target.value)}
+                      title="Cantidad"
+                      className="w-12 bg-background/60 border border-border rounded-lg px-1.5 py-2 text-xs text-center font-bold focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                    <div className="relative">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">$</span>
+                      <input
+                        type="number" step="0.01" value={it.precio_unitario}
+                        onChange={e => updateItem(idx, 'precio_unitario', e.target.value)}
+                        placeholder="0.00" title="Precio unitario"
+                        className="w-20 bg-background/60 border border-border rounded-lg pl-5 pr-2 py-2 text-xs text-right font-bold focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      />
+                    </div>
+                    <span className="w-16 text-right text-xs font-black text-primary tabular-nums">${Number(it.total).toFixed(2)}</span>
+                    <button type="button" onClick={() => removeItem(idx)} className="p-1 text-muted-foreground hover:text-red-400 transition-colors shrink-0" title="Quitar">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+                {items.length > 0 && (
+                  <div className="flex items-center justify-end gap-3 pt-2 mt-1 border-t border-border/40">
+                    <span className="text-[10px] uppercase font-black tracking-widest text-muted-foreground">Total</span>
+                    <span className="text-sm font-black text-primary tabular-nums">${itemsTotal.toFixed(2)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
         <div className="p-4 sm:p-6 border-t border-border bg-muted/10 flex flex-col-reverse sm:flex-row justify-end gap-3 shrink-0">
           <button onClick={onClose} className="w-full sm:w-auto px-5 py-2.5 sm:px-6 sm:py-3 rounded-2xl text-xs sm:text-sm font-bold text-muted-foreground hover:bg-muted/50 transition-all text-center">Cancelar</button>
           <Button 
-            onClick={handleSave} 
+            onClick={() => handleSave()} 
             disabled={isSaving} 
             className="w-full sm:w-auto rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground font-black px-6 sm:px-10 h-11 sm:h-12 text-xs sm:text-sm shadow-2xl shadow-primary/20 gap-2 flex items-center justify-center"
           >
@@ -1721,6 +2024,100 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           </Button>
         </div>
       </div>
+
+      {/* 🚨 Alerta de servicio duplicado (mismo vehículo/cliente ya registrado) */}
+      {dupAlert && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl border border-amber-500/30 bg-card shadow-2xl overflow-hidden">
+            <div className="p-5 sm:p-6 bg-amber-500/10 border-b border-amber-500/20 flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-6 h-6 text-amber-500" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-widest text-amber-500">Servicio ya registrado</h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Este vehículo/cliente ya tiene un servicio en el sistema.</p>
+              </div>
+            </div>
+            <div className="p-5 sm:p-6 space-y-3">
+              <div className="rounded-2xl border border-border bg-muted/30 p-3 space-y-1.5 text-xs">
+                <p className="font-black text-foreground">
+                  🚗 {dupAlert.vehiculo_info || '—'}{dupAlert.placa && dupAlert.placa !== 'SIN-PLACA' ? ` — ${dupAlert.placa}` : ''}
+                </p>
+                {dupAlert.nombre_cliente && dupAlert.nombre_cliente !== 'No definido' && (
+                  <p className="text-muted-foreground">👤 {dupAlert.nombre_cliente}</p>
+                )}
+                <p className="text-muted-foreground">
+                  📌 Estado: <span className="font-bold uppercase">{String(dupAlert.estado || '').replace(/_/g, ' ')}</span>
+                </p>
+                {dupAlert.descripcion && (
+                  <p className="text-muted-foreground whitespace-pre-line">🔧 {dupAlert.descripcion}</p>
+                )}
+                {dupAlert.registrado_por && (
+                  <p className="text-muted-foreground">✍️ Registrado por: {dupAlert.registrado_por}</p>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Para no duplicar, edita el servicio existente. Si aun así necesitas crear uno nuevo (visita distinta), puedes registrarlo de todos modos.
+              </p>
+            </div>
+            <div className="p-4 sm:p-5 border-t border-border bg-muted/10 flex flex-col-reverse sm:flex-row justify-end gap-2.5">
+              <button
+                onClick={() => setDupAlert(null)}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-bold text-muted-foreground hover:bg-muted/50 transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => { setDupAlert(null); handleSave(true); }}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest bg-amber-500 hover:bg-amber-600 text-white transition-all"
+              >
+                Registrar de todos modos
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🚗 Conflicto: el vehículo pertenece a otro cliente → trasladar propiedad */}
+      {vehConflict && (
+        <div className="fixed inset-0 z-[125] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl border border-orange-500/30 bg-card shadow-2xl overflow-hidden">
+            <div className="p-5 sm:p-6 bg-orange-500/10 border-b border-orange-500/20 flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-orange-500/20 flex items-center justify-center shrink-0">
+                <Car className="w-6 h-6 text-orange-500" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-widest text-orange-500">Vehículo de otro cliente</h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Este vehículo ya está registrado a otro cliente.</p>
+              </div>
+            </div>
+            <div className="p-5 sm:p-6 space-y-3">
+              <div className="rounded-2xl border border-border bg-muted/30 p-3 space-y-1.5 text-xs">
+                <p className="font-black text-foreground">🚗 Placa {vehConflict.placa}</p>
+                <p className="text-muted-foreground">Dueño actual: <span className="font-bold text-foreground">{vehConflict.ownerName || '—'}</span></p>
+                <p className="text-muted-foreground">Nuevo cliente: <span className="font-bold text-foreground">{formData.nombre_cliente}</span></p>
+              </div>
+              <p className="text-[12px] text-muted-foreground leading-relaxed">
+                Si trasladas la propiedad, el vehículo y su historial de servicios pasan a <b>{formData.nombre_cliente}</b>. El dueño anterior deja de tenerlo asociado. ¿Deseas continuar?
+              </p>
+            </div>
+            <div className="p-4 sm:p-5 border-t border-border bg-muted/10 flex flex-col-reverse sm:flex-row justify-end gap-2.5">
+              <button
+                onClick={() => setVehConflict(null)}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-bold text-muted-foreground hover:bg-muted/50 transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => { setVehConflict(null); handleSave(true, true); }}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest bg-orange-500 hover:bg-orange-600 text-white transition-all"
+              >
+                Trasladar propiedad y actualizar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1951,6 +2348,16 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
   const [showSelector, setShowSelector] = useState(false);
 
   const [items, setItems] = useState(() => {
+    // Preferir los ítems desglosados guardados en la orden (cada uno con su precio).
+    const saved = (cita.items as ServicioItem[] | undefined) || [];
+    if (Array.isArray(saved) && saved.length > 0) {
+      return saved.map(i => ({
+        descripcion: i.descripcion || 'Servicio',
+        cantidad: Number(i.cantidad) || 1,
+        precio_unitario: Number(i.precio_unitario) || 0,
+        total: Number(i.total) || (Number(i.cantidad) || 1) * (Number(i.precio_unitario) || 0),
+      }));
+    }
     const match = inventory.find((i: any) =>
       (cita.descripcion || '').toLowerCase().includes(i.nombre.toLowerCase().trim()) ||
       i.nombre.toLowerCase().trim().includes((cita.descripcion || '').toLowerCase().trim()) ||
@@ -1958,7 +2365,9 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
     );
     const price = match?.precio_usd || cita.costo_estimado || 0;
     const rawDesc = cita.descripcion || cita.tipo_personalizado || SERVICIO_LABELS[cita.tipo] || 'Servicio General';
-    return parseDescripcionItems(rawDesc, price);
+    // Desglose tolerante (multilínea del bot, " + ", ";", "|").
+    const parsed = parseServicioItemsFromText(rawDesc, price);
+    return parsed.length > 0 ? parsed : parseDescripcionItems(rawDesc, price);
   });
 
   const [secondItems, setSecondItems] = useState<any[]>([]);
@@ -2042,6 +2451,9 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
   const [printMode, setPrintMode] = useState<'single' | 'dual' | 'diferente'>('dual');
   const [printSide, setPrintSide] = useState<'left' | 'right'>('left');
   const [existingCorrelativo, setExistingCorrelativo] = useState('');
+  // Comprobante de pago (referencia + imagen) al convertir el servicio en venta
+  const [comprobante, setComprobante] = useState<ComprobanteValue>(emptyComprobante());
+  const [comprobanteSavedUrl, setComprobanteSavedUrl] = useState<string | null>(null);
 
   // Load correlativo from facturas table for already-registered services
   useEffect(() => {
@@ -2050,20 +2462,22 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
       .then(({ data }) => { if (data?.correlativo) setExistingCorrelativo(data.correlativo); });
   }, [cita?.id]);
 
-  const handleDownload = (correlativo?: string) => {
+  const handleDownload = (correlativo?: string, comp?: { url?: string | null; ref?: string | null }) => {
     const data1 = {
       id: cita.id,
       correlativo: correlativo || existingCorrelativo || undefined,
-      fecha: cita.fecha, 
-      cliente: clientName, 
-      vehiculo: vehicleStr, 
-      items, 
-      total, 
+      fecha: cita.fecha,
+      cliente: clientName,
+      vehiculo: vehicleStr,
+      items,
+      total,
       iva_aplicado: withIva,
       tasa_bcv: rates.bcv || globalBcvRate || 518.0,
       total_ves: totalVes,
       notas: cita.descripcion || undefined,
-      metodos_pago: payments
+      metodos_pago: payments,
+      comprobante_url: comp?.url || comprobanteSavedUrl || cita.comprobante_url || undefined,
+      comprobante_referencia: comp?.ref || comprobante.referencia.trim() || cita.comprobante_referencia || undefined
     };
 
     const dataList: any[] = [data1];
@@ -2103,6 +2517,11 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
       const sedeIdFinal = cita.sede_id || useSedeStore.getState().currentSede?.id;
       if (!sedeIdFinal) throw new Error('No se puede registrar la venta: sede del servicio no encontrada');
 
+      // Subir comprobante de pago (si se adjuntó) → URL pública
+      const comprobanteUrl = (await uploadComprobante(comprobante.file)) || cita.comprobante_url || null;
+      const comprobanteRef = comprobante.referencia.trim() || cita.comprobante_referencia || null;
+      setComprobanteSavedUrl(comprobanteUrl);
+
       const { data: existingVD } = await supabase.from('ventas_dia')
         .select('id').like('notas', `%${vdRefTag}%`).limit(1).maybeSingle();
 
@@ -2120,6 +2539,7 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
         creado_por: 'Admin',
         sede_id: sedeIdFinal,
         estado: 'pagado',
+        ...comprobanteFields(comprobanteUrl, comprobanteRef),
       };
 
       let ventaDia: any = null;
@@ -2135,7 +2555,10 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
         ventaDia = ins;
       }
 
-      const { error: citaError } = await withSedeFilter(supabase.from('servicios')).update({ estado: 'completada' }).eq('id', cita.id);
+      const { error: citaError } = await withSedeFilter(supabase.from('servicios')).update({
+        estado: 'completada',
+        ...comprobanteFields(comprobanteUrl, comprobanteRef),
+      }).eq('id', cita.id);
       if (citaError) throw citaError;
 
       // ventas_dia is the authoritative accounting table for dashboard-originated sales.
@@ -2162,6 +2585,8 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
           emitido_por: useAppStore.getState().user?.nombre || 'Admin',
           fecha_emision: getLocalISODate(),
           sede_id: cita.sede_id || useSedeStore.getState().currentSede?.id,
+          comprobante_url: comprobanteUrl || undefined,
+          comprobante_referencia: comprobanteRef || undefined,
         });
         if (facturaRegistro?.correlativo) finalCorrelativo = facturaRegistro.correlativo;
       } catch (e) {
@@ -2169,7 +2594,7 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
       }
 
       logActivity({ usuario: useAppStore.getState().user?.nombre || 'Admin', modulo: 'Servicios', accion: 'Venta Finalizada', detalles: `Venta para ${clientName} por $${total.toFixed(2)}` });
-      handleDownload(finalCorrelativo);
+      handleDownload(finalCorrelativo, { url: comprobanteUrl, ref: comprobanteRef });
       alert('¡Entrega procesada con éxito!');
       onClose();
       const btn = document.getElementById('refresh-btn');
@@ -2373,6 +2798,12 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
             )}
           </div>
         </div>
+
+        {cita.estado !== 'completada' && (
+          <div className="px-4 sm:px-8 pt-4">
+            <ComprobanteInput value={comprobante} onChange={setComprobante} compact />
+          </div>
+        )}
 
         <div className="p-4 sm:p-8 bg-gray-50 border-t border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-4">
            <div className="hidden sm:flex items-center gap-4 text-slate-400">

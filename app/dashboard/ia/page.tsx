@@ -436,7 +436,7 @@ export default function IAPage() {
     const lower = msg.toLowerCase();
     if (lower.includes('servicio') || lower.includes('ofrec')) return 'En Lycos Team ofrecemos los siguientes servicios:\n\n🔧 **Mecánica General** — Cambios de aceite, frenos, suspensión\n⚡ **Electrónica Automotriz** — Diagnóstico de fallas, sensores, ECU\n🔑 **Cerrajería Automotriz** — Llaves con chip, apertura de emergencia\n🖥️ **Diagnóstico Computarizado** — Escaneo OBD2 completo\n🔩 **Reparación de Motores** — Overhaul y reparaciones mayores\n🚨 **Asistencia de Emergencia** — Disponible para situaciones urgentes\n\n¿Le gustaría agendar una cita o tiene alguna consulta específica?';
     if (lower.includes('precio') || lower.includes('costo') || lower.includes('cuanto')) return 'Los precios varían según el servicio:\n\n• Cambio de aceite: $20-40\n• Diagnóstico computarizado: $25-50\n• Revisión de frenos: $30-80\n• Cerrajería (llave con chip): $60-120\n\nPara una cotización exacta necesitamos revisar su vehículo. ¿Desea agendar un diagnóstico gratuito?';
-    if (lower.includes('horario') || lower.includes('hora')) return '⏰ Nuestro horario de atención:\n\n📅 Lunes a Viernes: 8:00 AM — 6:00 PM\n📅 Sábado: 8:00 AM — 2:00 PM\n❌ Domingos: Cerrado\n\nPara emergencias fuera de horario, contáctenos al +58 412-334-3519. ¡Siempre hay alguien disponible!';
+    if (lower.includes('horario') || lower.includes('hora')) return '⏰ Nuestro horario de atención:\n\n📅 Lunes a Viernes: 8:00 AM — 5:00 PM (Caracas hasta las 4:00 PM)\n📅 Sábados: 8:00 AM — 5:00 PM (Caracas 8:30 AM a 2:00 PM)\n❌ Domingos: Cerrado\n\nPara emergencias fuera de horario, contáctenos al +58 412-334-3519. ¡Siempre hay alguien disponible!';
     if (lower.includes('cita') || lower.includes('agendar')) return '¡Con gusto agendamos su cita! 📅\n\nPara reservar necesito:\n1. Su nombre completo\n2. Marca y modelo del vehículo\n3. Tipo de servicio requerido\n4. Fecha y hora preferida\n\nPuede contactarnos al **+58 412-334-3519** o por WhatsApp. ¡Tenemos disponibilidad esta semana!';
     if (lower.includes('ruido') || lower.includes('frenar') || lower.includes('fren')) return '⚠️ Los ruidos al frenar pueden indicar varios problemas:\n\n• **Chirrido agudo**: Pastillas de freno desgastadas\n• **Golpeteo**: Disco dañado o suelto\n• **Vibración**: Discos deformados por calor\n\n🚨 Le recomendamos revisar sus frenos lo antes posible, ya que es un tema de seguridad. ¿Le agendamos una revisión gratuita?';
     if (lower.includes('emergencia') || lower.includes('urgente')) return '🚨 Sí, contamos con servicio de asistencia de emergencia.\n\nContacto de emergencia: **+58 412-334-3519**\n\nNuestro técnico puede estar con usted aproximadamente en 30-60 minutos dependiendo de la ubicación. Por favor indíquenos:\n• Su ubicación exacta\n• Tipo de problema\n• Marca y modelo del vehículo';
@@ -796,7 +796,7 @@ export default function IAPage() {
               {[
                 { icon: Car, label: 'Taller', value: 'Lycos Team' },
                 { icon: MapPin, label: 'Ubicación', value: 'Altos Mirandinos, VE' },
-                { icon: Clock, label: 'Horario', value: 'Lunes a Sabado 8am a 5pm' },
+                { icon: Clock, label: 'Horario', value: 'L-V 8am-5pm | Sáb (Ccs 8:30-2pm)' },
                 { icon: Phone, label: 'Teléfono', value: '+58 412-334-3519' },
                 { icon: Wrench, label: 'Servicios', value: '6 especialidades' },
               ].map(({ icon: Icon, label, value }) => (

@@ -18,6 +18,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
+import { ComprobanteInput, emptyComprobante, type ComprobanteValue } from '@/components/ventas/ComprobanteInput';
+import { uploadComprobante, comprobanteFields } from '@/lib/comprobante';
 import { Calendar as CalendarUI } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { format } from "date-fns";
@@ -50,9 +52,19 @@ export default function VentasPage() {
   const [showAbonoSection, setShowAbonoSection] = useState(false);
   const [showNotasSection, setShowNotasSection] = useState(false);
   const [abono, setAbono] = useState(0);
+  const [comprobante, setComprobante] = useState<ComprobanteValue>(emptyComprobante());
   const [tabVenta, setTabVenta] = useState<'nueva' | 'pendientes'>('nueva');
   const [ventasPendientes, setVentasPendientes] = useState<any[]>([]);
   const [loadingPendientes, setLoadingPendientes] = useState(false);
+
+  // Abonos sobre ventas pendientes existentes
+  const [abonoModalVenta, setAbonoModalVenta] = useState<any | null>(null);
+  const [abonoMonto, setAbonoMonto] = useState(0);
+  const [abonoMetodo, setAbonoMetodo] = useState('efectivo');
+  const [abonoNota, setAbonoNota] = useState('');
+  const [abonosHistorial, setAbonosHistorial] = useState<any[]>([]);
+  const [loadingAbonos, setLoadingAbonos] = useState(false);
+  const [procesandoAbono, setProcesandoAbono] = useState(false);
 
   // Payment methods
   const [metodosPago, setMetodosPago] = useState({
@@ -114,6 +126,246 @@ export default function VentasPage() {
       console.error('Error fetching data:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // ── Cargar historial de abonos de una venta ──────────────────
+  const cargarAbonos = async (ventaId: string) => {
+    if (!supabase) return;
+    setLoadingAbonos(true);
+    try {
+      const { data } = await supabase.from('abonos')
+        .select('*')
+        .eq('venta_id', ventaId)
+        .order('created_at', { ascending: true });
+      setAbonosHistorial(data || []);
+    } catch {
+      setAbonosHistorial([]);
+    } finally {
+      setLoadingAbonos(false);
+    }
+  };
+
+  const abrirModalAbono = async (venta: any) => {
+    setAbonoModalVenta(venta);
+    setAbonoMonto(0);
+    setAbonoMetodo('efectivo');
+    setAbonoNota('');
+    await cargarAbonos(venta.id);
+  };
+
+  // ── Registrar un abono parcial sobre una venta pendiente ─────
+  const registrarAbono = async () => {
+    if (!supabase || !abonoModalVenta) return;
+    const venta = abonoModalVenta;
+    const saldoActual = Number(venta.saldo_pendiente) || 0;
+    const monto = Number(abonoMonto) || 0;
+
+    if (monto <= 0) { alert('Ingresa un monto de abono válido.'); return; }
+    if (monto > saldoActual + 0.001) { alert(`El abono ($${monto.toFixed(2)}) no puede ser mayor al saldo pendiente ($${saldoActual.toFixed(2)}).`); return; }
+
+    setProcesandoAbono(true);
+    try {
+      const saldoDespues = Math.max(0, saldoActual - monto);
+      const totalAbonadoNuevo = (Number(venta.total_abonado) || 0) + monto;
+      const quedaPagado = saldoDespues <= 0.001;
+      const tasa = Number(venta.tasa_cambio) || 0;
+      const fechaHoy = new Date().toISOString().split('T')[0];
+
+      // 1. Registrar el abono en la tabla dedicada
+      const { data: abonoRow, error: abonoErr } = await withSedeFilter(supabase.from('abonos'))
+        .insert(withSedeInsert({
+          venta_id: venta.id,
+          monto,
+          monto_bs: tasa > 0 ? monto * tasa : 0,
+          tasa_cambio: tasa,
+          metodo_pago: abonoMetodo,
+          moneda: venta.moneda || 'USD',
+          saldo_antes: saldoActual,
+          saldo_despues: saldoDespues,
+          nota: abonoNota || null,
+          registrado_por: 'Admin',
+        }))
+        .select()
+        .single();
+      if (abonoErr) throw abonoErr;
+
+      // 2. Actualizar la venta pendiente
+      const { error: updErr } = await supabase.from('ventas_dia')
+        .update({
+          total_abonado: totalAbonadoNuevo,
+          abono: totalAbonadoNuevo,
+          saldo_pendiente: saldoDespues,
+          tiene_abono: true,
+          estado: quedaPagado ? 'pagado' : 'pendiente',
+          fecha_pago_completo: quedaPagado ? new Date().toISOString() : null,
+        })
+        .eq('id', venta.id);
+      if (updErr) throw updErr;
+
+      // 3. Registrar el abono como INGRESO del día (factura tipo venta con etiqueta abono)
+      await registrarFactura({
+        tipo: 'venta',
+        modulo_origen: 'ventas_pos',
+        referencia_id: abonoRow.id, // único por abono → no choca con el guard de duplicados
+        referencia_tabla: 'abonos',
+        cliente: venta.cliente || 'Consumidor Final',
+        vehiculo: venta.notas?.match(/Veh[ií]culo:\s*([^|]+)/i)?.[1]?.trim() || undefined,
+        total: monto,
+        moneda: venta.moneda || 'USD',
+        tasa_cambio: tasa || undefined,
+        total_bs: tasa > 0 ? monto * tasa : undefined,
+        items: [{
+          descripcion: `Abono${venta.presupuesto_numero ? ` - Presupuesto ${venta.presupuesto_numero}` : ''} (Saldo restante: $${saldoDespues.toFixed(2)})`,
+          cantidad: 1,
+          precio: monto,
+          total: monto,
+        }],
+        metodos_pago: { [abonoMetodo]: monto },
+        estado: 'pagado',
+        notas: `ABONO sobre venta de ${venta.cliente}. Total venta: $${Number(venta.total_ingresos).toFixed(2)} | Abonado acumulado: $${totalAbonadoNuevo.toFixed(2)} | Saldo: $${saldoDespues.toFixed(2)}${quedaPagado ? ' | VENTA SALDADA' : ''}`,
+        emitido_por: 'Admin',
+        fecha_emision: fechaHoy,
+      });
+
+      // 4. Log
+      try {
+        const { logActivity } = await import('@/lib/activity');
+        await logActivity({
+          usuario: 'Admin',
+          modulo: 'ventas',
+          accion: quedaPagado ? 'Abono final (venta saldada)' : 'Registrar abono',
+          detalles: `Abono de $${monto.toFixed(2)} sobre venta de ${venta.cliente}. Saldo: $${saldoDespues.toFixed(2)}`,
+          referencia_id: venta.id,
+          referencia_tabla: 'ventas_dia',
+        });
+      } catch {}
+
+      alert(quedaPagado
+        ? `¡Abono registrado! La venta quedó SALDADA por completo. Se generó la factura del abono final.`
+        : `¡Abono de $${monto.toFixed(2)} registrado! Saldo pendiente: $${saldoDespues.toFixed(2)}. Aparece en ventas recientes y reportes con etiqueta ABONO.`);
+
+      setAbonoModalVenta(null);
+      await fetchData();
+    } catch (err: any) {
+      alert('Error al registrar abono: ' + err.message);
+    } finally {
+      setProcesandoAbono(false);
+    }
+  };
+
+  // ── Marcar venta pendiente como PAGADA por completo ──────────
+  const marcarPagadoCompleto = async (venta: any) => {
+    if (!supabase) return;
+    const saldo = Number(venta.saldo_pendiente) || 0;
+    if (!confirm(`¿Marcar como PAGADA la venta de ${venta.cliente}?\n\nSe registrará el saldo restante de $${saldo.toFixed(2)} como pago final y se generará la factura total con el historial de abonos.`)) return;
+
+    setProcesandoAbono(true);
+    try {
+      const tasa = Number(venta.tasa_cambio) || 0;
+      const totalVenta = Number(venta.total_ingresos) || 0;
+      const fechaHoy = new Date().toISOString().split('T')[0];
+
+      // Si queda saldo, registrarlo como abono final
+      if (saldo > 0.001) {
+        const totalAbonadoNuevo = (Number(venta.total_abonado) || 0) + saldo;
+        const { data: abonoRow, error: abonoErr } = await withSedeFilter(supabase.from('abonos'))
+          .insert(withSedeInsert({
+            venta_id: venta.id,
+            monto: saldo,
+            monto_bs: tasa > 0 ? saldo * tasa : 0,
+            tasa_cambio: tasa,
+            metodo_pago: 'efectivo',
+            moneda: venta.moneda || 'USD',
+            saldo_antes: saldo,
+            saldo_despues: 0,
+            nota: 'Pago final (liquidación)',
+            registrado_por: 'Admin',
+          }))
+          .select()
+          .single();
+        if (abonoErr) throw abonoErr;
+
+        await supabase.from('ventas_dia')
+          .update({
+            total_abonado: totalAbonadoNuevo,
+            abono: totalAbonadoNuevo,
+            saldo_pendiente: 0,
+            tiene_abono: true,
+            estado: 'pagado',
+            fecha_pago_completo: new Date().toISOString(),
+          })
+          .eq('id', venta.id);
+
+        // Factura del pago final (ingreso del día)
+        await registrarFactura({
+          tipo: 'venta',
+          modulo_origen: 'ventas_pos',
+          referencia_id: abonoRow.id,
+          referencia_tabla: 'abonos',
+          cliente: venta.cliente || 'Consumidor Final',
+          total: saldo,
+          moneda: venta.moneda || 'USD',
+          tasa_cambio: tasa || undefined,
+          total_bs: tasa > 0 ? saldo * tasa : undefined,
+          items: [{ descripcion: `Pago final - liquidación${venta.presupuesto_numero ? ` Presupuesto ${venta.presupuesto_numero}` : ''}`, cantidad: 1, precio: saldo, total: saldo }],
+          metodos_pago: { efectivo: saldo },
+          estado: 'pagado',
+          notas: `PAGO FINAL. Venta saldada. Total: $${totalVenta.toFixed(2)}`,
+          emitido_por: 'Admin',
+          fecha_emision: fechaHoy,
+        });
+      } else {
+        await supabase.from('ventas_dia')
+          .update({ estado: 'pagado', fecha_pago_completo: new Date().toISOString() })
+          .eq('id', venta.id);
+      }
+
+      // Factura TOTAL de cierre con historial de abonos
+      const { data: todosAbonos } = await supabase.from('abonos')
+        .select('*').eq('venta_id', venta.id).order('created_at', { ascending: true });
+
+      const itemsFactura = (venta.desglose && venta.desglose.length > 0)
+        ? venta.desglose.map((d: any) => ({ descripcion: d.nombre, cantidad: d.cantidad, precio: d.precio, total: d.total }))
+        : [{ descripcion: venta.notas || 'Venta', cantidad: 1, precio: totalVenta, total: totalVenta }];
+
+      const historialTexto = (todosAbonos || []).map((a: any, i: number) =>
+        `Abono ${i + 1}: $${Number(a.monto).toFixed(2)} (${new Date(a.created_at).toLocaleDateString('es-VE')}, ${a.metodo_pago})`
+      ).join(' | ');
+
+      await registrarFactura({
+        tipo: 'venta',
+        modulo_origen: 'ventas_pos',
+        referencia_id: venta.id,
+        referencia_tabla: 'ventas_dia',
+        cliente: venta.cliente || 'Consumidor Final',
+        total: totalVenta,
+        moneda: venta.moneda || 'USD',
+        tasa_cambio: tasa || undefined,
+        total_bs: tasa > 0 ? totalVenta * tasa : undefined,
+        items: itemsFactura,
+        con_iva: !!venta.con_iva,
+        estado: 'pagado',
+        notas: `VENTA SALDADA${venta.presupuesto_numero ? ` (Presupuesto ${venta.presupuesto_numero})` : ''}. ${historialTexto ? 'Historial de abonos: ' + historialTexto : ''}`,
+        emitido_por: 'Admin',
+        fecha_emision: fechaHoy,
+      });
+
+      try {
+        const { logActivity } = await import('@/lib/activity');
+        await logActivity({
+          usuario: 'Admin', modulo: 'ventas', accion: 'Venta saldada (pago completo)',
+          detalles: `Venta de ${venta.cliente} marcada como pagada. Total: $${totalVenta.toFixed(2)}`,
+          referencia_id: venta.id, referencia_tabla: 'ventas_dia',
+        });
+      } catch {}
+
+      alert(`¡Venta saldada! Se generó la factura total ($${totalVenta.toFixed(2)}) con el historial completo de abonos.`);
+      await fetchData();
+    } catch (err: any) {
+      alert('Error al marcar como pagado: ' + err.message);
+    } finally {
+      setProcesandoAbono(false);
     }
   };
 
@@ -180,11 +432,16 @@ export default function VentasPage() {
       const tieneAbono = showAbonoSection && abonoAmount > 0 && saldoRestante > 0;
       const estadoVenta = saldoRestante > 0 ? 'pendiente' : 'pagado';
 
+      // Subir comprobante de pago (si se adjuntó imagen) → URL pública
+      const comprobanteUrl = await uploadComprobante(comprobante.file);
+      const comprobanteRef = comprobante.referencia.trim() || null;
+
       // 1. Register in ventas_dia (Accounting)
       const { data: ventaDia, error: ventaError } = await withSedeFilter(supabase.from('ventas_dia'))
         .insert(withSedeInsert({
           fecha: format(selectedDate, 'yyyy-MM-dd'),
           cliente: clienteNombre || 'Consumidor Final',
+          ...comprobanteFields(comprobanteUrl, comprobanteRef),
           total_ingresos: subtotal, // Store subtotal here, report logic handles IVA
           desglose: cart.map(item => ({
             descripcion: item.nombre,
@@ -249,7 +506,9 @@ export default function VentasPage() {
         tiene_abono: tieneAbono,
         abono: abonoAmount,
         saldo_pendiente: saldoRestante,
-        estado: estadoVenta
+        estado: estadoVenta,
+        comprobante_url: comprobanteUrl || undefined,
+        comprobante_referencia: comprobanteRef || undefined
       };
 
       const dataList: any[] = [data1];
@@ -294,6 +553,8 @@ export default function VentasPage() {
           emitido_por: 'Admin',
           fecha_emision: format(selectedDate, 'yyyy-MM-dd'),
           sede_id: currentSede?.id || undefined,
+          comprobante_url: comprobanteUrl || undefined,
+          comprobante_referencia: comprobanteRef || undefined,
         });
         if (facturaRegistro?.correlativo) correlativoVenta = facturaRegistro.correlativo;
       } catch (facErr) {
@@ -315,6 +576,7 @@ export default function VentasPage() {
       setNotas('');
       setAbono(0);
       setShowAbonoSection(false);
+      setComprobante(emptyComprobante());
       fetchData();
     } catch (err: any) {
       console.error('Error finalizing sale:', err);
@@ -490,8 +752,26 @@ export default function VentasPage() {
                         <p className="text-sm font-black text-amber-400">${Number(v.saldo_pendiente || 0).toFixed(2)}</p>
                         <p className="text-[9px] font-bold text-muted-foreground">SALDO</p>
                         {v.abono > 0 && (
-                          <p className="text-[9px] font-bold text-green-400">Abonó: ${Number(v.abono).toFixed(2)}</p>
+                          <p className="text-[9px] font-bold text-green-400">Abonó: ${Number(v.total_abonado || v.abono).toFixed(2)}</p>
                         )}
+                      </div>
+                      <div className="flex flex-col gap-1.5 flex-shrink-0">
+                        <Button
+                          size="sm"
+                          className="h-7 rounded-lg text-[9px] font-black gap-1 bg-green-500 hover:bg-green-600 text-white"
+                          onClick={() => abrirModalAbono(v)}
+                        >
+                          <DollarSign className="w-3 h-3" /> Abonar
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 rounded-lg text-[9px] font-black gap-1 text-amber-400 border-amber-400/30 hover:bg-amber-500/10"
+                          onClick={() => marcarPagadoCompleto(v)}
+                          disabled={procesandoAbono}
+                        >
+                          <CheckCircle className="w-3 h-3" /> Pagado
+                        </Button>
                       </div>
                     </div>
                   ))}
@@ -845,9 +1125,13 @@ export default function VentasPage() {
                 </div>
               </div>
 
+              <div className="pt-2">
+                <ComprobanteInput value={comprobante} onChange={setComprobante} compact />
+              </div>
+
               <div className="flex gap-2 pt-2">
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   className="flex-1 h-12 rounded-xl border-primary/30 text-primary font-bold gap-2"
                   onClick={() => {
                     if (cart.length === 0) return;
@@ -947,6 +1231,138 @@ export default function VentasPage() {
                   </button>
                 ))}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal de Abono ───────────────────────────────────── */}
+      {abonoModalVenta && (
+        <div className="fixed inset-0 z-[120] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => !procesandoAbono && setAbonoModalVenta(null)}>
+          <div className="bg-card border border-border rounded-3xl w-full max-w-md max-h-[90vh] overflow-y-auto shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-border/50 flex items-center justify-between sticky top-0 bg-card z-10">
+              <div>
+                <h3 className="text-lg font-black flex items-center gap-2">
+                  <DollarSign className="w-5 h-5 text-green-400" /> Registrar Abono
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">{abonoModalVenta.cliente}</p>
+              </div>
+              <button onClick={() => !procesandoAbono && setAbonoModalVenta(null)} className="w-8 h-8 rounded-lg hover:bg-white/10 flex items-center justify-center">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {/* Resumen */}
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-xl bg-background/50 border border-border/40 p-2.5">
+                  <p className="text-[9px] font-bold text-muted-foreground uppercase">Total</p>
+                  <p className="text-sm font-black">${Number(abonoModalVenta.total_ingresos || 0).toFixed(2)}</p>
+                </div>
+                <div className="rounded-xl bg-green-500/5 border border-green-500/20 p-2.5">
+                  <p className="text-[9px] font-bold text-green-400 uppercase">Abonado</p>
+                  <p className="text-sm font-black text-green-400">${Number(abonoModalVenta.total_abonado || abonoModalVenta.abono || 0).toFixed(2)}</p>
+                </div>
+                <div className="rounded-xl bg-amber-500/5 border border-amber-500/20 p-2.5">
+                  <p className="text-[9px] font-bold text-amber-400 uppercase">Saldo</p>
+                  <p className="text-sm font-black text-amber-400">${Number(abonoModalVenta.saldo_pendiente || 0).toFixed(2)}</p>
+                </div>
+              </div>
+
+              {abonoModalVenta.presupuesto_numero && (
+                <div className="rounded-xl bg-primary/5 border border-primary/20 p-2.5 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-primary" />
+                  <span className="text-xs font-bold">Presupuesto {abonoModalVenta.presupuesto_numero}</span>
+                </div>
+              )}
+
+              {/* Historial de abonos */}
+              <div>
+                <Label className="text-xs font-bold mb-2 block">Historial de abonos</Label>
+                {loadingAbonos ? (
+                  <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-primary" /></div>
+                ) : abonosHistorial.length === 0 ? (
+                  <p className="text-xs text-muted-foreground italic py-2">Sin abonos previos</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                    {abonosHistorial.map((a, i) => (
+                      <div key={a.id} className="flex items-center justify-between text-xs bg-background/40 rounded-lg px-3 py-1.5 border border-border/30">
+                        <span className="flex items-center gap-2">
+                          <Badge variant="outline" className="text-green-400 border-green-400/30 text-[8px] font-black px-1.5">ABONO {i + 1}</Badge>
+                          <span className="text-muted-foreground">{new Date(a.created_at).toLocaleDateString('es-VE')}</span>
+                        </span>
+                        <span className="font-black text-green-400">${Number(a.monto).toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Nuevo abono */}
+              <div className="space-y-3 pt-2 border-t border-border/40">
+                <div>
+                  <Label className="text-xs font-bold mb-1.5 block">Monto del abono (USD)</Label>
+                  <Input
+                    type="number" min="0" step="0.01"
+                    value={abonoMonto || ''}
+                    onChange={e => setAbonoMonto(Number(e.target.value))}
+                    placeholder="0.00"
+                    className="h-11 text-lg font-black"
+                  />
+                  <div className="flex gap-1.5 mt-2">
+                    {[0.25, 0.5, 1].map(frac => {
+                      const saldo = Number(abonoModalVenta.saldo_pendiente) || 0;
+                      const val = frac === 1 ? saldo : Math.round(saldo * frac * 100) / 100;
+                      return (
+                        <button key={frac} onClick={() => setAbonoMonto(val)}
+                          className="flex-1 text-[10px] font-bold py-1.5 rounded-lg bg-background/50 border border-border/40 hover:border-primary/40 hover:bg-primary/5 transition-colors">
+                          {frac === 1 ? 'Saldo total' : `${frac * 100}%`} (${val.toFixed(2)})
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <Label className="text-xs font-bold mb-1.5 block">Método de pago</Label>
+                  <Select value={abonoMetodo} onValueChange={setAbonoMetodo}>
+                    <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="efectivo">Efectivo USD</SelectItem>
+                      <SelectItem value="zelle">Zelle</SelectItem>
+                      <SelectItem value="pago_movil">Pago Móvil</SelectItem>
+                      <SelectItem value="efectivo_ves">Efectivo Bs</SelectItem>
+                      <SelectItem value="punto_de_venta">Punto de Venta</SelectItem>
+                      <SelectItem value="transferencia">Transferencia</SelectItem>
+                      <SelectItem value="cashea">Cashea</SelectItem>
+                      <SelectItem value="otro">Otro</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label className="text-xs font-bold mb-1.5 block">Nota (opcional)</Label>
+                  <Input value={abonoNota} onChange={e => setAbonoNota(e.target.value)} placeholder="Referencia, observación..." className="h-10" />
+                </div>
+
+                {abonoMonto > 0 && (
+                  <div className="rounded-xl bg-background/50 border border-border/40 p-3 space-y-1 text-xs">
+                    <div className="flex justify-between"><span className="text-muted-foreground">Abono ahora:</span><span className="font-black text-green-400">${abonoMonto.toFixed(2)}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Saldo después:</span><span className="font-black text-amber-400">${Math.max(0, (Number(abonoModalVenta.saldo_pendiente) || 0) - abonoMonto).toFixed(2)}</span></div>
+                    {(Number(abonoModalVenta.saldo_pendiente) || 0) - abonoMonto <= 0.001 && (
+                      <div className="flex items-center gap-1.5 pt-1 text-green-400"><CheckCircle className="w-3.5 h-3.5" /><span className="font-bold">Este abono salda la venta por completo</span></div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="p-5 border-t border-border/50 flex gap-2 sticky bottom-0 bg-card">
+              <Button variant="outline" className="flex-1 h-11 font-bold" onClick={() => setAbonoModalVenta(null)} disabled={procesandoAbono}>Cancelar</Button>
+              <Button className="flex-1 h-11 font-black bg-green-500 hover:bg-green-600 text-white gap-2" onClick={registrarAbono} disabled={procesandoAbono || abonoMonto <= 0}>
+                {procesandoAbono ? <Loader2 className="w-4 h-4 animate-spin" /> : <DollarSign className="w-4 h-4" />}
+                Registrar Abono
+              </Button>
             </div>
           </div>
         </div>

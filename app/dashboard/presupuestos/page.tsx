@@ -6,9 +6,10 @@ import {
   ArrowRight, ArrowLeft, Printer, UserPlus, Car, DollarSign, Euro,
   Percent, Receipt, History, Clock, Send, X, Edit3, Eye, Ban,
   Check, RefreshCw, Save, FileText, Calendar, Wallet,
-  Package, Wrench, MoreHorizontal, Download
+  Package, Wrench, MoreHorizontal, Download, ShoppingCart
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { registrarFactura } from '@/lib/supabase';
 import {
   fetchPresupuestos, fetchPresupuesto, createPresupuesto,
   updatePresupuesto, deletePresupuesto, updatePresupuestoEstado,
@@ -428,6 +429,122 @@ export default function PresupuestosPage() {
       }
     } catch (err: any) {
       alert('Error: ' + err.message);
+    }
+  };
+
+  // ── Convertir presupuesto en venta (contado o pendiente) ──────
+  const [convirtiendo, setConvirtiendo] = useState<string | null>(null);
+  const convertirAVenta = async (presupuesto: any, modo: 'pagado' | 'pendiente') => {
+    if (!supabase) return;
+    if (presupuesto.venta_id) {
+      alert('Este presupuesto ya fue convertido en venta.');
+      return;
+    }
+    const total = Number(presupuesto.total) || 0;
+    if (total <= 0) { alert('El presupuesto no tiene un total válido.'); return; }
+
+    const confirmMsg = modo === 'pagado'
+      ? `¿Convertir el presupuesto ${presupuesto.numero} en una VENTA PAGADA por $${total.toFixed(2)}?\n\nSe registrará como venta del día, aparecerá en Reportes y se generará su factura.`
+      : `¿Convertir el presupuesto ${presupuesto.numero} en una VENTA PENDIENTE POR PAGAR por $${total.toFixed(2)}?\n\nQuedará en el módulo de Ventas lista para recibir abonos.`;
+    if (!confirm(confirmMsg)) return;
+
+    setConvirtiendo(presupuesto.id);
+    try {
+      const vehiculoInfo = presupuesto.vehiculo_info || '';
+      const itemsRaw = typeof presupuesto.items === 'string' ? JSON.parse(presupuesto.items) : (presupuesto.items || []);
+
+      // Desglose para ventas_dia
+      const desglose = itemsRaw.map((it: any) => ({
+        nombre: it.descripcion || it.nombre || 'Item',
+        cantidad: Number(it.cantidad) || 1,
+        precio: Number(it.precio_unitario ?? it.precio) || 0,
+        total: Number(it.total) || (Number(it.cantidad) || 1) * (Number(it.precio_unitario ?? it.precio) || 0),
+      }));
+
+      // Items para la factura
+      const itemsFactura = itemsRaw.map((it: any) => ({
+        descripcion: it.descripcion || it.nombre || 'Item',
+        cantidad: Number(it.cantidad) || 1,
+        precio: Number(it.precio_unitario ?? it.precio) || 0,
+        total: Number(it.total) || (Number(it.cantidad) || 1) * (Number(it.precio_unitario ?? it.precio) || 0),
+      }));
+
+      const esPagado = modo === 'pagado';
+      const tasa = Number(presupuesto.tasa_cambio) || 0;
+      const fechaHoy = new Date().toISOString().split('T')[0];
+
+      // 1. Crear venta en ventas_dia
+      const { data: ventaDia, error: ventaErr } = await withSedeFilter(supabase.from('ventas_dia'))
+        .insert(withSedeInsert({
+          fecha: fechaHoy,
+          cliente: presupuesto.cliente_nombre,
+          total_ingresos: total,
+          total_servicios: desglose.length,
+          total_clientes: 1,
+          clientes_atendidos: 1,
+          desglose,
+          moneda: presupuesto.moneda,
+          tasa_cambio: tasa,
+          con_iva: Number(presupuesto.iva) > 0,
+          iva: Number(presupuesto.iva) || 0,
+          notas: `Presupuesto ${presupuesto.numero}${vehiculoInfo ? ` | Vehículo: ${vehiculoInfo}` : ''} | ${esPagado ? 'Venta pagada' : 'Pendiente por pagar'}`,
+          tiene_abono: false,
+          abono: 0,
+          total_abonado: 0,
+          saldo_pendiente: esPagado ? 0 : total,
+          por_cobrar: esPagado ? 0 : total,
+          estado: esPagado ? 'pagado' : 'pendiente',
+          presupuesto_id: presupuesto.id,
+          presupuesto_numero: presupuesto.numero,
+          creado_por: user?.nombre || 'Sistema',
+        }))
+        .select()
+        .single();
+      if (ventaErr) throw ventaErr;
+
+      // 2. Registrar factura (pagada o pendiente)
+      await registrarFactura({
+        tipo: 'presupuesto',
+        modulo_origen: 'presupuestos',
+        referencia_id: ventaDia.id,
+        referencia_tabla: 'ventas_dia',
+        cliente: presupuesto.cliente_nombre || 'Consumidor Final',
+        vehiculo: vehiculoInfo || undefined,
+        total,
+        moneda: presupuesto.moneda || 'USD',
+        tasa_cambio: tasa || undefined,
+        total_bs: tasa > 0 ? total * tasa : undefined,
+        items: itemsFactura,
+        con_iva: Number(presupuesto.iva) > 0,
+        estado: esPagado ? 'pagado' : 'pendiente',
+        notas: `Presupuesto ${presupuesto.numero}${esPagado ? ' - Venta pagada' : ' - Pendiente por pagar'}`,
+        emitido_por: user?.nombre || 'Sistema',
+        fecha_emision: fechaHoy,
+      });
+
+      // 3. Vincular y marcar presupuesto como convertido
+      await supabase.from('presupuestos')
+        .update({ venta_id: ventaDia.id })
+        .eq('id', presupuesto.id);
+      await updatePresupuestoEstado(presupuesto.id, 'convertido');
+
+      await logActivity({
+        usuario: user?.nombre || 'Sistema',
+        modulo: 'presupuestos',
+        accion: esPagado ? 'Convertir a venta pagada' : 'Convertir a venta pendiente',
+        detalles: `Presupuesto ${presupuesto.numero} convertido en venta ${esPagado ? 'pagada' : 'pendiente'} por $${total.toFixed(2)}`,
+        referencia_id: presupuesto.id,
+        referencia_tabla: 'presupuestos',
+      });
+
+      fetchData();
+      alert(esPagado
+        ? `Presupuesto convertido en VENTA PAGADA. Aparece en Reportes y Facturación con su factura generada.`
+        : `Presupuesto convertido en VENTA PENDIENTE POR PAGAR. Está en el módulo de Ventas listo para recibir abonos.`);
+    } catch (err: any) {
+      alert('Error al convertir: ' + err.message);
+    } finally {
+      setConvirtiendo(null);
     }
   };
 
@@ -1490,6 +1607,38 @@ export default function PresupuestosPage() {
                                 <Ban className="w-3 h-3" /> Rechazar
                               </Button>
                             </>
+                          )}
+
+                          {/* Convertir a venta — disponible en enviado y aprobado, si no fue convertido aún */}
+                          {(p.estado === 'aprobado' || p.estado === 'enviado') && !p.venta_id && (
+                            <>
+                              <Button
+                                size="sm"
+                                disabled={convirtiendo === p.id}
+                                className="h-7 rounded-lg text-[9px] font-black gap-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+                                onClick={(e) => { e.stopPropagation(); convertirAVenta(p, 'pagado'); }}
+                                title="Convertir en venta pagada (contado)"
+                              >
+                                {convirtiendo === p.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShoppingCart className="w-3 h-3" />} Venta pagada
+                              </Button>
+                              <Button
+                                size="sm"
+                                disabled={convirtiendo === p.id}
+                                variant="outline"
+                                className="h-7 rounded-lg text-[9px] font-black gap-1 text-amber-400 border-amber-400/30 hover:bg-amber-500/10"
+                                onClick={(e) => { e.stopPropagation(); convertirAVenta(p, 'pendiente'); }}
+                                title="Convertir en venta pendiente por pagar (abonos)"
+                              >
+                                {convirtiendo === p.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Clock className="w-3 h-3" />} Pendiente
+                              </Button>
+                            </>
+                          )}
+
+                          {/* Ya convertido: indicador */}
+                          {p.venta_id && (
+                            <span className="h-7 inline-flex items-center gap-1 px-2 rounded-lg text-[9px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/20">
+                              <Check className="w-3 h-3" /> Convertido a venta
+                            </span>
                           )}
 
                           {can('presupuestos', 'eliminar') && (p.estado === 'borrador' || p.estado === 'enviado') && (

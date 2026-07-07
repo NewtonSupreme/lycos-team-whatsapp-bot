@@ -27,7 +27,7 @@ import {
 import { supabase, registrarFactura } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
 import { cn, getLocalISODate, parseDescripcionItems } from '@/lib/utils';
-import { generateInvoicePDF, generateEgresoPDF } from '@/lib/invoice-pdf';
+import { generateInvoicePDF, generateEgresoPDF, type InvoicePDFItem } from '@/lib/invoice-pdf';
 import { generateCierrePDF, type CierreData } from '@/lib/cierre-pdf';
 import { generateNotaEntregaPDF } from '@/lib/distribucion-pdf';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
@@ -56,6 +56,14 @@ interface VentaDia {
   pago_ves?: number;
   tasa_cambio?: number;
   con_iva?: boolean;
+  tiene_abono?: boolean;
+  abono?: number;
+  total_abonado?: number;
+  saldo_pendiente?: number;
+  estado?: string;
+  referencia_tabla?: string;
+  presupuesto_id?: string;
+  presupuesto_numero?: string;
   metodos_pago?: {
     pago_movil?: number;
     zelle?: number;
@@ -175,7 +183,7 @@ function CierreWizard({ ventas, onClose, onSaved }: {
 }) {
   const { currentSede } = useSedeStore();
   const [step, setStep] = React.useState(1);
-  const [periodo, setPeriodo] = React.useState<'dia' | 'mes'>('dia');
+  const [periodo, setPeriodo] = React.useState<'dia' | 'semana' | 'mes'>('dia');
   const [fechaDia, setFechaDia] = React.useState(new Date().toISOString().split('T')[0]);
   const [fechaInicio, setFechaInicio] = React.useState(() => {
     const d = new Date(); d.setDate(1); return d.toISOString().split('T')[0];
@@ -198,6 +206,28 @@ function CierreWizard({ ventas, onClose, onSaved }: {
         .then((res: any) => setServicios(res.data || []));
     }
   }, []);
+
+  React.useEffect(() => {
+    const today = new Date();
+    if (periodo === 'mes') {
+      const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+      setFechaInicio(firstDay.toISOString().split('T')[0]);
+      setFechaFin(today.toISOString().split('T')[0]);
+    } else if (periodo === 'semana') {
+      const day = today.getDay();
+      const diffToMonday = today.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(today);
+      monday.setDate(diffToMonday);
+      setFechaInicio(monday.toISOString().split('T')[0]);
+      
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      
+      const todayEnd = new Date();
+      const end = sunday > todayEnd ? todayEnd : sunday;
+      setFechaFin(end.toISOString().split('T')[0]);
+    }
+  }, [periodo]);
 
   const ventasFiltradas = React.useMemo(() => {
     if (periodo === 'dia') return ventas.filter(v => v.fecha === fechaDia);
@@ -248,8 +278,8 @@ function CierreWizard({ ventas, onClose, onSaved }: {
         fecha: periodo === 'dia'
           ? new Date(fechaDia + 'T12:00:00').toLocaleDateString('es-VE')
           : new Date(fechaInicio + 'T12:00:00').toLocaleDateString('es-VE'),
-        fecha_inicio: periodo === 'mes' ? fechaInicio.split('-').reverse().join('/') : undefined,
-        fecha_fin: periodo === 'mes' ? fechaFin.split('-').reverse().join('/') : undefined,
+        fecha_inicio: (periodo === 'mes' || periodo === 'semana') ? fechaInicio.split('-').reverse().join('/') : undefined,
+        fecha_fin: (periodo === 'mes' || periodo === 'semana') ? fechaFin.split('-').reverse().join('/') : undefined,
         total_ingresos_usd: totalUSD,
         total_bs: totalBS,
         tasa_bcv: tasaBCV,
@@ -293,8 +323,8 @@ function CierreWizard({ ventas, onClose, onSaved }: {
         const { error } = await supabase.from('cierres_caja').insert(withSedeInsert({
           fecha: fechaDia || fechaInicio,
           periodo,
-          fecha_inicio: periodo === 'mes' ? fechaInicio : null,
-          fecha_fin: periodo === 'mes' ? fechaFin : null,
+          fecha_inicio: (periodo === 'mes' || periodo === 'semana') ? fechaInicio : null,
+          fecha_fin: (periodo === 'mes' || periodo === 'semana') ? fechaFin : null,
           total_ingresos_usd: totalUSD,
           total_bs: totalBS,
           tasa_bcv: tasaBCV,
@@ -310,7 +340,7 @@ function CierreWizard({ ventas, onClose, onSaved }: {
         await logActivity({
           usuario: userName,
           modulo: 'Reportes',
-          accion: `Generó cierre de caja ${periodo === 'dia' ? 'diario' : 'mensual'}`,
+          accion: `Generó cierre de caja ${periodo === 'dia' ? 'diario' : periodo === 'semana' ? 'semanal' : 'mensual'}`,
           detalles: `Fecha: ${fechaDia || fechaInicio}, Total: $${totalUSD.toFixed(2)}`,
           referencia_tabla: 'cierres_caja'
         });
@@ -367,12 +397,12 @@ function CierreWizard({ ventas, onClose, onSaved }: {
             <div className="space-y-4">
               <p className="text-xs text-muted-foreground">Selecciona el tipo de cierre y el período a reportar.</p>
               <div className="flex gap-3">
-                {(['dia', 'mes'] as const).map(p => (
+                {(['dia', 'semana', 'mes'] as const).map(p => (
                   <button key={p} onClick={() => setPeriodo(p)}
                     className={cn("flex-1 p-4 rounded-2xl border-2 text-sm font-black uppercase transition-all",
                       periodo === p ? "border-orange-500 bg-orange-600/10 text-orange-500" :
                       "border-border text-muted-foreground hover:border-orange-500/40")}>
-                    {p === 'dia' ? '📅 Por Día' : '📆 Por Mes'}
+                    {p === 'dia' ? '📅 Por Día' : p === 'semana' ? '🗓️ Por Semana' : '📆 Por Mes'}
                   </button>
                 ))}
               </div>
@@ -1718,7 +1748,17 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
         }
       } catch { /* non-blocking */ }
 
-      const dataList = [{
+      // Cargar historial de abonos si la venta tiene pagos parciales
+      let abonosVenta: any[] = [];
+      if (venta.tiene_abono || venta.estado === 'pendiente') {
+        try {
+          const { data: ab } = await supabase!.from('abonos')
+            .select('*').eq('venta_id', venta.id).order('created_at', { ascending: true });
+          abonosVenta = ab || [];
+        } catch { abonosVenta = []; }
+      }
+
+      const dataList: InvoicePDFItem[] = [{
         id: venta.id,
         correlativo: correlativo || undefined,
         fecha: venta.fecha,
@@ -1730,7 +1770,20 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
         pago_ves: venta.pago_ves,
         tasa_cambio: venta.tasa_cambio,
         iva_aplicado: venta.con_iva,
-        metodos_pago: venta.metodos_pago
+        metodos_pago: venta.metodos_pago,
+        comprobante_url: venta.comprobante_url || undefined,
+        comprobante_referencia: venta.comprobante_referencia || undefined,
+        estado: (venta.estado === 'pendiente' ? 'pendiente' : 'pagado') as 'pagado' | 'pendiente',
+        tiene_abono: venta.tiene_abono,
+        abono: venta.abono,
+        total_abonado: venta.total_abonado,
+        saldo_pendiente: venta.saldo_pendiente,
+        abonos: abonosVenta.map((a: any) => ({
+          monto: Number(a.monto),
+          metodo_pago: a.metodo_pago,
+          created_at: a.created_at,
+          saldo_despues: Number(a.saldo_despues),
+        })),
       }];
 
       if (printMode === 'dual') {
@@ -1781,7 +1834,9 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
           pago_ves: secondVenta.pago_ves,
           tasa_cambio: secondVenta.tasa_cambio,
           iva_aplicado: secondVenta.con_iva,
-          metodos_pago: secondVenta.metodos_pago
+          metodos_pago: secondVenta.metodos_pago,
+          comprobante_url: secondVenta.comprobante_url || undefined,
+          comprobante_referencia: secondVenta.comprobante_referencia || undefined
         });
       }
 
@@ -2412,6 +2467,9 @@ export default function ReportesPage() {
     );
 
     setVentas(allVentas);
+    if (eRes.error) {
+      console.error('Error fetching egresos:', eRes.error);
+    }
     setEgresos((eRes.data as Egreso[]) || []);
     setCierresOficiales((cRes.data as CierreOficial[])?.map((c, i) => ({ ...c, id: c.id || `c-${i}-${Date.now()}` })) || []);
     setPapeleraVentas(papRes.data || []);
@@ -2580,9 +2638,11 @@ export default function ReportesPage() {
     if (!supabase) return;
     const payload = { ...data, updated_at: new Date().toISOString() };
     if (editandoEgreso) {
-      await withSedeFilter(supabase.from('egresos')).update(payload).eq('id', editandoEgreso.id);
+      const { error } = await withSedeFilter(supabase.from('egresos')).update(payload).eq('id', editandoEgreso.id);
+      if (error) throw new Error(error.message || 'Error al actualizar egreso');
     } else {
-      await withSedeFilter(supabase.from('egresos')).insert(withSedeInsert({ ...payload, creado_por: 'Admin' }));
+      const { error } = await withSedeFilter(supabase.from('egresos')).insert(withSedeInsert({ ...payload, creado_por: 'Admin' }));
+      if (error) throw new Error(error.message || 'Error al guardar egreso');
 
       // Log Activity
       await logActivity({
@@ -3193,6 +3253,24 @@ export default function ReportesPage() {
                               {(v.isBinance || (v.notas && /binance|usdt/i.test(v.notas))) && (
                                 <span className="text-[8px] font-black text-black bg-yellow-500 px-1.5 py-0.5 rounded-full uppercase tracking-tighter">
                                   BINANCE
+                                </span>
+                              )}
+
+                              {(v.tiene_abono || v.referencia_tabla === 'abonos' || (v.notas && /\babono\b/i.test(v.notas))) && (
+                                <span className="text-[8px] font-black text-green-400 bg-green-500/10 px-1.5 py-0.5 rounded-full border border-green-500/20 uppercase tracking-tighter">
+                                  ABONO
+                                </span>
+                              )}
+
+                              {v.estado === 'pendiente' && (
+                                <span className="text-[8px] font-black text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded-full border border-amber-500/20 uppercase tracking-tighter">
+                                  PENDIENTE
+                                </span>
+                              )}
+
+                              {v.presupuesto_numero && (
+                                <span className="text-[8px] font-black text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded-full border border-blue-500/20 uppercase tracking-tighter">
+                                  PRESUP.
                                 </span>
                               )}
                             </div>

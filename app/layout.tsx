@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 import LoadingScreen from '@/components/layout/LoadingScreen';
 import { ThemeProvider } from '@/components/providers/ThemeProvider';
+import { Toaster } from '@/components/ui/sonner';
+import { AlertToastBridge } from '@/components/providers/AlertToastBridge';
 
 export const metadata: Metadata = {
   title: 'Lycos Team — Sistema de Gestión Automotriz',
@@ -37,6 +39,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         >
           <LoadingScreen />
           {children}
+          <Toaster />
+          <AlertToastBridge />
         </ThemeProvider>
       </body>
     </html>

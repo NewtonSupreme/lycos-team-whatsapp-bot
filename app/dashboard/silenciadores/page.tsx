@@ -24,6 +24,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
+import { ComprobanteInput, emptyComprobante, type ComprobanteValue } from '@/components/ventas/ComprobanteInput';
+import { uploadComprobante, comprobanteFields } from '@/lib/comprobante';
 import {
   Dialog,
   DialogContent,
@@ -147,6 +149,8 @@ export default function VentasPage() {
   const [showAbonoSection, setShowAbonoSection] = useState(false);
   const [showNotasSection, setShowNotasSection] = useState(false);
   const [abono, setAbono] = useState(0);
+  // Comprobante de pago (referencia + imagen del pago móvil / transferencia)
+  const [comprobante, setComprobante] = useState<ComprobanteValue>(emptyComprobante());
   const [tabVenta, setTabVenta] = useState<'nueva' | 'pendientes'>('nueva');
   const [ventasPendientes, setVentasPendientes] = useState<any[]>([]);
   const [loadingPendientes, setLoadingPendientes] = useState(false);
@@ -511,9 +515,14 @@ export default function VentasPage() {
       const hoyStr = format(new Date(), 'yyyy-MM-dd');
       const esRegistroAtrasado = ventaFechaStr !== hoyStr;
 
+      // Subir comprobante de pago (si se adjuntó imagen) → URL pública
+      const comprobanteUrl = await uploadComprobante(comprobante.file);
+      const comprobanteRef = comprobante.referencia.trim() || null;
+
       const { data: ventaDia, error: ventaError } = await withSedeFilter(supabase.from('ventas_dia'))
         .insert(withSedeInsert({
           fecha: ventaFechaStr,
+          ...comprobanteFields(comprobanteUrl, comprobanteRef),
           cliente: clienteNombre || 'Consumidor Final',
           total_ingresos: total,
           desglose: cart.map(item => {
@@ -631,7 +640,9 @@ export default function VentasPage() {
         tiene_abono: tieneAbono,
         abono: abonoAmount,
         saldo_pendiente: saldoRestante,
-        estado: estadoVenta
+        estado: estadoVenta,
+        comprobante_url: comprobanteUrl || undefined,
+        comprobante_referencia: comprobanteRef || undefined
       };
 
       const dataList: any[] = [data1];
@@ -677,6 +688,8 @@ export default function VentasPage() {
           emitido_por: 'Admin',
           fecha_emision: format(selectedDate, 'yyyy-MM-dd'),
           sede_id: currentSede?.id || undefined,
+          comprobante_url: comprobanteUrl || undefined,
+          comprobante_referencia: comprobanteRef || undefined,
         });
         if (facturaRegistro?.correlativo) correlativoSil = facturaRegistro.correlativo;
       } catch (facErr) {
@@ -694,6 +707,7 @@ export default function VentasPage() {
       setMetodosPago({ efectivo_usd: 0, zelle: 0, pago_movil: 0, efectivo_ves: 0, punto_de_venta: 0, transferencia: 0, cashea: 0, binance: 0, euros: 0, otro: 0 });
       setAbono(0);
       setShowAbonoSection(false);
+      setComprobante(emptyComprobante());
       setShowPreview(false);
       fetchData();
       const abonoMsg = tieneAbono
@@ -894,7 +908,9 @@ export default function VentasPage() {
       tasa_bcv: bcvRate,
       total_ves: (venta.total_ingresos || 0) * bcvRate,
       iva_aplicado: venta.con_iva,
-      metodos_pago: mp
+      metodos_pago: mp,
+      comprobante_url: venta.comprobante_url || undefined,
+      comprobante_referencia: venta.comprobante_referencia || undefined
     }], { mode: 'single', side: 'left', currencyMode: resolvedCurrencyMode as any });
   };
 
@@ -2102,6 +2118,9 @@ export default function VentasPage() {
                <span className="text-xs font-black uppercase tracking-widest text-muted-foreground">TOTAL A COBRAR:</span>
                <span className="text-2xl md:text-3xl font-black text-primary italic tracking-tighter">${Number(total).toFixed(2)}</span>
             </div>
+
+            {/* Comprobante de pago (referencia + imagen del pago) */}
+            <ComprobanteInput value={comprobante} onChange={setComprobante} />
           </div>
           <DialogFooter className="p-4 md:p-8 bg-muted/20 flex flex-col gap-4 flex-shrink-0">
              <div className="flex flex-col md:flex-row items-center justify-between w-full gap-4">

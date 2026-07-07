@@ -261,6 +261,8 @@ export default function FacturasPage() {
       notas: factura.notas,
       metodos_pago: factura.metodos_pago,
       estado: factura.estado as any,
+      comprobante_url: (factura as any).comprobante_url || undefined,
+      comprobante_referencia: (factura as any).comprobante_referencia || undefined,
     }], { mode: 'dual', currencyMode: 'dual' });
   };
 

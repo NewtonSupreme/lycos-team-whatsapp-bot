@@ -84,7 +84,7 @@ export default function ConfiguracionPage() {
     activo: true, respuesta_automatica: true,
     escalar_humano: true, aprendizaje: false,
     respuestas_nocturnas: true, max_intentos: 3,
-    ubicacion_sin_ia: false
+    ubicacion_sin_ia: false, bot_whatsapp_global_activo: true
   });
 
   // Password change
@@ -324,7 +324,10 @@ export default function ConfiguracionPage() {
                   <CardDescription className="text-xs">Comportamiento del asistente Gemini (solo Admin)</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                  <Toggle checked={ia.activo} onChange={v => setIa(p => ({ ...p, activo: v }))} label="Bot IA activo" description="Habilitar asistente de inteligencia artificial" />
+                  <div className="p-3 mb-4 rounded-xl border-2 border-primary/50 bg-primary/5">
+                    <Toggle checked={ia.bot_whatsapp_global_activo !== false} onChange={v => setIa(p => ({ ...p, bot_whatsapp_global_activo: v }))} label="Bot WhatsApp Global (On/Off)" description="Apaga o enciende completamente el bot en todos los entornos. Si se apaga, no responderá a nada." />
+                  </div>
+                  <Toggle checked={ia.activo} onChange={v => setIa(p => ({ ...p, activo: v }))} label="Asistente IA (Gemini) activo" description="Habilitar el motor de inteligencia artificial (si se apaga, solo responde menús fijos si los hay)" />
                   <Toggle checked={ia.respuesta_automatica} onChange={v => setIa(p => ({ ...p, respuesta_automatica: v }))} label="Respuesta automática" description="Responder mensajes sin intervención humana" />
                   <Toggle checked={ia.escalar_humano} onChange={v => setIa(p => ({ ...p, escalar_humano: v }))} label="Escalar a humano" description="Transferir cuando el bot no puede resolver" />
                   <Toggle checked={ia.respuestas_nocturnas} onChange={v => setIa(p => ({ ...p, respuestas_nocturnas: v }))} label="Respuestas nocturnas" description="Responder automáticamente fuera de horario" />
@@ -353,7 +356,8 @@ export default function ConfiguracionPage() {
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-xs">
                       {[
-                        ['Bot activo', ia.activo ? '✅ Sí' : '❌ No'],
+                        ['Bot WhatsApp Global', ia.bot_whatsapp_global_activo !== false ? '✅ Activo' : '❌ Apagado'],
+                        ['Motor IA (Gemini)', ia.activo ? '✅ Activo' : '❌ Apagado'],
                         ['Auto respuesta', ia.respuesta_automatica ? '✅ Sí' : '❌ No'],
                         ['Escalado', ia.escalar_humano ? '✅ Sí' : '❌ No'],
                         ['Nocturnas', ia.respuestas_nocturnas ? '✅ Sí' : '❌ No'],

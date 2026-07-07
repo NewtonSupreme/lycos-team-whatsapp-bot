@@ -620,6 +620,7 @@ export interface Presupuesto {
   creado_por: string;
   creado_por_id?: string | null;
   convertido_a?: string | null;
+  venta_id?: string | null;
   created_at: string;
   updated_at: string;
   sede_id?: string | null;
@@ -799,4 +800,20 @@ export interface EmployeeEarnings {
   jobs: JobAssignment[];
   adelantos: PayrollAdvance[];
   liquidado: boolean;
+}
+
+export interface Abono {
+  id: string;
+  venta_id: string;
+  monto: number;
+  monto_bs?: number | null;
+  tasa_cambio?: number | null;
+  metodo_pago: string;
+  moneda: string;
+  saldo_antes?: number | null;
+  saldo_despues?: number | null;
+  nota?: string | null;
+  registrado_por: string;
+  sede_id?: string | null;
+  created_at: string;
 }

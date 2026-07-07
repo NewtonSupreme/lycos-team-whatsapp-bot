@@ -114,7 +114,6 @@ export async function POST(request: NextRequest) {
       .from('mensajes_whatsapp')
       .select('id, from_number, body, media_url, media_type, wa_message_id, tipo')
       .eq('id', messageId)
-      .eq('sede_id', DEFAULT_SEDE_ID)
       .single();
 
     if (msgErr || !msg) return NextResponse.json({ error: 'Mensaje no encontrado' }, { status: 404 });
@@ -182,7 +181,7 @@ export async function POST(request: NextRequest) {
 
     // Update the message body if it changed
     if (newBody && newBody !== msg.body) {
-      await db.from('mensajes_whatsapp').update({ body: newBody }).eq('id', messageId).eq('sede_id', DEFAULT_SEDE_ID);
+      await db.from('mensajes_whatsapp').update({ body: newBody }).eq('id', messageId);
     }
 
     // Reprocess with AI (processCoreLogic)
