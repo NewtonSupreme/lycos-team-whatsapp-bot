@@ -37,6 +37,25 @@ export async function GET() {
           data = [...data, ...inserted].sort((a, b) => a.label.localeCompare(b.label));
         }
       }
+
+      // Sanar roles existentes agregando módulos que no existían cuando el rol se guardó en BD
+      for (const r of data) {
+        const defaults = PERMISOS_DEFAULT[r.nombre] || {};
+        let modified = false;
+        const currentPerms = typeof r.permisos === 'string' ? JSON.parse(r.permisos) : (r.permisos || {});
+        
+        for (const mod of Object.keys(defaults)) {
+          if (currentPerms[mod] === undefined || currentPerms[mod] === null) {
+            currentPerms[mod] = defaults[mod];
+            modified = true;
+          }
+        }
+        
+        if (modified) {
+          r.permisos = currentPerms;
+          await supabaseAdmin.from('roles').update({ permisos: currentPerms }).eq('id', r.id);
+        }
+      }
     }
 
     return NextResponse.json({ roles: data });

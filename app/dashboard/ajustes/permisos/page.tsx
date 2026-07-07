@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useAppStore } from "@/lib/store";
-import { MODULES, normalizePermiso, accesoToCrud, type Permisos, type CrudPermiso, type PermisoValue } from "@/types";
+import { MODULES, normalizePermiso, accesoToCrud, PERMISOS_DEFAULT, type Permisos, type CrudPermiso, type PermisoValue } from "@/types";
 import { Shield, Loader2, Save, AlertCircle, CheckCircle2 } from "lucide-react";
 
 interface RoleData {
@@ -43,10 +43,17 @@ export default function PermisosPage() {
 
   function getEffectivePermisos(role: RoleData): Permisos {
     const stored = role.permisos || {};
+    const defaults = PERMISOS_DEFAULT[role.nombre] || {};
     const result: any = {};
     for (const mod of MODULES) {
       const val = stored[mod];
-      result[mod] = val !== undefined ? normalizePermiso(val) : accesoToCrud(false);
+      if (val !== undefined && val !== null) {
+        result[mod] = normalizePermiso(val);
+      } else if (defaults[mod] !== undefined && defaults[mod] !== null) {
+        result[mod] = normalizePermiso(defaults[mod]);
+      } else {
+        result[mod] = accesoToCrud(false);
+      }
     }
     return result as Permisos;
   }

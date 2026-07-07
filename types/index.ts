@@ -256,17 +256,32 @@ export function getPermisos(
   defaultsOverride?: Record<string, Permisos> | null
 ): Permisos {
   const canonical = resolveRol(rol);
+  const codeDefaults = PERMISOS_DEFAULT[canonical] || (rol ? PERMISOS_DEFAULT[rol] : undefined) || MINIMAL_PERMISOS;
   const source = defaultsOverride ?? PERMISOS_DEFAULT;
-  // Defaults del rol: BD (override) → catálogo de código → mínimo seguro.
-  const defaults = source[canonical] || (rol ? source[rol] : undefined) || PERMISOS_DEFAULT[canonical] || MINIMAL_PERMISOS;
-  if (!storedPermisos) return defaults;
+  const rawDefaults = source[canonical] || (rol ? source[rol] : undefined) || codeDefaults;
+
+  // Asegurar que todos los módulos existan en defaults por si el rol en BD
+  // se guardó antes de añadir un nuevo módulo (p.ej. nomina, presupuestos).
+  const defaults: any = {};
+  for (const mod of MODULES) {
+    if (rawDefaults[mod] !== undefined && rawDefaults[mod] !== null) {
+      defaults[mod] = normalizePermiso(rawDefaults[mod]);
+    } else if (codeDefaults[mod] !== undefined && codeDefaults[mod] !== null) {
+      defaults[mod] = normalizePermiso(codeDefaults[mod]);
+    } else {
+      defaults[mod] = { crear: false, leer: false, editar: false, eliminar: false };
+    }
+  }
+
+  if (!storedPermisos) return defaults as Permisos;
+  
   const merged = { ...defaults };
   for (const [key, val] of Object.entries(storedPermisos)) {
-    if (key in defaults) {
+    if (key in defaults && val !== undefined && val !== null) {
       merged[key as keyof Permisos] = normalizePermiso(val);
     }
   }
-  return merged;
+  return merged as Permisos;
 }
 
 // ── Reglas de sistema ───────────────────────────────────────────────────────

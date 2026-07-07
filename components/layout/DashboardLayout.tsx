@@ -211,6 +211,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     else if (pathname.includes('/dashboard/calculadora')) requiredModule = 'calculadora';
     else if (pathname.includes('/dashboard/configuracion')) requiredModule = 'configuracion';
     else if (pathname.includes('/dashboard/distribuidor')) requiredModule = 'distribuidor';
+    else if (pathname.includes('/dashboard/nomina')) requiredModule = 'nomina';
 
     if (requiredModule && !can(requiredModule, 'leer')) {
       if (!accessDenied) setAccessDenied(true);
