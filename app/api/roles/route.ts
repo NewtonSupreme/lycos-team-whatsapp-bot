@@ -40,7 +40,7 @@ export async function GET() {
 
       // Sanar roles existentes agregando módulos que no existían cuando el rol se guardó en BD
       for (const r of data) {
-        const defaults = PERMISOS_DEFAULT[r.nombre] || {};
+        const defaults: Record<string, any> = (PERMISOS_DEFAULT[r.nombre] || {}) as Record<string, any>;
         let modified = false;
         const currentPerms = typeof r.permisos === 'string' ? JSON.parse(r.permisos) : (r.permisos || {});
         

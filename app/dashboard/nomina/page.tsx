@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import {
   Banknote, Loader2, Wallet, TrendingUp, Users, Calendar, RefreshCw, Plus,
   CheckCircle2, FileText, AlertTriangle, Settings2, ChevronRight, Building2, Download, X, Coins,
+  Sparkles, Check, AlertCircle, Bot, Wand2, Save,
 } from 'lucide-react';
 import {
   getPermisos, hasPermiso, resolveRol, getRoleMeta, ZONAS_TRABAJO,
@@ -17,7 +18,7 @@ import {
 import { generateReciboNominaPDF } from '@/lib/recibo-nomina-pdf';
 import AsignacionTecnicos, { type JobSpec } from '@/components/nomina/AsignacionTecnicos';
 
-type Tab = 'resumen' | 'trabajos' | 'reglas' | 'adelantos' | 'historial';
+type Tab = 'resumen' | 'ia' | 'trabajos' | 'reglas' | 'adelantos' | 'historial';
 
 const money = (n: number) => `$${(n ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const zonaLabel = (z: string) => ZONAS_TRABAJO.find(x => x.key === z)?.label || z;
@@ -111,6 +112,7 @@ export default function NominaPage() {
 
   const tabs: { key: Tab; label: string; show: boolean }[] = [
     { key: 'resumen', label: esTecnico ? 'Mi Resumen' : 'Resumen', show: true },
+    { key: 'ia', label: '✨ Análisis IA', show: canEdit },
     { key: 'trabajos', label: 'Trabajos', show: true },
     { key: 'reglas', label: 'Reglas & Tarifas', show: canEdit },
     { key: 'adelantos', label: 'Adelantos', show: canLiquidar },
@@ -182,9 +184,11 @@ export default function NominaPage() {
             esTecnico
               ? <MiResumen earnings={summary[0]} />
               : <ResumenAdmin summary={summary} totales={totales} canLiquidar={canLiquidar}
+                  range={range} sedeNombre={currentSede?.nombre}
                   onLiquidar={setLiquidarTarget} onDetalle={setDetalle} />
           )}
           {tab === 'trabajos' && <TrabajosTab range={range} sedeId={sedeId} canEdit={canEdit} canLiquidar={canLiquidar} esTecnico={esTecnico} userId={user?.id} />}
+          {tab === 'ia' && canEdit && <AnalisisIATab range={range} sedeId={sedeId} onDone={() => loadSummary(true)} />}
           {tab === 'reglas' && canEdit && <ReglasTab sedeId={sedeId} isAdmin={isAdmin} />}
           {tab === 'adelantos' && canLiquidar && <AdelantosTab sedeId={sedeId} onChange={() => loadSummary(true)} />}
           {tab === 'historial' && <HistorialTab sedeId={sedeId} isAdmin={isAdmin} />}
@@ -205,10 +209,24 @@ export default function NominaPage() {
 }
 
 // ════════════════════ RESUMEN ADMIN (tabla maestra) ════════════════════
-function ResumenAdmin({ summary, totales, canLiquidar, onLiquidar, onDetalle }: {
+function ResumenAdmin({ summary, totales, canLiquidar, range, sedeNombre, onLiquidar, onDetalle }: {
   summary: EmployeeEarnings[]; totales: any; canLiquidar: boolean;
+  range: { inicio: string; fin: string }; sedeNombre?: string;
   onLiquidar: (e: EmployeeEarnings) => void; onDetalle: (e: EmployeeEarnings) => void;
 }) {
+  const descargarHojaEmpleado = (e: EmployeeEarnings) => {
+    generateReciboNominaPDF({
+      recibo_numero: `BORRADOR · ${range.inicio} → ${range.fin}`,
+      empleado_nombre: e.empleado_nombre, rol: e.rol,
+      periodo_inicio: range.inicio, periodo_fin: range.fin, sede_nombre: sedeNombre,
+      sueldo_base: e.sueldo_base, total_comisiones: e.total_comisiones,
+      total_overrides: e.total_overrides, total_flat: e.total_flat,
+      bruto: e.bruto, deducciones: e.deducciones, total_pagar: e.total_pagar,
+      desglose_monedas: e.desglose_monedas,
+      jobs: (e.jobs || []).map(j => ({ fecha: j.fecha, zona: j.zona, tipo_trabajo: j.tipo_trabajo, descripcion: j.descripcion, comision_usd: j.comision_usd, es_override: j.es_override, moneda: j.moneda })),
+    });
+  };
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -251,11 +269,19 @@ function ResumenAdmin({ summary, totales, canLiquidar, onLiquidar, onDetalle }: 
                     <td className="text-right px-3 py-3 text-red-500">{e.deducciones ? `- ${money(e.deducciones)}` : '—'}</td>
                     <td className="text-right px-3 py-3 font-bold text-emerald-600">{money(e.total_pagar)}</td>
                     <td className="text-right px-4 py-3" onClick={ev => ev.stopPropagation()}>
-                      {canLiquidar
-                        ? <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white h-8" onClick={() => onLiquidar(e)} disabled={e.total_pagar === 0 && e.jobs.length === 0}>
-                            <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Liquidar
-                          </Button>
-                        : <ChevronRight className="w-4 h-4 text-slate-300 inline" />}
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => descargarHojaEmpleado(e)}
+                          title="Descargar hoja de comisiones (borrador)"
+                          className="text-slate-400 hover:text-indigo-600 p-1.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/20 transition-colors">
+                          <Download className="w-4 h-4" />
+                        </button>
+                        {canLiquidar
+                          ? <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white h-8" onClick={() => onLiquidar(e)} disabled={e.total_pagar === 0 && e.jobs.length === 0}>
+                              <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Liquidar
+                            </Button>
+                          : <ChevronRight className="w-4 h-4 text-slate-300 inline" />}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -813,6 +839,180 @@ function ModalShell({ children, onClose, title }: { children: React.ReactNode; o
         </CardHeader>
         <CardContent className="p-4 overflow-y-auto custom-scrollbar">{children}</CardContent>
       </Card>
+    </div>
+  );
+}
+
+// ════════════════════ ANÁLISIS CON IA ════════════════════
+function AnalisisIATab({ range, sedeId, onDone }: { range: { inicio: string; fin: string }; sedeId: string | null; onDone: () => void }) {
+  const [analyzing, setAnalyzing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [ops, setOps] = useState<any[]>([]);
+  const [stats, setStats] = useState<any>(null);
+  const [techs, setTechs] = useState<any[]>([]);
+  const [err, setErr] = useState('');
+  const [msg, setMsg] = useState('');
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    fetch(`/api/nomina/technicians${sedeId ? `?sede=${sedeId}` : ''}`).then(r => r.json()).then(d => setTechs(d.technicians || [])).catch(() => {});
+  }, [sedeId]);
+
+  const analizar = async () => {
+    setAnalyzing(true); setErr(''); setMsg(''); setDone(false); setOps([]); setStats(null);
+    try {
+      const qs = new URLSearchParams({ inicio: range.inicio, fin: range.fin });
+      if (sedeId) qs.set('sede', sedeId);
+      const r = await fetch(`/api/nomina/ai-analyze?${qs}`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Error al analizar');
+      if (d.total === 0 || (d.operaciones || []).length === 0) {
+        setMsg(d.mensaje || 'No hay operaciones sin asignar en este período.');
+      } else {
+        setOps((d.operaciones || []).map((o: any) => ({ ...o, omitir: false })));
+        setStats(d.stats);
+      }
+    } catch (e: any) { setErr(e.message); } finally { setAnalyzing(false); }
+  };
+
+  const updateOp = (idx: number, patch: any) => {
+    setOps(prev => prev.map((o, i) => i === idx ? { ...o, ...patch } : o));
+  };
+
+  const confirmar = async () => {
+    setSaving(true); setErr(''); setMsg('');
+    try {
+      const r = await fetch('/api/nomina/ai-analyze', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inicio: range.inicio, fin: range.fin, sede: sedeId, operaciones: ops }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Error al registrar');
+      setMsg(`${d.creados} trabajo(s) registrados correctamente.${d.errores?.length ? ` ${d.errores.length} con error.` : ''}`);
+      setDone(true);
+      setOps([]);
+      onDone();
+    } catch (e: any) { setErr(e.message); } finally { setSaving(false); }
+  };
+
+  const incluidas = ops.filter(o => !o.omitir).length;
+
+  return (
+    <div className="space-y-4">
+      {/* Header / launcher */}
+      <div className="rounded-2xl border border-purple-200 dark:border-purple-900/40 bg-gradient-to-br from-purple-50 to-indigo-50 dark:from-purple-950/20 dark:to-indigo-950/20 p-5">
+        <div className="flex items-start gap-3">
+          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center flex-shrink-0 shadow-lg">
+            <Sparkles className="w-6 h-6 text-white" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-base font-bold text-slate-800 dark:text-slate-100">Motor de Comisiones con IA</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              La IA (Gemini) analiza las ventas y servicios del período <b>{range.inicio} → {range.fin}</b>, detecta el técnico ejecutor, el tipo de servicio y la mano de obra, y prepara los trabajos para comisión. Revísalos y confirma.
+            </p>
+            <div className="mt-3">
+              <Button onClick={analizar} disabled={analyzing || saving}
+                className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white">
+                {analyzing ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Analizando con IA...</> : <><Wand2 className="w-4 h-4 mr-1.5" /> Analizar período con IA</>}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {err && <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 dark:bg-red-950/20 rounded-lg p-3"><AlertCircle className="w-4 h-4" /> {err}</div>}
+      {msg && <div className="flex items-center gap-2 text-sm text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 rounded-lg p-3"><CheckCircle2 className="w-4 h-4" /> {msg}</div>}
+
+      {/* Stats */}
+      {stats && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { label: 'Operaciones', val: stats.total, color: 'text-slate-700 dark:text-slate-200' },
+            { label: 'Con técnico', val: stats.con_tecnico, color: 'text-emerald-600' },
+            { label: 'Requieren revisión', val: stats.requieren_revision, color: 'text-amber-600' },
+            { label: 'Monto total', val: money(stats.monto_total), color: 'text-indigo-600' },
+          ].map(s => (
+            <div key={s.label} className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 bg-white dark:bg-slate-900">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{s.label}</p>
+              <p className={`text-lg font-bold ${s.color}`}>{s.val}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Tabla editable de operaciones clasificadas */}
+      {ops.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-800">
+                <tr className="text-left text-slate-500">
+                  <th className="px-3 py-2 font-semibold">Incluir</th>
+                  <th className="px-3 py-2 font-semibold">Descripción</th>
+                  <th className="px-3 py-2 font-semibold">Zona</th>
+                  <th className="px-3 py-2 font-semibold">Técnico</th>
+                  <th className="px-3 py-2 font-semibold text-right">Monto</th>
+                  <th className="px-3 py-2 font-semibold text-right">Mano obra</th>
+                  <th className="px-3 py-2 font-semibold">IA</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {ops.map((o, idx) => (
+                  <tr key={idx} className={`${o.omitir ? 'opacity-40' : ''} ${o.requiere_revision ? 'bg-amber-50/50 dark:bg-amber-950/10' : ''}`}>
+                    <td className="px-3 py-2">
+                      <input type="checkbox" checked={!o.omitir} onChange={e => updateOp(idx, { omitir: !e.target.checked })} className="rounded" />
+                    </td>
+                    <td className="px-3 py-2 max-w-[200px]">
+                      <div className="truncate font-medium text-slate-700 dark:text-slate-200" title={o.descripcion}>{o.descripcion}</div>
+                      <div className="text-[10px] text-slate-400">{o.fecha} · {o.cliente || 's/cliente'}</div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <select value={o.zona} onChange={e => updateOp(idx, { zona: e.target.value })}
+                        className="rounded border border-slate-200 dark:border-slate-700 bg-transparent px-1.5 py-1 text-xs">
+                        {ZONAS_TRABAJO.map(z => <option key={z.key} value={z.key}>{z.label}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-3 py-2">
+                      <select
+                        value={o.es_taller ? '__taller__' : (o.empleado_id || '')}
+                        onChange={e => {
+                          const v = e.target.value;
+                          if (v === '__taller__') updateOp(idx, { es_taller: true, empleado_id: null, empleado_nombre: 'Taller (sin técnico)' });
+                          else { const t = techs.find(x => x.id === v); updateOp(idx, { es_taller: false, empleado_id: v || null, empleado_nombre: t?.nombre || null }); }
+                        }}
+                        className="rounded border border-slate-200 dark:border-slate-700 bg-transparent px-1.5 py-1 text-xs max-w-[140px]">
+                        <option value="">— sin asignar —</option>
+                        <option value="__taller__">Taller (sin técnico)</option>
+                        {techs.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-3 py-2 text-right font-medium tabular-nums">{o.monto?.toFixed(2)} {o.moneda}</td>
+                    <td className="px-3 py-2 text-right">
+                      <input type="number" step="0.01" value={o.mano_obra}
+                        onChange={e => updateOp(idx, { mano_obra: Number(e.target.value) })}
+                        className="w-20 rounded border border-slate-200 dark:border-slate-700 bg-transparent px-1.5 py-1 text-xs text-right" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-1">
+                        <span className={`inline-block w-2 h-2 rounded-full ${o.confianza >= 0.7 ? 'bg-emerald-500' : o.confianza >= 0.5 ? 'bg-amber-500' : 'bg-red-500'}`} title={`Confianza: ${Math.round(o.confianza * 100)}%`} />
+                        {o.requiere_revision && <AlertTriangle className="w-3 h-3 text-amber-500" />}
+                      </div>
+                      <div className="text-[9px] text-slate-400 max-w-[120px] truncate" title={o.razon}>{o.razon}</div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center justify-between gap-3 p-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+            <p className="text-xs text-slate-500">{incluidas} de {ops.length} operaciones se registrarán como comisión.</p>
+            <Button onClick={confirmar} disabled={saving || incluidas === 0}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white">
+              {saving ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Registrando...</> : <><Save className="w-4 h-4 mr-1.5" /> Confirmar y registrar comisiones</>}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
