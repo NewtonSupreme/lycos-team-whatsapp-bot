@@ -9,7 +9,7 @@ import {
   TrendingUp, Save, CheckCircle2, XCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase, registrarFactura, createPresupuesto, generateNumeroPresupuesto, syncClientData, transferVehiculo } from '@/lib/supabase';
+import { supabase, registrarFactura, createPresupuesto, generateNumeroPresupuesto, syncClientData, transferVehiculo, autoRegisterSaleFromService } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from "@/lib/store/useSedeStore";
@@ -1614,6 +1614,19 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           }
         }
         
+        if (cita.estado === 'completado' || cita.estado === 'completada' || cita.estado === 'finalizado') {
+          try {
+            await autoRegisterSaleFromService({
+              ...cita,
+              ...updatePayload,
+              id: cita.id,
+              sede_id: cita.sede_id || useSedeStore.getState().currentSede?.id,
+            }, { userName: user?.nombre || 'Admin' });
+          } catch (err) {
+            console.error('Error registrando venta en edición de servicio:', err);
+          }
+        }
+
         logActivity({
           usuario: user?.nombre || 'Admin',
           modulo: 'Servicios',
