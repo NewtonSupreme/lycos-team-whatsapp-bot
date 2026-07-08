@@ -24,6 +24,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
+import DesglosePagoBancos from '@/components/pos/DesglosePagoBancos';
+import { buildVentaDiaFields, emptyBins, binsTotalUSD, deptFromInventario, type Bins } from '@/lib/reporte/ventas-mapping';
 import { ComprobanteInput, emptyComprobante, type ComprobanteValue } from '@/components/ventas/ComprobanteInput';
 import { uploadComprobante, comprobanteFields } from '@/lib/comprobante';
 import {
@@ -110,19 +112,8 @@ export default function VentasPage() {
     })();
   }, [selectedSale?.id]);
 
-  // Payment methods (Stored in USD/Euros)
-  const [metodosPago, setMetodosPago] = useState({
-    efectivo_usd: 0,
-    zelle: 0,
-    pago_movil: 0,
-    efectivo_ves: 0,
-    punto_de_venta: 0,
-    transferencia: 0,
-    cashea: 0,
-    binance: 0,
-    euros: 0,
-    otro: 0
-  });
+  // Desglose de pago por banco (clasificación exacta) → columnas de ventas_dia
+  const [bins, setBins] = useState<Bins>(emptyBins());
 
   const [printMode, setPrintMode] = useState<'single' | 'dual' | 'diferente'>('dual');
   const [printSide, setPrintSide] = useState<'left' | 'right'>('left');
@@ -140,8 +131,6 @@ export default function VentasPage() {
   const [secondVenta, setSecondVenta] = useState<any | null>(null);
   const [modoCashea, setModoCashea] = useState(false);
   const [mounted, setMounted] = useState(false);
-  // Local state for Bs. inputs to avoid rounding issues while typing
-  const [bsInputs, setBsInputs] = useState<Record<string, string>>({});
   // Collapsible sections
   const [showAbonoSection, setShowAbonoSection] = useState(false);
   const [showNotasSection, setShowNotasSection] = useState(false);
@@ -457,7 +446,7 @@ export default function VentasPage() {
   const activeRate = customRate !== null ? customRate : rates.bcv;
 
   // Cashea uses precio_bs (which stores the BCV base price in USD) or precio_unitario.
-  const isCasheaActive = modoCashea || metodosPago.cashea > 0;
+  const isCasheaActive = modoCashea || bins.cashea > 0;
   const subtotal = cart.reduce((sum, item) => {
     // Si es Cashea, usamos el precio base (precio_bs que ya está en USD para tasa BCV)
     const basePrice = (conIva && isCasheaActive)
@@ -472,11 +461,13 @@ export default function VentasPage() {
   const casheaResto = total - casheaInicial;
   const casheaCuota = casheaResto / 3;
 
-  const totalPaid = Object.values(metodosPago).reduce((acc, val) => acc + val, 0);
+  const totalPaid = binsTotalUSD(bins, activeRate);
   const balance = total - totalPaid;
 
+  const hasBsBin = bins.pago_movil_banesco > 0 || bins.bnc > 0 || bins.punto_banesco > 0 ||
+                   bins.punto_bancamiga > 0 || bins.pago_movil_exterior > 0 || bins.efectivo_bs > 0;
   const resolvedCurrencyMode = printCurrencyMode === 'auto'
-    ? ((metodosPago.pago_movil > 0 || metodosPago.efectivo_ves > 0 || isCasheaActive) ? 'dual' : 'usd')
+    ? ((hasBsBin || isCasheaActive) ? 'dual' : 'usd')
     : printCurrencyMode;
 
   const handleFinalize = async () => {
@@ -513,12 +504,28 @@ export default function VentasPage() {
       const comprobanteUrl = await uploadComprobante(comprobante.file);
       const comprobanteRef = comprobante.referencia.trim() || null;
 
+      // Clasificación exacta: banco (bins) + departamento (por categoría del producto)
+      const deptItems = cart.map(item => {
+        const prod = productos.find(p => p.id === item.id);
+        return { dept: deptFromInventario(prod?.categoria || 'silenciador'), monto: (item.precio_unitario || 0) * item.cantidad };
+      });
+      const mapped = buildVentaDiaFields({
+        bins,
+        subtotal,
+        conIva,
+        saldo: saldoRestante,
+        tasa: activeRate,
+        deptItems,
+      });
+
       const { data: ventaDia, error: ventaError } = await withSedeFilter(supabase.from('ventas_dia'))
         .insert(withSedeInsert({
           fecha: ventaFechaStr,
           ...comprobanteFields(comprobanteUrl, comprobanteRef),
           cliente: clienteNombre || 'Consumidor Final',
           total_ingresos: total,
+          clientes_atendidos: 1,
+          ...mapped, // departamentos + columnas por banco + contado/iva/inicial/financiado/por_cobrar/tasa + metodos_pago
           desglose: cart.map(item => {
             const effectivePrice = (conIva && isCasheaActive)
               ? (item.precio_bs || item.precio_unitario)
@@ -538,7 +545,6 @@ export default function VentasPage() {
               total: effectivePrice * item.cantidad
             };
           }),
-          metodos_pago: metodosPago,
           con_iva: conIva,
           tasa_cambio: activeRate,
           total_servicios: cart.reduce((s, i) => s + i.cantidad, 0),
@@ -609,7 +615,7 @@ export default function VentasPage() {
         tasa_bcv: activeRate,
         total_ves: bcvTotal * activeRate,
         iva_aplicado: conIva,
-        metodos_pago: metodosPago,
+        metodos_pago: mapped.metodos_pago,
         tiene_abono: tieneAbono,
         abono: abonoAmount,
         saldo_pendiente: saldoRestante,
@@ -654,7 +660,7 @@ export default function VentasPage() {
             precio_unitario: item.precio_unitario,
             total: item.total
           })),
-          metodos_pago: metodosPago,
+          metodos_pago: mapped.metodos_pago,
           con_iva: conIva,
           estado: estadoVenta as 'pagado' | 'pendiente',
           notas: notas || undefined,
@@ -676,7 +682,8 @@ export default function VentasPage() {
       setClienteNombre('');
       setVehiculoInfo('');
       setNotas('');
-      setMetodosPago({ efectivo_usd: 0, zelle: 0, pago_movil: 0, efectivo_ves: 0, punto_de_venta: 0, transferencia: 0, cashea: 0, binance: 0, euros: 0, otro: 0 });
+      setBins(emptyBins());
+      setModoCashea(false);
       setAbono(0);
       setShowAbonoSection(false);
       setComprobante(emptyComprobante());
@@ -711,32 +718,23 @@ export default function VentasPage() {
       return b.stock - a.stock;
     });
 
-  // Payment Calculation Logic
-  const handlePaymentChange = (method: string, valueStr: string) => {
+  // Payment Calculation Logic — Cashea se maneja aquí; el resto vía DesglosePagoBancos
+  const setCasheaMonto = (valueStr: string) => {
     const val = valueStr === '' ? 0 : parseFloat(valueStr);
-    setMetodosPago(prev => ({ ...prev, [method]: isNaN(val) ? 0 : val }));
+    setBins(prev => ({ ...prev, cashea: isNaN(val) ? 0 : Math.max(0, val) }));
   };
 
-  const autoFillMethod = (method: string) => {
-    if (method === 'cashea') {
-      setModoCashea(true);
-      const casheaSubtotal = cart.reduce((sum, item) => {
-        const basePrice = item.precio_bs || item.precio_unitario;
-        return sum + (item.cantidad * basePrice);
-      }, 0);
-      const casheaTotal = casheaSubtotal * 1.16;
-      const inicial = casheaTotal * (casheaPct / 100);
-      const otherPayments = Object.entries(metodosPago).reduce((acc, [k, v]) => {
-        if (k === 'cashea') return acc;
-        return acc + v;
-      }, 0);
-      const targetVal = Math.max(0, inicial - otherPayments);
-      setMetodosPago(prev => ({ ...prev, cashea: Number(targetVal.toFixed(2)) }));
-      return;
-    }
-
-    if (balance <= 0) return;
-    setMetodosPago(prev => ({ ...prev, [method]: Number(balance.toFixed(2)) }));
+  const autoFillCashea = () => {
+    setModoCashea(true);
+    const casheaSubtotal = cart.reduce((sum, item) => {
+      const basePrice = item.precio_bs || item.precio_unitario;
+      return sum + (item.cantidad * basePrice);
+    }, 0);
+    const casheaTotal = casheaSubtotal * 1.16;
+    const inicial = casheaTotal * (casheaPct / 100);
+    const otrosPagos = binsTotalUSD({ ...bins, cashea: 0 }, activeRate);
+    const targetVal = Math.max(0, inicial - otrosPagos);
+    setBins(prev => ({ ...prev, cashea: Number(targetVal.toFixed(2)) }));
   };
 
   // ─── Acciones para Ventas Pendientes ──────────────────────────────────
@@ -1647,7 +1645,7 @@ export default function VentasPage() {
                             <Smartphone className="w-4 h-4" /> Cashea
                           </Label>
                           <button
-                            onClick={() => { setConIva(true); setModoCashea(true); autoFillMethod('cashea'); }}
+                            onClick={() => { setConIva(true); setModoCashea(true); autoFillCashea(); }}
                             className="text-[8px] font-black text-blue-600 dark:text-blue-400 bg-white/50 dark:bg-slate-900/60 px-2 py-0.5 rounded-lg border border-blue-600/20 dark:border-blue-500/30"
                           >USAR CASHEA (+16% IVA)</button>
                        </div>
@@ -1658,7 +1656,7 @@ export default function VentasPage() {
                          {([40, 50, 60] as const).map(pct => (
                            <button
                              key={pct}
-                             onClick={() => { setCasheaPct(pct); setConIva(true); setModoCashea(true); if (metodosPago.cashea === 0) autoFillMethod('cashea'); }}
+                             onClick={() => { setCasheaPct(pct); setConIva(true); setModoCashea(true); if (bins.cashea === 0) autoFillCashea(); }}
                              className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all border ${casheaPct === pct && isCasheaActive ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white/40 dark:bg-slate-900/40 text-blue-600 dark:text-blue-400 border-blue-600/20 dark:border-blue-500/20 hover:bg-blue-600/10 dark:hover:bg-blue-400/10'}`}
                            >{pct}%</button>
                          ))}
@@ -1723,141 +1721,20 @@ export default function VentasPage() {
                        <Input
                          placeholder="Monto $ total Cashea"
                          className="h-10 bg-white/60 dark:bg-slate-950/60 text-sm font-black border-blue-600/20 dark:border-blue-500/20 text-blue-700 dark:text-blue-300 placeholder:text-blue-700/50 dark:placeholder:text-blue-300/40"
-                         value={metodosPago.cashea || ''}
-                         onChange={e => handlePaymentChange('cashea', e.target.value)}
+                         value={bins.cashea || ''}
+                         onChange={e => setCasheaMonto(e.target.value)}
                        />
                     </div>
 
-                   {/* Binance / USDT */}
-                   <div className="space-y-1.5 p-3 rounded-2xl bg-yellow-500/5 border border-yellow-500/10">
-                      <div className="flex items-center justify-between">
-                         <Label className="text-[9px] font-black uppercase text-muted-foreground flex items-center gap-1">
-                           <Coins className="w-3 h-3" /> Binance (USDT)
-                         </Label>
-                         <button onClick={() => autoFillMethod('binance')} className="text-[8px] font-black text-yellow-600">AUTO</button>
-                      </div>
-                      <Input 
-                        placeholder="Monto $"
-                        className="h-9 bg-background/50 text-xs font-black border-none"
-                        value={metodosPago.binance || ''}
-                        onChange={e => handlePaymentChange('binance', e.target.value)}
-                      />
-                   </div>
-
-                   {/* Divisas Cash */}
-                   <div className="space-y-1.5 p-3 rounded-2xl bg-primary/5 border border-primary/10">
-                      <div className="flex items-center justify-between">
-                         <Label className="text-[9px] font-black uppercase text-muted-foreground flex items-center gap-1">Divisas ($)</Label>
-                         <button onClick={() => autoFillMethod('efectivo_usd')} className="text-[8px] font-black text-primary">AUTO</button>
-                      </div>
-                      <Input 
-                        placeholder="Monto $"
-                        className="h-9 bg-background/50 text-xs font-black border-none"
-                        value={metodosPago.efectivo_usd || ''}
-                        onChange={e => handlePaymentChange('efectivo_usd', e.target.value)}
-                      />
-                   </div>
-
-                   {/* Euros Cash */}
-                   <div className="space-y-1.5 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/10">
-                      <div className="flex items-center justify-between">
-                         <Label className="text-[9px] font-black uppercase text-muted-foreground flex items-center gap-1">Euros (€)</Label>
-                         <button onClick={() => autoFillMethod('euros')} className="text-[8px] font-black text-amber-500">AUTO</button>
-                      </div>
-                      <Input 
-                        placeholder="Monto €"
-                        className="h-9 bg-background/50 text-xs font-black border-none"
-                        value={metodosPago.euros || ''}
-                        onChange={e => handlePaymentChange('euros', e.target.value)}
-                      />
-                   </div>
-
-                   {/* Zelle */}
-                   <div className="space-y-1.5 p-3 rounded-2xl bg-purple-500/5 border border-purple-500/10">
-                      <div className="flex items-center justify-between">
-                         <Label className="text-[9px] font-black uppercase text-muted-foreground">Zelle</Label>
-                         <button onClick={() => autoFillMethod('zelle')} className="text-[8px] font-black text-purple-500">AUTO</button>
-                      </div>
-                      <Input 
-                        placeholder="Monto $"
-                        className="h-9 bg-background/50 text-xs font-black border-none"
-                        value={metodosPago.zelle || ''}
-                        onChange={e => handlePaymentChange('zelle', e.target.value)}
-                      />
-                   </div>
-
-                   {/* Pago Móvil - DUAL INPUT */}
-                   <div className="col-span-full space-y-2 p-4 rounded-2xl bg-blue-500/5 border border-blue-500/10">
-                      <div className="flex items-center justify-between">
-                         <Label className="text-[10px] font-black uppercase text-blue-600">Pago Móvil</Label>
-                         <button onClick={() => autoFillMethod('pago_movil')} className="text-[9px] font-black text-blue-600 hover:bg-blue-600/10 px-2 py-0.5 rounded-lg border border-blue-600/20">SALDAR RESTANTE</button>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                          <span className="text-[8px] font-black uppercase text-muted-foreground">En Bolívares (Bs.)</span>
-                          <Input 
-                            placeholder="Bs."
-                            className="h-9 bg-background/50 text-xs font-black border-none"
-                            value={metodosPago.pago_movil ? ((metodosPago.pago_movil * rates.bcv) || 0).toFixed(2) : ''}
-                            onChange={e => handlePaymentChange('pago_movil', (parseFloat(e.target.value) / rates.bcv).toString())}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <span className="text-[8px] font-black uppercase text-muted-foreground">Equivalente en Dólares ($)</span>
-                          <Input 
-                            placeholder="$"
-                            className="h-9 bg-background/50 text-xs font-black border-none"
-                            value={metodosPago.pago_movil || ''}
-                            onChange={e => handlePaymentChange('pago_movil', e.target.value)}
-                          />
-                        </div>
-                      </div>
-                   </div>
-
-                   {/* Bolívares Efectivo - DUAL INPUT */}
-                   <div className="col-span-full space-y-2 p-4 rounded-2xl bg-orange-500/5 border border-orange-500/10">
-                      <div className="flex items-center justify-between">
-                         <Label className="text-[10px] font-black uppercase text-orange-600">Bolívares en Efectivo</Label>
-                         <button onClick={() => autoFillMethod('efectivo_ves')} className="text-[9px] font-black text-orange-600 hover:bg-orange-600/10 px-2 py-0.5 rounded-lg border border-orange-600/20">SALDAR RESTANTE</button>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                          <span className="text-[8px] font-black uppercase text-muted-foreground">En Bolívares (Bs.)</span>
-                          <Input 
-                            placeholder="Bs."
-                            className="h-9 bg-background/50 text-xs font-black border-none"
-                            value={bsInputs['efectivo_ves'] ?? (metodosPago.efectivo_ves ? ((metodosPago.efectivo_ves * rates.bcv) || 0).toFixed(2) : '')}
-                            onChange={e => {
-                              const val = e.target.value;
-                              setBsInputs(prev => ({ ...prev, ['efectivo_ves']: val }));
-                              const num = parseFloat(val);
-                              if (!isNaN(num)) {
-                                handlePaymentChange('efectivo_ves', (num / rates.bcv).toString());
-                              } else if (val === '') {
-                                handlePaymentChange('efectivo_ves', '0');
-                              }
-                            }}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <span className="text-[8px] font-black uppercase text-muted-foreground">Equivalente en Dólares ($)</span>
-                          <Input 
-                            placeholder="$"
-                            className="h-9 bg-background/50 text-xs font-black border-none"
-                            value={metodosPago.efectivo_ves || ''}
-                            onChange={e => {
-                              const val = e.target.value;
-                              handlePaymentChange('efectivo_ves', val);
-                              const num = parseFloat(val);
-                              if (!isNaN(num)) {
-                                setBsInputs(prev => ({ ...prev, ['efectivo_ves']: ((num * rates.bcv) || 0).toFixed(2) }));
-                              } else {
-                                setBsInputs(prev => ({ ...prev, ['efectivo_ves']: '' }));
-                              }
-                            }}
-                          />
-                        </div>
-                      </div>
+                   {/* Desglose de pago por banco (clasificación exacta) — Cashea arriba */}
+                   <div className="col-span-full">
+                     <DesglosePagoBancos
+                       bins={bins}
+                       onBinsChange={setBins}
+                       totalUSD={total}
+                       tasa={activeRate}
+                       hideBins={['cashea']}
+                     />
                    </div>
                 </div>
                </div>

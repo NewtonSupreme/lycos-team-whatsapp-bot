@@ -1,464 +1,320 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import ExcelJS from 'exceljs';
+import {
+  binsFromLegacyMetodos, binsTotalUSD, binToUSD,
+  BANK_METHODS, DEPT_LABELS, type Bins, type BankBin, type DeptKey,
+} from '@/lib/reporte/ventas-mapping';
 
-// Convert 1-based column index to Excel letter (e.g. 1 -> A, 26 -> Z, 27 -> AA)
-function colLetter(n: number): string {
-  let s = '';
-  while (n > 0) {
-    const rem = (n - 1) % 26;
-    s = String.fromCharCode(65 + rem) + s;
-    n = Math.floor((n - 1) / 26);
-  }
-  return s;
+// Comisión que cobra el banco por cada transacción de punto de venta (referencial, ajustable).
+const COMISION_PUNTO_PCT = 0.05;
+const DEPT_KEYS: DeptKey[] = ['silenciador', 'cauchera', 'alineacion', 'electronica', 'mecanica', 'frenos', 'lavado', 'repuestos'];
+
+const n = (x: unknown) => Number(x) || 0;
+const r2 = (x: number) => Math.round((Number(x) || 0) * 100) / 100;
+
+interface VentaNorm {
+  nombre: string;
+  carro: string;
+  departamentos: Record<DeptKey, number>;
+  total: number;
+  contado: number;
+  cashea: number;
+  iva: number;
+  inicial: number;
+  financiado: number;
+  porCobrar: number;
+  bancos: Bins;
 }
 
-export async function GET() {
+function extraerVehiculo(notas: string | null, desglose: unknown): string {
+  const m = (notas || '').match(/Veh[ií]culo:\s*([^|[\]]+)/i);
+  if (m) return m[1].trim();
+  if (Array.isArray(desglose) && desglose[0]?.descripcion) return String(desglose[0].descripcion);
+  return '';
+}
+
+// Resuelve la tasa BCV EXACTA que se usaba en la fecha dada (nunca la de hoy para un día pasado).
+// Prioridad: (1) tasa registrada en las ventas del día; (2) tasa registrada ese mismo día en
+// cualquier sede/tabla, o la más reciente ANTERIOR o igual (on-or-before); (3) la primera posterior.
+async function resolveTasaDelDia(db: any, fecha: string, ventasRows: any[]): Promise<number> {
+  // 1) Tasa de alguna venta del día ya cargada (filtrada por sede).
+  for (const v of ventasRows) { const t = n(v.tasa_cambio) || n(v.tasa); if (t > 0) return t; }
+
+  // 2) Última tasa positiva registrada en/antes de la fecha (global, BCV es igual para todas las sedes).
+  const [vd, cc, fa, ab] = await Promise.all([
+    db.from('ventas_dia').select('fecha, tasa_cambio, tasa').lte('fecha', fecha).gt('tasa_cambio', 0).order('fecha', { ascending: false }).limit(1).maybeSingle(),
+    db.from('cierres_caja').select('fecha, tasa_bcv').lte('fecha', fecha).gt('tasa_bcv', 0).order('fecha', { ascending: false }).limit(1).maybeSingle(),
+    db.from('facturas').select('fecha_emision, tasa_cambio').lte('fecha_emision', fecha).gt('tasa_cambio', 0).order('fecha_emision', { ascending: false }).limit(1).maybeSingle(),
+    db.from('abonos').select('created_at, tasa_cambio').lte('created_at', `${fecha}T23:59:59`).gt('tasa_cambio', 0).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  const cands: { fecha: string; tasa: number }[] = [];
+  if (vd.data) cands.push({ fecha: vd.data.fecha, tasa: n(vd.data.tasa_cambio) || n(vd.data.tasa) });
+  if (cc.data) cands.push({ fecha: cc.data.fecha, tasa: n(cc.data.tasa_bcv) });
+  if (fa.data) cands.push({ fecha: fa.data.fecha_emision, tasa: n(fa.data.tasa_cambio) });
+  if (ab.data) cands.push({ fecha: String(ab.data.created_at).slice(0, 10), tasa: n(ab.data.tasa_cambio) });
+  if (cands.length) {
+    cands.sort((a, b) => (a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0)); // fecha más cercana primero
+    return cands[0].tasa;
+  }
+
+  // 3) Si no hay ninguna en/antes, la primera posterior (histórico incompleto).
+  const post = await db.from('ventas_dia').select('tasa_cambio, tasa').gt('fecha', fecha).gt('tasa_cambio', 0).order('fecha', { ascending: true }).limit(1).maybeSingle();
+  if (post.data) return n(post.data.tasa_cambio) || n(post.data.tasa);
+  return 0;
+}
+
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const fecha = searchParams.get('fecha') || new Date().toISOString().split('T')[0];
+  const sede = searchParams.get('sede') || '';
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+  if (!supabaseUrl || !supabaseKey) {
+    return NextResponse.json({ error: 'Faltan credenciales de base de datos' }, { status: 500 });
+  }
+  const db = createClient(supabaseUrl, supabaseKey);
+  const applySede = <T extends { eq: (c: string, v: string) => T }>(q: T): T => (sede ? q.eq('sede_id', sede) : q);
+
   try {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-    if (!url || !key) {
-      return NextResponse.json({ error: 'Faltan credenciales de base de datos' }, { status: 500 });
-    }
-    const supabase = createClient(url, key);
+    // ── Datos base del día ──────────────────────────────────────
+    const ventasQ = db.from('ventas_dia').select('*').eq('fecha', fecha).order('created_at', { ascending: true });
+    const { data: ventasRaw } = await applySede(ventasQ as any);
+    const rows: any[] = ventasRaw || [];
 
-    // Obtener servicios de hoy
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayStr = today.toISOString();
+    // Tasa BCV EXACTA de la fecha (histórica, nunca la de hoy para un día pasado)
+    const tasa = await resolveTasaDelDia(db, fecha, rows);
 
-    const { data: servicios, error } = await supabase
-      .from('servicios')
-      .select(`
-        id, created_at, tipo, costo_final, descripcion, estado,
-        vehiculo:vehiculos (
-          marca, modelo, placa,
-          cliente:clientes (nombre, apellido)
-        )
-      `)
-      .gte('created_at', todayStr)
-      .order('created_at', { ascending: true });
+    // ── Normalizar cada venta (columnas o fallback a metodos_pago) ──
+    const ventas: VentaNorm[] = rows.map(v => {
+      const deptCols: Record<DeptKey, number> = {
+        silenciador: n(v.silenciador), cauchera: n(v.cauchera), alineacion: n(v.alineacion),
+        electronica: n(v.electronica), mecanica: n(v.mecanica), frenos: n(v.frenos),
+        lavado: n(v.lavado), repuestos: n(v.repuestos),
+      };
 
-    if (error) {
-      console.error('Error obteniendo servicios para el reporte:', error);
-      return NextResponse.json({ error: 'Error al consultar datos' }, { status: 500 });
-    }
+      const bankCols: Bins = {
+        pago_movil_banesco: n(v.pago_movil_banesco), bnc: n(v.bnc), punto_banesco: n(v.punto_banesco),
+        punto_bancamiga: n(v.punto_bancamiga), pago_movil_exterior: n(v.pago_movil_exterior),
+        dolares: n(v.dolares), binance: n(v.binance), zelle: n(v.zelle),
+        efectivo_bs: n(v.efectivo_bs), cashea: n(v.cashea),
+      };
+      const bankSum = (Object.values(bankCols) as number[]).reduce((a, b) => a + b, 0);
+      const bancos: Bins = bankSum > 0 ? bankCols : binsFromLegacyMetodos(v.metodos_pago);
 
-    // ──────────────────────────────────────────────────────────────
-    // CREATE WORKBOOK
-    // ──────────────────────────────────────────────────────────────
-    const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Lycos Team';
-    workbook.lastModifiedBy = 'Lycos Team Sistema';
-    workbook.created = new Date();
-    workbook.modified = new Date();
+      const recibidoUSD = binsTotalUSD(bancos, tasa);
+      const cashea = r2(bancos.cashea);
+      const contado = Math.max(0, r2(recibidoUSD - cashea));
+      const saldo = n(v.saldo_pendiente);
+      const total = n(v.total_ingresos);
+      const iva = v.con_iva ? r2(total * 0.16) : n(v.iva);
+      const esCashea = cashea > 0;
+      const inicial = esCashea ? contado : n(v.inicial);
+      const financiado = esCashea ? saldo : n(v.financiado);
+      const porCobrar = !esCashea ? (saldo || n(v.por_cobrar)) : n(v.por_cobrar);
 
-    const ws = workbook.addWorksheet('Reporte Diario', {
-      pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
-      views: [{ state: 'frozen', ySplit: 7 }],
+      return {
+        nombre: v.cliente || 'Consumidor Final',
+        carro: extraerVehiculo(v.notas, v.desglose),
+        departamentos: deptCols,
+        total, contado, cashea, iva, inicial, financiado, porCobrar,
+        bancos,
+      };
     });
 
-    const fechaHoy = new Date().toLocaleDateString('es-VE', {
+    // ── Totales de la tabla principal ───────────────────────────
+    const totDept = DEPT_KEYS.reduce((acc, k) => { acc[k] = r2(ventas.reduce((s, v) => s + v.departamentos[k], 0)); return acc; }, {} as Record<DeptKey, number>);
+    const totBancos = BANK_METHODS.reduce((acc, m) => { acc[m.id] = r2(ventas.reduce((s, v) => s + v.bancos[m.id], 0)); return acc; }, {} as Record<BankBin, number>);
+    const sum = (f: (v: VentaNorm) => number) => r2(ventas.reduce((s, v) => s + f(v), 0));
+    const totalesVentas = {
+      total: sum(v => v.total), contado: sum(v => v.contado), cashea: sum(v => v.cashea),
+      iva: sum(v => v.iva), inicial: sum(v => v.inicial), financiado: sum(v => v.financiado),
+      porCobrar: sum(v => v.porCobrar), departamentos: totDept, bancos: totBancos,
+    };
+
+    // ── S2 · Cuentas por cobrar (saldos abiertos) ───────────────
+    const pcQ = db.from('ventas_dia').select('cliente, notas, desglose, saldo_pendiente, total_ingresos, estado, por_cobrar_detalle')
+      .gt('saldo_pendiente', 0).order('created_at', { ascending: false }).limit(100);
+    const { data: pcRaw } = await applySede(pcQ as any);
+    const porCobrar = (pcRaw || []).map((v: any) => ({
+      nombre: v.cliente || 'Consumidor Final',
+      carro: extraerVehiculo(v.notas, v.desglose),
+      monto: n(v.saldo_pendiente),
+      observacion: Array.isArray(v.por_cobrar_detalle) && v.por_cobrar_detalle[0]?.observacion
+        ? String(v.por_cobrar_detalle[0].observacion)
+        : (v.estado === 'pendiente' ? 'Pendiente por pagar' : ''),
+    }));
+    const porCobrarTotal = r2(porCobrar.reduce((s: number, x: any) => s + x.monto, 0));
+
+    // ── S3 · Resumen de "SISTEMA" (departamentos + extras) ──────
+    const countIf = (f: (v: VentaNorm) => boolean) => ventas.filter(f).length;
+    const puntosUSD = binToUSD('punto_banesco', totBancos.punto_banesco, tasa) + binToUSD('punto_bancamiga', totBancos.punto_bancamiga, tasa);
+    const comisionPunto = r2(puntosUSD * COMISION_PUNTO_PCT);
+    const sistema = [
+      { sistema: 'CUENTAS X COBRAR', cantidad: countIf(v => v.porCobrar > 0), monto: totalesVentas.porCobrar },
+      { sistema: 'SILENCIADORES', cantidad: countIf(v => v.departamentos.silenciador > 0), monto: totDept.silenciador },
+      { sistema: 'CASHEA', cantidad: countIf(v => v.cashea > 0), monto: totalesVentas.cashea },
+      { sistema: 'ALINEACIÓN', cantidad: countIf(v => v.departamentos.alineacion > 0), monto: totDept.alineacion },
+      { sistema: 'ELECTRÓNICA', cantidad: countIf(v => v.departamentos.electronica > 0), monto: totDept.electronica },
+      { sistema: 'MECÁNICA', cantidad: countIf(v => v.departamentos.mecanica > 0), monto: totDept.mecanica },
+      { sistema: 'FRENOS', cantidad: countIf(v => v.departamentos.frenos > 0), monto: totDept.frenos },
+      { sistema: 'LAVADO', cantidad: countIf(v => v.departamentos.lavado > 0), monto: totDept.lavado },
+      { sistema: 'COMISIÓN PUNTO', cantidad: countIf(v => v.bancos.punto_banesco > 0 || v.bancos.punto_bancamiga > 0), monto: comisionPunto },
+      { sistema: 'IMPUESTO', cantidad: countIf(v => v.iva > 0), monto: totalesVentas.iva },
+    ];
+    const sistemaTotal = r2(sistema.reduce((s, x) => s + x.monto, 0));
+
+    // ── S4 · Forma de pago ──────────────────────────────────────
+    const creditoTotal = r2(totalesVentas.porCobrar + totalesVentas.financiado);
+    const formaPago = [
+      { forma: 'CASHEA', cantidad: countIf(v => v.cashea > 0), monto: totalesVentas.cashea },
+      { forma: 'CONTADO', cantidad: countIf(v => v.contado > 0), monto: totalesVentas.contado },
+      { forma: 'CRÉDITO', cantidad: countIf(v => v.porCobrar > 0 || v.financiado > 0), monto: creditoTotal },
+    ];
+    const formaPagoTotal = r2(formaPago.reduce((s, x) => s + x.monto, 0));
+
+    // ── S5 · Facturas montos (base imponible + IVA) ─────────────
+    const baseImponible = sum(v => (v.iva > 0 ? v.total : 0));
+    const ivaTotal = totalesVentas.iva;
+    const facturasMontos = { base: baseImponible, iva: ivaTotal, total: r2(baseImponible + ivaTotal) };
+
+    // ── S6 · Caja montos ────────────────────────────────────────
+    const caja = { inicial: totalesVentas.inicial, financiado: totalesVentas.financiado, total: r2(totalesVentas.inicial + totalesVentas.financiado) };
+
+    // ── S7 · Detalle de método de pago (por banco) ──────────────
+    const metodoPago = BANK_METHODS
+      .filter(m => m.id !== 'cashea')
+      .map(m => {
+        const nativo = totBancos[m.id];
+        const usd = binToUSD(m.id, nativo, tasa);
+        return {
+          metodo: m.short,
+          moneda: m.moneda,
+          cantidad: countIf(v => v.bancos[m.id] > 0),
+          montoBs: m.moneda === 'Bs' ? nativo : r2(usd * tasa),
+          tasa,
+          montoUsd: usd,
+        };
+      });
+    const metodoPagoTotalUsd = r2(metodoPago.reduce((s, x) => s + x.montoUsd, 0));
+
+    // ── S8 · KPIs (métricas manuales del día) ───────────────────
+    const mdQ = db.from('metricas_dia').select('*').eq('fecha', fecha).limit(1);
+    const { data: mdRaw } = await applySede(mdQ as any);
+    const md = (mdRaw && mdRaw[0]) || {};
+    const kpiPar = (ini: number, nue: number) => ({ inicial: n(ini), nuevos: n(nue), total: n(ini) + n(nue) });
+    const kpis = {
+      redes: kpiPar(md.redes_inicial, md.redes_nuevos),
+      app: kpiPar(md.app_inicial, md.app_nuevos),
+      rcv: kpiPar(md.rcv_inicial, md.rcv_nuevos),
+      cert: kpiPar(md.cert_inicial, md.cert_nuevos),
+    };
+
+    // ── S9 · Clientes en base de datos ──────────────────────────
+    const clientesTotalQ = db.from('clientes').select('id', { count: 'exact', head: true });
+    const { count: clientesTotal } = await applySede(clientesTotalQ as any);
+    const clientesNuevosQ = db.from('clientes').select('id', { count: 'exact', head: true })
+      .gte('created_at', `${fecha}T00:00:00`).lte('created_at', `${fecha}T23:59:59`);
+    const { count: clientesNuevos } = await applySede(clientesNuevosQ as any);
+    const clientesBD = { total: n(clientesTotal), nuevos: n(clientesNuevos) };
+
+    // ── S10 · Control de inventario / artículos (salidas del día) ──
+    const artMap = new Map<string, number>();
+    for (const v of rows) {
+      if (Array.isArray(v.desglose)) {
+        for (const it of v.desglose) {
+          const name = String(it.descripcion || '').trim();
+          const cant = n(it.cantidad) || 1;
+          if (name) artMap.set(name, (artMap.get(name) || 0) + cant);
+        }
+      }
+    }
+    const vsQ = db.from('ventas_silenciadores').select('modelo, cantidad')
+      .gte('fecha', `${fecha}T00:00:00`).lte('fecha', `${fecha}T23:59:59`);
+    const { data: vsRaw } = await applySede(vsQ as any);
+    for (const s of (vsRaw || [])) {
+      const name = String(s.modelo || '').trim();
+      if (name) artMap.set(name, (artMap.get(name) || 0) + (n(s.cantidad) || 1));
+    }
+    const articulos = Array.from(artMap.entries())
+      .map(([articulo, cantidad]) => ({ articulo, cantidad }))
+      .sort((a, b) => b.cantidad - a.cantidad);
+
+    // ── S11 · Carros en taller ──────────────────────────────────
+    const tallerQ = db.from('servicios').select('vehiculo_info, placa, descripcion, tipo, registrado_por, estado, id')
+      .in('estado', ['en_proceso', 'en_revision']).order('updated_at', { ascending: false }).limit(40);
+    const { data: tallerRaw } = await applySede(tallerQ as any);
+    const servIds = (tallerRaw || []).map((s: any) => s.id);
+    const mecPorServicio = new Map<string, string>();
+    if (servIds.length) {
+      const { data: jobs } = await db.from('job_assignments').select('referencia_id, empleado_nombre')
+        .in('referencia_id', servIds);
+      for (const j of (jobs || [])) {
+        if (j.referencia_id && j.empleado_nombre && !mecPorServicio.has(j.referencia_id)) {
+          mecPorServicio.set(j.referencia_id, j.empleado_nombre);
+        }
+      }
+    }
+    const taller = (tallerRaw || []).map((s: any) => ({
+      carro: [s.vehiculo_info, s.placa ? `(${s.placa})` : ''].filter(Boolean).join(' ') || '—',
+      mecanico: mecPorServicio.get(s.id) || s.registrado_por || '—',
+      trabajo: s.descripcion || s.tipo || '—',
+    }));
+
+    // ── S12 · Resumen de bancos (entradas del día) ──────────────
+    const bancoBs = (ids: BankBin[]) => r2(ids.reduce((acc, id) => acc + totBancos[id], 0));
+    const bancos = [
+      { banco: 'BANESCO', bs: bancoBs(['pago_movil_banesco', 'punto_banesco']), usd: r2(binToUSD('pago_movil_banesco', totBancos.pago_movil_banesco, tasa) + binToUSD('punto_banesco', totBancos.punto_banesco, tasa)) },
+      { banco: 'BNC', bs: totBancos.bnc, usd: binToUSD('bnc', totBancos.bnc, tasa) },
+      { banco: 'BANCA AMIGA', bs: totBancos.punto_bancamiga, usd: binToUSD('punto_bancamiga', totBancos.punto_bancamiga, tasa) },
+      { banco: 'EXTERIOR', bs: totBancos.pago_movil_exterior, usd: binToUSD('pago_movil_exterior', totBancos.pago_movil_exterior, tasa) },
+      { banco: 'DIVISAS / CRIPTO', bs: r2((totBancos.dolares + totBancos.zelle + totBancos.binance) * tasa), usd: r2(totBancos.dolares + totBancos.zelle + totBancos.binance) },
+    ];
+
+    // ── S13 · Gastos del día ────────────────────────────────────
+    const egQ = db.from('egresos').select('*').eq('fecha', fecha).order('created_at', { ascending: true });
+    const { data: egRaw } = await applySede(egQ as any);
+    const gastos = (egRaw || []).map((e: any) => {
+      const detalle = Array.isArray(e.desglose) && e.desglose.length
+        ? e.desglose.map((d: any) => d.descripcion).filter(Boolean).join(', ')
+        : '';
+      const usd = n(e.total_egresos);
+      return {
+        concepto: (e.notas || detalle || e.categoria || e.cliente || 'Gasto').toString().slice(0, 120),
+        usd,
+        bs: r2(usd * tasa),
+      };
+    });
+    const gastosTotal = { usd: r2(gastos.reduce((s: number, g: any) => s + g.usd, 0)), bs: r2(gastos.reduce((s: number, g: any) => s + g.bs, 0)) };
+
+    // ── Respuesta ───────────────────────────────────────────────
+    const fechaLabel = new Date(`${fecha}T12:00:00`).toLocaleDateString('es-VE', {
       weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
     });
 
-    // Color palette
-    const COLOR = {
-      primary: 'FF1a1a2e',     // dark navy (header bg)
-      accent:  'FFe94560',     // vivid red-pink (header text, totals)
-      gold:    'FFf5a623',     // gold (section titles)
-      lightBg: 'FFf8f9fa',    // light gray rows
-      altRow:  'FFe8eaf6',    // subtle purple-tinted alternate rows
-      white:   'FFFFFFFF',
-      black:   'FF000000',
-      border:  'FFbdbdbd',
-      grayHdr: 'FF37474f',    // dark gray sub-headers
-    };
-
-    // ── COLUMN WIDTHS ─────────────────────────────────────────────
-    // Nº | FECHA | NOMBRE | CARRO | SILENCIADOR | CAUCHERA | ALINEACION | (gap) | P.BANCAMIGA | P.BANESCO | CASHEA | EFECTIVO | ZELLE | PM BANESCO | BINANCE | WALLY | PM EXTERIOR | EFECT EUR | BANCO
-    ws.columns = [
-      { key: 'num',         width: 5 },
-      { key: 'fecha',       width: 13 },
-      { key: 'nombre',      width: 26 },
-      { key: 'carro',       width: 32 },
-      { key: 'silenciador', width: 14 },
-      { key: 'cauchera',    width: 12 },
-      { key: 'alineacion',  width: 12 },
-      { key: 'gap',         width: 2.5 },
-      { key: 'bancamiga',   width: 16 },
-      { key: 'banesco',     width: 16 },
-      { key: 'cashea',      width: 12 },
-      { key: 'efectivo',    width: 13 },
-      { key: 'zelle',       width: 12 },
-      { key: 'pmbanesco',   width: 18 },
-      { key: 'binance',     width: 12 },
-      { key: 'wally',       width: 10 },
-      { key: 'pmexterior',  width: 18 },
-      { key: 'efecteur',    width: 14 },
-      { key: 'banco',       width: 10 },
-    ];
-
-    // ─────────────────────────────────────────────────────────────
-    // ROW 1 — LOGO / COMPANY TITLE
-    // ─────────────────────────────────────────────────────────────
-    const row1 = ws.getRow(1);
-    row1.height = 40;
-    ws.mergeCells('A1:G1');
-    const logoCell = ws.getCell('A1');
-    logoCell.value = '⚙  LYCOS TEAM';
-    logoCell.font = { name: 'Calibri', size: 22, bold: true, color: { argb: COLOR.white } };
-    logoCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    logoCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.primary } };
-
-    ws.mergeCells('H1:S1');
-    const subtitleCell = ws.getCell('H1');
-    subtitleCell.value = 'TALLER AUTOMOTRIZ PROFESIONAL — San Antonio de los Altos, Miranda, Venezuela';
-    subtitleCell.font = { name: 'Calibri', size: 10, italic: true, color: { argb: 'FFbbdefb' } };
-    subtitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    subtitleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.primary } };
-
-    // ─────────────────────────────────────────────────────────────
-    // ROW 2 — REPORT TITLE
-    // ─────────────────────────────────────────────────────────────
-    const row2 = ws.getRow(2);
-    row2.height = 30;
-    ws.mergeCells('A2:S2');
-    const titleCell = ws.getCell('A2');
-    titleCell.value = 'REPORTE CIERRE DEL DÍA';
-    titleCell.font = { name: 'Calibri', size: 16, bold: true, color: { argb: COLOR.accent } };
-    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.primary } };
-
-    // ─────────────────────────────────────────────────────────────
-    // ROW 3 — DATE + summary metadata
-    // ─────────────────────────────────────────────────────────────
-    const row3 = ws.getRow(3);
-    row3.height = 22;
-    ws.mergeCells('A3:D3');
-    const dateCell = ws.getCell('A3');
-    dateCell.value = `📅  ${fechaHoy}`;
-    dateCell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF37474f' } };
-    dateCell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
-    dateCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFe3f2fd' } };
-
-    ws.mergeCells('E3:G3');
-    const totalServiciosCell = ws.getCell('E3');
-    totalServiciosCell.value = `Servicios del día: ${(servicios || []).length}`;
-    totalServiciosCell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: COLOR.grayHdr } };
-    totalServiciosCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    totalServiciosCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFe3f2fd' } };
-
-    ws.mergeCells('H3:S3');
-    const instrCell = ws.getCell('H3');
-    instrCell.value = 'Complete los campos de pago según el método utilizado en cada operación';
-    instrCell.font = { name: 'Calibri', size: 9, italic: true, color: { argb: 'FF90a4ae' } };
-    instrCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    instrCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFe3f2fd' } };
-
-    // ─────────────────────────────────────────────────────────────
-    // ROW 4 — Group Labels (SERVICIO section | PAGO section)
-    // ─────────────────────────────────────────────────────────────
-    const row4 = ws.getRow(4);
-    row4.height = 24;
-    ws.mergeCells('A4:G4');
-    const grpServCell = ws.getCell('A4');
-    grpServCell.value = '▸  INFORMACIÓN DEL SERVICIO';
-    grpServCell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: COLOR.white } };
-    grpServCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    grpServCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.grayHdr } };
-
-    ws.mergeCells('H4:H4');
-    ws.getCell('H4').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.primary } };
-
-    ws.mergeCells('I4:S4');
-    const grpPagoCell = ws.getCell('I4');
-    grpPagoCell.value = '▸  MÉTODOS DE PAGO';
-    grpPagoCell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: COLOR.white } };
-    grpPagoCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    grpPagoCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0d47a1' } };
-
-    // ─────────────────────────────────────────────────────────────
-    // ROW 5 — Sub-section labels
-    // ─────────────────────────────────────────────────────────────
-    const row5 = ws.getRow(5);
-    row5.height = 20;
-
-    // Service sub-labels (span 2 each)
-    const svc5headers: [string, string][] = [
-      ['A5:B5', 'General'],
-      ['C5:D5', 'Cliente'],
-      ['E5:G5', 'Tipo de Servicio'],
-    ];
-    svc5headers.forEach(([range, text]) => {
-      ws.mergeCells(range);
-      const c = ws.getCell(range.split(':')[0]);
-      c.value = text;
-      c.font = { name: 'Calibri', size: 9, color: { argb: COLOR.white } };
-      c.alignment = { horizontal: 'center', vertical: 'middle' };
-      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF546e7a' } };
+    return NextResponse.json({
+      fecha,
+      fechaLabel,
+      tasa,
+      deptLabels: DEPT_LABELS,
+      ventas,
+      totalesVentas,
+      porCobrar, porCobrarTotal,
+      sistema, sistemaTotal,
+      formaPago, formaPagoTotal,
+      facturasMontos,
+      caja,
+      metodoPago, metodoPagoTotalUsd,
+      kpis,
+      clientesBD,
+      articulos,
+      taller,
+      bancos,
+      gastos, gastosTotal,
+      generadoEn: new Date().toLocaleString('es-VE'),
     });
-
-    ws.getCell('H5').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.primary } };
-
-    const pago5headers: [string, string][] = [
-      ['I5:J5', 'Punto'],
-      ['K5:K5', 'Cashea'],
-      ['L5:M5', 'Divisas'],
-      ['N5:N5', 'Móvil'],
-      ['O5:P5', 'Cripto/Wallet'],
-      ['Q5:R5', 'Internacional'],
-      ['S5:S5', 'Banco'],
-    ];
-    pago5headers.forEach(([range, text]) => {
-      ws.mergeCells(range);
-      const c = ws.getCell(range.split(':')[0]);
-      c.value = text;
-      c.font = { name: 'Calibri', size: 9, color: { argb: 'FFe3f2fd' } };
-      c.alignment = { horizontal: 'center', vertical: 'middle' };
-      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1565c0' } };
-    });
-
-    // ─────────────────────────────────────────────────────────────
-    // ROW 6 — Column Headers
-    // ─────────────────────────────────────────────────────────────
-    const row6 = ws.getRow(6);
-    row6.height = 34;
-
-    const hdrs = [
-      'Nº', 'FECHA', 'NOMBRE', 'CARRO', 'SILENCIADOR', 'CAUCHERA', 'ALINEACIÓN',
-      '', // gap
-      'P. BANCAMIGA', 'P. BANESCO', 'CASHEA', 'EFECTIVO', 'ZELLE', 'PM BANESCO', 'BINANCE', 'WALLY', 'PM EXTERIOR', 'EF. EUR', 'BANCO'
-    ];
-
-    hdrs.forEach((label, ci) => {
-      const cell = row6.getCell(ci + 1);
-      cell.value = label;
-      cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: COLOR.white } };
-      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-      cell.fill = {
-        type: 'pattern', pattern: 'solid',
-        fgColor: { argb: ci === 7 ? COLOR.primary : ci <= 6 ? COLOR.grayHdr : 'FF1976d2' },
-      };
-      cell.border = {
-        top: { style: 'thin', color: { argb: 'FF90caf9' } },
-        bottom: { style: 'medium', color: { argb: 'FFe94560' } },
-        left: { style: 'thin', color: { argb: '88000000' } },
-        right: { style: 'thin', color: { argb: '88000000' } },
-      };
-    });
-
-    // ─────────────────────────────────────────────────────────────
-    // ROW 7 — Separator / Decorative
-    // ─────────────────────────────────────────────────────────────
-    const row7 = ws.getRow(7);
-    row7.height = 4;
-    for (let c = 1; c <= 19; c++) {
-      const cell = row7.getCell(c);
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.accent } };
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // DATA ROWS starting at row 8
-    // ─────────────────────────────────────────────────────────────
-    const dataStartRow = 8;
-    const rows = servicios || [];
-
-    rows.forEach((srv: Record<string, unknown>, idx: number) => {
-      const rowIdx = dataStartRow + idx;
-      const dataRow = ws.getRow(rowIdx);
-      dataRow.height = 20;
-
-      const isAlt = idx % 2 === 1;
-      const rowBg = isAlt ? COLOR.altRow : COLOR.lightBg;
-
-      const fecha = new Date(srv.created_at as string).toLocaleDateString('es-VE');
-
-      // Safely extract nested vehicle/client data
-      const rawV = srv.vehiculo;
-      const v = Array.isArray(rawV) ? rawV[0] : (rawV as Record<string, unknown> | null);
-      let clienteNombre = '';
-      let carroNombre = '';
-      if (v) {
-        const rawC = v.cliente;
-        const c = Array.isArray(rawC) ? rawC[0] : (rawC as Record<string, unknown> | null);
-        if (c) clienteNombre = `${c.nombre || ''} ${c.apellido || ''}`.trim();
-        carroNombre = `${v.marca || ''} ${v.modelo || ''} ${v.placa ? `(${v.placa})` : ''}`.trim();
-      }
-
-      // Assign cost to relevant service column
-      let silenciador: string | number = '';
-      let cauchera: string | number = '';
-      let alineacion: string | number = '';
-      const tipo = srv.tipo as string;
-      const costo = srv.costo_final ? Number(srv.costo_final) : '';
-
-      if (tipo === 'mecanica') cauchera = costo;
-      else if (tipo === 'electronica' || tipo === 'diagnostico') alineacion = costo;
-      else silenciador = costo; // silenciador, otro, etc.
-
-      const values = [
-        idx + 1, fecha, clienteNombre, carroNombre,
-        silenciador, cauchera, alineacion,
-        '', // gap
-        '', '', '', '', '', '', '', '', '', '', '', // payment methods (blank for manual fill)
-      ];
-
-      values.forEach((val, ci) => {
-        const cell = dataRow.getCell(ci + 1);
-        cell.value = val === '' ? null : val;
-
-        cell.font = { name: 'Calibri', size: 10, color: { argb: COLOR.black } };
-        cell.alignment = {
-          horizontal: ci === 0 ? 'center' : ci <= 3 ? 'left' : 'center',
-          vertical: 'middle',
-          indent: ci <= 3 && ci > 0 ? 1 : 0,
-        };
-        cell.fill = {
-          type: 'pattern', pattern: 'solid',
-          fgColor: { argb: ci === 7 ? COLOR.primary : rowBg },
-        };
-        cell.border = {
-          top: { style: 'hair', color: { argb: COLOR.border } },
-          bottom: { style: 'hair', color: { argb: COLOR.border } },
-          left: { style: 'thin', color: { argb: ci === 7 ? COLOR.primary : COLOR.border } },
-          right: { style: 'thin', color: { argb: ci === 7 ? COLOR.primary : COLOR.border } },
-        };
-
-        // Shade payment columns lightly
-        if (ci >= 8) {
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isAlt ? 'FFe8eaf6' : 'FFf3f4fe' } };
-        }
-      });
-    });
-
-    // ─────────────────────────────────────────────────────────────
-    // TOTALS ROW (2 rows after last data)
-    // ─────────────────────────────────────────────────────────────
-    const totalsRow = dataStartRow + rows.length;
-    // Spacer
-    const spacerRow = ws.getRow(totalsRow);
-    spacerRow.height = 6;
-    for (let c = 1; c <= 19; c++) {
-      spacerRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.primary } };
-    }
-
-    const sumRow = ws.getRow(totalsRow + 1);
-    sumRow.height = 28;
-    ws.mergeCells(`A${totalsRow + 1}:D${totalsRow + 1}`);
-    const totalLabelCell = ws.getCell(`A${totalsRow + 1}`);
-    totalLabelCell.value = 'TOTALES DEL DÍA';
-    totalLabelCell.font = { name: 'Calibri', size: 12, bold: true, color: { argb: COLOR.white } };
-    totalLabelCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    totalLabelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.grayHdr } };
-
-    // Sum formula for monetary columns (E:G) and (I:S)
-    const sumCols = [5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
-    sumCols.forEach(ci => {
-      const cell = sumRow.getCell(ci);
-      if (rows.length > 0) {
-        const cl = colLetter(ci);
-        cell.value = { formula: `SUM(${cl}${dataStartRow}:${cl}${dataStartRow + rows.length - 1})`, date1904: false };
-      } else {
-        cell.value = 0;
-      }
-      cell.numFmt = '"$"#,##0.00';
-      cell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: COLOR.accent } };
-      cell.alignment = { horizontal: 'center', vertical: 'middle' };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF263238' } };
-      cell.border = {
-        top: { style: 'medium', color: { argb: COLOR.accent } },
-        bottom: { style: 'medium', color: { argb: COLOR.accent } },
-        left: { style: 'thin', color: { argb: '88ffffff' } },
-        right: { style: 'thin', color: { argb: '88ffffff' } },
-      };
-    });
-
-    // Gap col in totals
-    sumRow.getCell(8).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.primary } };
-
-    // ─────────────────────────────────────────────────────────────
-    // SECTION ROWS (COLA CROMADA, INVENTARIO, etc.) — below totals
-    // ─────────────────────────────────────────────────────────────
-    const sections = [
-      { label: 'COLA CROMADA', cols: ['EFECTIVO', 'BANCAMIGA', 'BANESCO', 'CASHEA', 'BINANCE', 'WALLY', 'PM EXTERIOR', 'BANCO'] },
-      { label: 'INVENTARIO / REPUESTOS', cols: ['DESCRIPCIÓN', 'CANT.', 'PRECIO UNIT.', 'TOTAL', 'MÉTODO DE PAGO', 'BANCO'] },
-    ];
-
-    let nextRow = totalsRow + 3;
-    sections.forEach(({ label, cols }) => {
-      // Section header
-      const secHdr = ws.getRow(nextRow);
-      secHdr.height = 24;
-      ws.mergeCells(`A${nextRow}:S${nextRow}`);
-      const secHdrCell = ws.getCell(`A${nextRow}`);
-      secHdrCell.value = `◆  ${label}`;
-      secHdrCell.font = { name: 'Calibri', size: 12, bold: true, color: { argb: COLOR.white } };
-      secHdrCell.alignment = { horizontal: 'left', vertical: 'middle', indent: 2 };
-      secHdrCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.gold.replace('FF', 'FF5') } };
-      secHdrCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf57c00' } };
-      nextRow++;
-
-      // Sub-headers
-      const subHdrRow = ws.getRow(nextRow);
-      subHdrRow.height = 22;
-      cols.forEach((ch, ci) => {
-        const cell = subHdrRow.getCell(ci + 1);
-        cell.value = ch;
-        cell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: COLOR.white } };
-        cell.alignment = { horizontal: 'center', vertical: 'middle' };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFef6c00' } };
-        cell.border = { bottom: { style: 'medium', color: { argb: COLOR.gold } } };
-      });
-      nextRow++;
-
-      // 5 blank input rows
-      for (let br = 0; br < 5; br++) {
-        const blankRow = ws.getRow(nextRow);
-        blankRow.height = 18;
-        for (let ci = 1; ci <= cols.length; ci++) {
-          const c = blankRow.getCell(ci);
-          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: br % 2 ? 'FFfff8e1' : COLOR.white } };
-          c.border = {
-            top: { style: 'hair', color: { argb: COLOR.border } },
-            bottom: { style: 'hair', color: { argb: COLOR.border } },
-            left: { style: 'thin', color: { argb: COLOR.border } },
-            right: { style: 'thin', color: { argb: COLOR.border } },
-          };
-        }
-        nextRow++;
-      }
-      nextRow++; // gap
-    });
-
-    // ─────────────────────────────────────────────────────────────
-    // FOOTER
-    // ─────────────────────────────────────────────────────────────
-    const footerRow = ws.getRow(nextRow + 1);
-    footerRow.height = 20;
-    ws.mergeCells(`A${nextRow + 1}:S${nextRow + 1}`);
-    const footerCell = ws.getCell(`A${nextRow + 1}`);
-    footerCell.value = `Generado por el Sistema Lycos Team · ${new Date().toLocaleString('es-VE')} · Documento confidencial de uso interno`;
-    footerCell.font = { name: 'Calibri', size: 8, italic: true, color: { argb: 'FFbdbdbd' } };
-    footerCell.alignment = { horizontal: 'center', vertical: 'middle' };
-    footerCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLOR.primary } };
-
-    // ─────────────────────────────────────────────────────────────
-    // OUTPUT
-    // ─────────────────────────────────────────────────────────────
-    const buffer = await workbook.xlsx.writeBuffer();
-
-    return new NextResponse(buffer as ArrayBuffer, {
-      status: 200,
-      headers: {
-        'Content-Disposition': `attachment; filename="LYCOS_REPORTE_${new Date().toISOString().split('T')[0]}.xlsx"`,
-        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      },
-    });
-
-  } catch (err: unknown) {
-    console.error('API Reportes Error:', err);
-    return NextResponse.json({ error: 'Hubo un error al generar el reporte' }, { status: 500 });
+  } catch (err: any) {
+    console.error('Error en reporte diario:', err);
+    return NextResponse.json({ error: 'Error al generar el reporte diario', detalle: err?.message }, { status: 500 });
   }
 }
-

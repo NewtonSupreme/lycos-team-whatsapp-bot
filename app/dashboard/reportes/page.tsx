@@ -30,6 +30,7 @@ import { cn, getLocalISODate, parseDescripcionItems } from '@/lib/utils';
 import { generateInvoicePDF, generateEgresoPDF, type InvoicePDFItem } from '@/lib/invoice-pdf';
 import { generateCierrePDF, type CierreData } from '@/lib/cierre-pdf';
 import { generateNotaEntregaPDF } from '@/lib/distribucion-pdf';
+import { generateReporteDiarioPDF } from '@/lib/reporte-diario-pdf';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { useAppStore } from '@/lib/store';
@@ -2240,6 +2241,133 @@ function EgresoPreviewModal({ egreso, onClose }: { egreso: Egreso; onClose: () =
   );
 }
 
+// ── Modal: Métricas del día (KPIs manuales para el Reporte Diario) ─────────────
+function MetricasDiaModal({ onClose, defaultFecha }: { onClose: () => void; defaultFecha?: string }) {
+  const { currentSede } = useSedeStore();
+  const [fecha, setFecha] = useState(defaultFecha || getLocalISODate());
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [existingId, setExistingId] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    redes_inicial: 0, redes_nuevos: 0,
+    app_inicial: 0, app_nuevos: 0,
+    rcv_inicial: 0, rcv_nuevos: 0,
+    cert_inicial: 0, cert_nuevos: 0,
+    notas: '',
+  });
+
+  useEffect(() => {
+    (async () => {
+      if (!supabase) return;
+      setLoading(true);
+      try {
+        let q = supabase.from('metricas_dia').select('*').eq('fecha', fecha);
+        if (currentSede?.id) q = q.eq('sede_id', currentSede.id);
+        const { data } = await q.limit(1);
+        const row = data?.[0];
+        if (row) {
+          setExistingId(row.id);
+          setForm({
+            redes_inicial: row.redes_inicial || 0, redes_nuevos: row.redes_nuevos || 0,
+            app_inicial: row.app_inicial || 0, app_nuevos: row.app_nuevos || 0,
+            rcv_inicial: row.rcv_inicial || 0, rcv_nuevos: row.rcv_nuevos || 0,
+            cert_inicial: row.cert_inicial || 0, cert_nuevos: row.cert_nuevos || 0,
+            notas: row.notas || '',
+          });
+        } else {
+          setExistingId(null);
+          setForm({ redes_inicial: 0, redes_nuevos: 0, app_inicial: 0, app_nuevos: 0, rcv_inicial: 0, rcv_nuevos: 0, cert_inicial: 0, cert_nuevos: 0, notas: '' });
+        }
+      } finally { setLoading(false); }
+    })();
+  }, [fecha, currentSede?.id]);
+
+  const guardar = async () => {
+    if (!supabase) return;
+    setSaving(true);
+    try {
+      const payload: any = {
+        fecha,
+        sede_id: currentSede?.id || null,
+        ...form,
+        creado_por: useAppStore.getState().user?.nombre || 'Admin',
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = existingId
+        ? await supabase.from('metricas_dia').update(payload).eq('id', existingId)
+        : await supabase.from('metricas_dia').insert(payload);
+      if (error) throw error;
+      onClose();
+    } catch (e: any) {
+      alert('Error al guardar métricas: ' + (e?.message || e));
+    } finally { setSaving(false); }
+  };
+
+  const grupos: { key: keyof typeof form; keyN: keyof typeof form; label: string }[] = [
+    { key: 'redes_inicial', keyN: 'redes_nuevos', label: 'Redes / Instagram' },
+    { key: 'app_inicial', keyN: 'app_nuevos', label: 'Registro en la App' },
+    { key: 'rcv_inicial', keyN: 'rcv_nuevos', label: 'RCV' },
+    { key: 'cert_inicial', keyN: 'cert_nuevos', label: 'Certificado Médico' },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={() => !saving && onClose()}>
+      <div className="bg-card border border-border rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b border-border/40 flex items-center justify-between sticky top-0 bg-card z-10">
+          <div>
+            <h3 className="text-base font-black flex items-center gap-2"><BarChart2 className="w-4 h-4 text-primary" /> Métricas del día</h3>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Redes, App, RCV y Certificado — se incluyen en el Reporte Diario</p>
+          </div>
+          <button onClick={() => !saving && onClose()} className="w-8 h-8 rounded-lg hover:bg-white/10 flex items-center justify-center"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Fecha</label>
+            <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
+              className="mt-1 w-full px-3 py-2 rounded-xl border border-border/50 bg-background/50 text-sm font-bold focus:outline-none focus:ring-1 focus:ring-primary" />
+          </div>
+          {loading ? (
+            <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-primary" /></div>
+          ) : grupos.map(g => (
+            <div key={g.key} className="rounded-xl border border-border/40 bg-background/40 p-3">
+              <p className="text-xs font-black uppercase tracking-wide text-foreground mb-2">{g.label}</p>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="text-[9px] font-bold text-muted-foreground uppercase">Inicial</label>
+                  <input type="number" min={0} value={(form[g.key] as number) || ''} onChange={e => setForm(f => ({ ...f, [g.key]: Number(e.target.value) || 0 }))}
+                    className="w-full px-2 py-1.5 rounded-lg border border-border/40 bg-background/50 text-sm font-bold focus:outline-none focus:ring-1 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="text-[9px] font-bold text-muted-foreground uppercase">Nuevos</label>
+                  <input type="number" min={0} value={(form[g.keyN] as number) || ''} onChange={e => setForm(f => ({ ...f, [g.keyN]: Number(e.target.value) || 0 }))}
+                    className="w-full px-2 py-1.5 rounded-lg border border-border/40 bg-background/50 text-sm font-bold focus:outline-none focus:ring-1 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="text-[9px] font-bold text-muted-foreground uppercase">Total</label>
+                  <div className="w-full px-2 py-1.5 rounded-lg bg-primary/10 text-primary text-sm font-black text-center">
+                    {((form[g.key] as number) || 0) + ((form[g.keyN] as number) || 0)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+          <div>
+            <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Notas</label>
+            <textarea value={form.notas} onChange={e => setForm(f => ({ ...f, notas: e.target.value }))} rows={2}
+              className="mt-1 w-full px-3 py-2 rounded-xl border border-border/50 bg-background/50 text-xs resize-none focus:outline-none focus:ring-1 focus:ring-primary" />
+          </div>
+        </div>
+        <div className="p-5 border-t border-border/40 flex justify-end gap-2 sticky bottom-0 bg-card">
+          <button onClick={() => !saving && onClose()} className="px-4 py-2 rounded-xl text-sm hover:bg-white/5">Cancelar</button>
+          <Button onClick={guardar} disabled={saving || loading} className="gap-2">
+            {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Guardando...</> : <><CheckCircle className="w-4 h-4" /> Guardar métricas</>}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ──────────────────────────────────────────────────
 export default function ReportesPage() {
   const [ventas, setVentas] = useState<VentaDia[]>([]);
@@ -2268,6 +2396,11 @@ export default function ReportesPage() {
   const [selectedEgreso, setSelectedEgreso] = useState<Egreso | null>(null);
   const [mounted, setMounted] = useState(false);
   const [currentTasa, setCurrentTasa] = useState(518.0);
+  const [generandoReporte, setGenerandoReporte] = useState(false);
+  const [showMetricas, setShowMetricas] = useState(false);
+  const [showReporteFecha, setShowReporteFecha] = useState(false);
+  const [reporteModo, setReporteModo] = useState<'hoy' | 'otra'>('hoy');
+  const [reporteFecha, setReporteFecha] = useState(getLocalISODate());
   const { currentSede } = useSedeStore();
   const { user } = useAppStore();
   const { can } = useRolePermissions();
@@ -2882,6 +3015,32 @@ export default function ReportesPage() {
     window.location.href = `/api/reportes/export?tipo=${type}&from=${selectedDate}&to=${selectedDate}`;
   };
 
+  // Reporte Diario Completo (13 secciones) en PDF — datos reales de la plataforma.
+  const descargarReporteDiario = async (fecha?: string) => {
+    const f = fecha || selectedDate || getLocalISODate();
+    setGenerandoReporte(true);
+    try {
+      const sedeQ = currentSede?.id ? `&sede=${currentSede.id}` : '';
+      const res = await fetch(`/api/reportes/diario?fecha=${f}${sedeQ}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || `Error ${res.status}`);
+      }
+      const data = await res.json();
+      generateReporteDiarioPDF(data);
+      logActivity({
+        usuario: useAppStore.getState().user?.nombre || 'Admin',
+        modulo: 'Reportes',
+        accion: 'Descargó Reporte Diario Completo (PDF)',
+        detalles: `Fecha: ${f}`,
+      });
+    } catch (e: any) {
+      alert('No se pudo generar el reporte diario: ' + (e?.message || e));
+    } finally {
+      setGenerandoReporte(false);
+    }
+  };
+
   const exportMonth = (type: 'ventas'|'citas') => {
     const from = `${currentYear}-${String(currentMonth + 1).padStart(2,'0')}-01`;
     const to = `${currentYear}-${String(currentMonth + 1).padStart(2,'0')}-${String(getDaysInMonth(currentYear, currentMonth)).padStart(2,'0')}`;
@@ -2901,6 +3060,12 @@ export default function ReportesPage() {
           <div className="flex gap-2 w-full sm:w-auto">
             <Button onClick={() => setShowManual(true)} variant="outline" className="gap-2 flex-1 sm:flex-none border-border">
               <Plus className="w-4 h-4" /> Manual
+            </Button>
+            <Button onClick={() => setShowMetricas(true)} variant="outline" className="gap-2 flex-1 sm:flex-none border-border" title="Métricas del día (Redes, App, RCV, Certificado)">
+              <BarChart2 className="w-4 h-4" /> Métricas
+            </Button>
+            <Button onClick={() => { setReporteModo('hoy'); setReporteFecha(getLocalISODate()); setShowReporteFecha(true); }} disabled={generandoReporte} className="gap-2 flex-1 sm:flex-none bg-green-600 hover:bg-green-700 text-white font-bold">
+              {generandoReporte ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Reporte Diario
             </Button>
             <Button onClick={() => setShowCierreWizard(true)} className="gap-2 flex-1 sm:flex-none bg-orange-600 hover:bg-orange-700 text-white font-bold">
               <FileText className="w-4 h-4" /> Cierre PDF
@@ -3301,23 +3466,12 @@ export default function ReportesPage() {
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1 justify-end">
                               <button
-                                onClick={() => {
-                                  window.location.href = `/api/reportes/diario?fecha=${v.fecha}`;
-                                  
-                                  // Log Activity
-                                  logActivity({
-                                    usuario: useAppStore.getState().user?.nombre || 'Admin',
-                                    modulo: 'Reportes',
-                                    accion: 'Descargó reporte diario',
-                                    detalles: `Fecha: ${v.fecha}`,
-                                    referencia_id: v.id,
-                                    referencia_tabla: 'ventas_dia'
-                                  });
-                                }}
-                                className="w-7 h-7 rounded-lg hover:bg-green-500/10 text-muted-foreground hover:text-green-500 flex items-center justify-center transition-colors"
-                                title="Descargar Reporte Diario"
+                                onClick={() => descargarReporteDiario(v.fecha)}
+                                disabled={generandoReporte}
+                                className="w-7 h-7 rounded-lg hover:bg-green-500/10 text-muted-foreground hover:text-green-500 flex items-center justify-center transition-colors disabled:opacity-50"
+                                title="Descargar Reporte Diario Completo (PDF)"
                               >
-                                <Download className="w-3.5 h-3.5" />
+                                {generandoReporte ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
                               </button>
                               <button
                                 onClick={() => setSelectedVenta(v)}
@@ -4055,6 +4209,69 @@ export default function ReportesPage() {
       )}
 
       {/* Modals con Portals */}
+      {mounted && showReporteFecha && createPortal(
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={() => !generandoReporte && setShowReporteFecha(false)}>
+          <div className="bg-card border border-border rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-border/40 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-black flex items-center gap-2"><Download className="w-4 h-4 text-green-500" /> Reporte Diario</h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Elige la fecha del reporte a descargar</p>
+              </div>
+              <button onClick={() => !generandoReporte && setShowReporteFecha(false)} className="w-8 h-8 rounded-lg hover:bg-white/10 flex items-center justify-center"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => { setReporteModo('hoy'); setReporteFecha(getLocalISODate()); }}
+                  className={cn('p-4 rounded-2xl border-2 text-sm font-black uppercase transition-all',
+                    reporteModo === 'hoy' ? 'border-green-500 bg-green-500/10 text-green-500' : 'border-border text-muted-foreground hover:border-green-500/40')}
+                >📅 Hoy</button>
+                <button
+                  onClick={() => setReporteModo('otra')}
+                  className={cn('p-4 rounded-2xl border-2 text-sm font-black uppercase transition-all',
+                    reporteModo === 'otra' ? 'border-green-500 bg-green-500/10 text-green-500' : 'border-border text-muted-foreground hover:border-green-500/40')}
+                >🗓️ Otra fecha</button>
+              </div>
+
+              {reporteModo === 'otra' && (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Selecciona la fecha</label>
+                  <input type="date" value={reporteFecha} max={getLocalISODate()} onChange={e => setReporteFecha(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border border-border/50 bg-background/50 text-sm font-bold focus:outline-none focus:ring-1 focus:ring-green-500" />
+                </div>
+              )}
+
+              <div className="rounded-xl bg-background/50 border border-border/40 p-3 text-center">
+                <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Fecha del reporte</p>
+                <p className="text-sm font-black text-foreground mt-0.5">
+                  {new Date(((reporteModo === 'hoy' ? getLocalISODate() : reporteFecha)) + 'T12:00:00').toLocaleDateString('es-VE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                </p>
+              </div>
+            </div>
+            <div className="p-5 border-t border-border/40 flex justify-end gap-2">
+              <button onClick={() => !generandoReporte && setShowReporteFecha(false)} className="px-4 py-2 rounded-xl text-sm hover:bg-white/5">Cancelar</button>
+              <Button
+                onClick={async () => {
+                  const f = reporteModo === 'hoy' ? getLocalISODate() : reporteFecha;
+                  await descargarReporteDiario(f);
+                  setShowReporteFecha(false);
+                }}
+                disabled={generandoReporte}
+                className="gap-2 bg-green-600 hover:bg-green-700 text-white font-bold"
+              >
+                {generandoReporte ? <><Loader2 className="w-4 h-4 animate-spin" /> Generando...</> : <><Download className="w-4 h-4" /> Descargar PDF</>}
+              </Button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {mounted && showMetricas && createPortal(
+        <MetricasDiaModal onClose={() => setShowMetricas(false)} defaultFecha={selectedDate || getLocalISODate()} />,
+        document.body
+      )}
+
       {mounted && showManual && createPortal(
         <ManualModal
           inventario={inventarioHistory}

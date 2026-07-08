@@ -18,6 +18,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
+import DesglosePagoBancos from '@/components/pos/DesglosePagoBancos';
+import { buildVentaDiaFields, emptyBins, deptFromInventario, type Bins } from '@/lib/reporte/ventas-mapping';
 import { ComprobanteInput, emptyComprobante, type ComprobanteValue } from '@/components/ventas/ComprobanteInput';
 import { uploadComprobante, comprobanteFields } from '@/lib/comprobante';
 import { Calendar as CalendarUI } from "@/components/ui/calendar";
@@ -66,17 +68,8 @@ export default function VentasPage() {
   const [loadingAbonos, setLoadingAbonos] = useState(false);
   const [procesandoAbono, setProcesandoAbono] = useState(false);
 
-  // Payment methods
-  const [metodosPago, setMetodosPago] = useState({
-    efectivo_usd: 0,
-    zelle: 0,
-    pago_movil: 0,
-    efectivo_ves: 0,
-    punto_de_venta: 0,
-    transferencia: 0,
-    cashea: 0,
-    otro: 0
-  });
+  // Desglose de pago por banco (clasificación exacta) → columnas de ventas_dia
+  const [bins, setBins] = useState<Bins>(emptyBins());
 
   const [printMode, setPrintMode] = useState<'single' | 'dual' | 'diferente'>('dual');
   const [printSide, setPrintSide] = useState<'left' | 'right'>('left');
@@ -436,6 +429,20 @@ export default function VentasPage() {
       const comprobanteUrl = await uploadComprobante(comprobante.file);
       const comprobanteRef = comprobante.referencia.trim() || null;
 
+      // Clasificación exacta: banco (bins) + departamento (por categoría del producto)
+      const deptItems = cart.map(item => {
+        const prod = productos.find(p => p.id === item.id);
+        return { dept: deptFromInventario(prod?.categoria), monto: item.total };
+      });
+      const mapped = buildVentaDiaFields({
+        bins,
+        subtotal,
+        conIva,
+        saldo: saldoRestante,
+        tasa: rates.bcv,
+        deptItems,
+      });
+
       // 1. Register in ventas_dia (Accounting)
       const { data: ventaDia, error: ventaError } = await withSedeFilter(supabase.from('ventas_dia'))
         .insert(withSedeInsert({
@@ -443,13 +450,15 @@ export default function VentasPage() {
           cliente: clienteNombre || 'Consumidor Final',
           ...comprobanteFields(comprobanteUrl, comprobanteRef),
           total_ingresos: subtotal, // Store subtotal here, report logic handles IVA
+          clientes_atendidos: 1,
+          total_clientes: 1,
           desglose: cart.map(item => ({
             descripcion: item.nombre,
             cantidad: item.cantidad,
             precio_unitario: item.precio_unitario,
             total: item.total
           })),
-          metodos_pago: metodosPago,
+          ...mapped, // departamentos + columnas por banco + contado/iva/inicial/financiado/por_cobrar/tasa + metodos_pago
           con_iva: conIva,
           tasa_cambio: rates.bcv,
           notas: `${notas}${vehiculoInfo ? ` | Vehículo: ${vehiculoInfo}` : ''}${tieneAbono ? ` | Abono: $${abonoAmount.toFixed(2)} | Saldo: $${saldoRestante.toFixed(2)}` : ''}`,
@@ -499,8 +508,8 @@ export default function VentasPage() {
           total: item.total
         })),
         total: totalConIva,
-        pago_usd: metodosPago.efectivo_usd + metodosPago.zelle,
-        pago_ves: metodosPago.pago_movil + metodosPago.efectivo_ves,
+        pago_usd: mapped.dolares + mapped.zelle + mapped.binance,
+        pago_ves: mapped.pago_movil_banesco + mapped.bnc + mapped.pago_movil_exterior + mapped.punto_banesco + mapped.punto_bancamiga + mapped.efectivo_bs,
         tasa_bcv: rates.bcv,
         iva_aplicado: conIva,
         tiene_abono: tieneAbono,
@@ -546,7 +555,7 @@ export default function VentasPage() {
             precio_unitario: item.precio_unitario,
             total: item.total
           })),
-          metodos_pago: metodosPago,
+          metodos_pago: mapped.metodos_pago,
           con_iva: conIva,
           estado: estadoVenta as 'pagado' | 'pendiente',
           notas: notas || undefined,
@@ -576,6 +585,7 @@ export default function VentasPage() {
       setNotas('');
       setAbono(0);
       setShowAbonoSection(false);
+      setBins(emptyBins());
       setComprobante(emptyComprobante());
       fetchData();
     } catch (err: any) {
@@ -961,6 +971,16 @@ export default function VentasPage() {
                   <p className="text-base font-bold">${Number(subtotal).toFixed(2)}</p>
                 </div>
               </div>
+
+              {/* ── Desglose de pago por banco (clasificación exacta) ── */}
+              {cart.length > 0 && (
+                <DesglosePagoBancos
+                  bins={bins}
+                  onBinsChange={setBins}
+                  totalUSD={showAbonoSection && abono > 0 ? abono : total}
+                  tasa={rates.bcv}
+                />
+              )}
 
               {/* ── Abono Accordion ─────────────────────────── */}
               <div className="bg-background/40 rounded-2xl border border-border/40 overflow-hidden">

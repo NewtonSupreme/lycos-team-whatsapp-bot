@@ -21,6 +21,8 @@ import { uploadComprobante, comprobanteFields } from '@/lib/comprobante';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 import { cn, getLocalISODate, parseDescripcionItems } from '@/lib/utils';
+import DesglosePagoBancos from '@/components/pos/DesglosePagoBancos';
+import { buildVentaDiaFields, emptyBins, binsTotalUSD, deptFromServicioTipo, type Bins } from '@/lib/reporte/ventas-mapping';
 
 // ── Types ─────────────────────────────────────────────────────
 interface ServicioItem {
@@ -161,6 +163,11 @@ export default function ServiciosPage() {
   const [budgetCita, setBudgetCita] = useState<CitaServicio | null>(null);
   // Cambio de estado pendiente de confirmar (servicio completado que ya es venta).
   const [pendingEstadoChange, setPendingEstadoChange] = useState<{ cita: CitaServicio; nuevoEstado: string } | null>(null);
+  // Modal de cobro al finalizar un servicio (captura banco exacto + IVA)
+  const [cobroModal, setCobroModal] = useState<{ cita: CitaServicio; nuevoEstado: string } | null>(null);
+  const [cobroBins, setCobroBins] = useState<Bins>(emptyBins());
+  const [cobroConIva, setCobroConIva] = useState(false);
+  const [cobroProcesando, setCobroProcesando] = useState(false);
   const [inventory, setInventory] = useState<any[]>([]);
   const [selectedForDual, setSelectedForDual] = useState<string[]>([]);
   const [mounted, setMounted] = useState(false);
@@ -242,7 +249,12 @@ export default function ServiciosPage() {
   };
 
   // Aplica el cambio de estado real (y registra venta si pasa a completado).
-  const applyEstadoChange = async (cita: CitaServicio, nuevoEstado: string) => {
+  // `cobro` (opcional) trae el desglose por banco exacto capturado en el modal de cobro.
+  const applyEstadoChange = async (
+    cita: CitaServicio,
+    nuevoEstado: string,
+    cobro?: { bins: Bins; conIva: boolean; saldo: number }
+  ) => {
     const COMPLETED_STATES = ['completada', 'finalizado', 'finalizada', 'completado'];
     const id = cita.id;
     try {
@@ -287,6 +299,32 @@ export default function ServiciosPage() {
           const { data: existingVD } = await supabase.from('ventas_dia')
             .select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle();
 
+          // Clasificación precisa por banco (si viene del modal de cobro) o fallback a Divisas.
+          let extra: Record<string, any>;
+          if (cobro) {
+            const mapped = buildVentaDiaFields({
+              bins: cobro.bins,
+              subtotal: precio,
+              conIva: cobro.conIva,
+              saldo: cobro.saldo,
+              tasa: globalBcvRate || 0,
+              deptItems: [{ dept: deptFromServicioTipo(cita.tipo), monto: precio }],
+            });
+            const totalConIva = precio * (cobro.conIva ? 1.16 : 1);
+            const hayAbono = cobro.saldo > 0.01;
+            extra = {
+              ...mapped,
+              con_iva: cobro.conIva,
+              clientes_atendidos: 1,
+              tiene_abono: hayAbono,
+              abono: hayAbono ? Math.max(0, Math.round((totalConIva - cobro.saldo) * 100) / 100) : 0,
+              saldo_pendiente: cobro.saldo,
+              estado: hayAbono ? 'pendiente' : 'pagado',
+            };
+          } else {
+            extra = { metodos_pago: { divisas: precio }, con_iva: false, estado: 'pagado' };
+          }
+
           const vdData = {
             fecha: getLocalISODate(),
             cliente: clienteNombre,
@@ -294,15 +332,13 @@ export default function ServiciosPage() {
             total_servicios: 1,
             total_clientes: 1,
             desglose,
-            metodos_pago: { divisas: precio },
             tasa_cambio: globalBcvRate || 0,
-            con_iva: false,
             notas: notesFinal,
             creado_por: user?.nombre || 'Admin',
             sede_id: sedeId,
             fecha_registro: new Date().toISOString(),
             registro_atrasado: false,
-            estado: 'pagado',
+            ...extra,
           };
 
           const vdResult = existingVD
@@ -342,7 +378,39 @@ export default function ServiciosPage() {
         if (vd || vs) { setPendingEstadoChange({ cita, nuevoEstado }); return; }
       } catch { /* si falla la verificación, continuamos con el cambio normal */ }
     }
+
+    // Al ENTRAR a completado con un precio > 0: abrir modal de cobro para clasificar el pago por banco.
+    const entrandoCompletado = COMPLETED_STATES.includes(nuevoEstado) && !COMPLETED_STATES.includes(cita.estado);
+    const precioServicio = Number(cita.costo_final ?? cita.costo_estimado ?? 0);
+    if (entrandoCompletado && precioServicio > 0 && (cita.sede_id || currentSede?.id)) {
+      setCobroBins(emptyBins());
+      setCobroConIva(false);
+      setCobroModal({ cita, nuevoEstado });
+      return;
+    }
+
     await applyEstadoChange(cita, nuevoEstado);
+  };
+
+  // Confirma el cobro del modal → finaliza el servicio y registra la venta clasificada por banco.
+  const confirmCobroServicio = async () => {
+    if (!cobroModal) return;
+    const { cita, nuevoEstado } = cobroModal;
+    const precio = Number(cita.costo_final ?? cita.costo_estimado ?? 0);
+    const totalConIva = precio * (cobroConIva ? 1.16 : 1);
+    const pagado = binsTotalUSD(cobroBins, globalBcvRate || 0);
+    const saldo = Math.max(0, Math.round((totalConIva - pagado) * 100) / 100);
+    setCobroProcesando(true);
+    try {
+      await applyEstadoChange(cita, nuevoEstado, { bins: cobroBins, conIva: cobroConIva, saldo });
+      setCobroModal(null);
+      setCobroBins(emptyBins());
+      setCobroConIva(false);
+    } catch (e: any) {
+      alert('Error al registrar el cobro: ' + (e?.message || e));
+    } finally {
+      setCobroProcesando(false);
+    }
   };
 
   // Confirmado en el modal: elimina la venta asociada y aplica el cambio de estado.
@@ -701,6 +769,75 @@ export default function ServiciosPage() {
           </div>
         </div>
       )}
+
+      {/* 💵 Modal de cobro al finalizar servicio — clasifica el pago por banco exacto */}
+      {cobroModal && (() => {
+        const precio = Number(cobroModal.cita.costo_final ?? cobroModal.cita.costo_estimado ?? 0);
+        const totalConIva = Math.round(precio * (cobroConIva ? 1.16 : 1) * 100) / 100;
+        const pagado = binsTotalUSD(cobroBins, globalBcvRate || 0);
+        const saldo = Math.max(0, Math.round((totalConIva - pagado) * 100) / 100);
+        const esCredito = saldo > 0.01;
+        return (
+          <div className="fixed inset-0 z-[130] flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-sm">
+            <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-3xl border border-green-500/30 bg-card shadow-2xl">
+              <div className="p-4 sm:p-5 bg-green-500/10 border-b border-green-500/20 flex items-center justify-between sticky top-0 bg-card/95 backdrop-blur z-10">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-green-500/20 flex items-center justify-center shrink-0">
+                    <Banknote className="w-5 h-5 text-green-500" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black uppercase tracking-widest text-green-500">Finalizar y cobrar</h3>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">{getDisplayName(cobroModal.cita) || 'Consumidor Final'} · {getDisplayVehicle(cobroModal.cita)}</p>
+                  </div>
+                </div>
+                <button onClick={() => !cobroProcesando && setCobroModal(null)} className="w-8 h-8 rounded-lg hover:bg-white/10 flex items-center justify-center">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-4 sm:p-5 space-y-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <label className="flex items-center gap-2 cursor-pointer group">
+                    <input type="checkbox" checked={cobroConIva} onChange={e => setCobroConIva(e.target.checked)}
+                      className="w-4 h-4 rounded border-border text-primary" />
+                    <span className="text-xs font-black text-muted-foreground group-hover:text-primary transition-colors uppercase">Aplicar IVA (16%)</span>
+                  </label>
+                  <div className="text-right">
+                    <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Total a cobrar</p>
+                    <p className="text-2xl font-black text-primary tracking-tight italic">${totalConIva.toFixed(2)}</p>
+                  </div>
+                </div>
+
+                <DesglosePagoBancos
+                  bins={cobroBins}
+                  onBinsChange={setCobroBins}
+                  totalUSD={totalConIva}
+                  tasa={globalBcvRate || 0}
+                />
+
+                {esCredito && (
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
+                    <span className="text-xs font-bold text-amber-500 uppercase">Queda por cobrar (crédito)</span>
+                    <span className="text-sm font-black text-amber-500">${saldo.toFixed(2)}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 sm:p-5 border-t border-border bg-muted/10 flex flex-col-reverse sm:flex-row justify-end gap-2.5 sticky bottom-0 bg-card">
+                <button onClick={() => !cobroProcesando && setCobroModal(null)}
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-bold text-muted-foreground hover:bg-muted/50 transition-all">
+                  Cancelar
+                </button>
+                <button onClick={confirmCobroServicio} disabled={cobroProcesando}
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest bg-green-500 hover:bg-green-600 text-white transition-all flex items-center justify-center gap-2 disabled:opacity-60">
+                  {cobroProcesando ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                  {esCredito ? 'Finalizar (queda saldo)' : 'Finalizar y cobrar'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
