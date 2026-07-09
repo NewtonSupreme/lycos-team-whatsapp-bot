@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   User, Bell, Bot, Shield, Save, Phone, Mail,
   MapPin, Clock, Globe, Lock, Trash2, Smartphone, Monitor, Zap,
-  CheckCircle, AlertCircle, Loader2
+  CheckCircle, AlertCircle, Loader2, Image as ImageIcon, Copy, Check, Eye, Tag, Search, ExternalLink, Sparkles, X
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -62,6 +62,351 @@ function SaveStatus({ status }: { status: 'idle' | 'saving' | 'saved' | 'error' 
 }
 
 type SaveStatusType = 'idle' | 'saving' | 'saved' | 'error';
+
+interface BotImageItem {
+  id: string;
+  slug: string;
+  tag: string;
+  nombre: string;
+  categoria: 'silenciador' | 'rcv';
+  categoriaLabel: string;
+  ruta: string;
+  descripcion: string;
+  trigger: string;
+}
+
+const BOT_IMAGES_CATALOG: BotImageItem[] = [
+  {
+    id: 'cl30',
+    slug: 'cl30',
+    tag: '[IMAGE: cl30]',
+    nombre: 'Silenciador CL 30',
+    categoria: 'silenciador',
+    categoriaLabel: 'Silenciador / Escape',
+    ruta: '/Silenciadores/CL%2030.jpg',
+    descripcion: 'Silenciador Lycos modelo CL 30. Óptimo para vehículos livianos y sedanes estándar.',
+    trigger: 'Se envía cuando el cliente consulta el modelo CL 30 o solicita fotos de silenciadores de entrada para autos compactos.'
+  },
+  {
+    id: 'cl40',
+    slug: 'cl40',
+    tag: '[IMAGE: cl40]',
+    nombre: 'Silenciador CL 40',
+    categoria: 'silenciador',
+    categoriaLabel: 'Silenciador / Escape',
+    ruta: '/Silenciadores/CL%2040.jpg',
+    descripcion: 'Silenciador Lycos modelo CL 40. Excelente balance entre absorción acústica y desahogo de gases.',
+    trigger: 'Se envía al preguntar por el CL 40 o como recomendación para sedanes medianos y familiares.'
+  },
+  {
+    id: 'cl60',
+    slug: 'cl60',
+    tag: '[IMAGE: cl60]',
+    nombre: 'Silenciador CL 60',
+    categoria: 'silenciador',
+    categoriaLabel: 'Silenciador / Escape',
+    ruta: '/Silenciadores/CL%2060.jpg',
+    descripcion: 'Silenciador Lycos modelo CL 60 para vehículos de mayor cilindrada, camionetas o rústicos.',
+    trigger: 'Se envía al consultar el CL 60 o para vehículos de motor V6/V8 y camionetas.'
+  },
+  {
+    id: 'clc60',
+    slug: 'clc60',
+    tag: '[IMAGE: clc60]',
+    nombre: 'Silenciador CLC 60',
+    categoria: 'silenciador',
+    categoriaLabel: 'Silenciador / Escape',
+    ruta: '/Silenciadores/CLC%2060.jpg',
+    descripcion: 'Silenciador deportivo compacto modelo CLC 60, diseñado para cabinas de espacio reducido.',
+    trigger: 'Se envía cuando el cliente busca un escape compacto con rendimiento superior (CLC 60).'
+  },
+  {
+    id: 'clcp60',
+    slug: 'clcp60',
+    tag: '[IMAGE: clcp60]',
+    nombre: 'Silenciador CLCP 60',
+    categoria: 'silenciador',
+    categoriaLabel: 'Silenciador / Escape',
+    ruta: '/Silenciadores/CLCP%2060.jpg',
+    descripcion: 'Silenciador de alto desempeño CLCP 60 para flujo optimizado y durabilidad extrema.',
+    trigger: 'Se envía al preguntar por el modelo CLCP 60 en el catálogo de silenciadores.'
+  },
+  {
+    id: 'clh40',
+    slug: 'clh40',
+    tag: '[IMAGE: clh40]',
+    nombre: 'Silenciador CLH 40',
+    categoria: 'silenciador',
+    categoriaLabel: 'Silenciador / Escape',
+    ruta: '/Silenciadores/CLH%2040.jpg',
+    descripcion: 'Silenciador modelo CLH 40 con camuflaje acústico de alta eficiencia.',
+    trigger: 'Se envía cuando la IA sugiere o el cliente solicita específicamente la serie CLH 40.'
+  },
+  {
+    id: 'rc30',
+    slug: 'rc30',
+    tag: '[IMAGE: rc30]',
+    nombre: 'Resonador RC 30',
+    categoria: 'silenciador',
+    categoriaLabel: 'Resonador',
+    ruta: '/Silenciadores/RC%2030.jpg',
+    descripcion: 'Resonador modelo RC 30 para afinación del tono de escape y control de resonancia.',
+    trigger: 'Se envía cuando el cliente pregunta por resonadores o el modelo RC 30.'
+  },
+  {
+    id: 'rcv',
+    slug: 'rcv',
+    tag: '[IMAGE: rcv]',
+    nombre: 'Póliza RCV (Responsabilidad Civil)',
+    categoria: 'rcv',
+    categoriaLabel: 'Trámite / Seguro',
+    ruta: '/Rcv/RCV.jpg',
+    descripcion: 'Afiche e información visual oficial sobre la Póliza RCV obligatoria y servicios relacionados.',
+    trigger: 'Se envía cuando el cliente consulta sobre seguros RCV, trámites o pólizas.'
+  }
+];
+
+function BotImagesGallery() {
+  const [filter, setFilter] = useState<'all' | 'silenciador' | 'rcv'>('all');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [copiedTag, setCopiedTag] = useState<string | null>(null);
+  const [previewItem, setPreviewItem] = useState<BotImageItem | null>(null);
+
+  const handleCopyTag = (tag: string) => {
+    navigator.clipboard.writeText(tag);
+    setCopiedTag(tag);
+    setTimeout(() => setCopiedTag(null), 2000);
+  };
+
+  const filteredImages = BOT_IMAGES_CATALOG.filter(img => {
+    const matchesFilter = filter === 'all' ? true : img.categoria === filter;
+    const matchesSearch = searchTerm.trim() === ''
+      || img.nombre.toLowerCase().includes(searchTerm.toLowerCase())
+      || img.slug.toLowerCase().includes(searchTerm.toLowerCase())
+      || img.descripcion.toLowerCase().includes(searchTerm.toLowerCase());
+    return matchesFilter && matchesSearch;
+  });
+
+  return (
+    <div className="space-y-6">
+      {/* Banner informativo superior */}
+      <div className="relative overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-5 shadow-sm">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
+                <Sparkles className="w-4 h-4" />
+              </span>
+              <h3 className="text-base font-bold tracking-tight" style={{ fontFamily: 'Syne, sans-serif' }}>
+                Catálogo de Imágenes Dinámicas del Bot de WhatsApp
+              </h3>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed max-w-2xl">
+              Estas son las imágenes reales que el chatbot de IA puede enviar automáticamente a los clientes durante una conversación en WhatsApp. Cuando la IA decide ilustrar una respuesta, incluye etiquetas como <code className="rounded bg-primary/10 px-1.5 py-0.5 text-primary font-mono text-[11px]">[IMAGE: cl30]</code> y el servidor adjunta el archivo JPG al chat de forma automática.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 self-stretch sm:self-auto justify-end">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/15 border border-primary/20 px-3 py-1 text-xs font-semibold text-primary">
+              <ImageIcon className="w-3.5 h-3.5" />
+              {BOT_IMAGES_CATALOG.length} Archivos en Servidor
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Barra de Filtros y Búsqueda */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-card p-3 rounded-xl border border-border/40 shadow-sm">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+          <button
+            onClick={() => setFilter('all')}
+            className={cn(
+              'px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 flex items-center gap-1.5 whitespace-nowrap',
+              filter === 'all' ? 'bg-primary text-primary-foreground shadow-sm' : 'hover:bg-muted text-muted-foreground'
+            )}
+          >
+            Todas ({BOT_IMAGES_CATALOG.length})
+          </button>
+          <button
+            onClick={() => setFilter('silenciador')}
+            className={cn(
+              'px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 flex items-center gap-1.5 whitespace-nowrap',
+              filter === 'silenciador' ? 'bg-primary text-primary-foreground shadow-sm' : 'hover:bg-muted text-muted-foreground'
+            )}
+          >
+            Silenciadores y Resonadores (7)
+          </button>
+          <button
+            onClick={() => setFilter('rcv')}
+            className={cn(
+              'px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 flex items-center gap-1.5 whitespace-nowrap',
+              filter === 'rcv' ? 'bg-primary text-primary-foreground shadow-sm' : 'hover:bg-muted text-muted-foreground'
+            )}
+          >
+            Pólizas y Seguros (1)
+          </button>
+        </div>
+
+        <div className="relative w-full sm:w-64">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+          <input
+            type="text"
+            placeholder="Buscar por modelo o tag..."
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            className="w-full pl-9 pr-3 py-1.5 rounded-lg border border-border/40 bg-background text-xs focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+          />
+        </div>
+      </div>
+
+      {/* Grid de Tarjetas del Catálogo */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        {filteredImages.map(item => (
+          <div
+            key={item.id}
+            className="group flex flex-col rounded-2xl border border-border/40 bg-card hover:border-primary/40 hover:shadow-lg transition-all duration-300 overflow-hidden"
+          >
+            {/* Previsualización de Imagen */}
+            <div className="relative aspect-[4/3] w-full bg-muted/30 overflow-hidden border-b border-border/30">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={item.ruta}
+                alt={item.nombre}
+                className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                onError={e => {
+                  (e.currentTarget as HTMLImageElement).src = '/Nuevo_Lycos_LOGO.png';
+                }}
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end justify-between p-3">
+                <button
+                  onClick={() => setPreviewItem(item)}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-black/70 hover:bg-black/90 text-white text-[11px] font-medium backdrop-blur-md transition-colors"
+                >
+                  <Eye className="w-3.5 h-3.5" /> Ampliar foto
+                </button>
+                <a
+                  href={item.ruta}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="p-1.5 rounded-lg bg-black/70 hover:bg-black/90 text-white transition-colors"
+                  title="Abrir en pestaña nueva"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
+              <span className="absolute top-2.5 left-2.5 rounded-md bg-black/60 backdrop-blur-md px-2 py-0.5 text-[10px] font-semibold text-white uppercase tracking-wider">
+                {item.categoriaLabel}
+              </span>
+            </div>
+
+            {/* Contenido principal */}
+            <div className="flex flex-col flex-1 p-4 space-y-3">
+              <div>
+                <div className="flex items-start justify-between gap-2">
+                  <h4 className="font-bold text-sm tracking-tight group-hover:text-primary transition-colors">
+                    {item.nombre}
+                  </h4>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1 line-clamp-2 leading-relaxed">
+                  {item.descripcion}
+                </p>
+              </div>
+
+              {/* Tag / Comando IA + Botón Copiar */}
+              <div className="flex items-center justify-between rounded-xl bg-muted/40 border border-border/40 px-3 py-2">
+                <div className="flex items-center gap-1.5">
+                  <Tag className="w-3.5 h-3.5 text-primary" />
+                  <code className="text-xs font-mono font-semibold text-foreground">
+                    {item.tag}
+                  </code>
+                </div>
+                <button
+                  onClick={() => handleCopyTag(item.tag)}
+                  className="flex items-center gap-1 text-[11px] font-medium text-primary hover:text-primary/80 transition-colors"
+                  title="Copiar etiqueta para probar en el chat"
+                >
+                  {copiedTag === item.tag ? (
+                    <span className="flex items-center gap-1 text-green-500">
+                      <Check className="w-3.5 h-3.5" /> Copiado
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1">
+                      <Copy className="w-3.5 h-3.5" /> Copiar
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {/* Cuándo se dispara */}
+              <div className="pt-2 border-t border-border/30 text-[11px] text-muted-foreground/90">
+                <span className="font-semibold text-foreground/80">🤖 Disparo automático: </span>
+                {item.trigger}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {filteredImages.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-12 rounded-2xl border border-dashed border-border/50 bg-card/50 text-center">
+          <ImageIcon className="w-10 h-10 text-muted-foreground/30 mb-2" />
+          <p className="text-sm font-semibold">No se encontraron imágenes</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Intenta con otro término de búsqueda en el catálogo.
+          </p>
+        </div>
+      )}
+
+      {/* Modal de Ampliación de Imagen */}
+      {previewItem && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+          onClick={() => setPreviewItem(null)}
+        >
+          <div
+            className="relative max-w-3xl w-full bg-card rounded-2xl overflow-hidden border border-border/40 shadow-2xl flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border/30 bg-muted/30">
+              <div className="flex items-center gap-2">
+                <ImageIcon className="w-4 h-4 text-primary" />
+                <span className="font-bold text-sm">{previewItem.nombre}</span>
+                <span className="text-xs text-muted-foreground font-mono">({previewItem.tag})</span>
+              </div>
+              <button
+                onClick={() => setPreviewItem(null)}
+                className="w-7 h-7 rounded-lg hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 bg-black/90 flex items-center justify-center max-h-[70vh] overflow-hidden">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={previewItem.ruta}
+                alt={previewItem.nombre}
+                className="max-w-full max-h-[65vh] object-contain rounded-lg"
+              />
+            </div>
+            <div className="p-4 bg-card flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground max-w-xl">
+                {previewItem.descripcion}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2 text-xs self-start sm:self-auto"
+                onClick={() => handleCopyTag(previewItem.tag)}
+              >
+                {copiedTag === previewItem.tag ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                Copiar Tag IA
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ConfiguracionPage() {
   const { user } = useAppStore();
@@ -219,11 +564,12 @@ export default function ConfiguracionPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="empresa" onValueChange={setActiveTab}>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="w-full sm:w-auto flex overflow-x-auto">
           <TabsTrigger value="empresa" className="gap-1.5 flex-shrink-0"><User className="w-3.5 h-3.5" />Empresa</TabsTrigger>
           <TabsTrigger value="notificaciones" className="gap-1.5 flex-shrink-0"><Bell className="w-3.5 h-3.5" />Notificaciones</TabsTrigger>
           <TabsTrigger value="ia" className="gap-1.5 flex-shrink-0"><Bot className="w-3.5 h-3.5" />IA &amp; Bot</TabsTrigger>
+          <TabsTrigger value="imagenes_bot" className="gap-1.5 flex-shrink-0"><ImageIcon className="w-3.5 h-3.5 text-pink-500" />Imágenes Bot</TabsTrigger>
           <TabsTrigger value="seguridad" className="gap-1.5 flex-shrink-0"><Shield className="w-3.5 h-3.5" />Seguridad</TabsTrigger>
         </TabsList>
 
@@ -373,6 +719,38 @@ export default function ConfiguracionPage() {
               </Card>
             </div>
           )}
+
+          {/* Tarjeta de acceso al Catálogo de Imágenes */}
+          <div className="mt-4">
+            <Card className="border-primary/20 bg-gradient-to-r from-primary/5 via-card to-card">
+              <CardContent className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 py-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
+                    <ImageIcon className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-sm">Imágenes disponibles del Bot de WhatsApp</h4>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Consulta y previsualiza los 8 silenciadores y afiches que el bot IA envía a los clientes.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setActiveTab('imagenes_bot')}
+                  className="gap-1.5 text-xs font-medium border-primary/30 hover:bg-primary/10"
+                >
+                  <Eye className="w-3.5 h-3.5" /> Ver Catálogo de Imágenes
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ── Imágenes Bot ────────────────────────────────────── */}
+        <TabsContent value="imagenes_bot">
+          <BotImagesGallery />
         </TabsContent>
 
         {/* ── Seguridad ────────────────────────────────────────── */}
