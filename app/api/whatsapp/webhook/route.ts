@@ -3821,13 +3821,9 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
         await sendMsg(from, `✅ Entendido. Procedo con la gestión de *${motivo}* para la sede *${sedeName}*.`);
 
-        // Inject a hidden message so the AI can continue with the correct sede
-        const followUpMsg = `[SISTEMA: El administrador seleccionó la sede ${sedeName} (ID: ${selectedSedeId}) para ${motivo}. Por favor, procede con la información o el tag correspondiente usando este ID].`;
-        const aiResp = await getAIResponse(followUpMsg, ctx, rates, from);
-        if (aiResp) {
-          await sendMsg(from, cleanForWhatsApp(aiResp), true, wa_message_id);
-        }
-        return;
+        // Reemplazamos messageBody por el mensaje de sistema para que continúe al flujo principal
+        // y se procesen e inserten correctamente los tags de administración ([STOCK_UPSERT], etc.)
+        messageBody = `[SISTEMA: El administrador seleccionó la sede ${sedeName} (ID: ${selectedSedeId}) para ${motivo}. Por favor, procede con la información o el tag correspondiente usando este ID].`;
       }
     }
 
