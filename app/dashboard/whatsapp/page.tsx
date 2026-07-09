@@ -177,6 +177,29 @@ function LocationBubble({ body, isOut }: { body: string; isOut: boolean }) {
   );
 }
 
+const BOT_SLUG_TO_IMAGE: Record<string, { url: string; nombre: string }> = {
+  cl30: { url: '/Silenciadores/CL%2030.jpg', nombre: 'Silenciador CL 30' },
+  cl40: { url: '/Silenciadores/CL%2040.jpg', nombre: 'Silenciador CL 40' },
+  cl60: { url: '/Silenciadores/CL%2060.jpg', nombre: 'Silenciador CL 60' },
+  clc60: { url: '/Silenciadores/CLC%2060.jpg', nombre: 'Silenciador CLC 60' },
+  clcp60: { url: '/Silenciadores/CLCP%2060.jpg', nombre: 'Silenciador CLCP 60' },
+  clh40: { url: '/Silenciadores/CLH%2040.jpg', nombre: 'Silenciador CLH 40' },
+  rc30: { url: '/Silenciadores/RC%2030.jpg', nombre: 'Resonador RC 30' },
+  rcv: { url: '/Rcv/RCV.jpg', nombre: 'Póliza RCV' },
+};
+
+function parseBotImageTag(body: string): { slug: string; url: string; nombre: string; caption: string } | null {
+  if (!body) return null;
+  const match = body.match(/\[(?:Imagen|IMAGE|Image):\s*([a-zA-Z0-9_\-\s]+?)\]/i);
+  if (!match) return null;
+  const rawSlug = match[1].toLowerCase().trim();
+  const info = BOT_SLUG_TO_IMAGE[rawSlug];
+  const url = info ? info.url : `/Silenciadores/${encodeURIComponent(match[1].trim().toUpperCase())}.jpg`;
+  const nombre = info ? info.nombre : `Imagen ${match[1].trim()}`;
+  const caption = body.replace(match[0], '').trim();
+  return { slug: rawSlug, url, nombre, caption };
+}
+
 function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isOut: boolean; onImageClick: (url: string) => void; quotedMsg?: RawMsg | null }) {
   const { body, media_url, media_type } = msg;
 
@@ -184,6 +207,52 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
   const isLocationMsg = body?.startsWith('📍 Sede') || body?.startsWith('[Ubicación:') || body?.match(/maps\.app\.goo\.gl/);
   if (isLocationMsg) {
     return <LocationBubble body={body} isOut={isOut} />;
+  }
+
+  // Detect Bot image tags like [Imagen: cl30]
+  const botImg = parseBotImageTag(body);
+  if (botImg) {
+    return (
+      <div className="flex flex-col gap-1.5 max-w-[280px]">
+        {quotedMsg && (
+          <div className="mb-1 p-2 rounded-md bg-black/20 border-l-4 border-[#00a884] overflow-hidden opacity-80 cursor-pointer hover:bg-black/30 transition-colors"
+               onClick={() => document.getElementById(`msg-${quotedMsg.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
+            <div className="text-[10px] font-bold text-[#00a884] mb-0.5">
+              {quotedMsg.tipo === 'saliente' ? 'Tú' : 'Cliente'}
+            </div>
+            <div className="text-[11px] text-[#8696a0] line-clamp-2 italic">
+              {quotedMsg.body || (quotedMsg.media_type ? `[${quotedMsg.media_type}]` : 'Mensaje')}
+            </div>
+          </div>
+        )}
+        <div 
+          className="relative group rounded-lg overflow-hidden border border-white/10 bg-black/30 cursor-pointer shadow-md"
+          onClick={() => onImageClick(botImg.url)}
+        >
+          <img 
+            src={botImg.url} 
+            alt={botImg.nombre} 
+            className="w-full max-h-64 object-cover hover:scale-105 transition-transform duration-300"
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).src = '/Nuevo_Lycos_LOGO.png';
+            }}
+          />
+          <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between rounded bg-black/75 backdrop-blur-md px-2 py-1">
+            <span className="text-[10px] font-semibold text-white/90 truncate">
+              🖼️ {botImg.nombre}
+            </span>
+            <span className="text-[9px] font-mono text-emerald-400 font-bold ml-1 flex-shrink-0">
+              [{botImg.slug}]
+            </span>
+          </div>
+        </div>
+        {botImg.caption && (
+          <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words mt-1" style={{ color: '#e9edef', wordBreak: 'break-word' }}>
+            {botImg.caption}
+          </p>
+        )}
+      </div>
+    );
   }
 
   const proxyUrl = media_url ? (media_url.startsWith('blob:') ? media_url : `/api/whatsapp/media/${media_url}`) : null;
@@ -246,18 +315,43 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
           <img src={proxyUrl} alt="Sticker" className="w-32 h-32 object-contain" />
         </div>
       ) : (
-        <div className="flex items-center gap-2 px-2 py-1 rounded-lg" style={{ background: 'rgba(255,255,255,0.08)' }}>
-          <div style={{ color: isOut ? '#25d366' : '#8696a0' }}>{icons[type as keyof typeof icons] || <FileText className="w-8 h-8" />}</div>
-          <div className="flex flex-col">
-            <span className="text-sm font-medium" style={{ color: '#e9edef' }}>{labels[type as keyof typeof labels] || 'Archivo'}</span>
-            {body && !['[image]', '[imagen]', '[audio]', '[video]', '[sticker]'].includes(body.toLowerCase()) && (
-              <span className="text-xs opacity-70" style={{ color: '#e9edef' }}>{body}</span>
-            )}
+        <div className="flex flex-col gap-2 p-3 rounded-xl border border-white/10 bg-black/30 max-w-[260px] shadow-sm">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-emerald-500/15 text-emerald-400">
+              {icons[type as keyof typeof icons] || <FileText className="w-6 h-6" />}
+            </div>
+            <div className="flex flex-col min-w-0 flex-1">
+              <span className="text-sm font-bold truncate" style={{ color: '#e9edef' }}>
+                {labels[type as keyof typeof labels] || 'Documento adjunto'}
+              </span>
+              <span className="text-[11px] text-[#8696a0]">
+                Archivo PDF / Documento
+              </span>
+            </div>
           </div>
+
+          {proxyUrl ? (
+            <a
+              href={proxyUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              download
+              className="flex items-center justify-center gap-1.5 w-full py-1.5 px-3 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 text-xs font-semibold transition-colors no-underline"
+            >
+              <FileText className="w-3.5 h-3.5" /> Abrir / Descargar ↗
+            </a>
+          ) : (
+            <span className="text-[10px] text-[#8696a0] italic">
+              Documento enviado
+            </span>
+          )}
+
+          {body && !['[image]', '[imagen]', '[audio]', '[video]', '[sticker]', '[document]', '[documento]'].includes(body.toLowerCase()) && (
+            <p className="text-xs opacity-80 border-t border-white/10 pt-1.5 mt-0.5 whitespace-pre-wrap break-words" style={{ color: '#e9edef' }}>
+              {body}
+            </p>
+          )}
         </div>
-      )}
-      {media_url && body && type !== 'audio' && !['[image]', '[imagen]', '[audio]', '[video]', '[sticker]'].includes(body.toLowerCase()) && (
-         <p className="text-[13px] mt-1" style={{ color: '#e9edef' }}>{body}</p>
       )}
     </div>
   );
