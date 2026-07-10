@@ -53,6 +53,13 @@ const OWNER_NAMES_BY_LAST10: Record<string, string> = {
   '4142279708': 'Leandro Márquez',
 };
 
+// Restricción temporal para Juan Pablo (584123193206): solo consultas, deshabilitado registrar/actualizar servicios y citas.
+function isJuanPabloRestricted(phone?: string | null): boolean {
+  if (!phone) return false;
+  const clean = String(phone).replace(/[^0-9]/g, '');
+  return clean.endsWith('4123193206');
+}
+
 const ASESOR_DISPLAY_NAME = 'Asesor Lycos Team';
 const IG_LINK = 'https://www.instagram.com/lycos.team?igsh=MzVwZ3NkbnN2OHk=';
 const TT_LINK = 'https://www.tiktok.com/@lycos.team?_r=1&_t=ZS-94prPaQnR5E';
@@ -2135,6 +2142,15 @@ async function getAIResponse(
       `6. ELECCIÓN DE SEDE: Como eres administrador de una sede asignada (ID: ${ctx.adminSedeId}), NO preguntes nunca por la sede ni uses [ASK_SEDE]. Usa siempre tu sede_id (${ctx.adminSedeId}) en todos los registros automáticamente.`
     );
   }
+  if (isJuanPabloRestricted(from)) {
+    knowledge += `\n\n⚠️ RESTRICCIÓN TEMPORAL ACTIVA PARA ESTE USUARIO (JUAN PABLO):
+- ATENCIÓN: Tienes DESACTIVADO temporalmente el permiso para registrar, crear o actualizar servicios y citas para Juan Pablo.
+- ESTÁ TERMINANTEMENTE PROHIBIDO generar etiquetas [SERVICIO_UPSERT: ...] o [CITA_UPSERT: ...] ni ninguna otra etiqueta para crear o modificar servicios o citas.
+- ESTÁ TERMINANTEMENTE PROHIBIDO sugerir, ofrecer o preguntar a Juan Pablo si desea registrar o actualizar un servicio o cita (¡PROHIBIDO decir "¿Deseas ACTUALIZARLO agregando tu trabajo a ese MISMO servicio?" ni "¿Deseas registrar este servicio?").
+- Juan Pablo SOLO tiene permitido hacer CONSULTAS de información (buscar vehículos por placa/modelo/fecha, consultar historiales de servicios, ver inventario, precios y reportes en general).
+- Cuando Juan Pablo consulte sobre un vehículo o servicio (ej: "Dame información de four runner plateada de fecha 30 junio"), responde ÚNICAMENTE con los datos e historial encontrados en la base de datos de manera clara y directa, SIN intentar ni ofrecer registrar ni actualizar nada.
+- Si Juan Pablo te pide explícitamente registrar o actualizar un servicio o cita, explícale con amabilidad que temporalmente tiene deshabilitado el registro y actualización de servicios por este medio, pero que estás disponible para responder todas sus consultas.`;
+  }
 
   const vzlaDateTime = formatVzlaDateTime();
   const vzlaDateStr = getVzlaDateString();
@@ -3173,6 +3189,10 @@ async function decidirRespuestaDuplicado(
   const vehTxt = [dup.vehiculo_info, dup.placa && dup.placa !== 'SIN-PLACA' ? `Placa ${dup.placa}` : ''].filter(Boolean).join(' — ');
   const existBy = String(dup.registrado_por || '');
 
+  if (isJuanPabloRestricted(from)) {
+    return `ℹ️ *Información del Servicio Activo:*\n🚗 ${vehTxt || 'Vehículo'}\n📌 Trabajo: ${dup.descripcion || '—'}\n👤 Registrado por: *${existBy || 'N/D'}*\n📅 Estado: *${dup.estado || 'N/D'}*`;
+  }
+
   // NUNCA duplicamos. Siempre ofrecemos ACTUALIZAR el servicio existente
   // (agregar el trabajo al mismo registro; si es otra persona, queda a nombre de ambos).
   memoria.pending_merge_servicio = {
@@ -3706,7 +3726,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
     // ─── CO-REGISTRO DE SERVICIO: COMBINAR vs APARTE ───────────────────────────
     // El admin pidió registrar un trabajo para un vehículo que YA tiene servicio activo
     // (con Rafael involucrado). Esperamos su decisión.
-    if (ctx.memoria?.pending_merge_servicio && db) {
+    if (ctx.memoria?.pending_merge_servicio && !isJuanPabloRestricted(from) && db) {
       const pm = ctx.memoria.pending_merge_servicio;
       // Detección ROBUSTA de SÍ/NO. Los acentos rompían los word-boundaries del regex
       // (por eso "Sí"/"Actualízalo" NO se reconocían y el bot quedaba en bucle). Aquí:
@@ -3960,10 +3980,16 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         || ADMIN_PHONES.includes(from || '') || ADMIN_PHONES.includes(phoneClean2)
         || !ctx.botPermisos;
       const canBot = (mod: keyof Permisos, action: 'crear' | 'leer' | 'editar' | 'eliminar'): boolean => {
+        if (isJuanPabloRestricted(from) && (mod === 'servicios' || mod === 'agenda') && (action === 'crear' || action === 'editar')) {
+          return false;
+        }
         if (isFullAdmin) return true;
         return hasPermiso((ctx.botPermisos as Permisos)[mod], action);
       };
-      const canBotWrite = (mod: keyof Permisos) => canBot(mod, 'crear') || canBot(mod, 'editar');
+      const canBotWrite = (mod: keyof Permisos) => {
+        if (isJuanPabloRestricted(from) && (mod === 'servicios' || mod === 'agenda')) return false;
+        return canBot(mod, 'crear') || canBot(mod, 'editar');
+      };
 
       if (isAdmin && db) {
         // 1. [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca]
@@ -4866,7 +4892,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           cleanedAi = (await decidirRespuestaDuplicado(
             db, from, ctx.memoria, servicioDuplicado, dupNuevaDesc, dupNuevoRegistrante
           )).trim();
-        } else if (canBotWrite('servicios') && !servicioOK && (servicioFallo || aiClaimsRegistro)) {
+        } else if (!isJuanPabloRestricted(from) && canBotWrite('servicios') && !servicioOK && (servicioFallo || aiClaimsRegistro)) {
           try {
             // Texto combinado: mensaje actual + última descripción de imagen reciente del historial
             const imgHist = [...(ctx.historia || [])].reverse().find(h =>
