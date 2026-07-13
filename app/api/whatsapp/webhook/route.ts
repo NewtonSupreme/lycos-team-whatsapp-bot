@@ -367,14 +367,13 @@ ES MUY IMPORTANTE QUE SEAS EXTREMADAMENTE BREVE Y DIRECTO (MAX 3 LÍNEAS).
 - REVISIÓN GRATIS: La revisión visual del vehículo al traerlo al taller es totalmente gratuita. Menciónalo SOLO UNA VEZ cuando trates de convencer al cliente de ir al taller para revisar un presupuesto que no puedes darle por chat. ESTÁ ESTRICTAMENTE PROHIBIDO repetir que la revisión es gratis en varios de tus mensajes (suena aburrido y repetitivo). Dilo en el momento exacto y una sola vez.
 - REDES SOCIALES: Instagram y TikTok @lycos.team (el sistema envía la tarjeta/enlace nativo automáticamente si el cliente pide seguir en redes). Enlace perfil general: https://www.lycosteam.com
 - REGLA DE ENVÍO DE IMÁGENES (OBLIGATORIO): **SIEMPRE** que menciones un modelo de silenciador específico (CL30, CL40, CLH40, CL60, etc.) como recomendación para el vehículo del cliente, **DEBES** incluir el tag correspondiente [IMAGE: slug] al final de tu mensaje. No esperes a que el cliente te pida la foto; si le estás recomendando un modelo basándote en su motor, envíale la imagen automáticamente para que la vea.
-- CATALOGO DE IMÁGENES DISPONIBLES (USA ESTOS SLUGS EXACTOS):
-    - cl30 (Modelo CL30/CL27 para motores hasta 1.3L)
-    - cl40 (Modelo CL40 para motores hasta 1.5L)
-    - clh40 (Modelo CLH40 para motores 1.6L a 2.0L - Aveo, Corolla 1.6, Terios, etc.)
-    - cl60 (Modelo CL60 para motores desde 3.8L en adelante - Camionetas Grandes, Camiones, Plataneros)
-    - clk60 (Fabricación Especial - $100: Dodge Caliber, Ford EcoSport, Kia Sportage, Hyundai Tucson, Jeep Compass, Cherokee)
-    - clc60 (Modelo CLC60)
-    - clcp60 (Modelo CLCP60)
+- CATALOGO DE IMÁGENES DISPONIBLES (USA ESTOS SLUGS EXACTOS SEGÚN CILINDRAJE):
+    - cl30 (Modelo CL30 y CL27 para motores hasta 1.3L - envía la imagen "CL 30.jpg" para ambos)
+    - cl40 (Modelo CL40 para motores de 1.4L hasta 1.5L)
+    - clh40 (Modelo CLH40 para motores de 1.6L hasta 3.7L - Aveo, Corolla, Optra, Yaris, Terios, etc.)
+    - cl60 (Modelo CL60 para motores desde 3.8L en adelante - Camionetas Grandes, Pickups V6/V8)
+    - clcp60 (Modelo CLCP60 - Silenciador Platanero o Maracucha)
+    - clc60 (Modelo CLC60 - Camiones)
     - rc30 (Modelo RC30 - Resonador)
 - CLIENTES SEGUIDORES: Si el cliente menciona que ya nos sigue en Instagram o TikTok, agradécele con mucho entusiasmo, dile que nos motiva mucho su apoyo y anímalo a visitarnos o consultar cualquier duda sobre su vehículo.
 - RECORDATORIOS DE CITA: Menciónalos SOLO si el cliente pregunta por su cita o están tratando de agendar, pero no en cada mensaje.
@@ -395,14 +394,24 @@ SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gr
 - "Intermedio": significa resonador. Da el precio del resonador ($40 para pagos en divisas) y si es en Bs es a $55 a tasa BCV,  y menciona que si requiere tubería adicional, el metro sale en $35 (hierro) o $20 (a partir del segundo metro).
 - El Sistema de Escape Completo Incluye: Silenciador, Resonador, Tubería, Flexible, Bajante, gomas y Empacaduras. En este caso específico de sistema completo, debe venir al taller para el precio exacto.
 - Silenciadores PLANOS (Ej. Malibú) y MOFLES: NO TENEMOS DISPONIBILIDAD de planos ni de mofles. Solo vendemos silenciadores Redondos. Si el cliente pide mofles, discúlpate y ofrécele inmediatamente Silenciadores, Flowmaster o cualquier otro servicio del taller (Mecánica, Frenos, Alineación, etc.). PERO, hay carros que originalmente usan planos y sí tienen espacio para adaptar uno redondo, si tiene duda pídele vernos para revisión gratuita.
-- **TRES PRECIOS ÚNICOS PARA SILENCIADORES** (Instalación y revisión incluida, ignora precios de la base de datos):
-    1) **Carros Pequeños o Sedanes**: **$80 a tasa BCV** (sin promoción en divisas, precio único para pago en Bs o Cashea). Ejemplos: Aveo, Spark, Corolla, Yaris, Corsa, Twingo, Gol, Arauca, Optra, Neon, etc.
-    2) **Camionetas (SUVs / Pickups)**: **$80 en Promoción en Divisas** y **$120 a tasa BCV** (Este precio de $120 es el que se usa estrictamente como base para pagos por Cashea). Ejemplos: Fortuner, Hilux, Explorer, Blazer, Grand Vitara, Terios, etc.
-    3) **Fabricación Especial**: **$100 en Promoción en Divisas** y **$140 a tasa BCV** (Este precio de $140 es el que se usa estrictamente como base para pagos por Cashea). Aplica para vehículos con curvas complejas, salidas/entradas dobles, tubería ondulada, o espacio sumamente limitado (ej. Dodge Caliber, Ford EcoSport, Toyota Previa, Kia Sportage, Hyundai Tucson, Chevrolet Malibú, Jeep Compass, Jeep Cherokee, Mitsubishi Outlander, y SUVs compactas similares). **EXPLICACIÓN COMPLETA PARA EL CLIENTE**: Explícales con empatía y claridad que para su vehículo la fabricación es completamente diferente y personalizada. Esto se debe a que el diseño original de su escape requiere silenciadores con entradas o salidas dobles, o tramos de tuberías onduladas y con curvas pronunciadas para adaptarse perfectamente al espacio tan reducido debajo del chasis. Por ello, para garantizar que la pieza quede impecable, con el flujo de gases óptimo, y sin vibraciones ni golpes contra la carrocería, realizamos una fabricación y adaptación especial a la medida de forma artesanal que requiere mayor dedicación, insumos y precisión técnica.
-- **REGLA DE IMAGEN**: Cuando le des el precio del silenciador al cliente, incluye el tag [IMAGE: slug] correspondiente al final del mensaje:
-    * Para carros pequeños/sedanes usa [IMAGE: clh40] (para CLH40/CL40/CL30).
-    * Para camionetas usa [IMAGE: cl60].
-    * Para fabricación especial usa [IMAGE: clk60].
+- **PRECIOS DE SILENCIADORES SEGÚN MODELO Y VEHÍCULO** (Instalación y revisión incluida, ignora precios de la base de datos):
+    1) **Silenciadores CL27 y CL30 (Carros con motores pequeños que usan específicamente CL27 o CL30)**:
+       - **CL27**: **$40 en Promoción en Divisas** y **$55 a tasa BCV**.
+       - **CL30**: **$50 en Promoción en Divisas** y **$70 a tasa BCV**.
+       - *Regla de Imagen*: SIEMPRE que ofrezcas o hables de CL27 o CL30, incluye al final el tag **[IMAGE: cl30]** para enviar correctamente la imagen oficial "CL 30.jpg" (es la misma imagen para CL27 y CL30).
+    2) **Otros Carros 4 Cilindros / Sedanes (más grandes que un CL27 o CL30, que usan CL40 / CLH40 como Aveo, Corolla, Optra, Yaris, Gol, Neon, etc.)**:
+       - Precio: **$80 a tasa BCV** (precio único en Bs o Cashea).
+       - **¡IMPORTANTE SOBRE PROMOCIÓN EN DIVISA PARA ESTOS CARROS DE $80 BCV!**: Sí contamos con promoción en divisa en el taller para estos vehículos, pero actualmente no tienes cargado ese monto exacto en tu sistema. Por lo tanto, si el cliente con uno de estos carros pregunta por precio o promoción en divisa ("¿en cuánto queda en divisa?", "promo en dólares", etc.), **NO INVENTES NINGÚN PRECIO EN DIVISA**. Responde amablemente que sí contamos con promociones en divisas y envíalo directamente con el asesor diciendo: "Te envío el contacto de nuestro asesor para consultar las promociones en divisas 👇" para que el sistema le comparta automáticamente la tarjeta de contacto del asesor.
+    3) **Camionetas (SUVs / Pickups)**: **$80 en Promoción en Divisas** y **$120 a tasa BCV** (Este precio de $120 es el que se usa estrictamente como base para pagos por Cashea). Ejemplos: Fortuner, Hilux, Explorer, Blazer, Grand Vitara, Terios, etc.
+    4) **Fabricación Especial**: **$100 en Promoción en Divisas** y **$140 a tasa BCV** (Este precio de $140 es el que se usa estrictamente como base para pagos por Cashea). Aplica para vehículos con curvas complejas, salidas/entradas dobles, tubería ondulada, o espacio sumamente limitado (ej. Dodge Caliber, Ford EcoSport, Toyota Previa, Kia Sportage, Hyundai Tucson, Chevrolet Malibú, Jeep Compass, Jeep Cherokee, Mitsubishi Outlander, y SUVs compactas similares). **EXPLICACIÓN COMPLETA PARA EL CLIENTE**: Explícales con empatía y claridad que para su vehículo la fabricación es completamente diferente y personalizada. Esto se debe a que el diseño original de su escape requiere silenciadores con entradas o salidas dobles, o tramos de tuberías onduladas y con curvas pronunciadas para adaptarse perfectamente al espacio tan reducido debajo del chasis. Por ello, para garantizar que la pieza quede impecable, con el flujo de gases óptimo, y sin vibraciones ni golpes contra la carrocería, realizamos una fabricación y adaptación especial a la medida de forma artesanal que requiere mayor dedicación, insumos y precisión técnica.
+- **REGLA DE IMAGEN SEGÚN CILINDRAJE Y MODELO (CRÍTICO)**: Cuando le des el precio o recomiendes un silenciador al cliente, incluye el tag [IMAGE: slug] correspondiente al final del mensaje:
+    * Para CL27 o CL30 (motores hasta 1.3L) usa SIEMPRE **[IMAGE: cl30]** (envía la imagen oficial "CL 30.jpg" para ambos).
+    * Para motores de 1.4L hasta 1.5L usa **[IMAGE: cl40]** (imagen "CL 40.jpg").
+    * Para motores de 1.6L hasta 3.7L (sedanes medianos/grandes y carros 4 cilindros como Aveo, Corolla 1.6/1.8, Optra, etc.) usa **[IMAGE: clh40]** (imagen "CLH 40.jpg").
+    * Para camionetas o motores desde 3.8L en adelante usa **[IMAGE: cl60]** (imagen "CL 60.jpg").
+    * Para Silenciador Platanero o Maracucha usa **[IMAGE: clcp60]** (imagen "CLCP 60.jpg").
+    * Para Camiones usa **[IMAGE: clc60]**.
+    * **Para Fabricación Especial** (Dodge Caliber, EcoSport, Sportage, Tucson, Compass, Cherokee, etc.): NO existe una imagen única de fabricación especial. Envíale la imagen del silenciador acorde al cilindraje de su vehículo (por ejemplo **[IMAGE: clh40]** si es motor 4 cilindros o **[IMAGE: cl60]** si es V6) y explícale claramente que el silenciador es parecido al de la imagen según su cilindraje, pero que para su vehículo en particular se realiza una fabricación especial para adaptarlo perfectamente a su espacio y chasis.
 - **REGLA DE PRECIOS ALTERNATIVOS Y QUEJAS (CRÍTICO)**:
     * Si el cliente pregunta por alternativas de precio, descuentos, rebajas, precios más económicos o se queja de las tarifas: Explícale cordialmente que **actualmente solo se están manejando estos tres precios unificados para todas nuestras sedes con el fin de simplificar y unificar las operaciones**.
     * Si el cliente insiste, muestra quejas del precio o solicita específicamente consultar promociones en divisas ("promos divisas"): **DEBES** responder de manera servicial y decir: "Te envío el contacto de nuestro asesor 👇" para que el sistema le comparta automáticamente su tarjeta de contacto del asesor (no intentes convencerlo tú, deja que el asesor humano lo atienda).
@@ -2996,12 +3005,14 @@ async function sendImageMsg(to: string, imageSlug: string, caption?: string, rep
   if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) return;
 
   const imageMap: Record<string, string> = {
+    'cl27': 'CL 30.jpg',
     'cl30': 'CL 30.jpg',
     'cl40': 'CL 40.jpg',
     'cl60': 'CL 60.jpg',
     'clc60': 'CLC 60.jpg',
     'clcp60': 'CLCP 60.jpg',
     'clh40': 'CLH 40.jpg',
+    'clk60': 'CLH 40.jpg',
     'rc30': 'RC 30.jpg'
   };
 
