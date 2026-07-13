@@ -379,15 +379,13 @@ ES MUY IMPORTANTE QUE SEAS EXTREMADAMENTE BREVE Y DIRECTO (MAX 3 LÍNEAS).
 - CLIENTES SEGUIDORES: Si el cliente menciona que ya nos sigue en Instagram o TikTok, agradécele con mucho entusiasmo, dile que nos motiva mucho su apoyo y anímalo a visitarnos o consultar cualquier duda sobre su vehículo.
 - RECORDATORIOS DE CITA: Menciónalos SOLO si el cliente pregunta por su cita o están tratando de agendar, pero no en cada mensaje.
 
-HORARIO:
-- San Antonio de los Altos: Lunes a Sábado 8:00 AM – 5:00 PM.
-- Caracas (El Paraíso) y (El Cementerio): Lunes a Viernes 8:00 AM – 4:00 PM y Sábados 8:30 AM – 2:00 PM. (¡IMPORTANTE! Las citas en estas sedes de lunes a viernes se agendan hasta las 3:00 PM y los sábados de 8:30 AM hasta las 2:00 PM).
-DOMINGOS: CERRADO en todas las sedes sin excepciones.
-UBICACION:
-- San Antonio de los Altos: San Antonio de los Altos, Altos Mirandinos, Miranda. (En San Antonio de los Altos, distribuidor de las minas al frente del Frescos Market nos encontramos). 💡 BENEFICIOS EXCLUSIVOS: Si vienes a esta sede tienes revisión totalmente gratuita, instalación de la app del taller gratis y tecnología automotriz profesional.
-- Carrizal (Principal): Servicios Jadar Calle Raul Leoni, Municipio Carrizal cerca de eso.
-- Caracas (El Cementerio): E/S PDV Nuevo Prado Av. Roosevelt, Caracas cerca de esa bomba.
-- Caracas (El Paraíso): Avenida Los Liberales, Caracas 1020, Distrito Capital, Venezuela, Al frente de Puerkos Restaurant.
+HORARIO (San Antonio de los Altos):
+- Lunes a Sábado: 8:00 AM – 5:00 PM.
+DOMINGOS: CERRADO sin excepciones.
+SEDES Y UBICACION (CRÍTICO):
+- ÚNICA SEDE ACTIVA PARA CLIENTES: San Antonio de los Altos (Altos Mirandinos, Miranda). En San Antonio de los Altos, distribuidor de las minas al frente del Frescos Market nos encontramos. 💡 BENEFICIOS EXCLUSIVOS: Si vienes a esta sede tienes revisión totalmente gratuita, instalación de la app del taller gratis y tecnología automotriz profesional.
+- SEDES DESACTIVADAS TEMPORALMENTE: Las sedes de Caracas (El Paraíso y El Cementerio) y demás sedes están TEMPORALMENTE DESACTIVADAS.
+- REGLA DE ORO SOBRE OTRAS SEDES: Si el cliente pregunta por la sede de Caracas (El Paraíso o El Cementerio), Carrizal u otras sedes, DEBES responder claramente que están temporalmente desactivadas y que actualmente la sede que está funcionando y atendiendo es la de San Antonio de los Altos. ¡PROHIBIDO enviar direcciones o ubicaciones de Caracas o cualquier otra sede que no sea San Antonio de los Altos! Redirige siempre a San Antonio de los Altos.
 
 SERVICIOS Y PRECIOS:
 
@@ -501,7 +499,7 @@ REGLA DE ORO ABSOLUTA DE CITAS: ESTÁ TERMINANTEMENTE PROHIBIDO imprimir la etiq
 Si no tienes estos datos, DEBES pedírselos primero sin excepción.
 Si no da la placa, insiste una vez amablemente, si sigue sin darla procede con nombre y modelo.
 Calcula la fecha exacta desde hoy usando FECHA/HORA VENEZUELA. Nunca agendes domingos.
-⚠️ REGLA DE HORARIO DE CITAS: Para las sedes de Caracas (El Paraíso y El Cementerio), de Lunes a Viernes la última hora permitida para agendar es a las 03:00 PM (15:00) y los Sábados es de 8:30 AM a 02:00 PM (14:00). NO agendes después de esas horas. Para San Antonio, sí puedes agendar de 8:00 AM hasta las 5:00 PM de Lunes a Sábado.
+⚠️ REGLA DE SEDE Y HORARIO DE CITAS: Todas las citas de clientes se agendan ÚNICAMENTE para nuestra sede operativa de San Antonio de los Altos, en horario de Lunes a Sábado de 8:00 AM hasta las 5:00 PM. Si el cliente pide cita en Caracas (El Paraíso o El Cementerio) u otra sede, recuérdale amablemente que esas sedes están temporalmente desactivadas y agenda su cita para San Antonio de los Altos.
 VERIFICA estrictamente si tiene citas registradas o si el horario está ocupado globalmente.
 ORDEN DEL SISTEMA #1 (CITAS): Cuando tú y el cliente ya acordaron de forma exitosa los datos (Nombre, Vehículo y Día), DEBES **OBLIGATORIAMENTE** imprimir la siguiente etiqueta oculta de sistema AL FINAL de tu respuesta (solo UNA vez):
 [CITA: AAAA-MM-DD HH:MM | descripción breve | marca modelo]
@@ -3603,114 +3601,52 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
     const mentionsParaiso = selectedSedeFromButton === 'paraiso' || bodyClean.includes('paraiso') || bodyClean.includes('paraíso') || (isLocationChoicePending && (bodyClean === '4' || bodyClean.includes('paraiso'))) || (isCaracasChoicePending && (bodyClean === '2' || bodyClean.includes('paraiso')));
     const mentionsCaracasGeneral = bodyClean.includes('caracas') && !bodyClean.includes('cementerio') && !bodyClean.includes('paraiso') && !bodyClean.includes('paraíso');
 
-    if (!ctx.isAdmin && mentionsCaracasGeneral) {
-      console.log(`📍 [${from}] Preguntando por sede de Caracas específica con 2 botones...`);
-      const buttons = [
-        { id: 'ccs_choice_1', title: 'El Cementerio' },
-        { id: 'ccs_choice_2', title: 'El Paraiso' }
-      ];
-      await sendButtonMsg(from, '📍 Contamos con 2 sedes en Caracas. ¿Cuál te queda más cerca? 😊', buttons, 'Selecciona una opción');
-      ctx.memoria.awaiting_caracas_choice = true;
-      if (db) await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: ctx.sede_id || DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
-      return;
-    }
-
-    if (!ctx.isAdmin && (mentionsSanAntonio || mentionsCarrizal || mentionsCaracas || mentionsParaiso)) {
-      let locationSent = false;
-      let selectedSedeName = '';
-      let queryNameForDb = '';
+    if (!ctx.isAdmin && (isLocationRequest(lowerBody) || mentionsSanAntonio || mentionsCarrizal || mentionsCaracas || mentionsParaiso || mentionsCaracasGeneral)) {
+      const mentionsOtherSedes = mentionsCarrizal || mentionsCaracas || mentionsParaiso || mentionsCaracasGeneral;
       const selectedSedePhone = '584123343519';
 
-      if (mentionsSanAntonio) {
-        await sendMsg(from, '📍 *Sede San Antonio de los Altos:*\n\nEn San Antonio de los Altos, distribuidor de las minas al frente del Frescos Market nos encontramos. 😊\n\n*Mapa:* https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
+      if (mentionsOtherSedes) {
+        await sendMsg(from, 'ℹ️ *Información importante:* Las sedes de Caracas (El Paraíso, El Cementerio) y demás sedes están *temporalmente desactivadas*.\n\nEn este momento la sede que está funcionando y atendiendo es nuestra sede de *San Antonio de los Altos*. 🔧🚗', true);
         await delay(800);
-        await sendMsg(from, '🎥 *Video de cómo llegar:* https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
-        await delay(800);
-        await sendMsg(from, '🎁 *¡Beneficios Exclusivos en San Antonio!* 🎁\n\nSi vienes a nuestra sede de San Antonio, cuentas con beneficios como:\n✅ *Revisión totalmente gratuita.*\n✅ *Instalación de la app del taller GRATIS en Lycos Team.*\n✅ *Servicios y tecnología automotriz profesional.*\n\n¡Te esperamos! 🚗🔧', true);
-        selectedSedeName = 'Sede San Antonio';
-        queryNameForDb = 'San Antonio';
-        locationSent = true;
-      } else if (mentionsCarrizal) {
-        await sendMsg(from, '📍 *Sede Carrizal (Principal):*\n\nServicios Jadar Calle Raul Leoni, Municipio Carrizal cerca de eso. 😊\n\n*Mapa:* https://maps.app.goo.gl/cxLGkqWtsf5qogMB6', true);
-        selectedSedeName = 'Sede Carrizal';
-        queryNameForDb = 'Carrizal';
-        locationSent = true;
-      } else if (mentionsCaracas) {
-        await sendMsg(from, '📍 *Sede Caracas (El Cementerio):*\n\nE/S PDV Nuevo Prado Av. Roosevelt, Caracas cerca de esa bomba. 😊\n\n*Mapa:* https://maps.app.goo.gl/aeHGdzUumhpBep719', true);
-        selectedSedeName = 'Sede Caracas';
-        queryNameForDb = 'Caracas';
-        locationSent = true;
-      } else if (mentionsParaiso) {
-        await sendMsg(from, '📍 *Sede Caracas (El Paraíso):*\n\nAvenida Los Liberales, Caracas 1020, Distrito Capital, Venezuela, Al frente de Puerkos Restaurant. 😊\n\n*Mapa:* https://maps.app.goo.gl/c3TnUnHYGEJUWodX7', true);
-        selectedSedeName = 'Sede Caracas (El Paraíso)';
-        queryNameForDb = 'Paraíso';
-        locationSent = true;
       }
 
-      if (locationSent) {
-        delete ctx.memoria.awaiting_location_choice;
-        delete ctx.memoria.awaiting_caracas_choice;
-        if (db) {
-          const newSedeId = await findSedeIdByName(db, queryNameForDb) || ctx.sede_id || DEFAULT_SEDE_ID;
-          ctx.sede_id = newSedeId;
-          await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: newSedeId }, { onConflict: 'telefono' });
-        }
-        await delay(800);
-        await sendMsg(from, `También te comparto el contacto de la ${selectedSedeName} por si necesitas llamar:`);
-        await delay(500);
-        await sendContactCard(from, selectedSedePhone, selectedSedeName);
-        await delay(800);
-
-        // Determinar si el mensaje es SOLO la elección de sede o si hay una pregunta adicional
-        const isSimpleSedeChoice = bodyClean === 'caracas' ||
-          bodyClean === 'el cementerio' ||
-          bodyClean === 'el paraiso' ||
-          bodyClean === 'el paraíso' ||
-          bodyClean === 'san antonio' ||
-          bodyClean === 'carrizal' ||
-          bodyClean === '1' || bodyClean === '2' || bodyClean === '3' || bodyClean === '4' ||
-          bodyClean.length < 15;
-
-        if (isSimpleSedeChoice) {
-          await sendMsg(from, '¿Deseas agendar una cita en esta sede o tienes alguna otra duda? 😊');
-          return;
-        }
-
-        console.log(`📍 [${from}] Sede detectada pero el mensaje es complejo. Continuando procesamiento con IA.`);
-        // Inyectamos un mensaje en la historia para que la IA sepa que ya enviamos la ubicación
-        ctx.historia.push({
-          role: 'model',
-          parts: [{ text: `[SISTEMA: Ya le envié al cliente la ubicación detallada de ${selectedSedeName} con el mapa y el contacto. Responde ahora a sus otras dudas sobre precios o productos de forma directa.]` }]
-        });
-        // Continuamos el flujo para que la IA responda el resto de la pregunta
-      }
-    }
-
-    // If it's a generic location request and we haven't sent a specific one yet
-    if (isLocationRequest(lowerBody) && !ctx.isAdmin) {
-      console.log(`📍 [${from}] Preguntando por sede para ubicación con botones...`);
-      const buttons = [
-        { id: 'sede_1', title: 'San Antonio' },
-        { id: 'sede_2', title: 'Carrizal' },
-        { id: 'sede_3', title: 'Cementerio' },
-        { id: 'sede_4', title: 'El Paraiso' }
-      ];
-
-      await sendButtonMsg(
-        from,
-        '¡Con gusto! 📍 Contamos con 4 sedes disponibles. ¿Cuál te queda más cerca?',
-        buttons,
-        'Selecciona una opción abajo'
-      );
-
+      await sendMsg(from, '📍 *Sede San Antonio de los Altos:*\n\nEn San Antonio de los Altos, distribuidor de las minas al frente del Frescos Market nos encontramos. 😊\n\n*Mapa:* https://maps.app.goo.gl/7H6RGrbpXkxeqG2KA', true);
       await delay(800);
-      await sendMsg(from, '💡 *Dato importante:* Si vienes a nuestra sede de San Antonio, cuentas con más beneficios exclusivos y otros servicios adicionales. 🚗🔧');
+      await sendMsg(from, '🎥 *Video de cómo llegar:* https://www.instagram.com/reel/DUnhlwXkWSb/?igsh=MXJlNHducnBhN2piNg==', true);
+      await delay(800);
+      await sendMsg(from, '🎁 *¡Beneficios Exclusivos en San Antonio!* 🎁\n\nSi vienes a nuestra sede de San Antonio, cuentas con beneficios como:\n✅ *Revisión totalmente gratuita.*\n✅ *Instalación de la app del taller GRATIS en Lycos Team.*\n✅ *Servicios y tecnología automotriz profesional.*\n\n¡Te esperamos! 🚗🔧', true);
+      await delay(800);
+      await sendMsg(from, 'También te comparto el contacto de la Sede San Antonio por si necesitas llamar:');
+      await delay(500);
+      await sendContactCard(from, selectedSedePhone, 'Sede San Antonio');
 
-      ctx.memoria.awaiting_location_choice = true;
+      delete ctx.memoria.awaiting_location_choice;
+      delete ctx.memoria.awaiting_caracas_choice;
       if (db) {
-        await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: ctx.sede_id || DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
+        ctx.sede_id = DEFAULT_SEDE_ID;
+        await db.from('conversaciones').upsert({ telefono: from, memoria: ctx.memoria, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono' });
       }
-      return;
+
+      const isSimpleSedeChoice = bodyClean === 'caracas' ||
+        bodyClean === 'el cementerio' ||
+        bodyClean === 'el paraiso' ||
+        bodyClean === 'el paraíso' ||
+        bodyClean === 'san antonio' ||
+        bodyClean === 'carrizal' ||
+        bodyClean === '1' || bodyClean === '2' || bodyClean === '3' || bodyClean === '4' ||
+        bodyClean.length < 15;
+
+      if (isSimpleSedeChoice) {
+        await delay(800);
+        await sendMsg(from, '¿Deseas agendar una cita en nuestra sede de San Antonio de los Altos o tienes alguna otra duda? 😊');
+        return;
+      }
+
+      console.log(`📍 [${from}] Sede detectada pero el mensaje es complejo. Continuando procesamiento con IA.`);
+      ctx.historia.push({
+        role: 'model',
+        parts: [{ text: '[SISTEMA: Ya le informé al cliente que atendemos únicamente en la sede de San Antonio de los Altos (las demás sedes están temporalmente desactivadas) y le envié la ubicación de San Antonio. Responde ahora a sus otras dudas sobre precios o productos de forma directa.]' }]
+      });
     }
 
     // If we were waiting for a choice but the message didn't match any sede, clear the flag and let AI handle it
