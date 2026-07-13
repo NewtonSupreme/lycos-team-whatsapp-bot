@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, autoRegisterSaleFromService } from '@/lib/supabase';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Wrench, Loader2, RefreshCw, Car, Trash, User, Phone, Search, X, ChevronLeft, ChevronRight, Banknote } from 'lucide-react';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
@@ -26,6 +26,7 @@ interface ServicioRow {
   seguimiento: any[] | null;
   created_at: string;
   registrado_por: string | null;
+  sede_id?: string | null;
 }
 
 const ESTADO_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
@@ -204,7 +205,7 @@ export default function TallerPage() {
     if (!supabase) return;
     setLoading(true);
     const { data, error } = await withSedeFilter(supabase.from('servicios'))
-      .select('id, descripcion, tipo, tipo_personalizado, estado, costo_estimado, nombre_cliente, vehiculo_info, placa, telefono, cliente_id, vehiculo_id, seguimiento, created_at, registrado_por')
+      .select('id, descripcion, tipo, tipo_personalizado, estado, costo_estimado, nombre_cliente, vehiculo_info, placa, telefono, cliente_id, vehiculo_id, seguimiento, created_at, registrado_por, sede_id')
       .order('created_at', { ascending: false })
       .limit(100);
 
@@ -307,6 +308,19 @@ export default function TallerPage() {
       referencia_id: id,
       referencia_tabla: 'servicios',
     });
+
+    if (nuevoEstado === 'completada' || nuevoEstado === 'finalizado') {
+      try {
+        await autoRegisterSaleFromService({
+          ...servicio,
+          estado: nuevoEstado,
+          seguimiento: newSeguimiento,
+          sede_id: servicio.sede_id || currentSede?.id || undefined,
+        }, { userName: user?.nombre || 'Admin' });
+      } catch (err) {
+        console.error('Error registrando venta automática desde Taller:', err);
+      }
+    }
 
     if (nuevoEstado === 'en_revision' || nuevoEstado === 'completada') {
       fetch('/api/notificaciones/create', {

@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
 function buildTemplate(key: string, empleadoId: string, sede: string | null, proveedor: string) {
   const rules: any[] = [];
   const flats: any[] = [];
-  const base = { empleado_id: empleadoId, sede_id: sede, activo: true };
+  const base = { empleado_id: empleadoId, sede_id: sede, activo: true, moneda: 'USD' };
 
   switch (key) {
     case 'rafael': // Alineación (25% divisa / 20% + puente 35% en Bs) + Mecánica 40% + revisión $2
@@ -21,7 +21,7 @@ function buildTemplate(key: string, empleadoId: string, sede: string | null, pro
         { ...base, zona: 'alineacion', tipo_regla: 'porcentaje', base: 'ingreso_total', valor: 25,
           aplica_monedas: ['USD', 'EUR'], prioridad: 10, descripcion: 'Alineación 25% (divisa)' },
         { ...base, zona: 'alineacion', tipo_regla: 'porcentaje', base: 'ingreso_total', valor: 20,
-          aplica_monedas: ['VES'], proveedor_pct: 35, proveedor_nombre: proveedor, prioridad: 9,
+          aplica_monedas: ['VES'], moneda: 'VES', proveedor_pct: 35, proveedor_nombre: proveedor, prioridad: 9,
           descripcion: 'Alineación 20% (Bs, puente proveedor 35% · Lycos 45%)' },
         { ...base, zona: 'mecanica', tipo_regla: 'porcentaje', base: 'mano_obra', valor: 40,
           prioridad: 20, descripcion: 'Mecánica 40% mano de obra' },
@@ -32,8 +32,8 @@ function buildTemplate(key: string, empleadoId: string, sede: string | null, pro
 
     case 'roger': // Fijo $40/sem + Mecánica 40%
       rules.push(
-        { ...base, zona: 'all', tipo_regla: 'fijo_semanal', base: 'ingreso_total', valor: 40, moneda: 'USD',
-          prioridad: 10, descripcion: 'Sueldo fijo $40 semanal' },
+        { ...base, zona: 'all', tipo_regla: 'fijo_semanal', base: 'ingreso_total', valor: 40,
+          prioridad: 1, descripcion: 'Sueldo fijo $40 semanal' },
         { ...base, zona: 'mecanica', tipo_regla: 'porcentaje', base: 'mano_obra', valor: 40,
           prioridad: 20, descripcion: 'Mecánica 40% mano de obra' },
       );
@@ -50,8 +50,8 @@ function buildTemplate(key: string, empleadoId: string, sede: string | null, pro
 
     case 'acevedo': // Almacén: fijo $40/sem
       rules.push(
-        { ...base, zona: 'all', tipo_regla: 'fijo_semanal', base: 'ingreso_total', valor: 40, moneda: 'USD',
-          prioridad: 10, descripcion: 'Almacén — sueldo fijo $40 semanal' },
+        { ...base, zona: 'all', tipo_regla: 'fijo_semanal', base: 'ingreso_total', valor: 40,
+          prioridad: 1, descripcion: 'Almacén — sueldo fijo $40 semanal' },
       );
       break;
 
@@ -71,6 +71,34 @@ function buildTemplate(key: string, empleadoId: string, sede: string | null, pro
         empleado_id: empleadoId, sede_id: sede, activo: true, zona: 'escape',
         servicio_key: k, label, monto, moneda: 'USD',
       }));
+      break;
+
+    case 'nelson': // Cauchera
+      rules.push(
+        { ...base, zona: 'cauchera', tipo_regla: 'porcentaje', base: 'ingreso_total', valor: 0,
+          prioridad: 15, descripcion: 'Cauchera — Variable por servicio (30% rep. / 40% rotación / 100% adic). Si no especifica %, Por definir' },
+      );
+      break;
+
+    case 'angel': // Latonería
+      rules.push(
+        { ...base, zona: 'latoneria', tipo_regla: 'porcentaje', base: 'ingreso_total', valor: 0,
+          prioridad: 15, descripcion: 'Latonería y Pintura — Variable según presupuesto con cliente (Si monto no escrito: Por definir)' },
+      );
+      break;
+
+    case 'dyan': // Autolavado
+      rules.push(
+        { ...base, zona: 'lavado', tipo_regla: 'porcentaje', base: 'ingreso_total', valor: 0,
+          prioridad: 15, descripcion: 'Autolavado — Por definir (Caso especial pendiente de estructuración por administración)' },
+      );
+      break;
+
+    case 'frank': // Mecánica
+      rules.push(
+        { ...base, zona: 'mecanica', tipo_regla: 'porcentaje', base: 'mano_obra', valor: 40,
+          prioridad: 20, descripcion: 'Mecánica 40% mano de obra' },
+      );
       break;
   }
   return { rules, flats };

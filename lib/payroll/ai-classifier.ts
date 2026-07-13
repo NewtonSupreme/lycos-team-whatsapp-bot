@@ -29,6 +29,7 @@ export interface RawOperation {
   moneda: string;
   tasa_cambio?: number | null;
   registrado_por?: string | null;
+  encargado_detectado?: string | null;
 }
 
 export interface Technician {
@@ -47,6 +48,7 @@ export interface ClassifiedOperation {
   monto: number;
   moneda: string;
   tasa_cambio?: number | null;
+  encargado_detectado?: string | null;
   // Resultado de la IA
   zona: string;
   tipo_trabajo: string;
@@ -97,7 +99,7 @@ async function classifyChunkWithGemini(
 
   const techList = technicians.map(t => `- ${t.nombre}${t.rol ? ` (${t.rol})` : ''} [id:${t.id}]`).join('\n');
   const opsList = ops.map((o, idx) =>
-    `#${idx} | ${o.fecha} | ${o.descripcion} | Cliente: ${o.cliente || '-'} | Vehículo: ${o.vehiculo || '-'} | Monto: ${o.monto} ${o.moneda} | Registrado por: ${o.registrado_por || '-'}`
+    `#${idx} | ${o.fecha} | Descripción/Encargo: "${o.descripcion}" | Encargado previo/Asignado: ${o.encargado_detectado || 'Ninguno especificado'} | Cliente: ${o.cliente || '-'} | Vehículo: ${o.vehiculo || '-'} | Monto: ${o.monto} ${o.moneda} | Registrado por: ${o.registrado_por || '-'}`
   ).join('\n');
 
   const prompt = `Eres un experto en un taller automotriz (Lycos Team) que clasifica trabajos para calcular comisiones de técnicos.
@@ -109,13 +111,13 @@ ZONAS VÁLIDAS: ${ZONAS.join(', ')}
 
 Para cada operación, determina:
 1. "zona": la categoría del trabajo (una de las zonas válidas).
-2. "empleado_id": el id del técnico que probablemente ejecutó el trabajo, inferido por el tipo de servicio y su especialidad, o por quién lo registró. Si no puedes inferir un técnico concreto, usa null.
-3. "es_taller": true SOLO si el trabajo lo hizo el taller genéricamente sin un técnico identificable.
+2. "empleado_id": el id del técnico que ejecutó o tiene asignado el trabajo. REGLA DE ORO: Si en "Encargado previo/Asignado" o en "Descripción/Encargo" aparece el nombre o especialidad de alguno de los técnicos disponibles (ej. "Rafael", "Jorge", "Leandro", "Mecánico", "Alineación"), DEBES asignar su id obligatoriamente y poner confianza 0.9 o 1.0. Si hay varios técnicos mencionados, elige al técnico principal de esa especialidad. Si no aparece ningún técnico o mecánico, usa null. Nunca confundas al usuario administrativo o caja con el técnico.
+3. "es_taller": true SOLO si el trabajo lo hizo el taller genéricamente sin un técnico identificable y no se menciona ningún mecánico.
 4. "servicio_key": para escapes/silenciadores usa una de: silenciador, resonador, flexible, gomas, soldadura, extra, revision. Para otras zonas usa null.
 5. "tipo_trabajo": descripción corta del tipo (ej. "alineacion", "revision", "reparacion caucho", "soldadura escape").
 6. "mano_obra": estima qué porción del monto es MANO DE OBRA (no repuestos). Si el trabajo es puro servicio (alineación, revisión, soldadura), mano_obra = monto completo. Si claramente incluye repuestos caros (ej. "reemplazo base amortiguadores $60"), estima solo la porción de trabajo. Nunca mayor al monto.
 7. "confianza": 0.0 a 1.0 según qué tan seguro estás.
-8. "razon": explicación en 1 frase corta.
+8. "razon": explicación en 1 frase corta indicando por qué asignaste al técnico.
 
 OPERACIONES:
 ${opsList}
@@ -172,6 +174,7 @@ Responde SOLO con un array JSON válido, sin markdown ni texto adicional, con ex
       monto: op.monto,
       moneda: op.moneda,
       tasa_cambio: op.tasa_cambio,
+      encargado_detectado: op.encargado_detectado,
       zona,
       tipo_trabajo: r.tipo_trabajo || zona,
       servicio_key: r.servicio_key || null,
@@ -211,27 +214,33 @@ export function heuristicClassify(op: RawOperation, technicians: Technician[]): 
     else servicioKey = 'extra';
   }
 
-  // Intenta emparejar técnico por "registrado_por"
+  // Intenta emparejar técnico por "encargado_detectado" o en la misma descripción (nunca por registrado_por)
   let empleadoId: string | null = null;
   let empleadoNombre: string | null = null;
-  if (op.registrado_por) {
-    const reg = op.registrado_por.toLowerCase();
-    const match = technicians.find(t => t.nombre && reg.includes(t.nombre.toLowerCase().split(' ')[0]));
-    if (match) { empleadoId = match.id; empleadoNombre = match.nombre; }
+  const targetText = `${op.encargado_detectado || ''} ${op.descripcion || ''}`.toLowerCase();
+  for (const t of technicians) {
+    if (!t.nombre) continue;
+    const firstWord = t.nombre.toLowerCase().split(' ')[0];
+    if (firstWord && firstWord.length > 2 && targetText.includes(firstWord)) {
+      empleadoId = t.id;
+      empleadoNombre = t.nombre;
+      break;
+    }
   }
 
   return {
     origen: op.origen, origen_id: op.origen_id, fecha: op.fecha,
     descripcion: op.descripcion, cliente: op.cliente, vehiculo: op.vehiculo,
     monto: op.monto, moneda: op.moneda, tasa_cambio: op.tasa_cambio,
+    encargado_detectado: op.encargado_detectado,
     zona, tipo_trabajo: zona, servicio_key: servicioKey,
     empleado_id: empleadoId, empleado_nombre: empleadoNombre,
     es_taller: !empleadoId,
     mano_obra: Number(op.monto) || 0,
     ingreso_total: Number(op.monto) || 0,
-    confianza: empleadoId ? 0.4 : 0.2,
-    razon: 'Clasificación heurística (IA no disponible)',
-    requiere_revision: true,
+    confianza: empleadoId ? 0.8 : 0.3,
+    razon: empleadoId ? `Técnico detectado por mención en orden: ${empleadoNombre}` : 'Clasificación heurística (sin técnico detectado)',
+    requiere_revision: !empleadoId,
   };
 }
 
@@ -282,20 +291,65 @@ export async function gatherUnassignedOperations(
   }
 
   // ── servicios ──
-  let sq = db.from('servicios').select('id, fecha, descripcion, tipo, nombre_cliente, vehiculo_info, costo_final, costo_estimado, registrado_por, estado')
-    .gte('fecha', periodo.inicio).lte('fecha', periodo.fin);
+  let sq = db.from('servicios').select(`
+    id, fecha, descripcion, tipo, tipo_personalizado, nombre_cliente, vehiculo_info, placa, costo_final, costo_estimado, registrado_por, estado, notas, seguimiento, items,
+    vehiculos (marca, modelo, placa, clientes (nombre, apellido))
+  `).gte('fecha', periodo.inicio).lte('fecha', periodo.fin);
   if (periodo.sedeId) sq = sq.eq('sede_id', periodo.sedeId);
   const { data: servicios } = await sq;
 
   for (const s of (servicios || []) as any[]) {
     if (asignadas.has(`servicios:${s.id}`)) continue;
-    const monto = Number(s.costo_final ?? s.costo_estimado ?? 0);
+    let monto = Number(s.costo_final ?? s.costo_estimado ?? 0);
+    if (monto <= 0 && Array.isArray(s.items)) {
+      monto = s.items.reduce((acc: number, it: any) => acc + (Number(it.precio || it.costo || 0) * (Number(it.cantidad) || 1)), 0);
+    }
     if (monto <= 0) continue;
+
+    const relName = s.vehiculos?.clientes
+      ? `${s.vehiculos.clientes.nombre} ${s.vehiculos.clientes.apellido}`.trim()
+      : '';
+    const cliente = relName || s.nombre_cliente || 'Cliente de taller';
+    const relVeh = s.vehiculos ? `${s.vehiculos.marca} ${s.vehiculos.modelo}`.trim() : '';
+    const placaStr = s.vehiculos?.placa || s.placa || '';
+    const vehiculo = (relVeh || s.vehiculo_info || 'Vehículo de taller') + (placaStr ? ` [Placa: ${placaStr}]` : '');
+
+    // Extraer la descripción real y detallada
+    let descReal = s.tipo_personalizado || s.descripcion || '';
+    if (!descReal && Array.isArray(s.items) && s.items.length > 0) {
+      descReal = s.items.map((it: any) => `${it.nombre || it.descripcion || 'Ítem'}${it.cantidad > 1 ? ` (x${it.cantidad})` : ''}`).join(' + ');
+    }
+    if (!descReal) descReal = s.tipo || 'Servicio de taller';
+
+    // Extraer exhaustivamente el técnico asignado / encargado desde notas o seguimiento
+    const asignados: string[] = [];
+    if (s.notas) {
+      const m = String(s.notas).match(/Encargados?:\s*(.+?)(?:\n|$)/i);
+      if (m && m[1]) {
+        asignados.push(m[1].trim());
+      } else if (/mec[aá]nico|jefe|t[eé]cnico|alineaci[oó]n|escape/i.test(s.notas)) {
+        asignados.push(s.notas.trim());
+      }
+    }
+    if (Array.isArray(s.seguimiento)) {
+      s.seguimiento.forEach((seg: any) => {
+        if (seg && seg.accion) {
+          if (/encargado|asignado|mec[aá]nico|t[eé]cnico/i.test(seg.accion)) {
+            const m = seg.accion.match(/encargado\s*asignado:\s*([^\n\r]+)/i);
+            if (m && m[1]) asignados.push(m[1].trim());
+            else asignados.push(seg.accion.trim());
+          }
+        }
+      });
+    }
+    const asignadoA = asignados.length > 0 ? Array.from(new Set(asignados)).join(' | ') : null;
+
     ops.push({
       origen: 'servicios', origen_id: s.id, fecha: s.fecha,
-      descripcion: s.descripcion || s.tipo || 'Servicio',
-      cliente: s.nombre_cliente, vehiculo: s.vehiculo_info,
+      descripcion: descReal,
+      cliente, vehiculo,
       monto, moneda: 'USD', tasa_cambio: null, registrado_por: s.registrado_por,
+      encargado_detectado: asignadoA,
     });
   }
 

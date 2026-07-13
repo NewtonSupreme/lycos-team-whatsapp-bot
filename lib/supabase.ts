@@ -229,6 +229,66 @@ export async function updateServicioEstado(id: string, estado: string) {
   return data;
 }
 
+/**
+ * Sincroniza automáticamente una orden de servicio completada hacia la tabla de ventas contables (ventas_dia).
+ * Previene pérdidas o desajustes contables sin importar desde qué módulo (Taller, Servicios o Edición) se complete el trabajo.
+ */
+export async function autoRegisterSaleFromService(
+  service: any,
+  opts?: { userName?: string; bcvRate?: number; customDate?: string }
+) {
+  if (!supabase || !service) return null;
+  const precio = Number(service.costo_final ?? service.costo_estimado ?? 0);
+  if (precio <= 0) return null; // No generar ventas con costo 0
+
+  const id = service.id;
+  const clienteNombre = service.nombre_cliente || 'Consumidor Final';
+  const vehiculoStr = service.vehiculo_info || service.placa || 'Vehículo de Taller';
+  const sedeId = service.sede_id;
+  if (!sedeId) return null;
+
+  const refTag = `[ServicioID: ${id}]`;
+  const descStr = service.descripcion || service.tipo || 'Servicio de taller';
+  const notesFinal = `${descStr} [Total: $${precio} (Divisas)] | Cliente: ${clienteNombre} | Vehículo: ${vehiculoStr} ${refTag}`.trim();
+
+  let desglose = service.items;
+  if (!desglose || !Array.isArray(desglose) || desglose.length === 0) {
+    const { parseDescripcionItems } = await import('@/lib/utils');
+    desglose = parseDescripcionItems(descStr, precio);
+  }
+
+  const { data: existingVD } = await supabase.from('ventas_dia')
+    .select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle();
+
+  const vdData = {
+    fecha: opts?.customDate || (service.fecha ? service.fecha.split('T')[0] : getLocalISODate()),
+    cliente: clienteNombre,
+    total_ingresos: precio,
+    total_servicios: 1,
+    total_clientes: 1,
+    desglose,
+    metodos_pago: { divisas: precio },
+    tasa_cambio: opts?.bcvRate || 518.0,
+    con_iva: false,
+    notas: notesFinal,
+    creado_por: opts?.userName || service.registrado_por || 'Admin',
+    sede_id: sedeId,
+    fecha_registro: new Date().toISOString(),
+    registro_atrasado: false,
+    estado: 'pagado',
+  };
+
+  if (existingVD) {
+    const { data: upd, error } = await supabase.from('ventas_dia').update(vdData).eq('id', existingVD.id).select().single();
+    if (error) console.error('Error actualizando venta_dia:', error);
+    return upd;
+  } else {
+    const { data: ins, error } = await supabase.from('ventas_dia').insert(vdData).select().single();
+    if (error) console.error('Error insertando venta_dia:', error);
+    return ins;
+  }
+}
+
 // ─── Citas ─────────────────────────────────────────────────────────────────
 export async function fetchCitas() {
   if (!supabase) return null;

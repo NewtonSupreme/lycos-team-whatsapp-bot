@@ -44,6 +44,9 @@ export interface CreateJobInput {
   fecha?: string;
   referencia_tabla?: string | null;
   referencia_id?: string | null;
+  cliente?: string | null;
+  vehiculo?: string | null;
+  placa?: string | null;
   sede_id?: string | null;
   created_by?: string | null;
 }
@@ -88,6 +91,67 @@ export class PayrollCalculationService {
   }
 
   // ── Creación de trabajo con SNAPSHOT (ejecutor + overrides en cascada) ──────
+  /**
+   * Calcula la comisión de uno o varios trabajos SIN guardarlos.
+   * Lo usa el formulario de la orden para mostrar en vivo cuánto le toca a
+   * cada técnico según sus reglas, antes de guardar.
+   */
+  async previewJobs(inputs: CreateJobInput[]): Promise<any[]> {
+    const rates = await this.rates();
+    const sedeId = inputs[0]?.sede_id ?? null;
+    const rules = await this.getRules(sedeId);
+    const flats = await this.getFlatRates(sedeId);
+
+    const out: any[] = [];
+    for (const input of inputs) {
+      const moneda: MonedaNomina = input.moneda || 'USD';
+      const tasa = input.tasa_cambio && input.tasa_cambio > 0 ? input.tasa_cambio : rateForMoneda(moneda, rates);
+      const ingreso = round2(input.ingreso_total || 0);
+      const manoObra = round2(input.mano_obra != null ? input.mano_obra : ingreso);
+
+      const job: JobInput = {
+        empleado_id: input.empleado_id,
+        es_taller: !!input.es_taller,
+        zona: input.zona || 'general',
+        moneda, tasa_cambio: tasa,
+        ingreso_total: ingreso, mano_obra: manoObra,
+        servicio_key: input.servicio_key, cantidad: input.cantidad,
+        sede_id: input.sede_id,
+      };
+
+      const execRule = pickExecutorRule(rules, job);
+      const exec = computeExecutorCommission(execRule, job, flats, rates);
+      const overrides = computeOverrides(rules, job, rates);
+
+      // Nombres de los beneficiarios del override (p. ej. el jefe de taller)
+      const overridesDetalle = [];
+      for (const o of overrides) {
+        const { data: u } = await this.db.from('usuarios').select('nombre').eq('id', o.empleado_id).maybeSingle();
+        overridesDetalle.push({ ...o, empleado_nombre: u?.nombre || 'Empleado' });
+      }
+
+      out.push({
+        empleado_id: input.empleado_id,
+        es_taller: !!input.es_taller,
+        zona: job.zona,
+        mano_obra: manoObra,
+        ingreso_total: ingreso,
+        comision: exec.comision,
+        comision_usd: exec.comision_usd,
+        tipo_regla: exec.tipo_regla,
+        regla_descripcion: (exec.desglose as any)?.regla || null,
+        pct: (exec.desglose as any)?.pct ?? null,
+        base: (exec.desglose as any)?.base ?? null,
+        proveedor_monto_usd: exec.proveedor_monto_usd,
+        proveedor_nombre: exec.proveedor_nombre,
+        sin_regla: !execRule && exec.comision_usd === 0,
+        desglose: exec.desglose,
+        overrides: overridesDetalle,
+      });
+    }
+    return out;
+  }
+
   async createJobAssignment(input: CreateJobInput): Promise<{ executor: JobAssignment; overrides: JobAssignment[] }> {
     const rates = await this.rates();
     const moneda: MonedaNomina = input.moneda || 'USD';
@@ -147,7 +211,12 @@ export class PayrollCalculationService {
       es_override: false, override_de: null,
       proveedor_monto: exec.proveedor_monto, proveedor_monto_usd: exec.proveedor_monto_usd,
       proveedor_nombre: exec.proveedor_nombre,
-      lycos_neto, desglose: exec.desglose, estado: 'pendiente',
+      lycos_neto, desglose: {
+        ...exec.desglose,
+        cliente: input.cliente || null,
+        vehiculo: input.vehiculo || null,
+        placa: input.placa || null,
+      }, estado: 'pendiente',
       sede_id: input.sede_id ?? null, created_by: input.created_by ?? null,
     };
 
@@ -171,7 +240,10 @@ export class PayrollCalculationService {
         comision: o.comision, comision_moneda: o.comision_moneda, comision_usd: o.comision_usd,
         es_override: true, override_de: executor.id,
         proveedor_monto: 0, proveedor_monto_usd: 0, proveedor_nombre: null,
-        lycos_neto: 0, desglose: { tipo: 'override', pct: o.pct, base: o.base_aplicada, sobre: empleadoNombre },
+        lycos_neto: 0, desglose: {
+          tipo: 'override', pct: o.pct, base: o.base_aplicada, sobre: empleadoNombre,
+          cliente: input.cliente || null, vehiculo: input.vehiculo || null, placa: input.placa || null,
+        },
         estado: 'pendiente', sede_id: input.sede_id ?? null, created_by: input.created_by ?? null,
       };
       const { data: oi } = await this.db.from('job_assignments').insert(row).select().single();
@@ -197,7 +269,8 @@ export class PayrollCalculationService {
     if (!opts.includeLiquidated) jq = jq.eq('estado', 'pendiente');
     if (periodo.sedeId) jq = jq.eq('sede_id', periodo.sedeId);
     const { data: jobsData } = await jq;
-    const jobs = (jobsData as JobAssignment[]) || [];
+    const rawJobs = (jobsData as JobAssignment[]) || [];
+    const jobs = await this.enrichJobsWithClientInfo(rawJobs);
 
     let aq = this.db.from('payroll_advances').select('*')
       .eq('empleado_id', employeeId).eq('estado', 'pendiente')
@@ -248,16 +321,28 @@ export class PayrollCalculationService {
     if (periodo.sedeId) jq = jq.eq('sede_id', periodo.sedeId);
     const { data: jobEmps } = await jq;
 
+    // Traer todos los usuarios activos que sean técnicos en esta sede
+    let uq = this.db.from('usuarios').select('id, rol, activo').neq('activo', false);
+    if (periodo.sedeId) uq = uq.eq('sede_id', periodo.sedeId);
+    const { data: activeUsers } = await uq;
+
     const ids = new Set<string>();
     (jobEmps || []).forEach((r: any) => r.empleado_id && ids.add(r.empleado_id));
     // Empleados con sueldo fijo / reglas aunque no tengan trabajos
     rules.forEach(r => { if (r.empleado_id) ids.add(r.empleado_id); });
+    // Empleados con rol operativo (mecánicos, jefes de taller)
+    (activeUsers || []).forEach((u: any) => {
+      if (u.id && (u.rol === 'mecanico' || u.rol === 'jefe_taller')) {
+        ids.add(u.id);
+      }
+    });
 
     const results: EmployeeEarnings[] = [];
     for (const id of ids) {
       const e = await this.calculateEmployeeWeeklyEarnings(id, periodo);
-      // Incluye si tiene algo que pagar o algún movimiento
-      if (e.bruto !== 0 || e.jobs.length > 0 || e.sueldo_base > 0) results.push(e);
+      const esTec = (activeUsers || []).some((u: any) => u.id === id && (u.rol === 'mecanico' || u.rol === 'jefe_taller'));
+      // Incluye si tiene algo que pagar, algún movimiento o si es técnico registrado
+      if (e.bruto !== 0 || e.jobs.length > 0 || e.sueldo_base > 0 || esTec) results.push(e);
     }
     results.sort((a, b) => b.total_pagar - a.total_pagar);
     return results;
@@ -315,6 +400,72 @@ export class PayrollCalculationService {
     }
 
     return L;
+  }
+
+  /** Enrriquece de forma eficiente los trabajos con información de cliente, vehículo y placa del servicio o venta original. */
+  async enrichJobsWithClientInfo(jobs: JobAssignment[]): Promise<JobAssignment[]> {
+    if (!jobs || jobs.length === 0) return jobs;
+
+    const servIds = Array.from(new Set(jobs.filter(j => j.referencia_tabla === 'servicios' && j.referencia_id).map(j => String(j.referencia_id))));
+    const ventaIds = Array.from(new Set(jobs.filter(j => j.referencia_tabla === 'ventas_dia' && j.referencia_id).map(j => String(j.referencia_id).split('#')[0])));
+
+    const servMap = new Map<string, any>();
+    if (servIds.length > 0) {
+      const { data: servs } = await this.db.from('servicios').select(`
+        id, fecha, descripcion, tipo, nombre_cliente, vehiculo_info, placa, costo_final, costo_estimado, items, notas,
+        vehiculos (marca, modelo, placa, clientes (nombre, apellido))
+      `).in('id', servIds);
+      (servs || []).forEach((s: any) => servMap.set(String(s.id), s));
+    }
+
+    const ventaMap = new Map<string, any>();
+    if (ventaIds.length > 0) {
+      const { data: ventas } = await this.db.from('ventas_dia').select(`
+        id, fecha, cliente, desglose, notas, total_ingresos, moneda, tasa_cambio
+      `).in('id', ventaIds);
+      (ventas || []).forEach((v: any) => ventaMap.set(String(v.id), v));
+    }
+
+    return jobs.map(job => {
+      let cliente = job.desglose?.cliente || null;
+      let vehiculo = job.desglose?.vehiculo || null;
+      let placa = job.desglose?.placa || null;
+      let items = job.desglose?.items || null;
+
+      if (!cliente || !vehiculo || !items) {
+        if (job.referencia_tabla === 'servicios' && job.referencia_id) {
+          const s = servMap.get(String(job.referencia_id));
+          if (s) {
+            const relName = s.vehiculos?.clientes ? `${s.vehiculos.clientes.nombre} ${s.vehiculos.clientes.apellido}`.trim() : '';
+            cliente = cliente || relName || s.nombre_cliente || 'Cliente de Taller';
+            const relVeh = s.vehiculos ? `${s.vehiculos.marca} ${s.vehiculos.modelo}`.trim() : '';
+            vehiculo = vehiculo || relVeh || s.vehiculo_info || 'Vehículo de Taller';
+            placa = placa || s.vehiculos?.placa || s.placa || '';
+            items = items || s.items || null;
+          }
+        } else if (job.referencia_tabla === 'ventas_dia' && job.referencia_id) {
+          const v = ventaMap.get(String(job.referencia_id).split('#')[0]);
+          if (v) {
+            cliente = cliente || v.cliente || 'Consumidor Final';
+            items = items || v.desglose || null;
+          }
+        }
+      }
+
+      const desc = job.descripcion || (job.referencia_tabla === 'servicios' ? 'Servicio de taller' : job.referencia_tabla === 'ventas_dia' ? 'Venta en mostrador' : 'Trabajo asignado');
+
+      return {
+        ...job,
+        descripcion: desc,
+        desglose: {
+          ...job.desglose,
+          cliente: cliente || 'Consumidor Final',
+          vehiculo: vehiculo || (placa ? `Placa: ${placa}` : 'No especificado'),
+          placa: placa || null,
+          items: items || [],
+        }
+      };
+    });
   }
 
   private async nextReciboNumero(sedeId?: string | null): Promise<string> {

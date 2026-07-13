@@ -94,6 +94,8 @@ export async function POST(req: NextRequest) {
         fecha: op.fecha,
         referencia_tabla: op.origen || 'manual',
         referencia_id: op.origen_id ? String(op.origen_id).split('#')[0] : null,
+        cliente: op.cliente ?? null,
+        vehiculo: op.vehiculo ?? null,
         sede_id: sede,
         created_by: auth.user!.nombre,
       });

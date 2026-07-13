@@ -1,6 +1,8 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Phone, Mail, Car, Edit, Trash2, Eye, ArrowRightLeft } from 'lucide-react';
+import { Plus, Search, Phone, Mail, Car, Edit, Trash2, Eye, ArrowRightLeft, Wallet } from 'lucide-react';
+import GastosVehiculoModal from '@/components/egresos/GastosVehiculoModal';
+import HistorialServiciosCliente from '@/components/clientes/HistorialServiciosCliente';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,6 +46,7 @@ export default function ClientesPage() {
   const [showVehiculoModal, setShowVehiculoModal] = useState(false);
   const [editVehiculo, setEditVehiculo] = useState<Vehiculo | null>(null);
   const [transferVehiculoTarget, setTransferVehiculoTarget] = useState<Vehiculo | null>(null);
+  const [gastosTarget, setGastosTarget] = useState<Vehiculo | null>(null);
   const [vForm, setVForm] = useState({ marca: '', modelo: '', anio: new Date().getFullYear(), color: '', placa: '' });
 
   const [mounted, setMounted] = useState(false);
@@ -547,6 +550,9 @@ export default function ClientesPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => setGastosTarget(v)} title="Gastos y utilidad del vehículo" className="p-1.5 rounded-md hover:bg-rose-500/10 text-rose-400 transition-colors">
+                          <Wallet className="w-3 h-3" />
+                        </button>
                         {can('vehiculos', 'editar') && (
                           <button onClick={() => openVehiculoEdit(v)} className="p-1.5 rounded-md hover:bg-primary/10 hover:text-primary transition-colors">
                             <Edit className="w-3 h-3" />
@@ -590,7 +596,7 @@ export default function ClientesPage() {
 
       {/* Ver cliente */}
       <Dialog open={!!viewCliente} onOpenChange={() => setViewCliente(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           {viewCliente && (
             <>
               <DialogHeader>
@@ -642,6 +648,12 @@ export default function ClientesPage() {
                   {getVehiculos(viewCliente.id).length === 0 && <p className="text-xs text-muted-foreground text-center py-2">Sin vehículos registrados</p>}
                 </div>
               </div>
+
+              {/* Historial de servicios — click abre el detalle completo */}
+              <div className="pt-1 border-t border-border/30">
+                <HistorialServiciosCliente clienteId={viewCliente.id} />
+              </div>
+
               {viewCliente.notas && (
                 <div className="p-3 rounded-xl bg-muted/20 border border-border/30">
                   <p className="text-xs text-muted-foreground mb-1">Notas</p>
@@ -699,6 +711,22 @@ export default function ClientesPage() {
         usuario={user?.nombre || user?.email || 'Sistema'}
         currentOwnerName={editCliente ? `${editCliente.nombre} ${editCliente.apellido}` : (transferVehiculoTarget?.cliente ? `${transferVehiculoTarget.cliente.nombre} ${transferVehiculoTarget.cliente.apellido}` : '')}
       />
+
+      {/* Gastos y utilidad del vehículo del cliente */}
+      {gastosTarget && (
+        <GastosVehiculoModal
+          canDelete={can('vehiculos', 'eliminar')}
+          onClose={() => setGastosTarget(null)}
+          target={{
+            vehiculo_id: gastosTarget.id,
+            cliente_id: gastosTarget.cliente_id || editCliente?.id || null,
+            placa: gastosTarget.placa,
+            vehiculo_info: `${gastosTarget.marca} ${gastosTarget.modelo}`,
+            cliente_nombre: editCliente ? `${editCliente.nombre} ${editCliente.apellido || ''}`.trim() : null,
+            sede_id: gastosTarget.sede_id || null,
+          }}
+        />
+      )}
     </div>
   );
 }

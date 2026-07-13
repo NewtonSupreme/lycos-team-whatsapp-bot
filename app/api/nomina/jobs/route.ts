@@ -34,7 +34,9 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ jobs: data || [] });
+  const svc = getPayrollService(auth.db);
+  const enriched = await svc.enrichJobsWithClientInfo((data as any[]) || []);
+  return NextResponse.json({ jobs: enriched });
 }
 
 /**
@@ -72,6 +74,16 @@ export async function POST(req: NextRequest) {
   const svc = getPayrollService(auth.db);
   const created: any[] = [];
   try {
+    // Re-sincronización: al EDITAR una orden se reemplazan sus asignaciones pendientes.
+    // Los trabajos ya liquidados nunca se tocan (el histórico es intocable).
+    const refId = body.referencia_id ?? items[0]?.referencia_id ?? null;
+    if (body.replace === true && refId) {
+      await auth.db.from('job_assignments')
+        .delete()
+        .eq('referencia_id', refId)
+        .eq('estado', 'pendiente');
+    }
+
     for (const it of items) {
       const res = await svc.createJobAssignment({
         empleado_id: it.empleado_id ?? null,
@@ -88,6 +100,9 @@ export async function POST(req: NextRequest) {
         fecha: it.fecha,
         referencia_tabla: it.referencia_tabla ?? 'manual',
         referencia_id: it.referencia_id ?? null,
+        cliente: it.cliente ?? null,
+        vehiculo: it.vehiculo ?? null,
+        placa: it.placa ?? null,
         sede_id: sede,
         created_by: auth.user!.nombre,
       });

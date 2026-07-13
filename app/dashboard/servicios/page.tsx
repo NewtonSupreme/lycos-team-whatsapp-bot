@@ -6,10 +6,11 @@ import {
   Banknote, BadgeCheck, Activity, Plus, Trash2, Edit3,
   ChevronRight, ChevronLeft, MoreHorizontal, MessageSquare, Tag, Info,
   MapPin, Filter, LayoutGrid, List, FileText, MoveHorizontal, Download,
-  TrendingUp, Save, CheckCircle2, XCircle
+  TrendingUp, Save, CheckCircle2, XCircle, Wallet
 } from 'lucide-react';
+import GastosVehiculoModal from '@/components/egresos/GastosVehiculoModal';
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase, registrarFactura, createPresupuesto, generateNumeroPresupuesto, syncClientData, transferVehiculo } from '@/lib/supabase';
+import { supabase, registrarFactura, createPresupuesto, generateNumeroPresupuesto, syncClientData, transferVehiculo, autoRegisterSaleFromService } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from "@/lib/store/useSedeStore";
@@ -21,7 +22,9 @@ import { uploadComprobante, comprobanteFields } from '@/lib/comprobante';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 import { cn, getLocalISODate, parseDescripcionItems } from '@/lib/utils';
-import AsignacionTecnicos, { type JobSpec } from '@/components/nomina/AsignacionTecnicos';
+import PersonalYComisiones, { type AsignacionEmpleado } from '@/components/nomina/PersonalYComisiones';
+import MetodosPagoPicker from '@/components/pagos/MetodosPagoPicker';
+import { CATEGORIAS_VENTA, inferirCategoria, categoriaToZona, buildCategoriaColumns, buildPagoColumns, sumaMetodos } from '@/lib/categorias';
 
 // ── Types ─────────────────────────────────────────────────────
 interface ServicioItem {
@@ -78,10 +81,20 @@ interface CitaServicio {
   items?: ServicioItem[] | null;
   comprobante_url?: string | null;
   comprobante_referencia?: string | null;
+  fecha_inicio?: string | null;
+  fecha_fin?: string | null;
+  // Clasificación y cobro de la orden (alimentan el Reporte de Ventas)
+  categoria?: string | null;
+  metodos_pago?: Record<string, number> | null;
+  con_iva?: boolean | null;
+  tasa_cambio?: number | null;
+  total_pagado?: number | null;
   vehiculos?: { marca: string; modelo: string; placa: string; anio?: number; clientes?: { nombre: string; apellido: string; telefono: string } | null } | null;
 }
 
 const ESTADOS = ['pendiente', 'confirmada', 'en_revision', 'en_proceso', 'completada', 'cancelada'];
+// Trabajo "vivo" del taller: lo que todavía no se ha completado ni cancelado.
+const ESTADOS_ACTIVOS = ['pendiente', 'confirmada', 'en_revision', 'en_proceso', 'en_progreso'];
 
 const ESTADO_CONFIG: Record<string, { label: string; color: string; bg: string; icon: React.ElementType; glow: string }> = {
   pendiente:   { label: 'Pendiente',   color: 'text-amber-400',  bg: 'bg-amber-400/10 border-amber-400/20',  glow: 'shadow-amber-500/20', icon: AlertCircle },
@@ -160,6 +173,9 @@ export default function ServiciosPage() {
   const [trackingCita, setTrackingCita] = useState<CitaServicio | null>(null);
   const [invoiceCita, setInvoiceCita] = useState<CitaServicio | null>(null);
   const [budgetCita, setBudgetCita] = useState<CitaServicio | null>(null);
+  const [gastosCita, setGastosCita] = useState<CitaServicio | null>(null);
+  // Modo "Pendientes": ignora la fecha y muestra todo el trabajo vivo del taller.
+  const [soloPendientes, setSoloPendientes] = useState(false);
   // Cambio de estado pendiente de confirmar (servicio completado que ya es venta).
   const [pendingEstadoChange, setPendingEstadoChange] = useState<{ cita: CitaServicio; nuevoEstado: string } | null>(null);
   const [inventory, setInventory] = useState<any[]>([]);
@@ -183,7 +199,8 @@ export default function ServiciosPage() {
           id, fecha, hora, tipo, tipo_personalizado, descripcion, estado,
           nombre_cliente, vehiculo_info, placa, telefono, created_at,
           cliente_id, vehiculo_id, sede_id, seguimiento, notas, items,
-          costo_estimado, costo_final, registrado_por,
+          costo_estimado, costo_final, registrado_por, fecha_inicio, fecha_fin,
+          categoria, metodos_pago, con_iva, tasa_cambio, total_pagado,
           vehiculos (marca, modelo, placa, anio, clientes (nombre, apellido, telefono))
         `)
         .order('fecha', { ascending: false })
@@ -256,12 +273,28 @@ export default function ServiciosPage() {
       };
       const newSeguimiento = [...(cita.seguimiento || []), newEntry];
 
+      // ── Tiempos reales del servicio ────────────────────────────────────────
+      // fecha_inicio: al arrancar el trabajo (o si nunca se registró).
+      // fecha_fin: al completarlo. Si se reabre, se limpia para no dejar datos falsos.
+      const ahoraISO = new Date().toISOString();
+      const IN_PROGRESS_STATES = ['en_proceso', 'en_progreso', 'en_revision', 'confirmada'];
+      const updatePayload: any = {
+        estado: nuevoEstado,
+        updated_at: ahoraISO,
+        seguimiento: newSeguimiento,
+      };
+      if (!cita.fecha_inicio && (IN_PROGRESS_STATES.includes(nuevoEstado) || COMPLETED_STATES.includes(nuevoEstado))) {
+        updatePayload.fecha_inicio = ahoraISO;
+      }
+      if (COMPLETED_STATES.includes(nuevoEstado)) {
+        updatePayload.fecha_fin = ahoraISO;
+      } else if (COMPLETED_STATES.includes(cita.estado)) {
+        // Se reabrió un servicio ya completado → deja de tener finalización.
+        updatePayload.fecha_fin = null;
+      }
+
       const { error } = await withSedeFilter(supabase!.from('servicios'))
-        .update({
-          estado: nuevoEstado,
-          updated_at: new Date().toISOString(),
-          seguimiento: newSeguimiento
-        })
+        .update(updatePayload)
         .eq('id', id);
 
       if (error) throw error;
@@ -281,8 +314,17 @@ export default function ServiciosPage() {
         if (precio > 0 && sedeId) {
           const refTag = `[ServicioID: ${id}]`;
           const descStr = cita.descripcion || 'Servicio de taller';
-          const notesFinal = `${descStr} [Total: $${precio} (Divisas)] | Cliente: ${clienteNombre} | Vehículo: ${vehiculoStr} ${refTag}`.trim();
+          const notesFinal = `${descStr} | Cliente: ${clienteNombre} | Vehículo: ${vehiculoStr} ${refTag}`.trim();
           const desglose = parseDescripcionItems(descStr, precio);
+
+          // Métodos de pago reales capturados en la orden; si no hay, se asume divisas.
+          const svcAny = cita as any;
+          const metodos: Record<string, number> =
+            (svcAny.metodos_pago && Object.keys(svcAny.metodos_pago).length > 0)
+              ? svcAny.metodos_pago
+              : { efectivo_usd: precio };
+          // Clasificación de la orden (si falta, se infiere de la descripción).
+          const cat = svcAny.categoria || inferirCategoria(descStr || cita.tipo_personalizado || cita.tipo);
 
           // Dedup check — update if already registered (e.g., if invoice modal later replaces this entry)
           const { data: existingVD } = await supabase.from('ventas_dia')
@@ -291,13 +333,23 @@ export default function ServiciosPage() {
           const vdData = {
             fecha: getLocalISODate(),
             cliente: clienteNombre,
+            // Identidad real del cliente/vehículo en el Reporte de Ventas
+            cliente_id: cita.cliente_id || null,
+            vehiculo_id: cita.vehiculo_id || null,
+            servicio_id: id,
+            placa: cita.placa || cita.vehiculos?.placa || null,
+            vehiculo_info: vehiculoStr || null,
+            // Clasificación del servicio + su columna correspondiente
+            categoria: cat,
+            ...buildCategoriaColumns(cat, precio),
             total_ingresos: precio,
             total_servicios: 1,
             total_clientes: 1,
             desglose,
-            metodos_pago: { divisas: precio },
-            tasa_cambio: globalBcvRate || 0,
-            con_iva: false,
+            metodos_pago: metodos,
+            ...buildPagoColumns(metodos),
+            tasa_cambio: svcAny.tasa_cambio || globalBcvRate || 0,
+            con_iva: !!svcAny.con_iva,
             notas: notesFinal,
             creado_por: user?.nombre || 'Admin',
             sede_id: sedeId,
@@ -370,6 +422,11 @@ export default function ServiciosPage() {
     await applyEstadoChange(cita, nuevoEstado);
   };
 
+  // Total de servicios activos (para el badge del botón "Pendientes")
+  const pendientesCount = citas.filter(c =>
+    ESTADOS_ACTIVOS.includes(String(c.estado || '').toLowerCase())
+  ).length;
+
   const filtered = citas.filter(c => {
     // 1. Filtro de Texto
     const cliente = getDisplayName(c);
@@ -377,9 +434,15 @@ export default function ServiciosPage() {
     const txt = `${cliente} ${vehiculo} ${c.placa} ${c.descripcion}`.toLowerCase();
     const matchText = search === '' || txt.includes(search.toLowerCase());
 
-    // 2. Filtro de Fecha
     if (!matchText) return false;
 
+    // 1b. Modo "Pendientes": muestra TODO lo que sigue activo (pendiente, confirmada,
+    // en revisión, en proceso) sin importar la fecha — es el trabajo vivo del taller.
+    if (soloPendientes) {
+      return ESTADOS_ACTIVOS.includes(String(c.estado || '').toLowerCase());
+    }
+
+    // 2. Filtro de Fecha
     const rawDateStr = c.fecha || c.created_at;
     if (!rawDateStr) return false;
     
@@ -467,9 +530,32 @@ export default function ServiciosPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
-          <div className="relative flex-1 lg:w-80">
+          {/* Pendientes: todo el trabajo vivo del taller, sin filtro de fecha */}
+          <button
+            onClick={() => setSoloPendientes(v => !v)}
+            title="Ver todos los servicios pendientes, confirmados, en revisión y en proceso"
+            className={cn(
+              'relative flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-black uppercase tracking-widest border transition-all shrink-0',
+              soloPendientes
+                ? 'bg-[#f59e0b] text-black border-[#f59e0b] shadow-lg shadow-[#f59e0b]/20'
+                : 'bg-[#f59e0b]/10 text-[#f59e0b] border-[#f59e0b]/30 hover:bg-[#f59e0b]/20'
+            )}
+          >
+            <Clock className="w-3.5 h-3.5" />
+            Pendientes
+            {pendientesCount > 0 && (
+              <span className={cn(
+                'min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-black flex items-center justify-center',
+                soloPendientes ? 'bg-black/20 text-black' : 'bg-[#f59e0b] text-black'
+              )}>
+                {pendientesCount}
+              </span>
+            )}
+          </button>
+
+          <div className="relative flex-1 min-w-[180px] lg:w-80">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <input 
+            <input
               className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-muted/50 border border-border/50 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
               placeholder="Buscar cliente, placa, falla..."
               value={search}
@@ -578,6 +664,7 @@ export default function ServiciosPage() {
                 onTracking={setTrackingCita}
                 onInvoice={setInvoiceCita}
                 onBudget={setBudgetCita}
+                onGastos={setGastosCita}
                 onMove={updateEstado}
                 selectedForDual={selectedForDual}
                 setSelectedForDual={setSelectedForDual}
@@ -650,11 +737,28 @@ export default function ServiciosPage() {
       </AnimatePresence>
 
       {/* ── Modals ────────────────────────────────────────────── */}
-      {showNewModal && <ServiceFormModal onClose={() => { setShowNewModal(false); loadCitas(); }} />}
-      {editCita && <ServiceFormModal cita={editCita} onClose={() => { setEditCita(null); loadCitas(); }} />}
+      {showNewModal && <ServiceFormModal onClose={() => { setShowNewModal(false); loadCitas(); }} globalBcvRate={globalBcvRate} />}
+      {editCita && <ServiceFormModal cita={editCita} onClose={() => { setEditCita(null); loadCitas(); }} globalBcvRate={globalBcvRate} />}
       {trackingCita && <TrackingModal cita={trackingCita} onClose={() => { setTrackingCita(null); loadCitas(); }} />}
       {invoiceCita && <InvoiceModal cita={invoiceCita} citas={citas} inventory={inventory} onClose={() => { setInvoiceCita(null); loadCitas(); }} globalBcvRate={globalBcvRate} />}
       {budgetCita && <BudgetModal cita={budgetCita} inventory={inventory} onClose={() => setBudgetCita(null)} />}
+      {gastosCita && (
+        <GastosVehiculoModal
+          canDelete={can('servicios', 'eliminar')}
+          onClose={() => setGastosCita(null)}
+          target={{
+            vehiculo_id: gastosCita.vehiculo_id,
+            cliente_id: gastosCita.cliente_id,
+            servicio_id: gastosCita.id,
+            placa: gastosCita.placa || gastosCita.vehiculos?.placa || null,
+            vehiculo_info: gastosCita.vehiculo_info
+              || (gastosCita.vehiculos ? `${gastosCita.vehiculos.marca} ${gastosCita.vehiculos.modelo}` : null),
+            cliente_nombre: gastosCita.nombre_cliente
+              || (gastosCita.vehiculos?.clientes ? `${gastosCita.vehiculos.clientes.nombre} ${gastosCita.vehiculos.clientes.apellido || ''}`.trim() : null),
+            sede_id: gastosCita.sede_id || null,
+          }}
+        />
+      )}
 
       {/* ⚠️ Confirmación al sacar de "completado" un servicio que ya se convirtió en venta */}
       {pendingEstadoChange && (
@@ -707,7 +811,7 @@ export default function ServiciosPage() {
 }
 
 // ── Kanban Components ──────────────────────────────────────────
-function KanbanColumn({ estado, items, onEdit, onDelete, onTracking, onInvoice, onBudget, onMove, selectedForDual, setSelectedForDual }: any) {
+function KanbanColumn({ estado, items, onEdit, onDelete, onTracking, onInvoice, onBudget, onGastos, onMove, selectedForDual, setSelectedForDual }: any) {
   const cfg = ESTADO_CONFIG[estado];
   const Icon = cfg.icon;
 
@@ -735,6 +839,7 @@ function KanbanColumn({ estado, items, onEdit, onDelete, onTracking, onInvoice, 
               onTracking={onTracking}
               onInvoice={onInvoice}
               onBudget={onBudget}
+              onGastos={onGastos}
               onMove={onMove}
               isSelected={selectedForDual.includes(cita.id)}
               onSelect={(selected: boolean) => {
@@ -761,7 +866,7 @@ function KanbanColumn({ estado, items, onEdit, onDelete, onTracking, onInvoice, 
   );
 }
 
-function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onBudget, onMove, isSelected, onSelect }: any) {
+function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onBudget, onGastos, onMove, isSelected, onSelect }: any) {
   const { can } = useRolePermissions();
   const lastUpdate = cita.seguimiento?.[cita.seguimiento.length - 1];
 
@@ -921,7 +1026,14 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onBudget, 
         </button>
 
         <div className="flex gap-2">
-           <button 
+           <button
+            onClick={() => onGastos?.(cita)}
+            title="Gastos y utilidad de este vehículo"
+            className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white transition-all shadow-lg shadow-rose-500/5"
+           >
+             <Wallet className="w-3.5 h-3.5" />
+           </button>
+           <button
             onClick={() => onInvoice(cita)}
             className="p-1.5 rounded-lg bg-[#f59e0b]/10 hover:bg-[#f59e0b] text-[#f59e0b] hover:text-black transition-all shadow-lg shadow-[#f59e0b]/5"
            >
@@ -1013,8 +1125,53 @@ function ListView({ items, onEdit, onDelete, onTracking, onInvoice, onBudget }: 
   );
 }
 
+/**
+ * Convierte una asignación de personal en el trabajo que consume el motor de nómina.
+ * Si el empleado tiene ítems del desglose asignados, la mano de obra es la suma exacta
+ * de esos ítems (y la descripción dice cuáles hizo). Si no, se usa el monto manual.
+ */
+function buildJobDesdeAsignacion(
+  a: AsignacionEmpleado,
+  ctx: {
+    items: ServicioItem[];
+    costoTotal: number;
+    tipoTrabajo: string;
+    descripcionBase: string;
+    referenciaId: string | null;
+    fecha: string;
+  }
+) {
+  const asignados = a.item_idx
+    .map(i => ctx.items[i])
+    .filter(Boolean);
+
+  const manoObra = asignados.length > 0
+    ? asignados.reduce((s, it) => s + (Number(it.total) || 0), 0)
+    : (Number(a.mano_obra_manual) || 0);
+
+  const descripcion = asignados.length > 0
+    ? asignados.map(it => it.descripcion).join(' + ')
+    : ctx.descripcionBase;
+
+  return {
+    empleado_id: a.empleado_id,
+    es_taller: a.es_taller,
+    zona: a.zona,
+    tipo_trabajo: ctx.tipoTrabajo,
+    descripcion,
+    servicio_key: a.servicio_key || null,
+    cantidad: a.cantidad || 1,
+    ingreso_total: manoObra || ctx.costoTotal,
+    mano_obra: manoObra,
+    moneda: 'USD',
+    referencia_tabla: 'servicios',
+    referencia_id: ctx.referenciaId,
+    fecha: ctx.fecha,
+  };
+}
+
 // ── Service Form Modal (Create/Edit) ──────────────────────────
-function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () => void }) {
+function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaServicio; onClose: () => void; globalBcvRate?: number }) {
   const [formData, setFormData] = useState({
     nombre_cliente: cita?.nombre_cliente || cita?.vehiculos?.clientes?.nombre || '',
     // Saneado: solo dígitos/símbolos de teléfono (datos viejos con letras se limpian al abrir).
@@ -1025,6 +1182,28 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
     descripcion: cita?.descripcion || '',
     costo_estimado: cita?.costo_estimado?.toString() || '',
   });
+  // Clasificación del servicio → determina en qué columna del Reporte de Ventas cae.
+  const [categoria, setCategoria] = useState<string>(
+    (cita as any)?.categoria || inferirCategoria(cita?.descripcion || cita?.tipo_personalizado || cita?.tipo)
+  );
+  // Métodos de pago de la orden → se vuelcan a las columnas de ventas_dia al completar.
+  const [metodosPago, setMetodosPago] = useState<Record<string, number>>(
+    ((cita as any)?.metodos_pago && typeof (cita as any).metodos_pago === 'object')
+      ? (cita as any).metodos_pago
+      : {}
+  );
+  const [conIva, setConIva] = useState<boolean>(!!(cita as any)?.con_iva);
+  // Tasa personalizada (Bs por $) para los métodos de pago que la usen.
+  const [tasaCustom, setTasaCustom] = useState<number>(0);
+  // Tasa REAL del día del servicio (se guarda con la orden).
+  const [tasaDiaBcv, setTasaDiaBcv] = useState<number>(0);
+  useEffect(() => {
+    const f = (cita?.fecha || getLocalISODate()).slice(0, 10);
+    fetch(`/api/tasas?fecha=${f}`)
+      .then(r => r.json())
+      .then(d => { if (d?.bcv) setTasaDiaBcv(d.bcv); })
+      .catch(() => {});
+  }, [cita?.fecha]);
   // Servicios desglosados (ítems con precio para la factura). Se autollenan desde la
   // descripción (incluida la registrada por el bot) si no hay ítems guardados.
   const [items, setItems] = useState<ServicioItem[]>(() => {
@@ -1040,22 +1219,44 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
     const total = Number(cita?.costo_final ?? cita?.costo_estimado ?? 0);
     return parseServicioItemsFromText(cita?.descripcion || '', total);
   });
-  const [encargados, setEncargados] = useState<{ nombre: string; rol: 'mecanico' | 'jefe_taller' }[]>(() => {
-    if (!cita?.notas) return [];
-    const match = cita.notas.match(/^Encargados?: (.+)/);
-    if (!match) return [];
-    return match[1].split(', ').reduce<{ nombre: string; rol: 'mecanico' | 'jefe_taller' }[]>((acc, entry) => {
-      const m = entry.match(/^(.+) \((Jefe|Mecánico)\)$/);
-      if (m) acc.push({ nombre: m[1].trim(), rol: m[2] === 'Jefe' ? 'jefe_taller' : 'mecanico' });
-      return acc;
-    }, []);
-  });
   const [staffSuggestions, setStaffSuggestions] = useState<{ nombre: string; rol: string }[]>([]);
-  // Nómina: técnico(s) encargado(s) + mano de obra para generar la comisión.
-  const [jobSpecs, setJobSpecs] = useState<JobSpec[]>([]);
   const sedeNomina = useSedeStore(s => s.currentSede);
   const [staffSearch, setStaffSearch] = useState('');
   const [showStaffResults, setShowStaffResults] = useState(false);
+
+  // ── Personal a cargo + comisiones (empleados REGISTRADOS, con id) ──────────
+  const [asignaciones, setAsignaciones] = useState<AsignacionEmpleado[]>([]);
+  const [cargandoAsign, setCargandoAsign] = useState(!!cita);
+
+  // Al EDITAR, se recuperan las asignaciones ya registradas para esta orden.
+  useEffect(() => {
+    if (!cita?.id) { setCargandoAsign(false); return; }
+    let vivo = true;
+    fetch(`/api/nomina/jobs?ref=${cita.id}`)
+      .then(r => r.json())
+      .then(d => {
+        if (!vivo) return;
+        const jobs = (d.jobs || []).filter((j: any) => !j.es_override && j.estado !== 'anulado');
+        setAsignaciones(jobs.map((j: any) => ({
+          empleado_id: j.empleado_id,
+          es_taller: !!j.es_taller,
+          nombre: j.empleado_nombre || 'Taller (sin técnico)',
+          rol: j.es_taller ? 'taller' : 'mecanico',
+          zona: j.zona || 'mecanica',
+          item_idx: [],
+          mano_obra_manual: Number(j.mano_obra) || 0,
+          servicio_key: j.servicio_key || null,
+        })));
+      })
+      .catch(() => {})
+      .finally(() => { if (vivo) setCargandoAsign(false); });
+    return () => { vivo = false; };
+  }, [cita?.id]);
+
+  // El texto "Encargados:" de las notas se deriva del personal seleccionado.
+  const encargados = asignaciones
+    .filter(a => !a.es_taller && a.nombre)
+    .map(a => ({ nombre: a.nombre, rol: (a.rol === 'jefe_taller' ? 'jefe_taller' : 'mecanico') as 'jefe_taller' | 'mecanico' }));
   const [selectedClienteId, setSelectedClienteId] = useState<string | null>(cita?.cliente_id || null);
   const [selectedVehiculoId, setSelectedVehiculoId] = useState<string | null>(cita?.vehiculo_id || null);
   const [customServicio, setCustomServicio] = useState(cita?.tipo_personalizado || '');
@@ -1421,6 +1622,12 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           descripcion: formData.descripcion || '',
           items: itemsToSave,
           costo_estimado: costoFinalCalc,
+          // Clasificación + cobro de la orden (alimentan el Reporte de Ventas)
+          categoria,
+          metodos_pago: metodosPago,
+          con_iva: conIva,
+          tasa_cambio: tasaDiaBcv || globalBcvRate || null,
+          total_pagado: sumaMetodos(metodosPago),
           notas: encargados.length > 0
             ? `Encargados: ${encargados.map(e => `${e.nombre} (${e.rol === 'jefe_taller' ? 'Jefe' : 'Mecánico'})`).join(', ')}`
             : (cita?.notas || ''),
@@ -1437,7 +1644,33 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           .update(updatePayload)
           .eq('id', cita.id);
         if (error) throw error;
-        
+
+        // Nómina: re-sincroniza el personal a cargo y sus comisiones.
+        // Sólo se reemplazan los trabajos PENDIENTES; lo ya liquidado nunca se toca.
+        const asignValidasEdit = asignaciones.filter(a => a.empleado_id || a.es_taller);
+        if (asignValidasEdit.length > 0) {
+          try {
+            await fetch('/api/nomina/jobs', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                sede: sedeNomina?.id || null,
+                replace: true,
+                referencia_id: cita.id,
+                jobs: asignValidasEdit.map(a => buildJobDesdeAsignacion(a, {
+                  items,
+                  costoTotal: costoFinalCalc,
+                  tipoTrabajo: finalTipo,
+                  descripcionBase: formData.descripcion || (isCustomServicio ? customServicio.trim() : formData.tipo),
+                  referenciaId: cita.id,
+                  fecha: cita.fecha || getLocalISODate(),
+                })),
+              }),
+            });
+          } catch (nominaErr) {
+            console.error('No se pudo actualizar la comisión de nómina:', nominaErr);
+          }
+        }
+
         // ⛔ NO se renombra el cliente automáticamente al editar la orden (eso sobrescribía
         // clientes existentes). El cliente correcto ya se resolvió/creó en resolveClienteYVehiculo.
         // El renombrado SOLO ocurre si el usuario activó "Sobreescribir cliente" (se hace en el resolver).
@@ -1481,6 +1714,19 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           }
         }
         
+        if (cita.estado === 'completado' || cita.estado === 'completada' || cita.estado === 'finalizado') {
+          try {
+            await autoRegisterSaleFromService({
+              ...cita,
+              ...updatePayload,
+              id: cita.id,
+              sede_id: cita.sede_id || useSedeStore.getState().currentSede?.id,
+            }, { userName: user?.nombre || 'Admin' });
+          } catch (err) {
+            console.error('Error registrando venta en edición de servicio:', err);
+          }
+        }
+
         logActivity({
           usuario: user?.nombre || 'Admin',
           modulo: 'Servicios',
@@ -1510,7 +1756,13 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
           hora: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
           estado: 'pendiente',
           costo_estimado: costoFinalCalc,
-          notas: encargados.length > 0 
+          // Clasificación + cobro de la orden (alimentan el Reporte de Ventas)
+          categoria,
+          metodos_pago: metodosPago,
+          con_iva: conIva,
+          tasa_cambio: tasaDiaBcv || globalBcvRate || null,
+          total_pagado: sumaMetodos(metodosPago),
+          notas: encargados.length > 0
             ? `Encargados: ${encargados.map(e => `${e.nombre} (${e.rol === 'jefe_taller' ? 'Jefe' : 'Mecánico'})`).join(', ')}`
             : '',
           seguimiento: [
@@ -1533,10 +1785,10 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
         if (!payload.placa) delete payload.placa;
         payload.telefono = (String(payload.telefono || '').replace(/[^\d+()\s-]/g, '').trim()) || null;
 
-        // Nómina: exige técnico encargado o marcar "lo hizo el taller".
-        const specsValidos = jobSpecs.filter(s => s.empleado_id || s.es_taller);
-        if (specsValidos.length === 0) {
-          throw new Error('Indica el técnico encargado o marca "Lo hizo el taller" en la sección Comisión / Nómina.');
+        // Personal a cargo: obligatorio indicar quién hizo el trabajo (o el taller).
+        const asignValidas = asignaciones.filter(a => a.empleado_id || a.es_taller);
+        if (asignValidas.length === 0) {
+          throw new Error('Indica el personal a cargo o marca "Lo hizo el taller".');
         }
 
         const { data: nuevoServicio, error } = await withSedeFilter(supabase!.from('servicios')).insert(withSedeInsert(payload)).select().single();
@@ -1548,12 +1800,13 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               sede: sedeNomina?.id || null,
-              jobs: specsValidos.map(s => ({
-                ...s,
-                tipo_trabajo: finalTipoServicio,
-                descripcion: formData.descripcion || (isCustomServicio ? customServicio.trim() : formData.tipo),
-                referencia_tabla: 'servicios',
-                referencia_id: nuevoServicio?.id || null,
+              referencia_id: nuevoServicio?.id || null,
+              jobs: asignValidas.map(a => buildJobDesdeAsignacion(a, {
+                items,
+                costoTotal: costoFinalCalc,
+                tipoTrabajo: finalTipoServicio,
+                descripcionBase: formData.descripcion || (isCustomServicio ? customServicio.trim() : formData.tipo),
+                referenciaId: nuevoServicio?.id || null,
                 fecha: getLocalISODate(),
               })),
             }),
@@ -1826,120 +2079,59 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
               />
             </div>
 
-            <div className="col-span-2 space-y-3">
-              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Personal a Cargo (Jefe / Mec&aacute;nicos)</label>
-              
-              <div className="flex flex-wrap gap-2 mb-2">
-                {encargados.map((e, idx) => (
-                  <div key={idx} className="flex items-center gap-2 bg-muted/30 border border-border pl-3 pr-1 py-1 rounded-xl group animate-in zoom-in-95 duration-200">
-                    <span className="text-[11px] font-bold text-foreground">{e.nombre}</span>
-                    <button 
-                      type="button"
-                      onClick={() => {
-                        const next = [...encargados];
-                        next[idx].rol = e.rol === 'jefe_taller' ? 'mecanico' : 'jefe_taller';
-                        setEncargados(next);
-                      }}
-                      className={cn(
-                        "px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-tighter transition-all",
-                        e.rol === 'jefe_taller' ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"
-                      )}
-                    >
-                      {e.rol === 'jefe_taller' ? 'Jefe' : 'Mec&aacute;nico'}
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => setEncargados(encargados.filter((_, i) => i !== idx))}
-                      className="w-6 h-6 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive flex items-center justify-center"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              <div className="relative">
-                <Search className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 w-3.5 h-3.5 sm:w-4 sm:h-4 text-muted-foreground" />
-                <input 
-                  className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl pl-10 pr-3 py-2.5 sm:pl-12 sm:pr-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
-                  placeholder="Buscar o agregar encargado..."
-                  value={staffSearch}
-                  onChange={e => {
-                    setStaffSearch(e.target.value);
-                    setShowStaffResults(true);
-                  }}
-                  onFocus={() => setShowStaffResults(true)}
-                  onBlur={() => setTimeout(() => setShowStaffResults(false), 200)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && staffSearch.trim()) {
-                      e.preventDefault();
-                      if (!encargados.some(enc => enc.nombre === staffSearch.trim())) {
-                        setEncargados([...encargados, { nombre: staffSearch.trim(), rol: 'mecanico' }]);
-                      }
-                      setStaffSearch('');
-                    }
-                  }}
+            {/* Personal a cargo + comisiones (calculadas automáticamente) */}
+            <div className="col-span-2 space-y-2 rounded-2xl border border-border bg-muted/10 p-3">
+              {cargandoAsign ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Cargando personal a cargo…
+                </div>
+              ) : (
+                <PersonalYComisiones
+                  value={asignaciones}
+                  onChange={setAsignaciones}
+                  sedeId={sedeNomina?.id || null}
+                  defaultZona={categoriaToZona(categoria)}
+                  items={items}
+                  costoTotal={itemsTotal || parseFloat(formData.costo_estimado) || 0}
                 />
-                {showStaffResults && (
-                  <div className="absolute top-full left-0 right-0 z-[150] mt-2 bg-popover border border-border rounded-2xl shadow-2xl max-h-48 overflow-y-auto no-scrollbar py-2">
-                    {staffSearch && !staffSuggestions.some(s => s.nombre.toLowerCase().includes(staffSearch.toLowerCase())) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEncargados([...encargados, { nombre: staffSearch, rol: 'mecanico' }]);
-                          setStaffSearch('');
-                        }}
-                        className="w-full text-left px-4 py-3 hover:bg-muted transition-colors group flex items-center gap-3"
-                      >
-                        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                          <Plus className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <p className="text-xs font-bold text-foreground uppercase italic">Agregar &quot;{staffSearch}&quot;</p>
-                          <p className="text-[10px] text-muted-foreground">Nuevo personal de taller</p>
-                        </div>
-                      </button>
-                    )}
-                    {staffSuggestions
-                      .filter(s => s.nombre.toLowerCase().includes(staffSearch.toLowerCase()) && !encargados.some(e => e.nombre === s.nombre))
-                      .map((s, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => {
-                            setEncargados([...encargados, { nombre: s.nombre, rol: (s.rol === 'jefe_taller' ? 'jefe_taller' : 'mecanico') }]);
-                            setStaffSearch('');
-                          }}
-                          className="w-full text-left px-4 py-2 hover:bg-muted transition-colors group flex items-center justify-between"
-                        >
-                          <div>
-                            <p className="text-sm font-bold text-foreground group-hover:text-primary transition-colors">{s.nombre}</p>
-                            <p className="text-[10px] text-muted-foreground uppercase">{s.rol}</p>
-                          </div>
-                          <Plus className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </button>
-                      ))}
-                  </div>
-                )}
-              </div>
+              )}
             </div>
 
-            {!cita && (
-              <div className="col-span-2 space-y-2 rounded-2xl border border-amber-300/40 dark:border-amber-700/30 bg-amber-50/30 dark:bg-amber-950/10 p-3">
+            {/* Clasificación del servicio — define la columna del Reporte de Ventas */}
+            <div className="col-span-2 sm:col-span-1 space-y-2">
+              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Clasificaci&oacute;n del Servicio</label>
+              <select
+                value={categoria}
+                onChange={e => setCategoria(e.target.value)}
+                className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
+              >
+                {CATEGORIAS_VENTA.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+              </select>
+              <p className="text-[9px] text-muted-foreground ml-1">Determina en qu&eacute; columna aparece en el Reporte de Ventas.</p>
+            </div>
+
+            {/* Métodos de pago de la orden */}
+            <div className="col-span-2 space-y-2 rounded-2xl border border-emerald-300/40 dark:border-emerald-700/30 bg-emerald-50/30 dark:bg-emerald-950/10 p-3">
+              <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
-                  <Banknote className="w-3.5 h-3.5 text-amber-500" />
-                  <label className="text-[10px] text-amber-700 dark:text-amber-400 uppercase font-black tracking-widest">Comisión / Nómina</label>
+                  <Banknote className="w-3.5 h-3.5 text-emerald-500" />
+                  <label className="text-[10px] text-emerald-700 dark:text-emerald-400 uppercase font-black tracking-widest">M&eacute;todos de Pago</label>
                 </div>
-                <AsignacionTecnicos
-                  value={jobSpecs}
-                  onChange={setJobSpecs}
-                  sedeId={sedeNomina?.id || null}
-                  defaultZona="mecanica"
-                  ingresoTotal={parseFloat(formData.costo_estimado) || 0}
-                  moneda="USD"
-                />
+                <label className="flex items-center gap-1.5 text-[10px] font-bold text-muted-foreground cursor-pointer">
+                  <input type="checkbox" checked={conIva} onChange={e => setConIva(e.target.checked)} className="w-3.5 h-3.5 accent-emerald-500" />
+                  IVA 16%
+                </label>
               </div>
-            )}
+              <MetodosPagoPicker
+                value={metodosPago}
+                onChange={setMetodosPago}
+                total={(parseFloat(formData.costo_estimado) || 0) * (conIva ? 1.16 : 1)}
+                fecha={cita?.fecha || getLocalISODate()}
+                tasaCustom={tasaCustom}
+                onTasaCustomChange={setTasaCustom}
+              />
+              <p className="text-[9px] text-muted-foreground">Se guardan en la orden y se reflejan autom&aacute;ticamente en el Reporte de Ventas al completar el servicio.</p>
+            </div>
 
             <div className="col-span-2 space-y-2">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Descripci&oacute;n de la Falla / Trabajo</label>
@@ -2525,14 +2717,28 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
       const { data: existingVD } = await supabase.from('ventas_dia')
         .select('id').like('notas', `%${vdRefTag}%`).limit(1).maybeSingle();
 
+      // Clasificación de la orden (guardada al crearla; si falta se infiere).
+      const catVenta = (cita as any).categoria
+        || inferirCategoria(cita.descripcion || cita.tipo_personalizado || cita.tipo);
+
       const vdPayload = {
         fecha: getLocalISODate(),
         cliente: clientName,
+        // Identidad real del cliente/vehículo en el Reporte de Ventas
+        cliente_id: cita.cliente_id || null,
+        vehiculo_id: cita.vehiculo_id || null,
+        servicio_id: cita.id,
+        placa: cita.placa || cita.vehiculos?.placa || null,
+        vehiculo_info: vehicleStr || null,
+        // Clasificación → su columna correspondiente en el reporte
+        categoria: catVenta,
+        ...buildCategoriaColumns(catVenta, total),
         total_ingresos: total,
         total_servicios: items.length,
         total_clientes: 1,
         desglose: items,
         metodos_pago: payments,
+        ...buildPagoColumns(payments),
         tasa_cambio: rates.bcv || globalBcvRate || 518.0,
         con_iva: withIva,
         notas: vdNotas,

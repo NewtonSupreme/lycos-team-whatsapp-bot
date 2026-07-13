@@ -99,6 +99,16 @@ interface Egreso {
   imagen_url: string | null;
   creado_por: string;
   created_at: string;
+  // Asociación a cliente / vehículo / servicio (utilidad por vehículo)
+  cliente_id?: string | null;
+  vehiculo_id?: string | null;
+  servicio_id?: string | null;
+  cliente_nombre?: string | null;
+  vehiculo_info?: string | null;
+  placa?: string | null;
+  proveedor?: string | null;
+  origen?: string | null;
+  hora?: string | null;
 }
 
 interface CierreOficial {
@@ -1077,6 +1087,53 @@ function EgresoModal({ onClose, onSave, initial }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // ── Asociación a un vehículo (para calcular la utilidad de ese carro) ──────
+  const [placaBusqueda, setPlacaBusqueda] = useState(initial?.placa || '');
+  const [vinculo, setVinculo] = useState<{
+    vehiculo_id: string; cliente_id: string | null; placa: string;
+    vehiculo_info: string; cliente_nombre: string;
+  } | null>(
+    initial?.vehiculo_id
+      ? {
+          vehiculo_id: initial.vehiculo_id,
+          cliente_id: initial.cliente_id || null,
+          placa: initial.placa || '',
+          vehiculo_info: initial.vehiculo_info || '',
+          cliente_nombre: initial.cliente_nombre || '',
+        }
+      : null
+  );
+  const [buscandoPlaca, setBuscandoPlaca] = useState(false);
+  const [placaError, setPlacaError] = useState('');
+
+  const buscarVehiculo = async () => {
+    const pl = placaBusqueda.trim().toUpperCase();
+    if (!pl || !supabase) return;
+    setBuscandoPlaca(true); setPlacaError('');
+    try {
+      const { data } = await supabase
+        .from('vehiculos')
+        .select('id, marca, modelo, placa, cliente_id, clientes(nombre, apellido)')
+        .ilike('placa', pl).limit(1).maybeSingle();
+      if (!data) {
+        setVinculo(null);
+        setPlacaError(`No se encontró ningún vehículo con placa ${pl}`);
+      } else {
+        const c: any = data.clientes;
+        setVinculo({
+          vehiculo_id: data.id,
+          cliente_id: data.cliente_id,
+          placa: data.placa,
+          vehiculo_info: `${data.marca || ''} ${data.modelo || ''}`.trim(),
+          cliente_nombre: c ? `${c.nombre || ''} ${c.apellido || ''}`.trim() : '',
+        });
+      }
+    } catch {
+      setPlacaError('Error buscando el vehículo');
+    }
+    setBuscandoPlaca(false);
+  };
+
   
 
   
@@ -1103,10 +1160,17 @@ function EgresoModal({ onClose, onSave, initial }: {
       await onSave({
         fecha: form.fecha,
         cliente: form.cliente || null,
+        proveedor: form.cliente || null,
         categoria: form.categoria,
         total_egresos: Number(form.total_egresos),
         notas: form.notas || null,
         desglose: items.filter(i => i.descripcion.trim()),
+        // Asociación al vehículo/cliente → alimenta la Utilidad por Vehículo
+        vehiculo_id: vinculo?.vehiculo_id || null,
+        cliente_id: vinculo?.cliente_id || null,
+        placa: vinculo?.placa || null,
+        vehiculo_info: vinculo?.vehiculo_info || null,
+        cliente_nombre: vinculo?.cliente_nombre || null,
       });
       onClose();
     } catch (e) {
@@ -1173,6 +1237,54 @@ function EgresoModal({ onClose, onSave, initial }: {
                 className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm font-bold text-rose-400"
               />
             </div>
+          </div>
+
+          {/* Asociar el gasto a un vehículo → utilidad por vehículo */}
+          <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-3 space-y-2">
+            <label className="text-xs font-bold text-blue-400 uppercase tracking-wider">
+              Asociar a un vehículo (opcional)
+            </label>
+            <p className="text-[10px] text-muted-foreground -mt-1">
+              Si este gasto es por un carro específico, indica su placa. El sistema calculará la utilidad real de ese vehículo (ingresos − gastos).
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Placa del vehículo (ej: AG714TG)"
+                value={placaBusqueda}
+                onChange={e => setPlacaBusqueda(e.target.value.toUpperCase())}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); buscarVehiculo(); } }}
+                className="flex-1 px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm font-mono uppercase"
+              />
+              <button
+                type="button"
+                onClick={buscarVehiculo}
+                disabled={buscandoPlaca || !placaBusqueda.trim()}
+                className="px-3 py-2 rounded-lg bg-blue-500/20 text-blue-400 hover:bg-blue-500 hover:text-white text-xs font-bold transition-colors disabled:opacity-40"
+              >
+                {buscandoPlaca ? 'Buscando…' : 'Buscar'}
+              </button>
+              {vinculo && (
+                <button
+                  type="button"
+                  onClick={() => { setVinculo(null); setPlacaBusqueda(''); setPlacaError(''); }}
+                  className="px-3 py-2 rounded-lg hover:bg-white/5 text-xs text-muted-foreground"
+                >
+                  Quitar
+                </button>
+              )}
+            </div>
+            {placaError && <p className="text-[11px] text-amber-400">{placaError}</p>}
+            {vinculo && (
+              <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-2">
+                <p className="text-xs font-bold text-blue-300">
+                  🚗 {vinculo.placa} — {vinculo.vehiculo_info || 'Vehículo'}
+                </p>
+                {vinculo.cliente_nombre && (
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Cliente: {vinculo.cliente_nombre}</p>
+                )}
+              </div>
+            )}
           </div>
 
           <div>

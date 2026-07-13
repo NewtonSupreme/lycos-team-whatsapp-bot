@@ -17,6 +17,7 @@ import {
   ROLE_CATALOG, getRoleMeta, normalizePermiso, PERMISOS_DEFAULT, MASTER_ADMIN_USERNAME,
   type RoleMeta, type Permisos, type PermisoValue,
 } from "@/types";
+import PersonalTecnico, { AREAS } from "@/components/empleados/PersonalTecnico";
 
 // Icono lucide por rol del catálogo
 function RoleIconCmp({ rol, className }: { rol: string; className?: string }) {
@@ -99,7 +100,7 @@ export default function EmpleadosPage() {
     if (!supabase) return;
     setLoading(true);
     let query = supabase.from("usuarios").select(`
-      id, rol, username, email, nombre, telefono, activo,
+      id, rol, username, email, nombre, telefono, activo, especialidad,
       sede:sedes(id, nombre)
     `).order('nombre', { ascending: true });
 
@@ -206,6 +207,8 @@ export default function EmpleadosPage() {
       rol: emp.rol,
       sede_id: emp.sede?.id || currentSede?.id || "",
       telefono: emp.telefono || "",
+      especialidad: emp.especialidad || "",
+      activo: emp.activo !== false,
       password: "",
       permisos,
     });
@@ -508,11 +511,28 @@ export default function EmpleadosPage() {
                 <Wrench className="w-5 h-5 text-amber-500" />
                 <div>
                   <CardTitle className="text-lg">Personal Técnico (Taller)</CardTitle>
-                  <CardDescription>Jefes de taller y mecánicos — con acceso limitado al panel</CardDescription>
+                  <CardDescription>
+                    Organizado por área de trabajo — la misma zona que usa el motor de comisiones
+                  </CardDescription>
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="p-0">{renderTable(tecnicos, true)}</CardContent>
+            <CardContent className="p-3 sm:p-4">
+              {loading ? (
+                <div className="flex justify-center p-8">
+                  <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
+                </div>
+              ) : (
+                <PersonalTecnico
+                  empleados={tecnicos as any}
+                  canEdit={canEdit}
+                  canDelete={canDelete}
+                  onEdit={(e: any) => handleEditClick(e)}
+                  onDelete={handleDelete}
+                  onChanged={fetchEmpleados}
+                />
+              )}
+            </CardContent>
           </Card>
 
           <Card className="border-emerald-200 dark:border-emerald-900/50 shadow-sm overflow-hidden bg-emerald-50/10">
@@ -598,6 +618,37 @@ export default function EmpleadosPage() {
                         {sedes.map(s => <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>)}
                       </SelectContent>
                     </Select>
+                  </div>
+                </div>
+
+                {/* Área de trabajo + estado (personal técnico) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Área de trabajo</Label>
+                    <select
+                      value={editFormData.especialidad || ''}
+                      onChange={e => setEditFormData({ ...editFormData, especialidad: e.target.value })}
+                      className="w-full h-10 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
+                    >
+                      <option value="">— Sin área asignada —</option>
+                      {AREAS.map(a => <option key={a.key} value={a.key}>{a.label}</option>)}
+                    </select>
+                    <p className="text-[10px] text-slate-400">Determina en qué zona del taller se agrupa y comisiona.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Estado</Label>
+                    <label className="flex items-center gap-2 h-10 px-3 rounded-md border border-slate-200 dark:border-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editFormData.activo !== false}
+                        onChange={e => setEditFormData({ ...editFormData, activo: e.target.checked })}
+                        className="w-4 h-4 accent-emerald-500"
+                      />
+                      <span className="text-sm font-medium">
+                        {editFormData.activo !== false ? 'Activo' : 'Inactivo'}
+                      </span>
+                    </label>
+                    <p className="text-[10px] text-slate-400">Los inactivos no aparecen en los selectores de la orden.</p>
                   </div>
                 </div>
 

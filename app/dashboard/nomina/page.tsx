@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from '@/lib/store/useSedeStore';
@@ -24,10 +25,23 @@ const money = (n: number) => `$${(n ?? 0).toLocaleString('en-US', { minimumFract
 const zonaLabel = (z: string) => ZONAS_TRABAJO.find(x => x.key === z)?.label || z;
 
 // ── Períodos ────────────────────────────────────────────────────────────────
-function isoWeekStart(d: Date) { const x = new Date(d); const day = (x.getDay() + 6) % 7; x.setDate(x.getDate() - day); return x.toISOString().slice(0, 10); }
-function addDays(iso: string, n: number) { const x = new Date(iso + 'T00:00:00'); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); }
-function monthStart(d: Date) { return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10); }
-function monthEnd(d: Date) { return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10); }
+function getLocalISODate(d: Date = new Date()): string {
+  const offset = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - offset).toISOString().slice(0, 10);
+}
+function isoWeekStart(d: Date = new Date()) {
+  const x = new Date(d);
+  const day = (x.getDay() + 6) % 7; // Lunes = 0, Domingo = 6
+  x.setDate(x.getDate() - day);
+  return getLocalISODate(x);
+}
+function addDays(iso: string, n: number) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const x = new Date(y, m - 1, d + n);
+  return getLocalISODate(x);
+}
+function monthStart(d: Date = new Date()) { return getLocalISODate(new Date(d.getFullYear(), d.getMonth(), 1)); }
+function monthEnd(d: Date = new Date()) { return getLocalISODate(new Date(d.getFullYear(), d.getMonth() + 1, 0)); }
 
 const PRESETS = [
   { key: 'semana', label: 'Esta semana' },
@@ -144,25 +158,31 @@ export default function NominaPage() {
       </div>
 
       {/* Período */}
-      <Card className="border-slate-200 dark:border-slate-800">
-        <CardContent className="p-3 flex flex-wrap items-center gap-2">
-          <Calendar className="w-4 h-4 text-slate-400" />
-          {PRESETS.map(p => (
-            <button key={p.key} onClick={() => onPreset(p.key)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${preset === p.key ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'}`}>
-              {p.label}
-            </button>
-          ))}
-          {preset === 'custom' && (
-            <div className="flex items-center gap-2 ml-2">
-              <input type="date" value={range.inicio} onChange={e => setRange(r => ({ ...r, inicio: e.target.value }))}
-                className="h-8 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-sm" />
-              <span className="text-slate-400">→</span>
-              <input type="date" value={range.fin} onChange={e => setRange(r => ({ ...r, fin: e.target.value }))}
-                className="h-8 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-sm" />
-            </div>
-          )}
-          <span className="ml-auto text-xs text-slate-400">{range.inicio} → {range.fin}</span>
+      <Card className="border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 shadow-sm">
+        <CardContent className="p-3 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Calendar className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="text-xs font-bold text-slate-700 dark:text-slate-200 mr-1">Período:</span>
+            {PRESETS.map(p => (
+              <button key={p.key} onClick={() => onPreset(p.key)}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all shadow-sm ${preset === p.key ? 'bg-emerald-600 text-white shadow-emerald-500/20 scale-105' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 border border-slate-200 dark:border-slate-700'}`}>
+                {p.label}
+              </button>
+            ))}
+            {preset === 'custom' && (
+              <div className="flex items-center gap-2 ml-1">
+                <input type="date" value={range.inicio} onChange={e => setRange(r => ({ ...r, inicio: e.target.value }))}
+                  className="h-8 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-xs font-mono" />
+                <span className="text-slate-400 font-bold">→</span>
+                <input type="date" value={range.fin} onChange={e => setRange(r => ({ ...r, fin: e.target.value }))}
+                  className="h-8 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-xs font-mono" />
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2 bg-emerald-100/80 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 px-3 py-1.5 rounded-xl self-end sm:self-auto shrink-0 animate-in fade-in duration-300">
+            <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300">📅 Activo (Lunes a Domingo):</span>
+            <span className="text-xs font-mono font-black text-emerald-950 dark:text-emerald-200 tracking-tight">{range.inicio} → {range.fin}</span>
+          </div>
         </CardContent>
       </Card>
 
@@ -326,25 +346,206 @@ function MiResumen({ earnings }: { earnings?: EmployeeEarnings }) {
   );
 }
 
-function JobsTable({ jobs }: { jobs: JobAssignment[] }) {
+// ════════════════════ DETALLE DE TRABAJO (modal) ════════════════════
+function JobDetailModal({ job, onClose }: { job: JobAssignment; onClose: () => void }) {
+  const isAlineacion = job.zona === 'alineacion' || /alineaci/i.test(job.descripcion || '');
+  const provPct = Number(job.desglose?.proveedor_pct ?? (isAlineacion ? 35 : 0));
+  const provMontoBs = (job.proveedor_monto || 0) * (job.moneda === 'VES' ? 1 : (job.tasa_cambio || 1));
+  const provMontoUsd = job.proveedor_monto_usd || 0;
+  
+  const clienteName = String(job.desglose?.cliente || 'Consumidor Final');
+  const vehiculoInfo = String(job.desglose?.vehiculo || 'Vehículo de Taller');
+  const placaInfo = String(job.desglose?.placa || '');
+  const items = Array.isArray(job.desglose?.items) ? job.desglose.items : [];
+
+  const rateBs = job.tasa_cambio && job.tasa_cambio > 1 ? job.tasa_cambio : 1;
+  const ingresoBs = job.ingreso_usd * rateBs;
+  const manoObraBs = job.mano_obra_usd * rateBs;
+  const comisionBs = job.comision_usd * rateBs;
+  const lycosBs = (job.lycos_neto || 0) * rateBs;
+
+  return (
+    <ModalShell onClose={onClose} title={`Detalle Desglosado del Trabajo · ${job.fecha}`} zIndex={110}>
+      <div className="space-y-4 text-sm">
+        {/* Encabezado y Estado */}
+        <div className="flex flex-wrap items-center justify-between gap-2 p-3.5 rounded-xl bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800/80 border border-slate-200 dark:border-slate-700/60">
+          <div className="flex items-center gap-2.5">
+            <span className="text-xl">🛠️</span>
+            <div>
+              <div className="font-bold text-slate-800 dark:text-slate-100 text-base">{job.descripcion || job.tipo_trabajo || 'Servicio Automotriz'}</div>
+              <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2 mt-0.5">
+                <span className="px-2 py-0.5 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-medium">{zonaLabel(job.zona)}</span>
+                <span>• ID Ref: #{String(job.referencia_id || job.id).slice(0, 8)}</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <EstadoBadge estado={job.estado} />
+            {job.referencia_tabla === 'servicios' && job.referencia_id && (
+              <a href={`/dashboard/servicios?buscar=${job.referencia_id}`} target="_blank" rel="noreferrer"
+                className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium flex items-center gap-1 shadow-sm transition-colors">
+                🚗 Ver Servicio
+              </a>
+            )}
+            {job.referencia_tabla === 'ventas_dia' && job.referencia_id && (
+              <span className="px-2.5 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-medium border border-emerald-200 dark:border-emerald-800">
+                🧾 Venta en POS
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Cliente y Vehículo */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1.5">
+              <span>👤</span> Cliente Atendido
+            </div>
+            <div className="font-semibold text-slate-800 dark:text-slate-200 text-base truncate">{clienteName}</div>
+            <div className="text-xs text-slate-500 mt-0.5">Registrado vía {job.referencia_tabla || 'sistema'}</div>
+          </div>
+          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1.5">
+              <span>🚗</span> Vehículo / Placa
+            </div>
+            <div className="font-semibold text-slate-800 dark:text-slate-200 text-base truncate">{vehiculoInfo}</div>
+            {placaInfo && <div className="text-xs font-mono bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-1.5 py-0.5 rounded inline-block mt-1">{placaInfo}</div>}
+          </div>
+        </div>
+
+        {/* Desglose de ítems (si viene de POS o Servicio con items) */}
+        {items.length > 0 && (
+          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
+            <div className="text-xs font-bold uppercase text-slate-500 mb-2">Desglose de Ítems / Repuestos del Encargo</div>
+            <div className="divide-y divide-slate-200 dark:divide-slate-800 text-xs">
+              {items.map((it: any, idx: number) => (
+                <div key={idx} className="py-1.5 flex justify-between items-center">
+                  <span className="text-slate-700 dark:text-slate-300 font-medium">{it.nombre || it.descripcion || `Ítem #${idx + 1}`} {it.cantidad > 1 ? `(x${it.cantidad})` : ''}</span>
+                  <span className="font-mono text-slate-600 dark:text-slate-400">{money(Number(it.total || it.precio || 0))}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Cuadro de Desglose Financiero Dual (USD - VES) */}
+        <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-white dark:bg-slate-900">
+          <div className="bg-slate-50 dark:bg-slate-800/60 px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center">
+            <span className="text-xs font-bold text-slate-700 dark:text-slate-200 uppercase tracking-wide">Desglose Financiero & Comisión (Lycos Team)</span>
+            {rateBs > 1 && <span className="text-[11px] font-mono bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-full border border-amber-300 dark:border-amber-800">Tasa BCV: {rateBs.toFixed(2)} Bs/$</span>}
+          </div>
+          <div className="p-4 space-y-3">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
+              <div>
+                <span className="font-medium text-slate-700 dark:text-slate-200">Ingreso Total Cobrado al Cliente</span>
+                <div className="text-xs text-slate-400">Monto bruto facturado en la orden</div>
+              </div>
+              <div className="text-right font-mono">
+                <div className="font-bold text-base text-slate-800 dark:text-slate-100">{money(job.ingreso_usd)} USD</div>
+                {rateBs > 1 && <div className="text-xs text-slate-500">Bs. {ingresoBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
+              </div>
+            </div>
+
+            <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
+              <div>
+                <span className="font-medium text-slate-700 dark:text-slate-200">Porción Mano de Obra (Base Comisión)</span>
+                <div className="text-xs text-slate-400">Monto sobre el cual se calcula el % del técnico</div>
+              </div>
+              <div className="text-right font-mono">
+                <div className="font-semibold text-slate-700 dark:text-slate-200">{money(job.mano_obra_usd)} USD</div>
+                {rateBs > 1 && <div className="text-xs text-slate-500">Bs. {manoObraBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
+              </div>
+            </div>
+
+            <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
+              <div>
+                <span className="font-bold text-emerald-600 dark:text-emerald-400 text-base">Comisión del Técnico ({job.es_taller ? 'Taller' : job.empleado_nombre})</span>
+                <div className="text-xs text-slate-500 font-medium mt-0.5">
+                  Regla: <span className="text-indigo-600 dark:text-indigo-400">{job.tipo_regla || 'Estándar'}</span> · {job.es_override ? 'Override Jefe de Taller' : `${job.desglose?.valor || job.desglose?.pct || ''}% s/ ${job.desglose?.base || 'mano de obra'}`}
+                </div>
+              </div>
+              <div className="text-right font-mono">
+                <div className="font-bold text-lg text-emerald-600 dark:text-emerald-400">{money(job.comision_usd)} USD</div>
+                {rateBs > 1 && <div className="text-xs font-semibold text-emerald-600/80">Bs. {comisionBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
+              </div>
+            </div>
+
+            {/* Caso especial de Alineación y Balanceo (Puente Proveedor) */}
+            {isAlineacion && provMontoUsd > 0 && (
+              <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800 bg-amber-50/50 dark:bg-amber-950/20 p-2 rounded-lg">
+                <div>
+                  <span className="font-medium text-amber-800 dark:text-amber-300">Puente / Proveedor de Alineación ({provPct}%)</span>
+                  <div className="text-xs text-amber-600 dark:text-amber-400">Pago externo al proveedor de la máquina</div>
+                </div>
+                <div className="text-right font-mono">
+                  <div className="font-bold text-amber-700 dark:text-amber-300">{money(provMontoUsd)} USD</div>
+                  {rateBs > 1 && <div className="text-xs text-amber-600">Bs. {provMontoBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-between items-center pt-1">
+              <div>
+                <span className="font-bold text-slate-800 dark:text-slate-100">Retención del Taller (Lycos Neto)</span>
+                <div className="text-xs text-slate-400">Margen neto para el taller después de comisiones</div>
+              </div>
+              <div className="text-right font-mono">
+                <div className="font-bold text-indigo-600 dark:text-indigo-400">{money(job.lycos_neto || 0)} USD</div>
+                {rateBs > 1 && <div className="text-xs text-slate-500">Bs. {lycosBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Pie de modal con botón de cierre */}
+        <div className="flex justify-end pt-2">
+          <Button onClick={onClose} className="bg-slate-800 hover:bg-slate-900 text-white dark:bg-slate-700 dark:hover:bg-slate-600 px-6">
+            Cerrar Detalle
+          </Button>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function JobsTable({ jobs, onSelectJob }: { jobs: JobAssignment[]; onSelectJob?: (job: JobAssignment) => void }) {
+  const [selectedJob, setSelectedJob] = useState<JobAssignment | null>(null);
   if (!jobs || jobs.length === 0) return <div className="text-center py-8 text-slate-400 text-sm">Sin trabajos registrados.</div>;
   return (
-    <table className="w-full text-sm">
-      <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 text-xs uppercase">
-        <tr><th className="text-left px-4 py-2">Fecha</th><th className="text-left px-3 py-2">Zona</th><th className="text-left px-3 py-2">Detalle</th><th className="text-right px-3 py-2">Mano obra</th><th className="text-right px-4 py-2">Comisión</th></tr>
-      </thead>
-      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-        {jobs.map(j => (
-          <tr key={j.id} className={j.es_override ? 'bg-violet-50/40 dark:bg-violet-950/10' : ''}>
-            <td className="px-4 py-2 text-slate-500">{j.fecha}</td>
-            <td className="px-3 py-2"><span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800">{zonaLabel(j.zona)}</span></td>
-            <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{j.es_override ? '↳ Override (cascada)' : (j.descripcion || j.tipo_trabajo || '—')}</td>
-            <td className="text-right px-3 py-2 text-slate-500">{money(j.mano_obra_usd)}</td>
-            <td className="text-right px-4 py-2 font-semibold text-emerald-600">{money(j.comision_usd)}</td>
+    <>
+      <table className="w-full text-sm">
+        <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 text-xs uppercase">
+          <tr>
+            <th className="text-left px-4 py-2">Fecha</th>
+            <th className="text-left px-3 py-2">Zona</th>
+            <th className="text-left px-3 py-2">Detalle</th>
+            <th className="text-left px-3 py-2">Cliente / Vehículo</th>
+            <th className="text-right px-3 py-2">Mano obra</th>
+            <th className="text-right px-4 py-2">Comisión</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          {jobs.map(j => (
+            <tr
+              key={j.id}
+              onClick={() => onSelectJob ? onSelectJob(j) : setSelectedJob(j)}
+              className={`cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50 ${j.es_override ? 'bg-violet-50/40 dark:bg-violet-950/10' : ''}`}
+            >
+              <td className="px-4 py-2 text-slate-500">{j.fecha}</td>
+              <td className="px-3 py-2"><span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 font-medium">{zonaLabel(j.zona)}</span></td>
+              <td className="px-3 py-2 font-medium text-slate-700 dark:text-slate-200">{j.es_override ? '↳ Override (cascada)' : (j.descripcion || j.tipo_trabajo || '—')}</td>
+              <td className="px-3 py-2 text-xs text-slate-500">
+                <div className="font-semibold text-slate-700 dark:text-slate-300">{String(j.desglose?.cliente || 'Consumidor Final')}</div>
+                <div className="text-[11px] text-slate-400 truncate max-w-[180px]">{String(j.desglose?.vehiculo || 'Vehículo de Taller')}</div>
+              </td>
+              <td className="text-right px-3 py-2 text-slate-500 font-mono">{money(j.mano_obra_usd)}</td>
+              <td className="text-right px-4 py-2 font-bold text-emerald-600 font-mono">{money(j.comision_usd)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {selectedJob && <JobDetailModal job={selectedJob} onClose={() => setSelectedJob(null)} />}
+    </>
   );
 }
 
@@ -525,6 +726,7 @@ function RegistrarTrabajoModal({ sedeId, onClose, onDone }: { sedeId: string | n
 function TrabajosTab({ range, sedeId, canEdit, canLiquidar, esTecnico, userId }: any) {
   const [jobs, setJobs] = useState<JobAssignment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedJob, setSelectedJob] = useState<JobAssignment | null>(null);
   const load = useCallback(async () => {
     setLoading(true);
     const qs = new URLSearchParams({ inicio: range.inicio, fin: range.fin });
@@ -547,25 +749,50 @@ function TrabajosTab({ range, sedeId, canEdit, canLiquidar, esTecnico, userId }:
         {jobs.length === 0 ? <div className="text-center py-12 text-slate-400">Sin trabajos en este período.</div> : (
           <table className="w-full text-sm">
             <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 text-xs uppercase">
-              <tr><th className="text-left px-4 py-2">Fecha</th><th className="text-left px-3 py-2">Técnico</th><th className="text-left px-3 py-2">Zona</th><th className="text-right px-3 py-2">Ingreso</th><th className="text-right px-3 py-2">Mano obra</th><th className="text-right px-3 py-2">Comisión</th><th className="text-center px-3 py-2">Estado</th>{canLiquidar && <th className="px-3 py-2"></th>}</tr>
+              <tr>
+                <th className="text-left px-4 py-2">Fecha</th>
+                <th className="text-left px-3 py-2">Técnico</th>
+                <th className="text-left px-3 py-2">Zona</th>
+                <th className="text-left px-3 py-2">Detalle / Encargo</th>
+                <th className="text-left px-3 py-2">Cliente / Vehículo</th>
+                <th className="text-right px-3 py-2">Ingreso</th>
+                <th className="text-right px-3 py-2">Mano obra</th>
+                <th className="text-right px-3 py-2">Comisión</th>
+                <th className="text-center px-3 py-2">Estado</th>
+                {canLiquidar && <th className="px-3 py-2"></th>}
+              </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {jobs.map(j => (
-                <tr key={j.id} className={j.estado === 'anulado' ? 'opacity-40' : j.es_override ? 'bg-violet-50/40 dark:bg-violet-950/10' : ''}>
+                <tr
+                  key={j.id}
+                  onClick={() => setSelectedJob(j)}
+                  className={`cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50 ${j.estado === 'anulado' ? 'opacity-40' : j.es_override ? 'bg-violet-50/40 dark:bg-violet-950/10' : ''}`}
+                >
                   <td className="px-4 py-2 text-slate-500">{j.fecha}</td>
                   <td className="px-3 py-2 font-medium text-slate-700 dark:text-slate-200">{j.es_taller ? '🏢 Taller' : j.empleado_nombre}{j.es_override && <span className="text-[10px] text-violet-500 ml-1">override</span>}</td>
                   <td className="px-3 py-2"><span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800">{zonaLabel(j.zona)}</span></td>
-                  <td className="text-right px-3 py-2 text-slate-500">{money(j.ingreso_usd)}</td>
-                  <td className="text-right px-3 py-2 text-slate-500">{money(j.mano_obra_usd)}</td>
-                  <td className="text-right px-3 py-2 font-semibold text-emerald-600">{money(j.comision_usd)}</td>
+                  <td className="px-3 py-2 text-slate-600 dark:text-slate-300 font-medium">{j.es_override ? '↳ Override (cascada)' : (j.descripcion || j.tipo_trabajo || '—')}</td>
+                  <td className="px-3 py-2 text-xs text-slate-500">
+                    <div className="font-semibold text-slate-700 dark:text-slate-300">{String(j.desglose?.cliente || 'Consumidor Final')}</div>
+                    <div className="text-[11px] text-slate-400 truncate max-w-[180px]">{String(j.desglose?.vehiculo || 'Vehículo de Taller')}</div>
+                  </td>
+                  <td className="text-right px-3 py-2 text-slate-500 font-mono">{money(j.ingreso_usd)}</td>
+                  <td className="text-right px-3 py-2 text-slate-500 font-mono">{money(j.mano_obra_usd)}</td>
+                  <td className="text-right px-3 py-2 font-bold text-emerald-600 font-mono">{money(j.comision_usd)}</td>
                   <td className="text-center px-3 py-2"><EstadoBadge estado={j.estado} /></td>
-                  {canLiquidar && <td className="px-3 py-2 text-right">{j.estado === 'pendiente' && <button onClick={() => anular(j.id)} className="text-slate-400 hover:text-red-500"><X className="w-4 h-4" /></button>}</td>}
+                  {canLiquidar && (
+                    <td className="px-3 py-2 text-right" onClick={e => e.stopPropagation()}>
+                      {j.estado === 'pendiente' && <button onClick={() => anular(j.id)} className="text-slate-400 hover:text-red-500"><X className="w-4 h-4" /></button>}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </CardContent>
+      {selectedJob && <JobDetailModal job={selectedJob} onClose={() => setSelectedJob(null)} />}
     </Card>
   );
 }
@@ -576,11 +803,90 @@ function EstadoBadge({ estado }: { estado: string }) {
 }
 
 // ════════════════════ REGLAS TAB ════════════════════
+function RuleDetailModal({ rule, onClose }: { rule: CommissionRule; onClose: () => void }) {
+  return (
+    <ModalShell onClose={onClose} title={`Detalle de Regla de Comisión · ${rule.tipo_regla}`} zIndex={9999}>
+      <div className="space-y-4 text-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shadow-sm">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">👤 Empleado Vinculado</div>
+            <div className="font-semibold text-base text-slate-800 dark:text-slate-200"><EmpName id={rule.empleado_id} /></div>
+            <div className="text-xs text-slate-500 mt-0.5 font-mono">ID: {rule.empleado_id || 'Global / Todos'}</div>
+          </div>
+          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shadow-sm">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">🛠️ Zona y Tipo de Regla</div>
+            <div className="font-semibold text-base text-slate-800 dark:text-slate-200">{zonaLabel(rule.zona)}</div>
+            <div className="text-xs px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 inline-block mt-1.5 font-bold">
+              {rule.tipo_regla}
+            </div>
+          </div>
+        </div>
+        <div className="p-4 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/30 space-y-3 shadow-sm">
+          <div className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
+            <Coins className="w-4 h-4" /> Configuración y Porcentajes de Cálculo
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs pt-1">
+            <div className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-emerald-100 dark:border-emerald-900/50">
+              <span className="text-slate-400 font-medium block">Valor Principal:</span>
+              <span className="font-black text-base text-emerald-600 dark:text-emerald-400 mt-0.5 block">
+                {rule.tipo_regla === 'fijo_semanal' ? money(rule.valor) : `${rule.valor}%`}
+              </span>
+            </div>
+            <div className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-emerald-100 dark:border-emerald-900/50">
+              <span className="text-slate-400 font-medium block">Base de Cálculo:</span>
+              <span className="font-bold text-slate-800 dark:text-slate-200 uppercase mt-0.5 block">{rule.base}</span>
+            </div>
+            {rule.proveedor_pct != null && (
+              <div className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-orange-200 dark:border-orange-900/50">
+                <span className="text-slate-400 font-medium block">Puente Proveedor:</span>
+                <span className="font-black text-base text-orange-600 mt-0.5 block">{rule.proveedor_pct}%</span>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">📝 Descripción / Notas de Aplicación</div>
+          <div className="text-slate-700 dark:text-slate-300 font-medium leading-relaxed">{rule.descripcion || 'Sin descripción adicional en esta regla.'}</div>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function FlatRateDetailModal({ flat, onClose }: { flat: FlatRate; onClose: () => void }) {
+  return (
+    <ModalShell onClose={onClose} title={`Detalle de Tarifa a Destajo (Flat) · ${flat.label}`} zIndex={9999}>
+      <div className="space-y-4 text-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shadow-sm">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">👤 Empleado Asignado</div>
+            <div className="font-semibold text-base text-slate-800 dark:text-slate-200"><EmpName id={flat.empleado_id} /></div>
+          </div>
+          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shadow-sm">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">🔧 Servicio Específico</div>
+            <div className="font-bold text-base text-emerald-600 dark:text-emerald-400">{flat.label}</div>
+            <div className="text-xs text-slate-500 mt-0.5 font-medium">Zona: {zonaLabel(flat.zona)}</div>
+          </div>
+        </div>
+        <div className="p-5 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/30 flex items-center justify-between shadow-sm">
+          <div>
+            <span className="font-bold text-slate-800 dark:text-slate-200 block text-base">Tarifa fija por servicio</span>
+            <span className="text-xs text-slate-500">Monto exacto abonado por cada unidad realizada</span>
+          </div>
+          <span className="text-3xl font-black text-emerald-600 dark:text-emerald-400 font-mono">{money(flat.monto)}</span>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
 function ReglasTab({ sedeId, isAdmin }: { sedeId: string | null; isAdmin: boolean }) {
   const [rules, setRules] = useState<CommissionRule[]>([]);
   const [flats, setFlats] = useState<FlatRate[]>([]);
   const [loading, setLoading] = useState(true);
   const [seedOpen, setSeedOpen] = useState(false);
+  const [selectedRule, setSelectedRule] = useState<CommissionRule | null>(null);
+  const [selectedFlat, setSelectedFlat] = useState<FlatRate | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -595,7 +901,7 @@ function ReglasTab({ sedeId, isAdmin }: { sedeId: string | null; isAdmin: boolea
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <p className="text-sm text-slate-500">Reglas dinámicas vinculadas a cada empleado. El cálculo nunca usa nombres fijos.</p>
+        <p className="text-sm text-slate-500">Reglas dinámicas vinculadas a cada empleado. El cálculo nunca usa nombres fijos. <span className="font-semibold text-slate-700 dark:text-slate-300">Haz clic en cualquier fila para ver los detalles desglosados.</span></p>
         {isAdmin && <Button onClick={() => setSeedOpen(true)} variant="outline"><Settings2 className="w-4 h-4 mr-1.5" /> Aplicar plantillas</Button>}
       </div>
       <Card className="border-slate-200 dark:border-slate-800 overflow-hidden">
@@ -608,13 +914,13 @@ function ReglasTab({ sedeId, isAdmin }: { sedeId: string | null; isAdmin: boolea
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {rules.map(r => (
-                  <tr key={r.id}>
+                  <tr key={r.id} onClick={() => setSelectedRule(r)} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors">
                     <td className="px-4 py-2"><EmpName id={r.empleado_id} /></td>
-                    <td className="px-3 py-2">{zonaLabel(r.zona)}</td>
-                    <td className="px-3 py-2"><span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30">{r.tipo_regla}</span></td>
-                    <td className="text-right px-3 py-2 font-medium">{r.tipo_regla === 'fijo_semanal' ? money(r.valor) : `${r.valor}%`}{r.proveedor_pct ? <span className="text-[10px] text-orange-500 ml-1">+prov {r.proveedor_pct}%</span> : ''}</td>
-                    <td className="px-3 py-2 text-slate-500">{r.base}</td>
-                    <td className="px-3 py-2 text-slate-500 text-xs">{r.descripcion}</td>
+                    <td className="px-3 py-2 font-medium text-slate-700 dark:text-slate-300">{zonaLabel(r.zona)}</td>
+                    <td className="px-3 py-2"><span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 font-semibold">{r.tipo_regla}</span></td>
+                    <td className="text-right px-3 py-2 font-bold text-emerald-600">{r.tipo_regla === 'fijo_semanal' ? money(r.valor) : `${r.valor}%`}{r.proveedor_pct ? <span className="text-[10px] text-orange-500 ml-1">+prov {r.proveedor_pct}%</span> : ''}</td>
+                    <td className="px-3 py-2 text-slate-500 uppercase text-xs font-mono">{r.base}</td>
+                    <td className="px-3 py-2 text-slate-500 text-xs truncate max-w-[200px]">{r.descripcion}</td>
                   </tr>
                 ))}
               </tbody>
@@ -632,7 +938,7 @@ function ReglasTab({ sedeId, isAdmin }: { sedeId: string | null; isAdmin: boolea
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {flats.map(f => (
-                  <tr key={f.id}><td className="px-4 py-2"><EmpName id={f.empleado_id} /></td><td className="px-3 py-2">{f.label}</td><td className="px-3 py-2">{zonaLabel(f.zona)}</td><td className="text-right px-4 py-2 font-medium text-emerald-600">{money(f.monto)}</td></tr>
+                  <tr key={f.id} onClick={() => setSelectedFlat(f)} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors"><td className="px-4 py-2"><EmpName id={f.empleado_id} /></td><td className="px-3 py-2 font-semibold text-slate-800 dark:text-slate-200">{f.label}</td><td className="px-3 py-2 text-slate-500">{zonaLabel(f.zona)}</td><td className="text-right px-4 py-2 font-bold font-mono text-emerald-600">{money(f.monto)}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -640,6 +946,8 @@ function ReglasTab({ sedeId, isAdmin }: { sedeId: string | null; isAdmin: boolea
         </CardContent>
       </Card>
       {seedOpen && <SeedModal sedeId={sedeId} onClose={() => setSeedOpen(false)} onDone={() => { setSeedOpen(false); load(); }} />}
+      {selectedRule && <RuleDetailModal rule={selectedRule} onClose={() => setSelectedRule(null)} />}
+      {selectedFlat && <FlatRateDetailModal flat={selectedFlat} onClose={() => setSelectedFlat(null)} />}
     </div>
   );
 }
@@ -668,9 +976,13 @@ function SeedModal({ sedeId, onClose, onDone }: { sedeId: string | null; onClose
   const plantillas = [
     { key: 'rafael', label: 'Rafael — Alineación 25%/20%+puente · Mecánica 40% · Revisión $2' },
     { key: 'roger', label: 'Roger — Fijo $40/sem · Mecánica 40%' },
-    { key: 'jim', label: 'Jim — Override 7% jefe taller · Mecánica propia 40%' },
+    { key: 'jim', label: 'Jim / Jefe de Taller — Override 7% supervisión · Mecánica propia 40%' },
     { key: 'acevedo', label: 'Acevedo — Almacén fijo $40/sem' },
     { key: 'freddy', label: 'Freddy — Escapes a destajo (5/5/5/1/1/1)' },
+    { key: 'nelson', label: 'Nelson (Margarito) — Cauchera (30% rep. / 40% rotación / 100% adic)' },
+    { key: 'angel', label: 'Angel — Latonería y Pintura (Variable según presupuesto)' },
+    { key: 'dyan', label: 'Dyan — Autolavado (Caso especial por definir)' },
+    { key: 'frank', label: 'Frank — Mecánica general 40% mano de obra' },
   ];
   useEffect(() => { fetch(`/api/nomina/technicians${sedeId ? `?sede=${sedeId}` : ''}`).then(r => r.json()).then(d => setTechs(d.technicians || [])); }, [sedeId]);
 
@@ -829,17 +1141,111 @@ function HistorialTab({ sedeId, isAdmin }: { sedeId: string | null; isAdmin: boo
 }
 
 // ════════════════════ SHELL DE MODAL ════════════════════
-function ModalShell({ children, onClose, title }: { children: React.ReactNode; onClose: () => void; title: string }) {
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={onClose}>
-      <Card className="w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-200" onClick={(e: any) => e.stopPropagation()}>
-        <CardHeader className="py-3 border-b border-slate-200 dark:border-slate-800 flex flex-row items-center justify-between shrink-0">
-          <CardTitle className="text-lg">{title}</CardTitle>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+function ModalShell({ children, onClose, title, zIndex = 9999 }: { children: React.ReactNode; onClose: () => void; title: string; zIndex?: number }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted || typeof document === 'undefined') return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-2 sm:p-4 overflow-y-auto"
+      style={{ zIndex }}
+      onClick={onClose}
+    >
+      <Card
+        className="w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-200 bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 opacity-100 !bg-opacity-100 my-auto rounded-2xl overflow-hidden"
+        onClick={(e: any) => e.stopPropagation()}
+      >
+        <CardHeader className="py-4 px-5 bg-slate-50 dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800 flex flex-row items-center justify-between shrink-0">
+          <CardTitle className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+            <span>🔍</span> {title}
+          </CardTitle>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg bg-slate-200/60 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-300/60 dark:hover:bg-slate-700 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </CardHeader>
-        <CardContent className="p-4 overflow-y-auto custom-scrollbar">{children}</CardContent>
+        <CardContent className="p-4 sm:p-6 overflow-y-auto custom-scrollbar space-y-4 bg-white dark:bg-slate-900">
+          {children}
+        </CardContent>
       </Card>
-    </div>
+    </div>,
+    document.body
+  );
+}
+
+// ════════════════════ DETALLE DE OPERACIÓN IA (modal) ════════════════════
+function AIOperationDetailModal({ op, onClose }: { op: any; onClose: () => void }) {
+  return (
+    <ModalShell onClose={onClose} title={`Detalle de Análisis IA · ${op.fecha}`} zIndex={110}>
+      <div className="space-y-4 text-sm">
+        <div className="p-3.5 rounded-xl bg-gradient-to-r from-indigo-50 to-purple-50 dark:from-indigo-950/40 dark:to-purple-950/40 border border-indigo-200 dark:border-indigo-800 flex items-start gap-3">
+          <Bot className="w-6 h-6 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
+          <div>
+            <div className="font-bold text-slate-800 dark:text-slate-100 text-base">Análisis Inteligente (Gemini / Heurístico)</div>
+            <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+              Razonamiento: <span className="font-semibold text-indigo-700 dark:text-indigo-300">{op.razon || 'Clasificado automáticamente'}</span>
+            </p>
+            <div className="flex items-center gap-2 mt-2">
+              <span className="text-xs px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-medium">
+                Confianza: {Math.round((op.confianza || 0) * 100)}%
+              </span>
+              {op.requiere_revision && (
+                <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 font-medium flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" /> Requiere revisión
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shadow-sm">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">🛠️ Trabajo / Encargo Detectado</div>
+            <div className="font-semibold text-slate-800 dark:text-slate-200 text-base">{op.descripcion || op.tipo_trabajo || '—'}</div>
+            <div className="text-xs text-slate-500 mt-1">Zona asignada: <span className="font-medium text-slate-700 dark:text-slate-300">{zonaLabel(op.zona)}</span></div>
+          </div>
+          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shadow-sm">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">👤 Técnico / Encargado</div>
+            <div className="font-semibold text-slate-800 dark:text-slate-200 text-base">{op.es_taller ? '🏢 Taller (sin técnico)' : (op.empleado_nombre || 'Sin asignar')}</div>
+            {op.encargado_detectado && (
+              <div className="text-xs text-indigo-600 dark:text-indigo-400 mt-1 font-medium">Mención en orden: {op.encargado_detectado}</div>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">👤 Cliente</div>
+            <div className="font-semibold text-slate-800 dark:text-slate-200 text-base truncate">{op.cliente || 'Consumidor Final'}</div>
+          </div>
+          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">🚗 Vehículo / Placa</div>
+            <div className="font-semibold text-slate-800 dark:text-slate-200 text-base truncate">{op.vehiculo || 'Vehículo de Taller'}</div>
+          </div>
+        </div>
+
+        <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm space-y-2">
+          <div className="text-xs font-bold uppercase text-slate-400">Estimación de Montos</div>
+          <div className="flex justify-between items-center text-sm">
+            <span className="text-slate-600 dark:text-slate-400">Monto Total de la Orden:</span>
+            <span className="font-mono font-bold text-slate-800 dark:text-slate-100">{money(op.monto)} USD</span>
+          </div>
+          <div className="flex justify-between items-center text-sm">
+            <span className="text-slate-600 dark:text-slate-400">Porción Estimada Mano de Obra:</span>
+            <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{money(op.mano_obra)} USD</span>
+          </div>
+        </div>
+
+        <div className="flex justify-end pt-2">
+          <Button onClick={onClose} className="bg-slate-800 hover:bg-slate-900 text-white dark:bg-slate-700 dark:hover:bg-slate-600 px-6">
+            Cerrar Detalle
+          </Button>
+        </div>
+      </div>
+    </ModalShell>
   );
 }
 
@@ -853,6 +1259,7 @@ function AnalisisIATab({ range, sedeId, onDone }: { range: { inicio: string; fin
   const [err, setErr] = useState('');
   const [msg, setMsg] = useState('');
   const [done, setDone] = useState(false);
+  const [selectedAIOp, setSelectedAIOp] = useState<any>(null);
 
   useEffect(() => {
     fetch(`/api/nomina/technicians${sedeId ? `?sede=${sedeId}` : ''}`).then(r => r.json()).then(d => setTechs(d.technicians || [])).catch(() => {});
@@ -958,21 +1365,25 @@ function AnalisisIATab({ range, sedeId, onDone }: { range: { inicio: string; fin
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {ops.map((o, idx) => (
-                  <tr key={idx} className={`${o.omitir ? 'opacity-40' : ''} ${o.requiere_revision ? 'bg-amber-50/50 dark:bg-amber-950/10' : ''}`}>
-                    <td className="px-3 py-2">
+                  <tr
+                    key={idx}
+                    onClick={() => setSelectedAIOp(o)}
+                    className={`cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${o.omitir ? 'opacity-40' : ''} ${o.requiere_revision ? 'bg-amber-50/50 dark:bg-amber-950/10' : ''}`}
+                  >
+                    <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
                       <input type="checkbox" checked={!o.omitir} onChange={e => updateOp(idx, { omitir: !e.target.checked })} className="rounded" />
                     </td>
                     <td className="px-3 py-2 max-w-[200px]">
                       <div className="truncate font-medium text-slate-700 dark:text-slate-200" title={o.descripcion}>{o.descripcion}</div>
                       <div className="text-[10px] text-slate-400">{o.fecha} · {o.cliente || 's/cliente'}</div>
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
                       <select value={o.zona} onChange={e => updateOp(idx, { zona: e.target.value })}
                         className="rounded border border-slate-200 dark:border-slate-700 bg-transparent px-1.5 py-1 text-xs">
                         {ZONAS_TRABAJO.map(z => <option key={z.key} value={z.key}>{z.label}</option>)}
                       </select>
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
                       <select
                         value={o.es_taller ? '__taller__' : (o.empleado_id || '')}
                         onChange={e => {
@@ -987,7 +1398,7 @@ function AnalisisIATab({ range, sedeId, onDone }: { range: { inicio: string; fin
                       </select>
                     </td>
                     <td className="px-3 py-2 text-right font-medium tabular-nums">{o.monto?.toFixed(2)} {o.moneda}</td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-3 py-2 text-right" onClick={e => e.stopPropagation()}>
                       <input type="number" step="0.01" value={o.mano_obra}
                         onChange={e => updateOp(idx, { mano_obra: Number(e.target.value) })}
                         className="w-20 rounded border border-slate-200 dark:border-slate-700 bg-transparent px-1.5 py-1 text-xs text-right" />
@@ -1013,6 +1424,7 @@ function AnalisisIATab({ range, sedeId, onDone }: { range: { inicio: string; fin
           </div>
         </div>
       )}
+      {selectedAIOp && <AIOperationDetailModal op={selectedAIOp} onClose={() => setSelectedAIOp(null)} />}
     </div>
   );
 }

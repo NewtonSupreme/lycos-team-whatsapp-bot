@@ -680,7 +680,7 @@ export interface CommissionRule {
   proveedor_pct: number;         // % al proveedor externo (puente)
   proveedor_nombre: string | null;
   prioridad: number;
-  condiciones: Record<string, unknown>;
+  condiciones: Record<string, any>;
   descripcion: string | null;
   activo: boolean;
   vigencia_desde: string;
@@ -738,7 +738,7 @@ export interface JobAssignment {
   proveedor_monto_usd: number;
   proveedor_nombre: string | null;
   lycos_neto: number;
-  desglose: Record<string, unknown>;
+  desglose: Record<string, any>;
   estado: EstadoJob;
   payroll_ledger_id: string | null;
   sede_id: string | null;
