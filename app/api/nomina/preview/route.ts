@@ -27,9 +27,12 @@ export async function POST(req: NextRequest) {
   try {
     const preview = await svc.previewJobs(
       items.map(it => ({
+        ref: it.ref != null ? String(it.ref) : undefined,
         empleado_id: it.empleado_id ?? null,
         es_taller: !!it.es_taller,
         zona: it.zona || 'general',
+        tipo_trabajo: it.tipo_trabajo ?? null,
+        descripcion: it.descripcion ?? null,
         ingreso_total: Number(it.ingreso_total) || 0,
         mano_obra: it.mano_obra != null ? Number(it.mano_obra) : undefined,
         servicio_key: it.servicio_key ?? null,

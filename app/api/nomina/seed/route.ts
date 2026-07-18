@@ -6,18 +6,54 @@ import { logActivityServer } from '@/lib/activity-server';
 export const dynamic = 'force-dynamic';
 
 /**
- * Plantillas de comisión documentadas para Lycos Team. El admin mapea qué
- * fila de `usuarios` corresponde a cada persona (no se hardcodean nombres).
- * Devuelve las reglas/tarifas a insertar para un empleado dado.
+ * Plantillas de comisión de Lycos Team — calcadas de las RELACIONES DE PAGO
+ * reales de administración (semanas 25/26) y del catálogo de empleados:
+ *
+ *  · Rafael (V-16.278.639, alineación): 25% alineación · 40% revisión/reemplazo.
+ *    En Bs por puente: proveedor 35% · Lycos 45% · Rafael 20%.
+ *  · Roger (V-10.279.435, mecánica): $40/sem fijo + 40% mano de obra.
+ *  · Jim (V-11.038.792, jefe de taller): 7% supervisión sobre la mano de obra
+ *    de los carros del taller + 40% si él ejecuta el trabajo.
+ *  · Acevedo (V-3.882.980, inventario): $40/sem fijo.
+ *  · Freddy (V-11.098.823, silenciadores): 50% de CADA trabajo.
+ *  · Nelson/Margarito (V-8.683.914, cauchera): 30% reparación · 40% revisión/
+ *    rotación · 100% adicional · resto Por definir.
+ *  · Angel (V-16.888.296, latonería): Por definir (según presupuesto del cliente).
+ *  · Frank/Francisco (V-9.284.889, mecánica): 40% mano de obra.
+ *  · Dyan (V-29.622.223, autolavado): Por definir (caso especial).
+ *
+ * El admin mapea qué fila de `usuarios` es cada persona (no se hardcodean nombres);
+ * al aplicar, también se guarda su cédula, alias y área en el perfil del empleado.
+ * Las reglas con condiciones.tipos se evalúan contra el TEXTO del trabajo
+ * (descripción/tipo), p. ej. "Rotación" → 40% en la cauchera.
  */
+
+interface TemplateMeta { cedula: string; alias?: string; especialidad: string; nombreCompleto: string; }
+
+const META: Record<string, TemplateMeta> = {
+  rafael:  { cedula: 'V-16.278.639', especialidad: 'alineacion', nombreCompleto: 'Rafael Antonio Ramirez' },
+  roger:   { cedula: 'V-10.279.435', especialidad: 'mecanica',   nombreCompleto: 'Roger Rafael Rodriguez Bello' },
+  jim:     { cedula: 'V-11.038.792', especialidad: 'jefatura',   nombreCompleto: 'Jim Carboney Rincon Perez' },
+  acevedo: { cedula: 'V-3.882.980',  especialidad: 'almacen',    nombreCompleto: 'Antonio Jose Acevedo Colmenares' },
+  freddy:  { cedula: 'V-11.098.823', especialidad: 'escape',     nombreCompleto: 'Freddy Ramón Rodriguez Cordova' },
+  nelson:  { cedula: 'V-8.683.914',  alias: 'NELSON', especialidad: 'cauchera', nombreCompleto: 'Margarito Carvajal' },
+  angel:   { cedula: 'V-16.888.296', especialidad: 'latoneria',  nombreCompleto: 'Angel Luis Perez Espinoza' },
+  frank:   { cedula: 'V-9.284.889',  especialidad: 'mecanica',   nombreCompleto: 'Francisco Antonio Hernandez Ruiz' },
+  dyan:    { cedula: 'V-29.622.223', especialidad: 'autolavado', nombreCompleto: 'Dyan Andres Anchundia Mota' },
+};
+
 function buildTemplate(key: string, empleadoId: string, sede: string | null, proveedor: string) {
   const rules: any[] = [];
   const flats: any[] = [];
   const base = { empleado_id: empleadoId, sede_id: sede, activo: true, moneda: 'USD' };
 
   switch (key) {
-    case 'rafael': // Alineación (25% divisa / 20% + puente 35% en Bs) + Mecánica 40% + revisión $2
+    case 'rafael':
       rules.push(
+        // Revisión / reemplazo de piezas → 40% (hoja real: Revisión $5 → $2 = 40%)
+        { ...base, zona: 'alineacion', tipo_regla: 'porcentaje', base: 'ingreso_total', valor: 40,
+          prioridad: 5, condiciones: { tipos: ['revision', 'reemplazo', 'amortiguador', 'base', 'tren'] },
+          descripcion: 'Revisión / reemplazo de piezas 40%' },
         { ...base, zona: 'alineacion', tipo_regla: 'porcentaje', base: 'ingreso_total', valor: 25,
           aplica_monedas: ['USD', 'EUR'], prioridad: 10, descripcion: 'Alineación 25% (divisa)' },
         { ...base, zona: 'alineacion', tipo_regla: 'porcentaje', base: 'ingreso_total', valor: 20,
@@ -26,75 +62,71 @@ function buildTemplate(key: string, empleadoId: string, sede: string | null, pro
         { ...base, zona: 'mecanica', tipo_regla: 'porcentaje', base: 'mano_obra', valor: 40,
           prioridad: 20, descripcion: 'Mecánica 40% mano de obra' },
       );
-      flats.push({ empleado_id: empleadoId, sede_id: sede, activo: true, zona: 'alineacion',
-        servicio_key: 'revision', label: 'Revisión', monto: 2, moneda: 'USD' });
       break;
 
-    case 'roger': // Fijo $40/sem + Mecánica 40%
+    case 'roger':
       rules.push(
         { ...base, zona: 'all', tipo_regla: 'fijo_semanal', base: 'ingreso_total', valor: 40,
           prioridad: 1, descripcion: 'Sueldo fijo $40 semanal' },
         { ...base, zona: 'mecanica', tipo_regla: 'porcentaje', base: 'mano_obra', valor: 40,
-          prioridad: 20, descripcion: 'Mecánica 40% mano de obra' },
+          prioridad: 20, descripcion: 'Mecánica 40% mano de obra (Lycos 60%)' },
       );
       break;
 
-    case 'jim': // Jefe de taller: override 7% sobre mecánica de otros + 40% propia
+    case 'jim':
       rules.push(
         { ...base, zona: 'mecanica', tipo_regla: 'override_cascada', base: 'mano_obra', valor: 7,
-          prioridad: 5, descripcion: 'Override 7% jefe de taller (mecánica de cualquier otro)' },
+          prioridad: 5, descripcion: 'Supervisión 7% s/ mano de obra de los carros del taller' },
         { ...base, zona: 'mecanica', tipo_regla: 'porcentaje', base: 'mano_obra', valor: 40,
-          prioridad: 20, descripcion: 'Mecánica propia 40% mano de obra' },
+          prioridad: 20, descripcion: 'Ejecución propia 40% mano de obra' },
       );
       break;
 
-    case 'acevedo': // Almacén: fijo $40/sem
+    case 'acevedo':
       rules.push(
         { ...base, zona: 'all', tipo_regla: 'fijo_semanal', base: 'ingreso_total', valor: 40,
-          prioridad: 1, descripcion: 'Almacén — sueldo fijo $40 semanal' },
+          prioridad: 1, descripcion: 'Dpto. Inventario — sueldo fijo $40 semanal' },
       );
       break;
 
-    case 'freddy': // Escapes: tarifas a destajo
+    case 'freddy':
+      // Hoja real "Técnico en silenciadores": 50% de CADA trabajo (soldadura,
+      // silenciador, revisión, empacadura…). Los $5/$1 de antes eran 50% de $10/$2.
       rules.push(
-        { ...base, zona: 'escape', tipo_regla: 'tarifa_flat', base: 'ingreso_total', valor: 0,
-          prioridad: 10, descripcion: 'Escapes — pago a destajo (tarifas flat)' },
+        { ...base, zona: 'escape', tipo_regla: 'porcentaje', base: 'ingreso_total', valor: 50,
+          prioridad: 10, descripcion: 'Silenciadores — 50% por cada trabajo' },
       );
-      [
-        ['silenciador', 'Instalación silenciador', 5],
-        ['resonador', 'Instalación resonador', 5],
-        ['flexible', 'Instalación flexible', 5],
-        ['gomas', 'Montar gomas', 1],
-        ['soldadura', 'Soldadura', 1],
-        ['extra', 'Extra pequeño', 1],
-      ].forEach(([k, label, monto]) => flats.push({
-        empleado_id: empleadoId, sede_id: sede, activo: true, zona: 'escape',
-        servicio_key: k, label, monto, moneda: 'USD',
-      }));
       break;
 
-    case 'nelson': // Cauchera
+    case 'nelson':
+      // Hoja "NELSON SEM 25" (Margarito Carvajal): % según el tipo de servicio.
       rules.push(
+        { ...base, zona: 'cauchera', tipo_regla: 'porcentaje', base: 'ingreso_total', valor: 30,
+          prioridad: 5, condiciones: { tipos: ['reparacion'] }, descripcion: 'Reparación de caucho 30%' },
+        { ...base, zona: 'cauchera', tipo_regla: 'porcentaje', base: 'ingreso_total', valor: 40,
+          prioridad: 6, condiciones: { tipos: ['revision', 'rotacion'] }, descripcion: 'Revisión / rotación 40%' },
+        { ...base, zona: 'cauchera', tipo_regla: 'porcentaje', base: 'ingreso_total', valor: 100,
+          prioridad: 7, condiciones: { tipos: ['adicional'] }, descripcion: 'Adicional (aprobado) 100%' },
         { ...base, zona: 'cauchera', tipo_regla: 'porcentaje', base: 'ingreso_total', valor: 0,
-          prioridad: 15, descripcion: 'Cauchera — Variable por servicio (30% rep. / 40% rotación / 100% adic). Si no especifica %, Por definir' },
+          prioridad: 15, descripcion: 'Cauchera — otros servicios: Por definir' },
       );
       break;
 
-    case 'angel': // Latonería
+    case 'angel':
       rules.push(
         { ...base, zona: 'latoneria', tipo_regla: 'porcentaje', base: 'ingreso_total', valor: 0,
-          prioridad: 15, descripcion: 'Latonería y Pintura — Variable según presupuesto con cliente (Si monto no escrito: Por definir)' },
+          prioridad: 15, descripcion: 'Latonería y Pintura — Por definir (según presupuesto con el cliente)' },
       );
       break;
 
-    case 'dyan': // Autolavado
+    case 'dyan':
       rules.push(
-        { ...base, zona: 'lavado', tipo_regla: 'porcentaje', base: 'ingreso_total', valor: 0,
-          prioridad: 15, descripcion: 'Autolavado — Por definir (Caso especial pendiente de estructuración por administración)' },
+        { ...base, zona: 'autolavado', tipo_regla: 'porcentaje', base: 'ingreso_total', valor: 0,
+          prioridad: 15, descripcion: 'Autolavado — Por definir (caso especial pendiente por administración)' },
       );
       break;
 
-    case 'frank': // Mecánica
+    case 'frank':
       rules.push(
         { ...base, zona: 'mecanica', tipo_regla: 'porcentaje', base: 'mano_obra', valor: 40,
           prioridad: 20, descripcion: 'Mecánica 40% mano de obra' },
@@ -137,6 +169,18 @@ export async function POST(req: NextRequest) {
     if (!empId) continue;
     const { rules, flats } = buildTemplate(key, empId, sede, proveedor);
     allRules.push(...rules); allFlats.push(...flats);
+
+    // Completa el perfil del empleado con su identidad del catálogo:
+    // cédula, alias de las hojas de pago y área de trabajo.
+    const meta = META[key];
+    if (meta) {
+      await auth.db.from('usuarios').update({
+        cedula: meta.cedula,
+        alias: meta.alias ?? null,
+        especialidad: meta.especialidad,
+        updated_at: new Date().toISOString(),
+      }).eq('id', empId);
+    }
   }
 
   if (allRules.length) {
@@ -150,7 +194,7 @@ export async function POST(req: NextRequest) {
 
   await logActivityServer(auth.db, {
     usuario: auth.user!.nombre, modulo: 'nomina', accion: 'Plantillas de comisión aplicadas',
-    detalles: `${empleadoIds.length} empleado(s) · ${allRules.length} reglas · ${allFlats.length} tarifas`,
+    detalles: `${empleadoIds.length} empleado(s) · ${allRules.length} reglas · cédulas/áreas actualizadas`,
     sede_id: sede,
   });
   return NextResponse.json({ success: true, rules: allRules.length, flats: allFlats.length });

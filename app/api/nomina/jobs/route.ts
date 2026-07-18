@@ -103,6 +103,7 @@ export async function POST(req: NextRequest) {
         cliente: it.cliente ?? null,
         vehiculo: it.vehiculo ?? null,
         placa: it.placa ?? null,
+        comision_manual: it.comision_manual != null ? Number(it.comision_manual) : null,
         sede_id: sede,
         created_by: auth.user!.nombre,
       });

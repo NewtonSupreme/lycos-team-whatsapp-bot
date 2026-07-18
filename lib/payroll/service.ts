@@ -49,6 +49,19 @@ export interface CreateJobInput {
   placa?: string | null;
   sede_id?: string | null;
   created_by?: string | null;
+  /**
+   * Comisión fijada A MANO (USD). Se usa cuando la regla es "por definir"
+   * (latonería por presupuesto, casos especiales) o el admin quiere ajustar.
+   * Si viene, tiene prioridad sobre el cálculo automático.
+   */
+  comision_manual?: number | null;
+  /** Identificador de ida y vuelta para el preview (no se persiste). */
+  ref?: string;
+}
+
+/** Texto del trabajo contra el que se evalúan las reglas por tipo de servicio. */
+function textoDe(input: CreateJobInput): string {
+  return [input.servicio_key, input.tipo_trabajo, input.descripcion].filter(Boolean).join(' ');
 }
 
 export class PayrollCalculationService {
@@ -117,6 +130,7 @@ export class PayrollCalculationService {
         ingreso_total: ingreso, mano_obra: manoObra,
         servicio_key: input.servicio_key, cantidad: input.cantidad,
         sede_id: input.sede_id,
+        texto: textoDe(input),
       };
 
       const execRule = pickExecutorRule(rules, job);
@@ -130,21 +144,29 @@ export class PayrollCalculationService {
         overridesDetalle.push({ ...o, empleado_nombre: u?.nombre || 'Empleado' });
       }
 
+      // Regla "Por definir": existe pero no tiene % fijado (latonería por presupuesto,
+      // caso especial del autolavado…). La UI pedirá la comisión manual.
+      const porDefinir = !!execRule && execRule.tipo_regla === 'porcentaje'
+        && Number(execRule.valor) === 0 && exec.comision_usd === 0;
+
       out.push({
+        ref: input.ref ?? null,
         empleado_id: input.empleado_id,
         es_taller: !!input.es_taller,
         zona: job.zona,
+        descripcion: input.descripcion ?? null,
         mano_obra: manoObra,
         ingreso_total: ingreso,
         comision: exec.comision,
         comision_usd: exec.comision_usd,
         tipo_regla: exec.tipo_regla,
-        regla_descripcion: (exec.desglose as any)?.regla || null,
+        regla_descripcion: (exec.desglose as any)?.regla || execRule?.descripcion || null,
         pct: (exec.desglose as any)?.pct ?? null,
         base: (exec.desglose as any)?.base ?? null,
         proveedor_monto_usd: exec.proveedor_monto_usd,
         proveedor_nombre: exec.proveedor_nombre,
         sin_regla: !execRule && exec.comision_usd === 0,
+        por_definir: porDefinir,
         desglose: exec.desglose,
         overrides: overridesDetalle,
       });
@@ -176,6 +198,7 @@ export class PayrollCalculationService {
       ingreso_total: ingreso, mano_obra: manoObra,
       servicio_key: input.servicio_key, cantidad: input.cantidad,
       sede_id: input.sede_id,
+      texto: textoDe(input),
     };
 
     const rules = await this.getRules(input.sede_id);
@@ -183,6 +206,18 @@ export class PayrollCalculationService {
 
     const execRule = pickExecutorRule(rules, job);
     const exec = computeExecutorCommission(execRule, job, flats, rates);
+
+    // Comisión fijada A MANO: prevalece sobre la regla automática (casos "por definir":
+    // latonería por presupuesto, adicionales 100%, ajustes puntuales del admin).
+    if (input.comision_manual != null && Number(input.comision_manual) >= 0 && Number.isFinite(Number(input.comision_manual))) {
+      const manualUsd = round2(Number(input.comision_manual));
+      exec.comision = manualUsd;
+      exec.comision_moneda = 'USD';
+      exec.comision_usd = manualUsd;
+      exec.tipo_regla = null;
+      exec.desglose = { ...exec.desglose, regla: 'Comisión manual (fijada por administración)', manual: true };
+    }
+
     const overrides = computeOverrides(rules, job, rates);
     const overridesUsd = round2(overrides.reduce((s, o) => s + o.comision_usd, 0));
 

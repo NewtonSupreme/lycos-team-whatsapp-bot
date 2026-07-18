@@ -2,18 +2,19 @@
 /**
  * PERSONAL A CARGO Y COMISIONES — sección unificada de la Orden de Servicio.
  *
- * Reemplaza el antiguo "Personal a cargo" (que guardaba sólo NOMBRES sueltos y por
- * eso no se podía calcular nada) por una selección de EMPLEADOS REGISTRADOS (con id).
- * Debajo de cada empleado, el sistema calcula EN VIVO su comisión aplicando sus
- * reglas de nómina (25% alineación, 40% mano de obra, override 7% del jefe de taller,
- * tarifas a destajo, etc.) — sin que nadie tenga que hacer cuentas a mano.
+ * Selecciona EMPLEADOS REGISTRADOS (con id) y calcula EN VIVO la comisión de cada
+ * uno aplicando sus reglas de nómina, igual que las relaciones de pago manuales:
+ * CADA SERVICIO del desglose se evalúa POR SEPARADO con su propio porcentaje
+ * (ej. cauchera: 30% reparación, 40% rotación/revisión, 100% adicional;
+ *  Rafael: 25% alineación, 40% revisión/reemplazo; Freddy: 50% por trabajo;
+ *  Jim: +7% de supervisión en cascada).
  *
- * Si la orden tiene desglose de servicios con precio, cada ítem puede asignarse al
- * empleado que lo ejecutó, para que la comisión salga EXACTA.
+ * Si la regla del empleado está "Por definir" (latonería por presupuesto, casos
+ * especiales), se pide la COMISIÓN MANUAL, que prevalece sobre el cálculo.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Plus, Trash2, Wrench, Building2, Loader2, Users, Search, X, TrendingUp, AlertTriangle, Check,
+  Plus, Trash2, Wrench, Building2, Loader2, Users, Search, TrendingUp, AlertTriangle, Check, PencilLine,
 } from 'lucide-react';
 import { ZONAS_TRABAJO } from '@/types';
 
@@ -36,19 +37,18 @@ export interface AsignacionEmpleado {
   mano_obra_manual: number;
   servicio_key?: string | null;
   cantidad?: number;
+  /** Comisión fijada a mano (USD). Prevalece sobre la regla automática. */
+  comision_manual?: number | null;
 }
 
-interface Tecnico { id: string; nombre: string; rol: string; sede_id: string | null; }
+interface Tecnico { id: string; nombre: string; rol: string; sede_id: string | null; especialidad?: string | null; }
 
 interface Props {
   value: AsignacionEmpleado[];
   onChange: (v: AsignacionEmpleado[]) => void;
   sedeId?: string | null;
-  /** Zona por defecto, derivada de la clasificación del servicio. */
   defaultZona?: string;
-  /** Desglose de la orden (ítems con precio) para asignar por servicio. */
   items?: ItemDesglose[];
-  /** Costo total de la orden (si no hay desglose). */
   costoTotal?: number;
 }
 
@@ -63,6 +63,14 @@ const ESCAPE_SERVICIOS = [
 ];
 
 const money = (n: number) => `$${(n ?? 0).toFixed(2)}`;
+
+/** Zona por defecto del empleado según su área asignada en Gestión de Empleados. */
+function zonaDeTecnico(t: Tecnico, fallback: string): string {
+  const e = t.especialidad || '';
+  if (!e || e === 'jefatura' || e === 'almacen') return fallback;
+  if (e === 'lavado') return 'autolavado';
+  return e;
+}
 
 export default function PersonalYComisiones({
   value, onChange, sedeId, defaultZona = 'mecanica', items = [], costoTotal = 0,
@@ -79,7 +87,6 @@ export default function PersonalYComisiones({
     [items]
   );
 
-  // ── Personal registrado ───────────────────────────────────────────────────
   useEffect(() => {
     let vivo = true;
     setCargando(true);
@@ -91,7 +98,6 @@ export default function PersonalYComisiones({
     return () => { vivo = false; };
   }, [sedeId]);
 
-  /** Mano de obra efectiva de una asignación (ítems asignados o monto manual). */
   const manoObraDe = useCallback((a: AsignacionEmpleado): number => {
     if (a.item_idx.length > 0) {
       return a.item_idx.reduce((s, idx) => s + (Number(items[idx]?.total) || 0), 0);
@@ -99,14 +105,55 @@ export default function PersonalYComisiones({
     return Number(a.mano_obra_manual) || 0;
   }, [items]);
 
-  // ── Cálculo en vivo de comisiones ─────────────────────────────────────────
+  /**
+   * Jobs de preview: UNO POR ÍTEM asignado (así cada servicio recibe su propio %,
+   * exactamente como las hojas de pago manuales). ref = `${asignación}:${ítem}`.
+   */
+  const buildPreviewJobs = useCallback(() => {
+    const jobs: any[] = [];
+    value.forEach((a, i) => {
+      if (!a.empleado_id && !a.es_taller) return;
+      const base = {
+        empleado_id: a.empleado_id,
+        es_taller: a.es_taller,
+        zona: a.zona,
+        servicio_key: a.servicio_key || null,
+        cantidad: a.cantidad || 1,
+        moneda: 'USD',
+      };
+      if (a.item_idx.length > 0) {
+        for (const idx of a.item_idx) {
+          const it = items[idx];
+          if (!it) continue;
+          jobs.push({
+            ...base,
+            ref: `${i}:${idx}`,
+            descripcion: it.descripcion,
+            ingreso_total: Number(it.total) || 0,
+            mano_obra: Number(it.total) || 0,
+          });
+        }
+      } else {
+        const mo = Number(a.mano_obra_manual) || 0;
+        jobs.push({
+          ...base,
+          ref: `${i}:m`,
+          descripcion: '',
+          ingreso_total: mo || costoTotal,
+          mano_obra: mo,
+        });
+      }
+    });
+    return jobs;
+  }, [value, items, costoTotal]);
+
   const asignacionesKey = JSON.stringify(
-    value.map(a => [a.empleado_id, a.es_taller, a.zona, manoObraDe(a), a.servicio_key, a.cantidad])
-  );
+    value.map(a => [a.empleado_id, a.es_taller, a.zona, a.item_idx, a.mano_obra_manual, a.servicio_key, a.cantidad])
+  ) + JSON.stringify(itemsValidos.map(i => [i.descripcion, i.total]));
 
   useEffect(() => {
-    const validas = value.filter(a => a.empleado_id || a.es_taller);
-    if (validas.length === 0) { setPreview([]); return; }
+    const jobs = buildPreviewJobs();
+    if (jobs.length === 0) { setPreview([]); return; }
 
     let vivo = true;
     setCalculando(true);
@@ -114,38 +161,26 @@ export default function PersonalYComisiones({
       fetch('/api/nomina/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sede: sedeId,
-          jobs: validas.map(a => {
-            const mo = manoObraDe(a);
-            return {
-              empleado_id: a.empleado_id,
-              es_taller: a.es_taller,
-              zona: a.zona,
-              ingreso_total: mo || costoTotal,
-              mano_obra: mo,
-              servicio_key: a.servicio_key || null,
-              cantidad: a.cantidad || 1,
-              moneda: 'USD',
-            };
-          }),
-        }),
+        body: JSON.stringify({ sede: sedeId, jobs }),
       })
         .then(r => r.json())
         .then(d => { if (vivo) setPreview(d.preview || []); })
         .catch(() => {})
         .finally(() => vivo && setCalculando(false));
-    }, 350); // debounce
+    }, 350);
 
     return () => { vivo = false; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [asignacionesKey, sedeId, costoTotal]);
 
+  /** Filas del preview que pertenecen a la asignación i. */
+  const previewDe = (i: number) => preview.filter(p => String(p.ref || '').startsWith(`${i}:`));
+
   // ── Mutaciones ────────────────────────────────────────────────────────────
   const agregar = (t: Tecnico | null) => {
     const nueva: AsignacionEmpleado = t
-      ? { empleado_id: t.id, es_taller: false, nombre: t.nombre, rol: t.rol, zona: defaultZona, item_idx: [], mano_obra_manual: 0 }
-      : { empleado_id: null, es_taller: true, nombre: 'Taller (sin técnico)', rol: 'taller', zona: defaultZona, item_idx: [], mano_obra_manual: 0 };
+      ? { empleado_id: t.id, es_taller: false, nombre: t.nombre, rol: t.rol, zona: zonaDeTecnico(t, defaultZona), item_idx: [], mano_obra_manual: 0, comision_manual: null }
+      : { empleado_id: null, es_taller: true, nombre: 'Taller (sin técnico)', rol: 'taller', zona: defaultZona, item_idx: [], mano_obra_manual: 0, comision_manual: null };
     onChange([...value, nueva]);
     setBuscar('');
     setAbrirBuscador(false);
@@ -159,12 +194,9 @@ export default function PersonalYComisiones({
   const toggleItem = (i: number, itemIdx: number) => {
     const a = value[i];
     const ya = a.item_idx.includes(itemIdx);
-    actualizar(i, {
-      item_idx: ya ? a.item_idx.filter(x => x !== itemIdx) : [...a.item_idx, itemIdx],
-    });
+    actualizar(i, { item_idx: ya ? a.item_idx.filter(x => x !== itemIdx) : [...a.item_idx, itemIdx] });
   };
 
-  /** Un ítem sólo puede estar asignado a un empleado a la vez. */
   const itemTomadoPor = (itemIdx: number, exceptoI: number): string | null => {
     const i = value.findIndex((a, idx) => idx !== exceptoI && a.item_idx.includes(itemIdx));
     return i >= 0 ? value[i].nombre : null;
@@ -175,10 +207,15 @@ export default function PersonalYComisiones({
       t.nombre.toLowerCase().includes(buscar.toLowerCase())
   );
 
-  const totalComisiones = preview.reduce(
-    (s, p) => s + (Number(p.comision_usd) || 0) + (p.overrides || []).reduce((so: number, o: any) => so + (Number(o.comision_usd) || 0), 0),
-    0
-  );
+  /** Comisión efectiva de la asignación i (manual si está fijada; si no, la automática). */
+  const comisionDe = (i: number): number => {
+    const a = value[i];
+    if (a.comision_manual != null && a.comision_manual > 0) return Number(a.comision_manual);
+    return previewDe(i).reduce((s, p) => s + (Number(p.comision_usd) || 0), 0);
+  };
+
+  const totalComisiones = value.reduce((s, _, i) => s + comisionDe(i), 0)
+    + preview.reduce((s, p) => s + (p.overrides || []).reduce((so: number, o: any) => so + (Number(o.comision_usd) || 0), 0), 0);
   const totalProveedor = preview.reduce((s, p) => s + (Number(p.proveedor_monto_usd) || 0), 0);
   const lycosNeto = costoTotal - totalComisiones - totalProveedor;
 
@@ -216,7 +253,9 @@ export default function PersonalYComisiones({
                 >
                   <div className="min-w-0">
                     <p className="text-xs font-bold truncate">{t.nombre}</p>
-                    <p className="text-[10px] text-muted-foreground uppercase">{t.rol.replace(/_/g, ' ')}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase">
+                      {(t.especialidad || t.rol).replace(/_/g, ' ')}
+                    </p>
                   </div>
                   <Plus className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                 </button>
@@ -245,17 +284,17 @@ export default function PersonalYComisiones({
       {/* Tarjetas por empleado */}
       <div className="space-y-2">
         {value.map((a, i) => {
-          const p = preview.find(
-            x => (a.empleado_id && x.empleado_id === a.empleado_id) || (a.es_taller && x.es_taller)
-          );
+          const filas = previewDe(i);
           const mo = manoObraDe(a);
           const esEscape = a.zona === 'escape';
+          const autoTotal = filas.reduce((s, p) => s + (Number(p.comision_usd) || 0), 0);
+          const hayPorDefinir = filas.some(p => p.por_definir);
+          const sinRegla = filas.length > 0 && filas.every(p => p.sin_regla);
+          const manualActiva = a.comision_manual != null && a.comision_manual > 0;
+          const overridesAsign = filas.flatMap(p => p.overrides || []);
 
           return (
-            <div
-              key={i}
-              className="rounded-2xl border border-border bg-muted/20 p-3 space-y-2.5"
-            >
+            <div key={i} className="rounded-2xl border border-border bg-muted/20 p-3 space-y-2.5">
               {/* Fila 1: quién + zona + quitar */}
               <div className="flex flex-wrap items-center gap-2">
                 <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -289,11 +328,7 @@ export default function PersonalYComisiones({
                   </select>
                 )}
 
-                <button
-                  type="button"
-                  onClick={() => quitar(i)}
-                  className="text-muted-foreground hover:text-red-500 p-1 shrink-0"
-                >
+                <button type="button" onClick={() => quitar(i)} className="text-muted-foreground hover:text-red-500 p-1 shrink-0">
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -333,12 +368,10 @@ export default function PersonalYComisiones({
                 </div>
               )}
 
-              {/* Fila 3: mano de obra + comisión calculada */}
+              {/* Fila 3: mano de obra */}
               <div className="flex flex-wrap items-end gap-3">
                 <div>
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-0.5">
-                    Mano de obra
-                  </p>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-0.5">Mano de obra</p>
                   {a.item_idx.length > 0 ? (
                     <div className="h-8 px-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 flex items-center text-sm font-black text-emerald-500">
                       {money(mo)}
@@ -359,50 +392,88 @@ export default function PersonalYComisiones({
                   )}
                 </div>
 
-                {/* Comisión calculada automáticamente */}
+                {/* Comisión total de la asignación */}
                 <div className="flex-1 min-w-[160px]">
                   <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-0.5 flex items-center gap-1">
                     Comisión {calculando && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
                   </p>
-                  {p ? (
-                    p.sin_regla ? (
-                      <p className="text-[11px] text-amber-500 flex items-center gap-1">
-                        <AlertTriangle className="w-3 h-3" />
-                        Sin regla de comisión configurada
-                      </p>
-                    ) : (
-                      <div>
-                        <span className="text-base font-black text-emerald-500">
-                          {money(Number(p.comision_usd))}
-                        </span>
-                        {p.regla_descripcion && (
-                          <span className="ml-1.5 text-[10px] text-muted-foreground">
-                            {p.regla_descripcion}
-                          </span>
-                        )}
-                        {Number(p.proveedor_monto_usd) > 0 && (
-                          <p className="text-[10px] text-orange-500">
-                            Proveedor ({p.proveedor_nombre || 'puente'}): {money(Number(p.proveedor_monto_usd))}
-                          </p>
-                        )}
-                      </div>
-                    )
+                  {manualActiva ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-base font-black text-blue-500">{money(Number(a.comision_manual))}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 border border-blue-500/20 font-bold">MANUAL</span>
+                    </div>
+                  ) : sinRegla ? (
+                    <p className="text-[11px] text-amber-500 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" /> Sin regla configurada — usa la comisión manual o configúrala en Nómina.
+                    </p>
+                  ) : hayPorDefinir ? (
+                    <p className="text-[11px] text-amber-500 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" /> <b>Por definir</b> — indica la comisión manual (según presupuesto/acuerdo).
+                    </p>
+                  ) : filas.length > 0 ? (
+                    <span className="text-base font-black text-emerald-500">{money(autoTotal)}</span>
                   ) : (
-                    <span className="text-[11px] text-muted-foreground">
-                      {mo > 0 ? 'Calculando…' : 'Indica la mano de obra'}
-                    </span>
+                    <span className="text-[11px] text-muted-foreground">{mo > 0 ? 'Calculando…' : 'Indica la mano de obra'}</span>
                   )}
+                </div>
+
+                {/* Comisión manual */}
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-0.5 flex items-center gap-1">
+                    <PencilLine className="w-2.5 h-2.5" /> Manual
+                  </p>
+                  <div className="relative">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-blue-500 font-bold">$</span>
+                    <input
+                      type="number" step="0.01" placeholder="auto"
+                      value={a.comision_manual ?? ''}
+                      onChange={e => actualizar(i, { comision_manual: e.target.value === '' ? null : (parseFloat(e.target.value) || 0) })}
+                      className={`w-24 h-8 rounded-lg border pl-6 pr-2 text-sm font-bold ${
+                        manualActiva || hayPorDefinir
+                          ? 'border-blue-500/50 bg-blue-500/5 text-blue-600 dark:text-blue-400'
+                          : 'border-border bg-background/40 text-muted-foreground'
+                      }`}
+                    />
+                  </div>
                 </div>
               </div>
 
+              {/* Desglose por servicio (cada uno con SU porcentaje, como la hoja manual) */}
+              {!manualActiva && filas.length > 1 && (
+                <div className="rounded-lg bg-background/40 border border-border/50 px-2.5 py-1.5 space-y-0.5">
+                  {filas.map((p, fi) => (
+                    <div key={fi} className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="text-muted-foreground truncate">
+                        {p.descripcion || 'Trabajo'} · {money(Number(p.mano_obra))}
+                      </span>
+                      <span className="shrink-0 font-bold text-emerald-500">
+                        {p.pct != null ? `${p.pct}% → ` : ''}{money(Number(p.comision_usd))}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Regla aplicada (una sola fila) */}
+              {!manualActiva && filas.length === 1 && filas[0].regla_descripcion && !filas[0].por_definir && !filas[0].sin_regla && (
+                <p className="text-[10px] text-muted-foreground">{filas[0].regla_descripcion}</p>
+              )}
+
+              {/* Proveedor (puente) */}
+              {filas.some(p => Number(p.proveedor_monto_usd) > 0) && (
+                <p className="text-[10px] text-orange-500">
+                  Proveedor ({filas.find(p => p.proveedor_nombre)?.proveedor_nombre || 'puente'}):{' '}
+                  {money(filas.reduce((s, p) => s + (Number(p.proveedor_monto_usd) || 0), 0))}
+                </p>
+              )}
+
               {/* Overrides en cascada (jefe de taller) */}
-              {p?.overrides?.length > 0 && (
+              {overridesAsign.length > 0 && (
                 <div className="rounded-lg bg-violet-500/5 border border-violet-500/20 px-2.5 py-1.5 space-y-0.5">
-                  {p.overrides.map((o: any, oi: number) => (
+                  {overridesAsign.map((o: any, oi: number) => (
                     <div key={oi} className="flex items-center justify-between text-[11px]">
                       <span className="text-violet-400 flex items-center gap-1">
-                        <TrendingUp className="w-3 h-3" />
-                        {o.empleado_nombre} · override {o.pct}%
+                        <TrendingUp className="w-3 h-3" /> {o.empleado_nombre} · override {o.pct}%
                       </span>
                       <span className="font-bold text-violet-400">{money(Number(o.comision_usd))}</span>
                     </div>
@@ -415,7 +486,7 @@ export default function PersonalYComisiones({
       </div>
 
       {/* Totales */}
-      {preview.length > 0 && (
+      {(preview.length > 0 || value.some(a => (a.comision_manual ?? 0) > 0)) && (
         <div className="rounded-xl border border-border bg-muted/30 px-3 py-2 space-y-1">
           <div className="flex items-center justify-between text-xs">
             <span className="text-muted-foreground">Total comisiones</span>
@@ -430,17 +501,15 @@ export default function PersonalYComisiones({
           {costoTotal > 0 && (
             <div className="flex items-center justify-between text-xs pt-1 border-t border-border/40">
               <span className="text-muted-foreground font-bold">Le queda a Lycos</span>
-              <span className={`font-black ${lycosNeto >= 0 ? 'text-blue-500' : 'text-red-500'}`}>
-                {money(lycosNeto)}
-              </span>
+              <span className={`font-black ${lycosNeto >= 0 ? 'text-blue-500' : 'text-red-500'}`}>{money(lycosNeto)}</span>
             </div>
           )}
         </div>
       )}
 
       <p className="text-[10px] text-muted-foreground">
-        Las comisiones se calculan solas con las reglas de cada empleado (Nómina → Reglas & Tarifas).
-        Si alguien aparece “sin regla”, configúralo ahí.
+        Cada servicio del desglose se comisiona por separado con la regla del empleado
+        (Nómina → Reglas &amp; Tarifas). “Por definir” = escribe la comisión manual.
       </p>
     </div>
   );

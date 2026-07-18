@@ -18,6 +18,31 @@ export interface JobInput {
   servicio_key?: string | null; // para tarifa flat
   cantidad?: number;
   sede_id?: string | null;
+  /**
+   * Texto del trabajo (servicio_key + tipo + descripción) contra el que se evalúan
+   * las reglas condicionadas por tipo de servicio (condiciones.tipos).
+   * Ej.: la cauchera paga 30% "reparación", 40% "rotación/revisión" y 100% "adicional".
+   */
+  texto?: string;
+}
+
+/** Normaliza texto para comparar sin acentos ni mayúsculas ("Revisión" → "revision"). */
+function normTexto(s: string): string {
+  return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+/**
+ * Evalúa la condición por tipo de servicio de una regla (condiciones.tipos).
+ *  · null  → la regla no condiciona por tipo (aplica de forma genérica)
+ *  · true  → el trabajo coincide con alguno de los tipos
+ *  · false → la regla exige tipos y el trabajo NO coincide (se descarta)
+ */
+function tiposMatch(r: CommissionRule, texto?: string): boolean | null {
+  const tipos = (r.condiciones as any)?.tipos;
+  if (!Array.isArray(tipos) || tipos.length === 0) return null;
+  const t = normTexto(texto || '');
+  if (!t) return false;
+  return tipos.some((k: any) => t.includes(normTexto(String(k))));
 }
 
 export interface CommissionResult {
@@ -74,19 +99,23 @@ function sedeMatch(r: CommissionRule, sedeId?: string | null): boolean {
  */
 export function pickExecutorRule(
   rules: CommissionRule[],
-  job: { empleado_id: string | null; zona: string; moneda: MonedaNomina; sede_id?: string | null }
+  job: { empleado_id: string | null; zona: string; moneda: MonedaNomina; sede_id?: string | null; texto?: string }
 ): CommissionRule | null {
   if (!job.empleado_id) return null;
-  const candidates = rules.filter(r =>
-    r.empleado_id === job.empleado_id &&
-    (r.tipo_regla === 'porcentaje' || r.tipo_regla === 'tarifa_flat') &&
-    ruleVigente(r) &&
-    zonaMatch(r.zona, job.zona) &&
-    monedaMatch(r, job.moneda) &&
-    sedeMatch(r, job.sede_id)
-  );
+  const candidates = rules.filter(r => {
+    if (r.empleado_id !== job.empleado_id) return false;
+    if (r.tipo_regla !== 'porcentaje' && r.tipo_regla !== 'tarifa_flat') return false;
+    if (!ruleVigente(r) || !zonaMatch(r.zona, job.zona) || !monedaMatch(r, job.moneda) || !sedeMatch(r, job.sede_id)) return false;
+    // Una regla condicionada por tipo de servicio se descarta si el trabajo no coincide.
+    if (tiposMatch(r, job.texto) === false) return false;
+    return true;
+  });
   if (candidates.length === 0) return null;
   candidates.sort((a, b) => {
+    // 1º: regla condicionada por tipo que COINCIDE (la más específica de todas)
+    const ta = tiposMatch(a, job.texto) === true ? 0 : 1;
+    const tb = tiposMatch(b, job.texto) === true ? 0 : 1;
+    if (ta !== tb) return ta - tb;
     const za = a.zona === job.zona ? 0 : 1;
     const zb = b.zona === job.zona ? 0 : 1;
     if (za !== zb) return za - zb;

@@ -651,7 +651,7 @@ export type MonedaNomina = 'USD' | 'EUR' | 'VES';
 /** Zonas operativas — coinciden con las categorías de ventas_dia. */
 export type ZonaTrabajo =
   | 'alineacion' | 'mecanica' | 'escape' | 'frenos'
-  | 'autolavado' | 'cauchera' | 'electronica' | 'general' | 'all';
+  | 'autolavado' | 'cauchera' | 'electronica' | 'latoneria' | 'general' | 'all';
 
 export const ZONAS_TRABAJO: { key: ZonaTrabajo; label: string }[] = [
   { key: 'alineacion', label: 'Alineación y Balanceo' },
@@ -661,6 +661,7 @@ export const ZONAS_TRABAJO: { key: ZonaTrabajo; label: string }[] = [
   { key: 'autolavado', label: 'Autolavado' },
   { key: 'cauchera', label: 'Cauchera' },
   { key: 'electronica', label: 'Electrónica' },
+  { key: 'latoneria', label: 'Latonería y Pintura' },
   { key: 'general', label: 'General' },
 ];
 

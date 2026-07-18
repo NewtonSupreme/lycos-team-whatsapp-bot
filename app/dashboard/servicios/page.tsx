@@ -1126,11 +1126,13 @@ function ListView({ items, onEdit, onDelete, onTracking, onInvoice, onBudget }: 
 }
 
 /**
- * Convierte una asignación de personal en el trabajo que consume el motor de nómina.
- * Si el empleado tiene ítems del desglose asignados, la mano de obra es la suma exacta
- * de esos ítems (y la descripción dice cuáles hizo). Si no, se usa el monto manual.
+ * Convierte una asignación de personal en los trabajos que consume el motor de nómina.
+ * Genera UN TRABAJO POR ÍTEM del desglose asignado, para que cada servicio se
+ * comisione con su propio porcentaje (igual que las relaciones de pago manuales:
+ * cauchera 30% reparación / 40% rotación / 100% adicional; Rafael 25% alineación /
+ * 40% revisión…). Si hay comisión manual, se registra un solo trabajo con ese monto.
  */
-function buildJobDesdeAsignacion(
+function buildJobsDesdeAsignacion(
   a: AsignacionEmpleado,
   ctx: {
     items: ServicioItem[];
@@ -1140,34 +1142,53 @@ function buildJobDesdeAsignacion(
     referenciaId: string | null;
     fecha: string;
   }
-) {
-  const asignados = a.item_idx
-    .map(i => ctx.items[i])
-    .filter(Boolean);
-
-  const manoObra = asignados.length > 0
-    ? asignados.reduce((s, it) => s + (Number(it.total) || 0), 0)
-    : (Number(a.mano_obra_manual) || 0);
-
-  const descripcion = asignados.length > 0
-    ? asignados.map(it => it.descripcion).join(' + ')
-    : ctx.descripcionBase;
-
-  return {
+): any[] {
+  const base = {
     empleado_id: a.empleado_id,
     es_taller: a.es_taller,
     zona: a.zona,
     tipo_trabajo: ctx.tipoTrabajo,
-    descripcion,
     servicio_key: a.servicio_key || null,
     cantidad: a.cantidad || 1,
-    ingreso_total: manoObra || ctx.costoTotal,
-    mano_obra: manoObra,
     moneda: 'USD',
     referencia_tabla: 'servicios',
     referencia_id: ctx.referenciaId,
     fecha: ctx.fecha,
   };
+
+  const asignados = a.item_idx.map(i => ctx.items[i]).filter(Boolean);
+  const manoObraTotal = asignados.length > 0
+    ? asignados.reduce((s, it) => s + (Number(it.total) || 0), 0)
+    : (Number(a.mano_obra_manual) || 0);
+
+  // Comisión manual → un solo trabajo con el monto fijado por administración.
+  if (a.comision_manual != null && a.comision_manual > 0) {
+    return [{
+      ...base,
+      descripcion: asignados.length > 0 ? asignados.map(it => it.descripcion).join(' + ') : ctx.descripcionBase,
+      ingreso_total: manoObraTotal || ctx.costoTotal,
+      mano_obra: manoObraTotal,
+      comision_manual: Number(a.comision_manual),
+    }];
+  }
+
+  // Un trabajo por ítem → cada servicio con su propio % según las reglas.
+  if (asignados.length > 0) {
+    return asignados.map(it => ({
+      ...base,
+      descripcion: it.descripcion,
+      ingreso_total: Number(it.total) || 0,
+      mano_obra: Number(it.total) || 0,
+    }));
+  }
+
+  // Sin desglose: un trabajo con la mano de obra manual.
+  return [{
+    ...base,
+    descripcion: ctx.descripcionBase,
+    ingreso_total: manoObraTotal || ctx.costoTotal,
+    mano_obra: manoObraTotal,
+  }];
 }
 
 // ── Service Form Modal (Create/Edit) ──────────────────────────
@@ -1656,7 +1677,7 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
                 sede: sedeNomina?.id || null,
                 replace: true,
                 referencia_id: cita.id,
-                jobs: asignValidasEdit.map(a => buildJobDesdeAsignacion(a, {
+                jobs: asignValidasEdit.flatMap(a => buildJobsDesdeAsignacion(a, {
                   items,
                   costoTotal: costoFinalCalc,
                   tipoTrabajo: finalTipo,
@@ -1801,7 +1822,7 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
             body: JSON.stringify({
               sede: sedeNomina?.id || null,
               referencia_id: nuevoServicio?.id || null,
-              jobs: asignValidas.map(a => buildJobDesdeAsignacion(a, {
+              jobs: asignValidas.flatMap(a => buildJobsDesdeAsignacion(a, {
                 items,
                 costoTotal: costoFinalCalc,
                 tipoTrabajo: finalTipoServicio,

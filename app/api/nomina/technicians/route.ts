@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
   const sedeParam = url.searchParams.get('sede');
   const soloTecnicos = url.searchParams.get('tecnicos') === '1';
 
-  let q = db.from('usuarios').select('id, nombre, username, rol, sede_id, activo').order('nombre');
+  let q = db.from('usuarios').select('id, nombre, username, rol, sede_id, activo, especialidad, cedula, alias, foto_url').order('nombre');
 
   // No multi-sede: bloqueado a su sede. Multi-sede: filtra si se pidió una sede concreta.
   const sede = user.multiSede ? sedeParam : user.sede_id;

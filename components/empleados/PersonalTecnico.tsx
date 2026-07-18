@@ -23,6 +23,9 @@ export interface EmpleadoTecnico {
   telefono?: string | null;
   activo?: boolean | null;
   especialidad?: string | null;
+  cedula?: string | null;
+  alias?: string | null;
+  foto_url?: string | null;
   sede?: { id: string; nombre: string } | null;
 }
 
@@ -207,10 +210,28 @@ export default function PersonalTecnico({ empleados, canEdit, canDelete, onEdit,
                     >
                       {/* Cabecera */}
                       <div className="flex items-start justify-between gap-2 mb-2">
+                        {/* Foto / cédula del empleado — recortada y adaptada al recuadro */}
+                        {e.foto_url ? (
+                          <a href={e.foto_url} target="_blank" rel="noopener noreferrer" title="Ver documento completo" className="shrink-0">
+                            <img
+                              src={e.foto_url}
+                              alt={e.nombre}
+                              className={`w-11 h-11 rounded-xl object-cover border-2 shadow-sm ${inactivo ? 'border-slate-200 dark:border-slate-700 grayscale' : 'border-amber-300 dark:border-amber-700'}`}
+                            />
+                          </a>
+                        ) : (
+                          <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border ${inactivo ? 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700' : 'bg-amber-500/10 border-amber-500/20'}`}>
+                            <Wrench className={`w-4 h-4 ${inactivo ? 'text-slate-400' : 'text-amber-500'}`} />
+                          </div>
+                        )}
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <Wrench className={`w-3.5 h-3.5 shrink-0 ${inactivo ? 'text-slate-400' : 'text-amber-500'}`} />
                             <p className="text-sm font-bold truncate text-slate-800 dark:text-slate-100">{e.nombre}</p>
+                            {e.alias && (
+                              <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 border border-blue-500/20">
+                                “{e.alias}”
+                              </span>
+                            )}
                             {dup && (
                               <span className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 border border-amber-500/30">
                                 <Copy className="w-2.5 h-2.5" /> Duplicado
@@ -222,10 +243,13 @@ export default function PersonalTecnico({ empleados, canEdit, canDelete, onEdit,
                               </span>
                             )}
                           </div>
-                          <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-400">
+                          <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-400 flex-wrap">
                             <span className={`px-1.5 py-0.5 rounded border font-bold uppercase ${rolMeta?.color || 'bg-slate-500/10 text-slate-500 border-slate-500/20'}`}>
                               {rolMeta?.label || e.rol}
                             </span>
+                            {e.cedula && (
+                              <span className="font-mono font-bold text-slate-500 dark:text-slate-400">{e.cedula}</span>
+                            )}
                             {e.sede?.nombre && (
                               <span className="flex items-center gap-0.5 truncate">
                                 <MapPin className="w-2.5 h-2.5" /> {e.sede.nombre}

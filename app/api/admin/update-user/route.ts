@@ -28,7 +28,7 @@ export async function POST(req: Request) {
       }
     });
 
-    const { id, email, nombre, sede_id, rol, activo, telefono, username, permisos, password, especialidad } = await req.json();
+    const { id, email, nombre, sede_id, rol, activo, telefono, username, permisos, password, especialidad, cedula, foto_url, alias } = await req.json();
 
     if (!id) {
       return NextResponse.json({ error: 'ID de usuario requerido' }, { status: 400 });
@@ -61,6 +61,9 @@ export async function POST(req: Request) {
     if (sede_id !== undefined) updates.sede_id = sede_id;
     if (telefono !== undefined) updates.telefono = telefono || null;
     if (especialidad !== undefined) updates.especialidad = especialidad || null;
+    if (cedula !== undefined) updates.cedula = cedula || null;
+    if (foto_url !== undefined) updates.foto_url = foto_url || null;
+    if (alias !== undefined) updates.alias = alias || null;
     if (permisos !== undefined) updates.permisos = permisos;
 
     // Reseteo opcional de contraseña (solo si el admin escribió una nueva)

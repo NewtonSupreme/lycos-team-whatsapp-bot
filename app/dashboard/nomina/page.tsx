@@ -973,16 +973,18 @@ function SeedModal({ sedeId, onClose, onDone }: { sedeId: string | null; onClose
   const [proveedor, setProveedor] = useState('Proveedor Puente Alineación');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+  // Plantillas calcadas de las relaciones de pago reales de administración.
+  // Al aplicar, también se guarda la cédula, alias y área en el perfil del empleado.
   const plantillas = [
-    { key: 'rafael', label: 'Rafael — Alineación 25%/20%+puente · Mecánica 40% · Revisión $2' },
-    { key: 'roger', label: 'Roger — Fijo $40/sem · Mecánica 40%' },
-    { key: 'jim', label: 'Jim / Jefe de Taller — Override 7% supervisión · Mecánica propia 40%' },
-    { key: 'acevedo', label: 'Acevedo — Almacén fijo $40/sem' },
-    { key: 'freddy', label: 'Freddy — Escapes a destajo (5/5/5/1/1/1)' },
-    { key: 'nelson', label: 'Nelson (Margarito) — Cauchera (30% rep. / 40% rotación / 100% adic)' },
-    { key: 'angel', label: 'Angel — Latonería y Pintura (Variable según presupuesto)' },
-    { key: 'dyan', label: 'Dyan — Autolavado (Caso especial por definir)' },
-    { key: 'frank', label: 'Frank — Mecánica general 40% mano de obra' },
+    { key: 'rafael', label: 'Rafael Ramirez (V-16.278.639) — Alineación 25% · Revisión/reemplazo 40% · Bs: puente 35% + Lycos 45% + Rafael 20%' },
+    { key: 'roger', label: 'Roger Rodriguez (V-10.279.435) — Fijo $40/sem + Mecánica 40% mano de obra' },
+    { key: 'jim', label: 'Jim Rincon (V-11.038.792) — Jefe de taller: 7% supervisión + 40% ejecución propia' },
+    { key: 'acevedo', label: 'Antonio Acevedo (V-3.882.980) — Dpto. Inventario: fijo $40/sem' },
+    { key: 'freddy', label: 'Freddy Rodriguez (V-11.098.823) — Silenciadores: 50% por cada trabajo' },
+    { key: 'nelson', label: 'Margarito Carvajal “NELSON” (V-8.683.914) — Cauchera: 30% reparación · 40% revisión/rotación · 100% adicional' },
+    { key: 'angel', label: 'Angel Perez (V-16.888.296) — Latonería y Pintura: Por definir (según presupuesto con el cliente)' },
+    { key: 'frank', label: 'Francisco Hernandez (V-9.284.889) — Mecánica 40% mano de obra' },
+    { key: 'dyan', label: 'Dyan Anchundia (V-29.622.223) — Autolavado: Por definir (caso especial)' },
   ];
   useEffect(() => { fetch(`/api/nomina/technicians${sedeId ? `?sede=${sedeId}` : ''}`).then(r => r.json()).then(d => setTechs(d.technicians || [])); }, [sedeId]);
 

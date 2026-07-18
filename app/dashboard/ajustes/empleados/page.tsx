@@ -71,12 +71,34 @@ export default function EmpleadosPage() {
     rol: "atencion_cliente",
     sede_id: "",
     telefono: "",
+    cedula: "",
+    especialidad: "",
     password: DEFAULT_PASSWORD,
   });
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editFormData, setEditFormData] = useState<any>(null);
+  const [subiendoFoto, setSubiendoFoto] = useState(false);
+
+  /** Sube la foto de la cédula/carnet al bucket público 'avatars' (carpeta personal/). */
+  async function handleSubirFoto(file?: File | null) {
+    if (!file || !supabase) return;
+    setSubiendoFoto(true);
+    try {
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+      const path = `personal/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const { error } = await supabase.storage.from('avatars').upload(path, file, {
+        upsert: true, contentType: file.type || 'image/jpeg',
+      });
+      if (error) throw error;
+      const { data } = supabase.storage.from('avatars').getPublicUrl(path);
+      if (data?.publicUrl) setEditFormData((f: any) => ({ ...f, foto_url: data.publicUrl }));
+    } catch (e: any) {
+      alert('No se pudo subir la imagen: ' + (e.message || e));
+    }
+    setSubiendoFoto(false);
+  }
 
   useEffect(() => {
     setMounted(true);
@@ -100,7 +122,7 @@ export default function EmpleadosPage() {
     if (!supabase) return;
     setLoading(true);
     let query = supabase.from("usuarios").select(`
-      id, rol, username, email, nombre, telefono, activo, especialidad,
+      id, rol, username, email, nombre, telefono, activo, especialidad, cedula, alias, foto_url,
       sede:sedes(id, nombre)
     `).order('nombre', { ascending: true });
 
@@ -151,7 +173,7 @@ export default function EmpleadosPage() {
         nombre: "", apellido: "", email: "", username: "",
         rol: assignableRoles[0]?.nombre || "atencion_cliente",
         sede_id: isAdmin ? "todas" : (currentSede?.id || sedes[0]?.id || ""),
-        telefono: "", password: DEFAULT_PASSWORD,
+        telefono: "", cedula: "", especialidad: "", password: DEFAULT_PASSWORD,
       });
       fetchEmpleados();
     } catch (error: any) {
@@ -208,6 +230,9 @@ export default function EmpleadosPage() {
       sede_id: emp.sede?.id || currentSede?.id || "",
       telefono: emp.telefono || "",
       especialidad: emp.especialidad || "",
+      cedula: emp.cedula || "",
+      alias: emp.alias || "",
+      foto_url: emp.foto_url || "",
       activo: emp.activo !== false,
       password: "",
       permisos,
@@ -436,6 +461,26 @@ export default function EmpleadosPage() {
                   </div>
                 </div>
 
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Cédula de Identidad</Label>
+                    <Input placeholder="Ej: V-16.278.639" className="font-mono" value={formData.cedula}
+                      onChange={e => setFormData({ ...formData, cedula: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Área de trabajo</Label>
+                    <select
+                      value={formData.especialidad}
+                      onChange={e => setFormData({ ...formData, especialidad: e.target.value })}
+                      className="w-full h-10 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
+                    >
+                      <option value="">— Sin área —</option>
+                      {AREAS.map(a => <option key={a.key} value={a.key}>{a.label}</option>)}
+                    </select>
+                    <p className="text-[10px] text-slate-400">Zona del taller donde comisiona (técnicos).</p>
+                  </div>
+                </div>
+
                 <div className="space-y-2">
                   <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Rol de Acceso</Label>
                   <Select value={formData.rol} onValueChange={v => setFormData({ ...formData, rol: v })}>
@@ -649,6 +694,66 @@ export default function EmpleadosPage() {
                       </span>
                     </label>
                     <p className="text-[10px] text-slate-400">Los inactivos no aparecen en los selectores de la orden.</p>
+                  </div>
+                </div>
+
+                {/* Identificación: cédula + alias + foto (cédula/carnet) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Cédula de identidad</Label>
+                    <Input
+                      placeholder="Ej: V-16.278.639"
+                      className="font-mono"
+                      value={editFormData.cedula || ''}
+                      onChange={e => setEditFormData({ ...editFormData, cedula: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Alias (hojas de pago)</Label>
+                    <Input
+                      placeholder='Ej: "NELSON"'
+                      value={editFormData.alias || ''}
+                      onChange={e => setEditFormData({ ...editFormData, alias: e.target.value })}
+                    />
+                    <p className="text-[10px] text-slate-400">Nombre con el que aparece en las relaciones de pago.</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Foto / Cédula escaneada</Label>
+                  <div className="flex items-center gap-3">
+                    {editFormData.foto_url ? (
+                      <a href={editFormData.foto_url} target="_blank" rel="noopener noreferrer" title="Ver imagen completa" className="shrink-0">
+                        {/* La imagen se recorta/adapta automáticamente al recuadro (object-cover) */}
+                        <img
+                          src={editFormData.foto_url}
+                          alt="Documento del empleado"
+                          className="w-16 h-16 rounded-xl object-cover border-2 border-blue-200 dark:border-blue-800 shadow-sm"
+                        />
+                      </a>
+                    ) : (
+                      <div className="w-16 h-16 rounded-xl bg-slate-100 dark:bg-slate-800 border border-dashed border-slate-300 dark:border-slate-600 flex items-center justify-center shrink-0">
+                        <User className="w-6 h-6 text-slate-300 dark:text-slate-600" />
+                      </div>
+                    )}
+                    <div className="flex-1 space-y-1">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        disabled={subiendoFoto}
+                        onChange={e => handleSubirFoto(e.target.files?.[0])}
+                        className="block w-full text-xs text-slate-500 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-600 dark:file:bg-blue-950/40 dark:file:text-blue-400 file:text-xs file:font-bold hover:file:bg-blue-100 file:cursor-pointer"
+                      />
+                      <p className="text-[10px] text-slate-400">
+                        {subiendoFoto ? 'Subiendo imagen…' : 'Sube la foto de la cédula o carnet; se adapta sola al recuadro.'}
+                      </p>
+                    </div>
+                    {editFormData.foto_url && (
+                      <button type="button" onClick={() => setEditFormData({ ...editFormData, foto_url: '' })}
+                        className="text-[10px] text-red-400 hover:text-red-500 font-bold shrink-0">
+                        Quitar
+                      </button>
+                    )}
                   </div>
                 </div>
 
