@@ -2765,8 +2765,15 @@ async function getOrCreateClientAndVehicle(
   let isNew = false;
 
   try {
-    // 1. Client — search by phone first
-    const { data: client } = await db.from('clientes').select('id, nombre, apellido').eq('telefono', phone).limit(1).maybeSingle();
+    // 1. Client — search by phone first. Tolerante a duplicados: tomamos el
+    //    más antiguo (el que probablemente tiene vehículos/servicios asociados)
+    //    y NUNCA usamos .maybeSingle() porque lanza error si hay duplicados.
+    const { data: clientRows } = await db.from('clientes')
+      .select('id, nombre, apellido, created_at')
+      .eq('telefono', phone)
+      .order('created_at', { ascending: true })
+      .limit(1);
+    const client = (clientRows && clientRows[0]) || null;
     if (client) {
       clientId = client.id;
       // Update name if we now have a REAL name and the stored one is generic/wrong
@@ -2813,8 +2820,14 @@ async function getOrCreateClientAndVehicle(
       const modelo = vehParts.slice(1).join(' ') || '';
 
       if (placa && placa.length >= 4) {
-        // Try exact plate match (global — could be shared vehicle)
-        const { data: vehByPlaca } = await db.from('vehiculos').select('id, cliente_id').eq('placa', placa).limit(1).maybeSingle();
+        // Try exact plate match (global — could be shared vehicle).
+        // Tolerante a duplicados: no usamos maybeSingle (lanza error si hay >1).
+        const { data: vehByPlacaRows } = await db.from('vehiculos')
+          .select('id, cliente_id')
+          .eq('placa', placa)
+          .order('created_at', { ascending: true })
+          .limit(1);
+        const vehByPlaca = (vehByPlacaRows && vehByPlacaRows[0]) || null;
         if (vehByPlaca) {
           vehicleId = vehByPlaca.id;
           // Link to this client if not already done
