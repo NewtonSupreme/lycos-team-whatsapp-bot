@@ -633,7 +633,7 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
         * REGISTRA INMEDIATAMENTE con [SERVICIO_UPSERT] sin pedir confirmación ni datos adicionales.
         * Extrae de la imagen: marca, modelo, placa, color. Extrae del audio/texto: sede, servicio, precio/presupuesto.
         * Si el audio menciona una sede, úsala. Si dice "presupuesto por definir", deja costo vacío y estado='pendiente'.
-        * EJEMPLO: imagen=[VEHÍCULO] Mazda | Placa AF562YV + audio="favor registrar, sede San Antonio, entonación mayor, presupuesto por definir" → [SERVICIO_UPSERT: | | | | | Mazda | AF562YV | otro | Entonación mayor — Presupuesto por definir | pendiente | | <sede_san_antonio_id> | Entonacion]
+        * EJEMPLO: imagen=[VEHÍCULO] Mazda | Placa AF562YV + audio="favor registrar, sede San Antonio, entonación mayor, presupuesto por definir, técnico Dayan" → [SERVICIO_UPSERT: | | | | | Mazda | AF562YV | otro | Entonación mayor — Presupuesto por definir | pendiente | | <sede_san_antonio_id> | Entonacion | Dayan]
 
         ⛔ PROHIBICIÓN ABSOLUTA (SERVICIO ≠ CITA): Cuando el admin registra un vehículo que YA ESTÁ FÍSICAMENTE EN EL TALLER para un trabajo (alineación, revisión, revisión en puente, balanceo, mecánica, etc.), eso es un SERVICIO y se registra con [SERVICIO_UPSERT] de INMEDIATO. ¡NUNCA preguntes "¿para qué día deseas agendar la cita?" ni uses [CITA_UPSERT]! Las CITAS son SOLO para cuando el cliente/admin pide explícitamente AGENDAR para una FECHA FUTURA (ej. "agéndame para el viernes"). Si el vehículo está en el taller ahora, NO hay fecha que preguntar: regístralo como servicio con su [SERVICIO_UPSERT] y confirma "Registrado el servicio de [trabajo] para [vehículo] en [sede]." sin pedir fecha.
 
@@ -754,7 +754,7 @@ REGLA DE TAGS (Imprimir SIEMPRE al final de tu respuesta):
     - [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion | sede_id | costo_estimado | nombre_cliente | vehiculo_info | placa | telefono]
     - ⚠️ REGLA CRITICA CITA_UPSERT: La fecha y hora deben ir en CAMPOS SEPARADOS. NO pongas "2026-06-02 08:00" en el campo fecha. Debe ser: fecha="2026-06-02" y hora="08:00" en campos separados.
     - ✅ EJEMPLO CORRECTO: [CITA_UPSERT: | 2026-06-02 | 08:00 | | | pendiente | Cambio de aceite | | 45 | Juan Pérez | Chevrolet D-MAX | | ]
-   - ⚠️ FORMATO CORRECTO (SOLO valores separados por |, NUNCA incluyas los nombres de los campos): [SERVICIO_UPSERT: | | | Jorge Muñoz | 584146857440 | Chevrolet D-MAX | A46AZOA | otro | Cambio pastillas freno + Aceite 10W30 | pendiente | 45 | 310595c5-5258-47fa-9b69-5ad9932685a7 | Frenos]
+   - ⚠️ FORMATO CORRECTO (SOLO valores separados por |, NUNCA incluyas los nombres de los campos): [SERVICIO_UPSERT: | | | Jorge Muñoz | 584146857440 | Chevrolet D-MAX | A46AZOA | otro | Cambio pastillas freno + Aceite 10W30 | pendiente | 45 | 310595c5-5258-47fa-9b69-5ad9932685a7 | Frenos | Dayan]
    - ⚠️ EJEMPLO INCORRECTO (NO hagas esto — esto rompe el parser): [SERVICIO_UPSERT: nombre_cliente | Jorge Muñoz | telefono | | ...]
    - 📵 CAMPO TELÉFONO: SOLO números (ej. 584146857440). Si NO tienes el número, déjalo VACÍO. ⛔ JAMÁS pongas un nombre, apellido ni letras (ej. "ANGEL", "CARMEN", "AGÜERO") en el campo de teléfono: el nombre va en nombre_cliente, NUNCA en telefono.
    - ⚠️ REGLA CRITICA: El tag debe contener SOLO los valores separados por |. NUNCA incluyas etiquetas/nombres de campos dentro del tag. El primer campo (id_opcional) se deja vacío para crear un nuevo servicio, o se pone un UUID válido (36 caracteres con guiones) para actualizar uno existente.
@@ -4191,7 +4191,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           } catch (e) { console.error('Error in CITA_UPSERT:', e); }
         }
 
-        // 3b. [SERVICIO_UPSERT: id_opcional | cliente_id | vehiculo_id | nombre_cliente | telefono | vehiculo_info | placa | tipo | descripcion | estado | costo_estimado | sede_id | tipo_personalizado]
+        // 3b. [SERVICIO_UPSERT: id_opcional | cliente_id | vehiculo_id | nombre_cliente | telefono | vehiculo_info | placa | tipo | descripcion | estado | costo_estimado | sede_id | tipo_personalizado | personal_cargo]
         const servUpsertMatches = canBotWrite('servicios') ? Array.from(cleanedAi.matchAll(/\[SERVICIO_UPSERT:\s*([^\]]+)\]/gi)) : [];
         for (const match of servUpsertMatches) {
           try {
@@ -4204,7 +4204,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             const FIELD_LABELS = new Set([
               'id_opcional', 'cliente_id', 'vehiculo_id', 'nombre_cliente', 'telefono',
               'vehiculo_info', 'placa', 'tipo', 'descripcion', 'estado', 'costo_estimado',
-              'sede_id', 'tipo_personalizado'
+              'sede_id', 'tipo_personalizado', 'personal_cargo'
             ]);
 
             let id: string | null = null;
@@ -4220,6 +4220,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             let costoEstimado: number | null = null;
             let sedeId: string | null = null;
             let tipoPersonalizado: string | null = null;
+            let personalCargo: string | null = null;
 
             // Detect labeled format: first part is a known field label (e.g., "nombre_cliente" not a UUID)
             const isLabeledFormat = rawParts.length > 13 && FIELD_LABELS.has(rawParts[0]?.toLowerCase());
@@ -4247,6 +4248,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               costoEstimado = fieldMap['costo_estimado'] ? parseFloat(fieldMap['costo_estimado']) : null;
               sedeId = fieldMap['sede_id'] || ctx.sede_id || DEFAULT_SEDE_ID;
               tipoPersonalizado = fieldMap['tipo_personalizado'] || null;
+              personalCargo = fieldMap['personal_cargo'] || null;
               console.log(`🔧 ADMIN: Tag etiquetado parseado: nombre=${nombreCliente}, placa=${placa}, tipo=${tipo}, sede=${sedeId}`);
             } else {
               // Standard positional parsing
@@ -4264,6 +4266,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               costoEstimado = (rawParts[10] && rawParts[10] !== 'null' && !isNaN(parseFloat(rawParts[10]))) ? parseFloat(rawParts[10]) : null;
               sedeId = (rawParts[11] && rawParts[11] !== 'null' && rawParts[11] !== 'undefined' && UUID_RE.test(rawParts[11])) ? rawParts[11] : (ctx.sede_id || DEFAULT_SEDE_ID);
               tipoPersonalizado = (rawParts[12] && rawParts[12] !== 'null' && !FIELD_LABELS.has(rawParts[12].toLowerCase())) ? rawParts[12] : null;
+              personalCargo = (rawParts[13] && rawParts[13] !== 'null' && !FIELD_LABELS.has(rawParts[13].toLowerCase())) ? rawParts[13] : null;
             }
 
             const now = new Date();
@@ -4342,6 +4345,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               tipo_personalizado: tipoPersonalizado,
               descripcion: descripcion || 'Servicio de taller',
               estado: estado || 'pendiente',
+              notas: personalCargo ? `Encargados: ${personalCargo}` : null,
               costo_estimado: costoEstimado,
               registrado_por: adminName,
               fecha: vzlaDateStr,

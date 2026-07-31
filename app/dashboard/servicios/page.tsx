@@ -1316,14 +1316,22 @@ function ServiceFormModal({ cita, onClose }: { cita?: CitaServicio; onClose: () 
   // ── Ítems desglosados ──
   const itemsTotal = items.reduce((s, i) => s + (Number(i.total) || 0), 0);
   const addItem = () => setItems([...items, { descripcion: '', cantidad: 1, precio_unitario: 0, total: 0 }]);
-  const removeItem = (idx: number) => setItems(items.filter((_, i) => i !== idx));
+  const removeItem = (idx: number) => {
+    const newItems = items.filter((_, i) => i !== idx);
+    setItems(newItems);
+    const newTotal = newItems.reduce((s, it) => s + (Number(it.total) || 0), 0);
+    setFormData(prev => ({ ...prev, costo_estimado: String(newTotal) }));
+  };
   const updateItem = (idx: number, field: keyof ServicioItem, value: string | number) => {
-    setItems(items.map((it, i) => {
+    const newItems = items.map((it, i) => {
       if (i !== idx) return it;
       const next: ServicioItem = { ...it, [field]: field === 'descripcion' ? String(value) : (Number(value) || 0) };
       next.total = (Number(next.cantidad) || 1) * (Number(next.precio_unitario) || 0);
       return next;
-    }));
+    });
+    setItems(newItems);
+    const newTotal = newItems.reduce((s, it) => s + (Number(it.total) || 0), 0);
+    setFormData(prev => ({ ...prev, costo_estimado: String(newTotal) }));
   };
   // Repuebla los ítems desde la descripción actual (botón "Desglosar").
   const autoDesglosar = () => {
