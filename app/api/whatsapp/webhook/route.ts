@@ -2696,11 +2696,15 @@ async function getOrCreateClientAndVehicle(
     // 1. Client — search by phone first. Tolerante a duplicados: tomamos el
     //    más antiguo (el que probablemente tiene vehículos/servicios asociados)
     //    y NUNCA usamos .maybeSingle() porque lanza error si hay duplicados.
-    const { data: clientRows } = await db.from('clientes')
-      .select('id, nombre, apellido, created_at')
-      .eq('telefono', phone)
-      .order('created_at', { ascending: true })
-      .limit(1);
+    let clientRows = null;
+    if (phone && phone !== '00000000' && phone !== '00000000000') {
+      const { data } = await db.from('clientes')
+        .select('id, nombre, apellido, created_at')
+        .eq('telefono', phone)
+        .order('created_at', { ascending: true })
+        .limit(1);
+      clientRows = data;
+    }
     const client = (clientRows && clientRows[0]) || null;
     if (client) {
       clientId = client.id;
@@ -4091,7 +4095,9 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             const nombreCliente = (parts[9] && parts[9] !== 'null') ? parts[9] : null;
             const vehiculoInfo = (parts[10] && parts[10] !== 'null') ? parts[10] : null;
             const placa = (parts[11] && parts[11] !== 'null') ? parts[11].toUpperCase().replace(/[-\s]/g, '') : null;
-            const phoneParam = (parts[12] && parts[12] !== 'null') ? parts[12] : (from || '00000000000');
+            const isSenderAdmin = !!ctx.isAdmin || (await checkIsBotAdmin(from || '', db, ADMIN_PHONES));
+            const defaultPhone = isSenderAdmin ? '00000000' : (from || '00000000000');
+            const phoneParam = (parts[12] && parts[12] !== 'null') ? parts[12] : defaultPhone;
 
             // Resolve or create Client & Vehicle if IDs are missing but details are present
             let finalClientId = clientId;
@@ -4269,7 +4275,9 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             let finalVehId = vehId;
 
             // Resolve or create client & vehicle only when we have an explicit client name or ID
-            const clientPhone = telefono || (nameToUse ? from : null);
+            const isSenderAdmin = !!ctx.isAdmin || (await checkIsBotAdmin(from || '', db, ADMIN_PHONES));
+            const defaultPhone = isSenderAdmin ? '00000000' : from;
+            const clientPhone = telefono || (nameToUse ? defaultPhone : null);
             if (!finalClientId && nameToUse && clientPhone) {
               const { clientId: newCId } = await getOrCreateClientAndVehicle(
                 db, clientPhone, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
