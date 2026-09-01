@@ -2528,6 +2528,17 @@ async function processIntents(
   waProfileName?: string
 ): Promise<{ clientId?: string; vehicleId?: string }> {
   if (!db) return {};
+
+  // 🛡️ IDENTIDAD DEL OPERADOR INMUTABLE: si quien escribe es un usuario interno
+  // (cualquiera con acceso al Modo Dios, no sólo admin/dueño), el bot NUNCA debe
+  // extraer nombres/vehículos del texto libre para su propio número: esos datos son
+  // de los CLIENTES que registra vía tags, no de su ficha. Sin esto, un "Soy Juan"
+  // o un mensaje corto con el nombre del cliente renombraba el perfil del operador.
+  if (ctx.isAdmin) {
+    console.log(`🛡️ [${from}] processIntents omitido (operador interno — identidad inmutable).`);
+    return {};
+  }
+
   const newMemoria: Memoria = { ...ctx.memoria };
   let memChanged = false;
 
@@ -2661,7 +2672,7 @@ async function isOwnerOrAdminPhone(db: ReturnType<typeof getDb>, phone: string):
   if (!db) return false;
   try {
     const { data: candidates } = await db.from('usuarios')
-      .select('rol, telefono')
+      .select('rol, telefono, permisos')
       .eq('activo', true)
       .or(`telefono.eq.${phoneClean},telefono.ilike.%${last10}`);
     const user = (candidates || []).find(
@@ -2670,8 +2681,16 @@ async function isOwnerOrAdminPhone(db: ReturnType<typeof getDb>, phone: string):
     if (!user?.rol) return false;
     const raw = String(user.rol).trim().toLowerCase();
     const canonical = resolveRol(raw);
-    return canonical === 'admin' || canonical === 'dueno'
-      || raw === 'administrador' || raw === 'dueño' || raw === 'owner';
+    if (canonical === 'admin' || canonical === 'dueno'
+      || raw === 'administrador' || raw === 'dueño' || raw === 'owner') return true;
+    // Cualquier rol con acceso al Modo Dios (ia_asistente.leer) es operador interno:
+    // su ficha tampoco debe renombrarse al registrar clientes desde WhatsApp.
+    try {
+      const parsed = typeof user.permisos === 'string' ? JSON.parse(user.permisos) : user.permisos;
+      return !!getPermisos(user.rol, parsed).ia_asistente?.leer;
+    } catch {
+      return false;
+    }
   } catch {
     return false;
   }
@@ -3863,7 +3882,11 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
 
       // ── Extract Client Name via AI Tag ────────────────────────────────
-      const nombreMatch = cleanedAi.match(/\[NOMBRE:\s*([^\]]+?)\]/i);
+      // 🛡️ Nunca para operadores internos: su identidad no se toca desde el chat.
+      const nombreMatch = ctx.isAdmin ? null : cleanedAi.match(/\[NOMBRE:\s*([^\]]+?)\]/i);
+      if (ctx.isAdmin) {
+        cleanedAi = cleanedAi.replace(/\[NOMBRE:[^\]]+\]/gi, '').trim();
+      }
       if (nombreMatch) {
         const aiDetectedName = nombreMatch[1].trim();
         cleanedAi = cleanedAi.replace(/\[NOMBRE:[^\]]+\]/gi, '').trim();

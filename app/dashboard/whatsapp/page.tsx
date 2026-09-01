@@ -200,6 +200,26 @@ function parseBotImageTag(body: string): { slug: string; url: string; nombre: st
   return { slug: rawSlug, url, nombre, caption };
 }
 
+// Extrae el texto adjunto (caption) real de un mensaje multimedia, descartando los
+// marcadores sintéticos que el webhook guarda como `body` (p. ej. "[Video]",
+// "[Cliente envió audio]", "[Imagen enviada por el administrador. Descripción...]").
+// Para mensajes salientes el `body` YA viene limpio (sólo el caption).
+function extractMediaCaption(body?: string | null): string {
+  if (!body) return '';
+  const raw = body.trim();
+  // Caption embebido por el webhook en imágenes entrantes:
+  //   ... - Mensaje del administrador adjunto: "texto"
+  const adjunto = raw.match(/Mensaje del \w+ adjunto:\s*"([^"]+)"/i);
+  if (adjunto) return adjunto[1].trim();
+  // Marcadores sintéticos sin texto útil.
+  if (/^\[(?:v[ií]deo|imagen|sticker|audio|documento|mensaje de voz|el cliente|el administrador|cliente envi|imagen enviada|imagen:|documento adjunto)/i.test(raw)) {
+    return '';
+  }
+  // Si aún queda un marcador entre corchetes al inicio y nada más, no hay caption.
+  if (/^\[[^\]]+\]$/.test(raw)) return '';
+  return raw;
+}
+
 function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isOut: boolean; onImageClick: (url: string) => void; quotedMsg?: RawMsg | null }) {
   const { body, media_url, media_type } = msg;
 
@@ -346,12 +366,17 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
             </span>
           )}
 
-          {body && !['[image]', '[imagen]', '[audio]', '[video]', '[sticker]', '[document]', '[documento]'].includes(body.toLowerCase()) && (
+          {extractMediaCaption(body) && (
             <p className="text-xs opacity-80 border-t border-white/10 pt-1.5 mt-0.5 whitespace-pre-wrap break-words" style={{ color: '#e9edef' }}>
-              {body}
+              {extractMediaCaption(body)}
             </p>
           )}
         </div>
+      )}
+      {(type === 'image' || type === 'video' || type === 'sticker') && extractMediaCaption(body) && (
+        <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words mt-1" style={{ color: '#e9edef', wordBreak: 'break-word' }}>
+          {extractMediaCaption(body)}
+        </p>
       )}
     </div>
   );
@@ -804,7 +829,7 @@ export default function WhatsAppPage() {
 
           if (file.type.startsWith('image/')) {
             optimistic.media_type = 'image';
-            if (url) optimistic.body = '[imagen] ' + (optimistic.body || '');
+            optimistic.media_url = url || undefined;
           }
           else if (file.type.startsWith('video/')) optimistic.media_type = 'video';
           else if (file.type.startsWith('audio/')) optimistic.media_type = 'audio';
