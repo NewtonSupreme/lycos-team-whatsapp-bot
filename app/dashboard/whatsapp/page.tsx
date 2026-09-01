@@ -408,6 +408,7 @@ export default function WhatsAppPage() {
   const [showQuickReplies, setShowQuickReplies] = useState(false);
   const [showMobileChat, setShowMobileChat] = useState(false);
   const [showMobileInfo, setShowMobileInfo] = useState(false);
+  const [showInfoDesktop, setShowInfoDesktop] = useState(true);
   const [togglingMode, setTogglingMode] = useState(false);
   const [selectedVehicles, setSelectedVehicles] = useState<Vehiculo[]>([]);
   const [loadingVehicles, setLoadingVehicles] = useState(false);
@@ -1442,8 +1443,8 @@ export default function WhatsAppPage() {
 
   return (
     <>
-    <div className="space-y-3 relative">
-      <div className="space-y-3 transition-opacity duration-300">
+    <div className="relative flex flex-col h-[calc(100dvh-12rem)] md:h-[calc(100dvh-7.5rem)] min-h-[480px]">
+      <div className="flex flex-col flex-1 min-h-0 gap-3 transition-opacity duration-300">
       {/* Page header */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-0 justify-between">
         <div>
@@ -1496,8 +1497,8 @@ export default function WhatsAppPage() {
 
       {/* Chat layout */}
       <div
-        className="flex rounded-2xl overflow-hidden border border-white/8"
-        style={{ height: 'calc(100dvh - 160px)', minHeight: '500px', background: '#111b21' }}
+        className="flex flex-1 min-h-0 rounded-2xl overflow-hidden border border-white/8"
+        style={{ background: '#111b21' }}
       >
         {/* ── Left: conversation list ── */}
         <div
@@ -1591,8 +1592,8 @@ export default function WhatsAppPage() {
           {selected ? (
             <div className="flex-1 flex overflow-hidden relative">
               {/* Chat Main Area */}
-              <div 
-                className="flex-1 flex flex-col min-w-0 relative" style={{ background: '#0b141a' }}
+              <div
+                className="flex-1 flex flex-col min-w-0 min-h-0 relative" style={{ background: '#0b141a' }}
                 onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                 onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
                 onDrop={(e) => {
@@ -1627,8 +1628,15 @@ export default function WhatsAppPage() {
                     <button onClick={() => setShowMobileChat(false)} className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/5 transition-colors flex-shrink-0">
                       <X className="w-5 h-5" style={{ color: '#aebac1' }} />
                     </button>
-                    <button onClick={() => setShowMobileInfo(true)} className="md:hidden w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/5 transition-colors flex-shrink-0">
+                    <button onClick={() => setShowMobileInfo(true)} className="lg:hidden w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/5 transition-colors flex-shrink-0">
                       <Info className="w-4 h-4" style={{ color: '#aebac1' }} />
+                    </button>
+                    <button
+                      onClick={() => setShowInfoDesktop(v => !v)}
+                      title={showInfoDesktop ? 'Ocultar panel de información' : 'Mostrar panel de información'}
+                      className="hidden lg:flex w-7 h-7 items-center justify-center rounded-lg hover:bg-white/5 transition-colors flex-shrink-0"
+                    >
+                      <Info className="w-4 h-4" style={{ color: showInfoDesktop ? '#00a884' : '#aebac1' }} />
                     </button>
                     <UserAvatar conv={selected} className="w-9 h-9 flex-shrink-0 shadow-xl" />
                     <div className="min-w-0 flex-1">
@@ -2044,7 +2052,8 @@ export default function WhatsAppPage() {
               {/* ── Right Sidebar: Client Details & Garage ── */}
               <div className={cn(
                 showMobileInfo ? 'absolute inset-0 z-30 flex' : 'hidden',
-                'lg:relative lg:flex flex-col w-full lg:w-72 border-l border-white/6 overflow-y-auto'
+                'flex-col w-full lg:w-72 border-l border-white/6 overflow-y-auto',
+                showInfoDesktop ? 'lg:relative lg:flex' : 'lg:hidden'
               )} style={{ background: '#0b141a' }}>
                 <div className="flex items-center justify-between p-4" style={{ background: '#202c33', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                    <h2 className="text-sm font-semibold flex items-center gap-2" style={{ color: '#e9edef' }}>

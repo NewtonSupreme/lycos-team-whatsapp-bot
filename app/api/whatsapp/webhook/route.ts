@@ -3872,7 +3872,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
     let stockConfirmadoEsteTurno = false;
     {
       const pend = ctx.memoria.accion_pendiente as AccionPendiente | undefined;
-      if (pend) {
+      if (pend && db) {
         if (!pendienteVigente(pend)) {
           delete ctx.memoria.accion_pendiente;
           try { await db.from('conversaciones').update({ memoria: ctx.memoria }).eq('telefono', from); } catch { /* noop */ }
@@ -5253,7 +5253,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         .trim();
 
       // ── F1: Action Guard — reconciliar el texto con lo que REALMENTE pasó ───
-      if (ctx.isAdmin) {
+      if (ctx.isAdmin && db) {
         if (guardConfirmRequests.length > 0) {
           // Hay una acción sensible esperando confirmación: ese es el único mensaje.
           cleanedAi = `${guardConfirmRequests.join('\n\n')}\n\nResponde *SÍ* para aplicar o *NO* para cancelar.`;
