@@ -200,6 +200,26 @@ function parseBotImageTag(body: string): { slug: string; url: string; nombre: st
   return { slug: rawSlug, url, nombre, caption };
 }
 
+// Extrae el texto adjunto (caption) real de un mensaje multimedia, descartando los
+// marcadores sintéticos que el webhook guarda como `body` (p. ej. "[Video]",
+// "[Cliente envió audio]", "[Imagen enviada por el administrador. Descripción...]").
+// Para mensajes salientes el `body` YA viene limpio (sólo el caption).
+function extractMediaCaption(body?: string | null): string {
+  if (!body) return '';
+  const raw = body.trim();
+  // Caption embebido por el webhook en imágenes entrantes:
+  //   ... - Mensaje del administrador adjunto: "texto"
+  const adjunto = raw.match(/Mensaje del \w+ adjunto:\s*"([^"]+)"/i);
+  if (adjunto) return adjunto[1].trim();
+  // Marcadores sintéticos sin texto útil.
+  if (/^\[(?:v[ií]deo|imagen|sticker|audio|documento|mensaje de voz|el cliente|el administrador|cliente envi|imagen enviada|imagen:|documento adjunto)/i.test(raw)) {
+    return '';
+  }
+  // Si aún queda un marcador entre corchetes al inicio y nada más, no hay caption.
+  if (/^\[[^\]]+\]$/.test(raw)) return '';
+  return raw;
+}
+
 function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isOut: boolean; onImageClick: (url: string) => void; quotedMsg?: RawMsg | null }) {
   const { body, media_url, media_type } = msg;
 
@@ -346,12 +366,17 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
             </span>
           )}
 
-          {body && !['[image]', '[imagen]', '[audio]', '[video]', '[sticker]', '[document]', '[documento]'].includes(body.toLowerCase()) && (
+          {extractMediaCaption(body) && (
             <p className="text-xs opacity-80 border-t border-white/10 pt-1.5 mt-0.5 whitespace-pre-wrap break-words" style={{ color: '#e9edef' }}>
-              {body}
+              {extractMediaCaption(body)}
             </p>
           )}
         </div>
+      )}
+      {(type === 'image' || type === 'video' || type === 'sticker') && extractMediaCaption(body) && (
+        <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words mt-1" style={{ color: '#e9edef', wordBreak: 'break-word' }}>
+          {extractMediaCaption(body)}
+        </p>
       )}
     </div>
   );
@@ -383,6 +408,7 @@ export default function WhatsAppPage() {
   const [showQuickReplies, setShowQuickReplies] = useState(false);
   const [showMobileChat, setShowMobileChat] = useState(false);
   const [showMobileInfo, setShowMobileInfo] = useState(false);
+  const [showInfoDesktop, setShowInfoDesktop] = useState(true);
   const [togglingMode, setTogglingMode] = useState(false);
   const [selectedVehicles, setSelectedVehicles] = useState<Vehiculo[]>([]);
   const [loadingVehicles, setLoadingVehicles] = useState(false);
@@ -804,7 +830,7 @@ export default function WhatsAppPage() {
 
           if (file.type.startsWith('image/')) {
             optimistic.media_type = 'image';
-            if (url) optimistic.body = '[imagen] ' + (optimistic.body || '');
+            optimistic.media_url = url || undefined;
           }
           else if (file.type.startsWith('video/')) optimistic.media_type = 'video';
           else if (file.type.startsWith('audio/')) optimistic.media_type = 'audio';
@@ -1417,8 +1443,8 @@ export default function WhatsAppPage() {
 
   return (
     <>
-    <div className="space-y-3 relative">
-      <div className="space-y-3 transition-opacity duration-300">
+    <div className="relative flex flex-col h-[calc(100dvh-12rem)] md:h-[calc(100dvh-7.5rem)] min-h-[480px]">
+      <div className="flex flex-col flex-1 min-h-0 gap-3 transition-opacity duration-300">
       {/* Page header */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-0 justify-between">
         <div>
@@ -1471,8 +1497,8 @@ export default function WhatsAppPage() {
 
       {/* Chat layout */}
       <div
-        className="flex rounded-2xl overflow-hidden border border-white/8"
-        style={{ height: 'calc(100dvh - 160px)', minHeight: '500px', background: '#111b21' }}
+        className="flex flex-1 min-h-0 rounded-2xl overflow-hidden border border-white/8"
+        style={{ background: '#111b21' }}
       >
         {/* ── Left: conversation list ── */}
         <div
@@ -1566,8 +1592,8 @@ export default function WhatsAppPage() {
           {selected ? (
             <div className="flex-1 flex overflow-hidden relative">
               {/* Chat Main Area */}
-              <div 
-                className="flex-1 flex flex-col min-w-0 relative" style={{ background: '#0b141a' }}
+              <div
+                className="flex-1 flex flex-col min-w-0 min-h-0 relative" style={{ background: '#0b141a' }}
                 onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                 onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
                 onDrop={(e) => {
@@ -1602,8 +1628,15 @@ export default function WhatsAppPage() {
                     <button onClick={() => setShowMobileChat(false)} className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/5 transition-colors flex-shrink-0">
                       <X className="w-5 h-5" style={{ color: '#aebac1' }} />
                     </button>
-                    <button onClick={() => setShowMobileInfo(true)} className="md:hidden w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/5 transition-colors flex-shrink-0">
+                    <button onClick={() => setShowMobileInfo(true)} className="lg:hidden w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/5 transition-colors flex-shrink-0">
                       <Info className="w-4 h-4" style={{ color: '#aebac1' }} />
+                    </button>
+                    <button
+                      onClick={() => setShowInfoDesktop(v => !v)}
+                      title={showInfoDesktop ? 'Ocultar panel de información' : 'Mostrar panel de información'}
+                      className="hidden lg:flex w-7 h-7 items-center justify-center rounded-lg hover:bg-white/5 transition-colors flex-shrink-0"
+                    >
+                      <Info className="w-4 h-4" style={{ color: showInfoDesktop ? '#00a884' : '#aebac1' }} />
                     </button>
                     <UserAvatar conv={selected} className="w-9 h-9 flex-shrink-0 shadow-xl" />
                     <div className="min-w-0 flex-1">
@@ -2019,7 +2052,8 @@ export default function WhatsAppPage() {
               {/* ── Right Sidebar: Client Details & Garage ── */}
               <div className={cn(
                 showMobileInfo ? 'absolute inset-0 z-30 flex' : 'hidden',
-                'lg:relative lg:flex flex-col w-full lg:w-72 border-l border-white/6 overflow-y-auto'
+                'flex-col w-full lg:w-72 border-l border-white/6 overflow-y-auto',
+                showInfoDesktop ? 'lg:relative lg:flex' : 'lg:hidden'
               )} style={{ background: '#0b141a' }}>
                 <div className="flex items-center justify-between p-4" style={{ background: '#202c33', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                    <h2 className="text-sm font-semibold flex items-center gap-2" style={{ color: '#e9edef' }}>

@@ -208,9 +208,17 @@ export async function POST(request: NextRequest) {
         ...(mediaId ? { media_url: mediaId, media_type: mediaType } : {}),
         sede_id: effectiveSedeId
       });
+      const mediaIcon = mediaType === 'image' ? '📷' : mediaType === 'video' ? '🎥' : mediaType === 'audio' ? '🎙️' : mediaType === 'document' ? '📎' : '';
+      const previewMsg = location
+        ? `📍 Ubicación: ${location.name || 'Sede'}`
+        : interactive
+          ? `🔘 ${interactive.body?.text || 'Interactivo'}`
+          : mediaIcon
+            ? `${mediaIcon} ${message || (mediaType === 'image' ? 'Imagen' : mediaType === 'video' ? 'Video' : mediaType === 'audio' ? 'Audio' : 'Documento')}`
+            : message;
       await db.from('conversaciones').upsert({
         telefono: to.replace(/[^0-9]/g, ''),
-        ultimo_mensaje: location ? `📍 Ubicación: ${location.name || 'Sede'}` : (interactive ? `🔘 ${interactive.body?.text || 'Interactivo'}` : message),
+        ultimo_mensaje: previewMsg,
         ultimo_mensaje_at: new Date().toISOString(),
         // Solo pasar a humano si es un texto directo (no ubicación ni botones)
         ...((!location && !interactive) ? { estado: 'humano' } : {}),
