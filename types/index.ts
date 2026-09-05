@@ -77,7 +77,7 @@ function full(acceso: boolean): CrudPermiso {
 // Fuente única de verdad para los roles del sistema Lycos Team.
 // El admin puede reconfigurar los permisos de cada rol desde /ajustes/permisos
 // y los permisos por-usuario desde Gestión de Empleados.
-export type RoleIcon = 'crown' | 'eye' | 'shield' | 'dollar' | 'headset' | 'hardhat' | 'wrench';
+export type RoleIcon = 'crown' | 'eye' | 'shield' | 'dollar' | 'headset' | 'hardhat' | 'wrench' | 'clipboard';
 
 export interface RoleMeta {
   nombre: string;        // slug interno (clave en BD)
@@ -127,6 +127,12 @@ export const ROLE_CATALOG: RoleMeta[] = [
     conAcceso: true, esTecnico: false, asignablePorSupervisor: true, multiSede: false,
   },
   {
+    nombre: 'registrador', label: 'Registrador',
+    descripcion: 'Logística de registro: ingresa vehículos al taller, define el servicio y coloca los precios.',
+    icon: 'clipboard', color: 'bg-teal-500/10 text-teal-500 border-teal-500/20',
+    conAcceso: true, esTecnico: false, asignablePorSupervisor: true, multiSede: false,
+  },
+  {
     nombre: 'jefe_taller', label: 'Jefe de Taller',
     descripcion: 'Lidera el taller: servicios, vehículos e inventario.',
     icon: 'hardhat', color: 'bg-violet-500/10 text-violet-500 border-violet-500/20',
@@ -154,11 +160,24 @@ export const ROLE_ALIASES: Record<string, string> = {
   empleado: 'atencion_cliente',
   mecanico_acceso: 'mecanico',
   jefe_taller_acceso: 'jefe_taller',
+  // Rótulos en español que quedaron guardados en `usuarios.rol` antes de canonizar.
+  // Sin estos, un usuario con rol "Administrador" no era reconocido como admin y el
+  // chatbot lo trataba como cliente.
+  administrador: 'admin',
+  administracion: 'admin',
+  'administración': 'admin',
+  'dueño': 'dueno',
+  dueno: 'dueno',
+  owner: 'dueno',
+  propietario: 'dueno',
 };
 
+/** Normaliza el rol crudo de la BD (recorta y baja a minúsculas) y resuelve aliases. */
 export function resolveRol(rol?: string | null): string {
   if (!rol) return 'atencion_cliente';
-  return ROLE_ALIASES[rol] || rol;
+  const limpio = String(rol).trim().toLowerCase();
+  if (!limpio) return 'atencion_cliente';
+  return ROLE_ALIASES[limpio] || limpio;
 }
 
 // REGLA DEL SISTEMA: la eliminación definitiva (eliminar) es exclusiva del admin.
@@ -208,6 +227,16 @@ export const PERMISOS_DEFAULT: Record<string, Permisos> = {
     leads: manage(true, true, true), inventario: ver(), papelera: none(), ventas: none(),
     ia_asistente: manage(true, true, true), reportes: none(), actividad: none(), calculadora: full(true),
     configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: manage(true, true, true), nomina: none()
+  },
+  // Registrador — logística de ingreso: registra el vehículo, define el servicio y le
+  // pone precio. Todo lo demás es solo consulta. Rol 100% reconfigurable desde
+  // /ajustes/permisos (el chatbot lee esos permisos en vivo).
+  registrador: {
+    dashboard: ver(), clientes: manage(true, true, true), vehiculos: manage(true, true, true),
+    servicios: manage(true, true, true), taller: ver(), agenda: manage(true, true, true), whatsapp: ver(),
+    leads: none(), inventario: ver(), papelera: none(), ventas: ver(),
+    ia_asistente: manage(true, true, true), reportes: none(), actividad: none(), calculadora: full(true),
+    configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: manage(true, true, true)
   },
   // Jefe de Taller — manda en el taller: servicios, vehículos e inventario.
   jefe_taller: {
@@ -315,17 +344,27 @@ export function getChatbotCapabilities(
   const esAdmin = resolveRol(rol) === 'admin';
   const puedeUsarModoDios = can('ia_asistente', 'leer');
 
+  const escribe = (m: keyof Permisos) => can(m, 'crear') || can(m, 'editar');
+
   const capabilities: ChatbotCapability[] = [
     { key: 'consultar', label: 'Consultar el sistema (Modo Dios)', allowed: puedeUsarModoDios,
       detail: 'Ventas, servicios, citas, inventario, reportes, clientes y vehículos en tiempo real.' },
-    { key: 'servicios', label: 'Registrar / editar servicios por chat', allowed: puedeUsarModoDios && (can('servicios', 'crear') || can('servicios', 'editar')),
+    { key: 'servicios', label: 'Registrar / editar servicios por chat', allowed: puedeUsarModoDios && escribe('servicios'),
       detail: 'Crear y actualizar órdenes de taller desde WhatsApp.' },
-    { key: 'citas', label: 'Agendar / editar citas por chat', allowed: puedeUsarModoDios && (can('agenda', 'crear') || can('agenda', 'editar')),
+    { key: 'vehiculos', label: 'Registrar / editar vehículos por chat', allowed: puedeUsarModoDios && escribe('vehiculos'),
+      detail: 'Ingresar vehículos al sistema con su placa, marca, modelo y año.' },
+    { key: 'citas', label: 'Agendar / editar citas por chat', allowed: puedeUsarModoDios && escribe('agenda'),
       detail: 'Crear y modificar citas en la agenda.' },
-    { key: 'clientes', label: 'Registrar / editar clientes por chat', allowed: puedeUsarModoDios && (can('clientes', 'crear') || can('clientes', 'editar')),
+    { key: 'clientes', label: 'Registrar / editar clientes por chat', allowed: puedeUsarModoDios && escribe('clientes'),
       detail: 'Alta y actualización de clientes y sus datos.' },
-    { key: 'inventario', label: 'Gestionar inventario / stock por chat', allowed: puedeUsarModoDios && (can('inventario', 'crear') || can('inventario', 'editar')),
+    { key: 'presupuestos', label: 'Crear presupuestos por chat', allowed: puedeUsarModoDios && escribe('presupuestos'),
+      detail: 'Registrar presupuestos con ítems, cantidades y precios.' },
+    { key: 'ventas', label: 'Registrar / cobrar ventas por chat', allowed: puedeUsarModoDios && escribe('ventas'),
+      detail: 'Registrar ventas, abonos y marcar pendientes como pagadas.' },
+    { key: 'inventario', label: 'Gestionar inventario / stock por chat', allowed: puedeUsarModoDios && escribe('inventario'),
       detail: 'Actualizar precios, existencias y productos.' },
+    { key: 'ganancias', label: 'Ver ganancias y márgenes (confidencial)', allowed: puedeUsarModoDios && (esAdmin || resolveRol(rol) === 'dueno' || can('distribuidor', 'leer')),
+      detail: 'Costo de fabricante, reventa y margen. Nunca visible para clientes.' },
     { key: 'eliminar', label: 'Eliminar registros por chat', allowed: esAdmin,
       detail: 'La eliminación definitiva es exclusiva del Administrador.' },
   ];

@@ -13,7 +13,7 @@ import { useAppStore } from '@/lib/store';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { supabase } from '@/lib/supabase';
-import { getPermisos, hasPermiso, type Permisos } from '@/types';
+import { getPermisos, hasPermiso, resolveRol, type Permisos } from '@/types';
 
 interface NavItem {
   href: string;
@@ -85,7 +85,7 @@ export default function Sidebar() {
 
   const roleDefaults = useAppStore(s => s.roleDefaults);
   const permisos = getPermisos(user?.rol || 'empleado', user?.permisos, roleDefaults);
-  const isAdmin = user?.rol === 'admin';
+  const isAdmin = resolveRol(user?.rol) === 'admin';
 
   const canAccess = (permKey?: keyof Permisos): boolean => {
     if (isAdmin) return true;

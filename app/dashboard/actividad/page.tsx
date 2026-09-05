@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { withSedeFilter } from '@/lib/db-filters';
-import { getPermisos, hasPermiso } from '@/types';
+import { getPermisos, hasPermiso, resolveRol } from '@/types';
 
 interface LogEntry {
   id: string;
@@ -111,7 +111,7 @@ export default function ActividadPage() {
   const [selected, setSelected] = useState<LogEntry | null>(null);
 
   const permisos = getPermisos(user?.rol, user?.permisos, roleDefaults);
-  const isAdmin = user?.rol === 'admin';
+  const isAdmin = resolveRol(user?.rol) === 'admin';
   const canView = isAdmin || hasPermiso(permisos.actividad, 'leer');
 
   const loadLogs = useCallback(async () => {

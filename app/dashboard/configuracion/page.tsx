@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
+import { resolveRol } from '@/types';
 
 // ── Toggle Component ──────────────────────────────────────────
 function Toggle({ checked, onChange, label, description, disabled }: {
@@ -410,7 +411,7 @@ function BotImagesGallery() {
 
 export default function ConfiguracionPage() {
   const { user } = useAppStore();
-  const isAdmin = user?.rol === 'admin';
+  const isAdmin = resolveRol(user?.rol) === 'admin';
 
   const [saveStatus, setSaveStatus] = useState<SaveStatusType>('idle');
   const [activeTab, setActiveTab] = useState('empresa');

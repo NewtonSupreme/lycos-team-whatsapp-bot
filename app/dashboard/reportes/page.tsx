@@ -35,7 +35,7 @@ import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { useAppStore } from '@/lib/store';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
-import { Distribucion } from '@/types';
+import { Distribucion, resolveRol } from '@/types';
 
 // ── Types ──────────────────────────────────────────────────────
 interface VentaDia {
@@ -2516,7 +2516,7 @@ export default function ReportesPage() {
   const { currentSede } = useSedeStore();
   const { user } = useAppStore();
   const { can } = useRolePermissions();
-  const isAdmin = user?.rol === 'admin';
+  const isAdmin = resolveRol(user?.rol) === 'admin';
   const canDeleteVentas = can('ventas', 'eliminar');
 
   useEffect(() => {

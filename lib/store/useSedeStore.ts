@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { getRoleMeta } from '@/types';
 
 export interface Sede {
   id: string;
@@ -7,10 +8,14 @@ export interface Sede {
   es_principal: boolean;
 }
 
-// Roles allowed to switch between/view all sedes.
-// Only the administrator and the owner (dueño, read-only) have multi-sede access;
-// every other role (incl. supervisor) is locked to their assigned sede.
-const SEDE_SWITCH_ROLES = ['admin', 'dueno'] as const;
+// Quién puede ver y cambiar de sede: se deriva de `multiSede` del ROLE_CATALOG, la
+// MISMA bandera que usa el chatbot para decidir el alcance de datos de cada rol. Así
+// el panel y el bot nunca se contradicen.
+// Hoy: solo Administración y Dueño. El resto (supervisor, atención al cliente,
+// registrador y cualquier rol personalizado) queda fijo en su sede asignada.
+function rolPuedeCambiarSede(rol: string | null): boolean {
+  return !!rol && !!getRoleMeta(rol)?.multiSede;
+}
 
 interface SedeState {
   currentSede: Sede | null;
@@ -20,7 +25,7 @@ interface SedeState {
   setCurrentSede: (sede: Sede) => void;
   setAvailableSedes: (sedes: Sede[]) => void;
   setUserRole: (role: string | null) => void;
-  // Only admin / gerente (supervisor) can view & switch all sedes
+  /** true solo para los roles multi-sede del catálogo (admin y dueño). */
   canViewAll: () => boolean;
 }
 
@@ -34,12 +39,7 @@ export const useSedeStore = create<SedeState>()(
       setCurrentSede: (sede) => set((state) => ({ currentSede: sede, sedeRefreshKey: state.sedeRefreshKey + 1 })),
       setAvailableSedes: (sedes) => set({ availableSedes: sedes }),
       setUserRole: (role) => set({ userRole: role }),
-      canViewAll: () => {
-        const state = get();
-        // Strictly role-based: only admin and gerente (supervisor) can switch sedes.
-        // A regular employee/técnico stays locked to their assigned sede.
-        return SEDE_SWITCH_ROLES.includes(state.userRole as any);
-      }
+      canViewAll: () => rolPuedeCambiarSede(get().userRole)
     }),
     {
       name: 'sede-storage',

@@ -11,10 +11,10 @@ import { useSedeStore } from "@/lib/store/useSedeStore";
 import { useAppStore } from "@/lib/store";
 import {
   Loader2, Plus, Users, Shield, MapPin, Trash2, User, Wrench, Eye, EyeOff,
-  Crown, DollarSign, Headphones, HardHat, KeyRound
+  Crown, DollarSign, Headphones, HardHat, KeyRound, ClipboardList
 } from "lucide-react";
 import {
-  ROLE_CATALOG, getRoleMeta, normalizePermiso, PERMISOS_DEFAULT, MASTER_ADMIN_USERNAME,
+  ROLE_CATALOG, getRoleMeta, normalizePermiso, PERMISOS_DEFAULT, MASTER_ADMIN_USERNAME, resolveRol,
   type RoleMeta, type Permisos, type PermisoValue,
 } from "@/types";
 import PersonalTecnico, { AREAS } from "@/components/empleados/PersonalTecnico";
@@ -30,6 +30,7 @@ function RoleIconCmp({ rol, className }: { rol: string; className?: string }) {
     case 'headset': return <Headphones className={className} />;
     case 'hardhat': return <HardHat className={className} />;
     case 'wrench': return <Wrench className={className} />;
+    case 'clipboard': return <ClipboardList className={className} />;
     default: return <Shield className={className} />;
   }
 }
@@ -47,7 +48,7 @@ export default function EmpleadosPage() {
 
   const { canViewAll, currentSede } = useSedeStore();
   const { user, setUser } = useAppStore();
-  const userRole = user?.rol || 'atencion_cliente';
+  const userRole = resolveRol(user?.rol);
   const isAdmin = userRole === 'admin';
   const canEdit = isAdmin || userRole === 'supervisor';
   const canDelete = isAdmin;
@@ -381,7 +382,7 @@ export default function EmpleadosPage() {
 
   const administrativos = empleados.filter(e => !getRoleMeta(e.rol)?.esTecnico);
   const tecnicos = empleados.filter(e => getRoleMeta(e.rol)?.esTecnico);
-  const botAdmins = empleados.filter(e => e.rol === 'admin' && e.telefono);
+  const botAdmins = empleados.filter(e => resolveRol(e.rol) === 'admin' && e.telefono);
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">

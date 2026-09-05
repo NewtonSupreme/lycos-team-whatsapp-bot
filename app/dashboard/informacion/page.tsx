@@ -9,7 +9,7 @@ import {
 } from "@/types";
 import {
   Shield, Crown, Eye, DollarSign, Headphones, HardHat, Wrench, Bot, LayoutGrid,
-  Check, X, MessageSquareText, Info, MapPin,
+  Check, X, MessageSquareText, Info, MapPin, ClipboardList,
 } from "lucide-react";
 
 function RoleIconCmp({ rol, className }: { rol: string; className?: string }) {
@@ -21,6 +21,7 @@ function RoleIconCmp({ rol, className }: { rol: string; className?: string }) {
     case 'headset': return <Headphones className={className} />;
     case 'hardhat': return <HardHat className={className} />;
     case 'wrench': return <Wrench className={className} />;
+    case 'clipboard': return <ClipboardList className={className} />;
     default: return <Shield className={className} />;
   }
 }

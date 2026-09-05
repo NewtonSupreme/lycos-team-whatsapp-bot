@@ -1,11 +1,12 @@
 import { useAppStore } from '@/lib/store';
-import { getPermisos, hasPermiso, Permisos } from '@/types';
+import { getPermisos, hasPermiso, resolveRol, Permisos } from '@/types';
 
 export function useRolePermissions() {
   const { user, roleDefaults } = useAppStore();
   
-  // Administradores tienen acceso total por defecto
-  const isAdmin = user?.rol === 'admin';
+  // Administradores tienen acceso total por defecto.
+  // `resolveRol` normaliza mayúsculas y rótulos heredados ("Administrador").
+  const isAdmin = resolveRol(user?.rol) === 'admin';
   
   // Obtenemos el set de permisos resuelto para el usuario actual
   const permisos = getPermisos(user?.rol || 'empleado', user?.permisos, roleDefaults);

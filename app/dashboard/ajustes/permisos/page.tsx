@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useAppStore } from "@/lib/store";
-import { MODULES, normalizePermiso, accesoToCrud, PERMISOS_DEFAULT, type Permisos, type CrudPermiso, type PermisoValue } from "@/types";
+import { MODULES, normalizePermiso, accesoToCrud, PERMISOS_DEFAULT, resolveRol, type Permisos, type CrudPermiso, type PermisoValue } from "@/types";
 import { Shield, Loader2, Save, AlertCircle, CheckCircle2 } from "lucide-react";
 
 interface RoleData {
@@ -16,7 +16,7 @@ interface RoleData {
 
 export default function PermisosPage() {
   const { user, setRoleDefaults } = useAppStore();
-  const isAdmin = user?.rol === 'admin';
+  const isAdmin = resolveRol(user?.rol) === 'admin';
 
   const [roles, setRoles] = useState<RoleData[]>([]);
   const [loading, setLoading] = useState(true);
