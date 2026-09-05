@@ -433,7 +433,8 @@ describe('Rate', () => {
     const r = rate('USD', 'VES', 3600000n, 'BCV', at('2026-09-01T00:00:00Z'));
     const result = convert(money(1000n, 'USD'), r);
     expect(result.money.currency).toBe('VES');
-    expect(result.money.amountMinor).toBe(36000n);
+    // $10.00 (1000 minor) x 3.6 VES/USD = 36.00 VES = 3600 minor
+    expect(result.money.amountMinor).toBe(3600n);
     expect(result.rateSource).toBe('BCV');
     expect(result.rateAt).toEqual(at('2026-09-01T00:00:00Z'));
   });
