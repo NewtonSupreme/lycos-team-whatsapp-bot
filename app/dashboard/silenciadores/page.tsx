@@ -712,7 +712,6 @@ export default function VentasPage() {
       setBins(emptyBins());
       setModoCashea(false);
       setJobSpecs([]);
-      setMetodosPago({ efectivo_usd: 0, zelle: 0, pago_movil: 0, efectivo_ves: 0, punto_de_venta: 0, transferencia: 0, cashea: 0, binance: 0, euros: 0, otro: 0 });
       setAbono(0);
       setShowAbonoSection(false);
       setComprobante(emptyComprobante());

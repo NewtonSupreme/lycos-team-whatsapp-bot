@@ -236,7 +236,7 @@ export const PERMISOS_DEFAULT: Record<string, Permisos> = {
     servicios: manage(true, true, true), taller: ver(), agenda: manage(true, true, true), whatsapp: ver(),
     leads: none(), inventario: ver(), papelera: none(), ventas: ver(),
     ia_asistente: manage(true, true, true), reportes: none(), actividad: none(), calculadora: full(true),
-    configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: manage(true, true, true)
+    configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: manage(true, true, true), nomina: none()
   },
   // Jefe de Taller — manda en el taller: servicios, vehículos e inventario.
   jefe_taller: {
