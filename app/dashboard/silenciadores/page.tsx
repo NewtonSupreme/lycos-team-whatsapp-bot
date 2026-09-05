@@ -40,6 +40,7 @@ import { Calendar as CalendarUI } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+import AsignacionTecnicos, { type JobSpec } from '@/components/nomina/AsignacionTecnicos';
 
 interface CartItem {
   id: string;
@@ -64,6 +65,8 @@ export default function VentasPage() {
   const [clienteNombre, setClienteNombre] = useState('');
   const [vehiculoInfo, setVehiculoInfo] = useState('');
   const [notas, setNotas] = useState('');
+  // Nómina: técnico(s) encargado(s) de la instalación (escapes) para la comisión.
+  const [jobSpecs, setJobSpecs] = useState<JobSpec[]>([]);
   const [conIva, setConIva] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
@@ -473,6 +476,9 @@ export default function VentasPage() {
   const handleFinalize = async () => {
     if (cart.length === 0) return alert("El carrito está vacío");
     if (!supabase) return;
+    // Nómina: exige técnico encargado o "lo hizo el taller".
+    const specsValidos = jobSpecs.filter(s => s.empleado_id || s.es_taller);
+    if (specsValidos.length === 0) return alert('Indica el técnico encargado o marca "Lo hizo el taller" en la sección Comisión / Nómina.');
 
     let abonoAmount = showAbonoSection ? abono : 0;
     let saldoRestante = 0;
@@ -572,6 +578,27 @@ export default function VentasPage() {
         referencia_id: ventaDia.id,
         referencia_tabla: 'ventas_dia'
       });
+
+      // Nómina: registra trabajos + comisiones (no bloquea la venta si falla).
+      try {
+        await fetch('/api/nomina/jobs', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sede: currentSede?.id || null,
+            jobs: specsValidos.map(s => ({
+              ...s,
+              tipo_trabajo: s.zona,
+              descripcion: `${clienteNombre || 'Consumidor Final'}${vehiculoInfo ? ' · ' + vehiculoInfo : ''}`,
+              referencia_tabla: 'ventas_dia',
+              referencia_id: ventaDia.id,
+              fecha: ventaFechaStr,
+              moneda: 'USD',
+            })),
+          }),
+        });
+      } catch (nominaErr) {
+        console.error('No se pudo registrar la comisión de nómina (POS):', nominaErr);
+      }
 
       for (const item of cart) {
         let qtyToDeduct = item.cantidad;
@@ -684,6 +711,8 @@ export default function VentasPage() {
       setNotas('');
       setBins(emptyBins());
       setModoCashea(false);
+      setJobSpecs([]);
+      setMetodosPago({ efectivo_usd: 0, zelle: 0, pago_movil: 0, efectivo_ves: 0, punto_de_venta: 0, transferencia: 0, cashea: 0, binance: 0, euros: 0, otro: 0 });
       setAbono(0);
       setShowAbonoSection(false);
       setComprobante(emptyComprobante());
@@ -1839,6 +1868,27 @@ export default function VentasPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Comisión / Nómina — técnico de la instalación */}
+              {cart.length > 0 && (
+                <div className="px-4 pb-2">
+                  <div className="rounded-2xl border border-amber-300/40 dark:border-amber-700/30 bg-amber-50/30 dark:bg-amber-950/10 p-3">
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <Banknote className="w-3.5 h-3.5 text-amber-500" />
+                      <span className="text-[10px] text-amber-700 dark:text-amber-400 uppercase font-black tracking-widest">Comisión / Nómina</span>
+                    </div>
+                    <AsignacionTecnicos
+                      value={jobSpecs}
+                      onChange={setJobSpecs}
+                      sedeId={currentSede?.id || null}
+                      defaultZona="escape"
+                      ingresoTotal={total}
+                      moneda="USD"
+                      compact
+                    />
+                  </div>
+                </div>
+              )}
 
               {/* Totales y Finalización */}
               <div className="p-8 space-y-6 bg-gradient-to-t from-primary/10 to-transparent border-t border-border/30">

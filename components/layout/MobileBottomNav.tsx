@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, MessageSquare, Calendar, Wrench,
-  MoreHorizontal, Users, Car, Bot, FileText, Activity, Settings, X, TrendingUp, LogOut, Calculator, ShoppingCart, Receipt, Info
+  MoreHorizontal, Users, Car, Bot, FileText, Activity, Settings, X, TrendingUp, LogOut, Calculator, ShoppingCart, Receipt, Info, Banknote
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -33,6 +33,7 @@ const MORE_NAV: NavItem[] = [
   { href: '/dashboard/silenciadores', icon: ShoppingCart, label: 'Ventas', permKey: 'ventas' },
   { href: '/dashboard/facturas', icon: Receipt, label: 'Facturas', permKey: 'ventas' },
   { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente', permKey: 'ia_asistente' },
+  { href: '/dashboard/nomina', icon: Banknote, label: 'Nómina', permKey: 'nomina' },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', permKey: 'reportes' },
   { href: '/dashboard/actividad', icon: Activity, label: 'Actividad', permKey: 'actividad' },
   { href: '/dashboard/calculadora', icon: Calculator, label: 'Calculadora', permKey: 'calculadora' },

@@ -28,7 +28,7 @@ export async function POST(req: Request) {
       }
     });
 
-    const { id, email, nombre, sede_id, rol, activo, telefono, username, permisos, password } = await req.json();
+    const { id, email, nombre, sede_id, rol, activo, telefono, username, permisos, password, especialidad, cedula, foto_url, alias } = await req.json();
 
     if (!id) {
       return NextResponse.json({ error: 'ID de usuario requerido' }, { status: 400 });
@@ -50,20 +50,21 @@ export async function POST(req: Request) {
       }
     }
 
-    const updates: any = {
-      username,
-      nombre,
-      email,
-      rol,
-      activo: activo !== undefined ? activo : true,
-      sede_id,
-      telefono: telefono || null,
-      updated_at: new Date().toISOString()
-    };
-
-    if (permisos !== undefined) {
-      updates.permisos = permisos;
-    }
+    // Solo se actualiza lo que venga definido: así una acción parcial
+    // (p. ej. activar/desactivar) no borra el resto de los datos del usuario.
+    const updates: any = { updated_at: new Date().toISOString() };
+    if (username !== undefined) updates.username = username;
+    if (nombre !== undefined) updates.nombre = nombre;
+    if (email !== undefined) updates.email = email;
+    if (rol !== undefined) updates.rol = rol;
+    if (activo !== undefined) updates.activo = activo;
+    if (sede_id !== undefined) updates.sede_id = sede_id;
+    if (telefono !== undefined) updates.telefono = telefono || null;
+    if (especialidad !== undefined) updates.especialidad = especialidad || null;
+    if (cedula !== undefined) updates.cedula = cedula || null;
+    if (foto_url !== undefined) updates.foto_url = foto_url || null;
+    if (alias !== undefined) updates.alias = alias || null;
+    if (permisos !== undefined) updates.permisos = permisos;
 
     // Reseteo opcional de contraseña (solo si el admin escribió una nueva)
     if (typeof password === 'string' && password.trim().length > 0) {

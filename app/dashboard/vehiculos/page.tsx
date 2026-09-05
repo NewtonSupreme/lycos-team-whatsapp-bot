@@ -1,6 +1,7 @@
 'use client';
 import React, { useState, useRef } from 'react';
-import { Car, Plus, Search, Edit, Trash2, Eye, Wrench, CheckCircle2, XCircle, Loader2, ArrowRightLeft } from 'lucide-react';
+import { Car, Plus, Search, Edit, Trash2, Eye, Wrench, CheckCircle2, XCircle, Loader2, ArrowRightLeft, Wallet } from 'lucide-react';
+import GastosVehiculoModal from '@/components/egresos/GastosVehiculoModal';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,6 +34,7 @@ export default function VehiculosPage() {
   const [editVehiculo, setEditVehiculo] = useState<Vehiculo | null>(null);
   const [viewVehiculo, setViewVehiculo] = useState<Vehiculo | null>(null);
   const [transferVehiculoTarget, setTransferVehiculoTarget] = useState<Vehiculo | null>(null);
+  const [gastosTarget, setGastosTarget] = useState<Vehiculo | null>(null);
   const { user } = useAppStore();
   const { can } = useRolePermissions();
   const [vehiculoServicios, setVehiculoServicios] = useState<any[]>([]);
@@ -400,6 +402,7 @@ export default function VehiculosPage() {
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button onClick={() => setViewVehiculo(vehiculo)} className="w-6 h-6 rounded-md hover:bg-white/10 flex items-center justify-center"><Eye className="w-3.5 h-3.5 text-muted-foreground" /></button>
                       <button onClick={() => openEdit(vehiculo)} className="w-6 h-6 rounded-md hover:bg-white/10 flex items-center justify-center"><Edit className="w-3.5 h-3.5 text-muted-foreground" /></button>
+                      <button onClick={() => setGastosTarget(vehiculo)} title="Gastos y utilidad del vehículo" className="w-6 h-6 rounded-md hover:bg-rose-500/10 flex items-center justify-center"><Wallet className="w-3.5 h-3.5 text-rose-400" /></button>
                       <button onClick={() => setTransferVehiculoTarget(vehiculo)} title="Transferir a otro cliente" className="w-6 h-6 rounded-md hover:bg-primary/10 flex items-center justify-center"><ArrowRightLeft className="w-3.5 h-3.5 text-muted-foreground" /></button>
                       {can('vehiculos', 'eliminar') && (
                         <button onClick={() => handleDelete(vehiculo.id)} className="w-6 h-6 rounded-md hover:bg-red-500/10 flex items-center justify-center"><Trash2 className="w-3.5 h-3.5 text-red-400" /></button>
@@ -446,6 +449,24 @@ export default function VehiculosPage() {
           <Car className="w-12 h-12 text-muted-foreground/30 mb-3" />
           <p className="text-muted-foreground">No se encontraron vehículos</p>
         </div>
+      )}
+
+      {/* Gastos y utilidad del vehículo */}
+      {gastosTarget && (
+        <GastosVehiculoModal
+          canDelete={can('vehiculos', 'eliminar')}
+          onClose={() => setGastosTarget(null)}
+          target={{
+            vehiculo_id: gastosTarget.id,
+            cliente_id: gastosTarget.cliente_id,
+            placa: gastosTarget.placa,
+            vehiculo_info: `${gastosTarget.marca} ${gastosTarget.modelo}`,
+            cliente_nombre: clientes.find(c => c.id === gastosTarget.cliente_id)
+              ? `${clientes.find(c => c.id === gastosTarget.cliente_id)!.nombre} ${clientes.find(c => c.id === gastosTarget.cliente_id)!.apellido || ''}`.trim()
+              : null,
+            sede_id: gastosTarget.sede_id || null,
+          }}
+        />
       )}
 
       {/* Modal */}

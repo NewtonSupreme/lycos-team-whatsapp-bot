@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Users, Car, Wrench, Calendar, MessageSquare,
   Bot, FileText, Settings, ChevronLeft, ChevronRight,
   Activity, LogOut, TrendingUp, UserCircle, Package, Calculator, ShoppingCart, Trash2, Truck, Shield,
-  FileSpreadsheet, Receipt, Info
+  FileSpreadsheet, Receipt, Info, Banknote
 } from 'lucide-react';
 import { cn, getInitials } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -39,6 +39,7 @@ const navItemsConfig: NavItem[] = [
   { href: '/dashboard/facturas', icon: Receipt, label: 'Facturas', badge: null, permKey: 'ventas' },
   { href: '/dashboard/presupuestos', icon: FileSpreadsheet, label: 'Presupuestos', badge: null, permKey: 'presupuestos' },
   { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente', badge: null, permKey: 'ia_asistente' },
+  { href: '/dashboard/nomina', icon: Banknote, label: 'Nómina', badge: null, permKey: 'nomina' },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', badge: null, permKey: 'reportes' },
   { href: '/dashboard/actividad', icon: Activity, label: 'Actividad', badge: null, permKey: 'actividad' },
   { href: '/dashboard/calculadora', icon: Calculator, label: 'Calculadora', badge: null, permKey: 'calculadora' },

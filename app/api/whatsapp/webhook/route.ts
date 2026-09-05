@@ -6,6 +6,8 @@ import {
   WRITE_TAGS, reconciliarTexto, esAfirmacion, esNegacion, pendienteVigente,
   resumenCambioStock, cambioPrecioSospechoso, type AccionPendiente,
 } from '@/lib/bot/action-guard';
+import { getPayrollService } from '@/lib/payroll/service';
+import { buildUtilidad } from '@/lib/utilidad';
 
 async function checkIsBotAdmin(phone: string, db: any, adminPhones: string[]): Promise<boolean> {
   const phoneClean = phone.replace(/[^0-9]/g, '');
@@ -689,6 +691,29 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
     - ⛔ REGLA DE ORO INQUEBRANTABLE: Si vas a decir "registré", "quedó registrado", "listo", "agregué el servicio" o cualquier confirmación de registro, DEBES incluir OBLIGATORIAMENTE el tag [SERVICIO_UPSERT: ...] al final de ESE MISMO mensaje. Decir que lo registraste SIN imprimir el tag es un ERROR GRAVE: el servicio NO se guarda y el sistema queda inconsistente. NUNCA confirmes un registro sin su tag.
     - Si te faltan datos para registrar (no hay vehículo ni placa ni servicio claro), NO digas que registraste: pregunta lo que falta. Solo confirma registro cuando emitas el tag.
     - ⚠️ COMBINACIÓN IMAGEN + AUDIO (CRÍTICO): Cuando el historial reciente tenga una imagen de un vehículo Y el mensaje actual (audio o texto) pida registrar/ingresar el servicio, COMBINA AMBOS en UNA sola respuesta y UN solo [SERVICIO_UPSERT]: toma marca/modelo/placa de la descripción de la imagen y la sede/servicio/precio del audio. No respondas dos veces ni pidas de nuevo lo que ya está en la imagen.
+
+11b. GESTIÓN DE EGRESOS / GASTOS [EGRESO_UPSERT]:
+    - El admin puede registrar un GASTO/EGRESO directamente por WhatsApp (compra de repuestos, insumos, pago a terceros, etc.).
+    - FORMATO EXACTO DEL TAG (imprímelo al final del mensaje):
+      [EGRESO_UPSERT: monto | categoria | descripcion | placa | proveedor | metodo_pago | sede_id]
+      • monto: número en USD (obligatorio). Ej: 45.50
+      • categoria: repuestos | insumos | terceros | pintura | herramientas | nomina | servicios | local | otro
+      • descripcion: qué se compró/pagó (ej. "2 pastillas de freno delanteras")
+      • placa: ⚠️ CLAVE — la placa del vehículo por el cual se hizo el gasto. Si la pones, el gasto queda
+        AUTOMÁTICAMENTE asociado a ese vehículo y a su dueño, y el sistema calcula la UTILIDAD de ese carro
+        (ingresos del vehículo − gastos del vehículo). Déjala vacía SOLO si el gasto es general del taller.
+      • proveedor: a quién se le pagó (ej. "Repuestos El Chamo")
+      • metodo_pago: efectivo_usd | zelle | binance | pago_movil_banesco | efectivo_bs | transferencia | otro
+      • sede_id: si el admin menciona la sede; si no, déjalo vacío.
+    - EJEMPLO: admin dice "compré 2 pastillas de freno en 30$ para el carro de placa AG714TG, le pagué a Repuestos El Chamo en efectivo"
+      → [EGRESO_UPSERT: 30 | repuestos | 2 pastillas de freno delanteras | AG714TG | Repuestos El Chamo | efectivo_usd | ]
+    - ⛔ REGLA DE ORO: si dices "registré el gasto" / "quedó registrado el egreso", DEBES imprimir el tag [EGRESO_UPSERT: ...]
+      en ESE MISMO mensaje. Confirmar sin el tag es un ERROR GRAVE (el gasto NO se guarda).
+    - Si el admin no da el monto, PREGÚNTALO. Si no da la placa pero el gasto es claramente de un vehículo, pregunta la placa
+      para poder asociarlo y calcular la utilidad de ese carro.
+    - Todo egreso registrado aparece automáticamente en el panel de Egresos, en el reporte de Egresos y en la
+      Utilidad por Vehículo. Usa la sección [EGRESOS Y UTILIDAD] del contexto para responder cuánto se ha gastado,
+      en qué, por cuál vehículo y cuál es la utilidad real de cada carro.
 
 12. GESTIÓN DE VENTAS:
     - [VENTAS RECIENTES] contiene ventas de los últimos 30 días (de ventas_silenciadores y ventas_dia).
@@ -2081,7 +2106,77 @@ CAMBIOS SENSIBLES (precio/stock, eliminar producto, registrar venta): el sistema
           + `REGLA: Esta información es CONFIDENCIAL. Solo puedes darla a este administrador. JAMÁS reveles costos de fabricante, ganancias ni márgenes a clientes.\n`;
       }
 
-      historialTecnico = `\n--- FIN DE DATOS DEL SISTEMA ---\nInstrucción estricta: Eres el asistente administrativo (Modo Dios). Debes dar la información precisa de lo que se te pide usando la data anterior. Puedes ejecutar comandos para modificar la base de datos si el admin te lo pide. No inventes nada. ${ventasInfo}${gananciasInfo}`;
+      // ─── NÓMINA Y COMISIONES (semana actual) — para responder al admin por WhatsApp ───
+      let nominaInfo = '';
+      const puedeVerNomina = rolCanonGan === 'admin' || rolCanonGan === 'dueno' || rolCanonGan === 'supervisor' || hasPermiso(botPermisos?.nomina, 'leer');
+      if (puedeVerNomina) {
+        try {
+          const svc = getPayrollService();
+          const hoyN = new Date();
+          const dN = (hoyN.getDay() + 6) % 7;
+          const lunesN = new Date(hoyN); lunesN.setDate(hoyN.getDate() - dN);
+          const domN = new Date(lunesN); domN.setDate(lunesN.getDate() + 6);
+          const iniN = lunesN.toISOString().slice(0, 10);
+          const finN = domN.toISOString().slice(0, 10);
+          const nominaSede = (rolCanonGan === 'admin' || rolCanonGan === 'dueno') ? null : (adminSedeId || null);
+          const resumen = await svc.getPayrollSummary({ inicio: iniN, fin: finN, sedeId: nominaSede });
+          if (resumen.length > 0) {
+            const totalN = resumen.reduce((s, e) => s + e.total_pagar, 0);
+            nominaInfo = `\n[NÓMINA Y COMISIONES — semana ${iniN} → ${finN} | Total a pagar: $${totalN.toFixed(2)} (USD)]\n`
+              + resumen.map(e => `- ${e.empleado_nombre} (${e.rol}): base $${e.sueldo_base.toFixed(2)}, comisiones $${(e.total_comisiones + e.total_flat).toFixed(2)}, override $${e.total_overrides.toFixed(2)}, adelantos -$${e.deducciones.toFixed(2)}, TOTAL $${e.total_pagar.toFixed(2)} (${e.jobs.length} trabajos)`).join('\n')
+              + `\nReglas de comisión dinámicas por empleado/zona. Si el admin pregunta por pagos, comisiones o cuánto le toca a un técnico, usa estos datos. Para liquidar/pagar nómina indícale que use el panel de Nómina.\n`;
+          } else {
+            nominaInfo = `\n[NÓMINA Y COMISIONES — semana ${iniN} → ${finN}]\nSin comisiones ni sueldos calculados esta semana.\n`;
+          }
+        } catch (e) { console.error('Error nomina webhook context:', e); }
+      }
+
+      // ─── EGRESOS Y UTILIDAD POR VEHÍCULO ───────────────────────────────────
+      let egresosInfo = '';
+      if (puedeVerGanancias) {
+        try {
+          const hoyE = new Date();
+          const desdeE = new Date(hoyE.getFullYear(), hoyE.getMonth(), 1).toISOString().slice(0, 10);
+          const hastaE = hoyE.toISOString().slice(0, 10);
+
+          const { data: egs } = await db.from('egresos').select('*')
+            .gte('fecha', desdeE).lte('fecha', hastaE)
+            .order('fecha', { ascending: false }).limit(120);
+
+          const listaE = egs || [];
+          const totalE = listaE.reduce((s: number, e: any) => s + (Number(e.total_egresos) || 0), 0);
+
+          egresosInfo = `\n[EGRESOS Y UTILIDAD — mes actual (${desdeE} → ${hastaE})]\n`
+            + `Total egresos del mes: $${totalE.toFixed(2)} (${listaE.length} registros)\n`;
+
+          if (listaE.length > 0) {
+            egresosInfo += `Detalle de egresos:\n`
+              + listaE.slice(0, 40).map((e: any) =>
+                `- ${e.fecha}${e.hora ? ' ' + e.hora : ''} | $${(Number(e.total_egresos) || 0).toFixed(2)} | ${e.categoria || 'otro'}`
+                + ` | ${e.notas || e.desglose?.[0]?.descripcion || 'Sin descripción'}`
+                + (e.placa ? ` | VEHÍCULO: ${e.placa}${e.vehiculo_info ? ' (' + e.vehiculo_info + ')' : ''}` : ' | Gasto general del taller')
+                + (e.cliente_nombre ? ` | Cliente: ${e.cliente_nombre}` : '')
+                + (e.proveedor || e.cliente ? ` | Pagado a: ${e.proveedor || e.cliente}` : '')
+                + (e.origen === 'bot' ? ' | [registrado por WhatsApp]' : '')
+              ).join('\n') + '\n';
+          }
+
+          // Utilidad real por vehículo (ingresos − egresos asociados)
+          const filasU = await buildUtilidad(db, { desde: desdeE, hasta: hastaE, sedeId: null });
+          const conMovimiento = filasU.filter(f => f.ingresos > 0 || f.egresos > 0).slice(0, 30);
+          if (conMovimiento.length > 0) {
+            const tIng = conMovimiento.reduce((s, f) => s + f.ingresos, 0);
+            const tEgr = conMovimiento.reduce((s, f) => s + f.egresos, 0);
+            egresosInfo += `\nUTILIDAD POR VEHÍCULO (mes actual) — Ingresos $${tIng.toFixed(2)} | Egresos $${tEgr.toFixed(2)} | Utilidad $${(tIng - tEgr).toFixed(2)}\n`
+              + conMovimiento.map(f =>
+                `- ${f.placa} (${f.vehiculo}) | Cliente: ${f.cliente} | Ingresos $${f.ingresos.toFixed(2)} | Egresos $${f.egresos.toFixed(2)} | UTILIDAD $${f.utilidad.toFixed(2)} (${f.margen}%)`
+              ).join('\n') + '\n';
+          }
+          egresosInfo += `REGLA: Esta información es CONFIDENCIAL (solo admin). Úsala para responder cuánto se gastó, en qué, por cuál vehículo y la utilidad real de cada carro.\n`;
+        } catch (e) { console.error('Error egresos webhook context:', e); }
+      }
+
+      historialTecnico = `\n--- FIN DE DATOS DEL SISTEMA ---\nInstrucción estricta: Eres el asistente administrativo (Modo Dios). Debes dar la información precisa de lo que se te pide usando la data anterior. Puedes ejecutar comandos para modificar la base de datos si el admin te lo pide. No inventes nada. ${ventasInfo}${gananciasInfo}${nominaInfo}${egresosInfo}`;
 
     } else {
       // Logic for regular clients (same as before)
@@ -4030,6 +4125,79 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       }
 
       if (isAdmin && db) {
+        // 0. [EGRESO_UPSERT: monto | categoria | descripcion | placa | proveedor | metodo_pago | sede_id]
+        //    Registra un gasto en el panel de Egresos. Si viene la PLACA, el gasto queda
+        //    asociado automáticamente al vehículo y su cliente → utilidad por vehículo.
+        const egresoMatches = canBotWrite('reportes') ? Array.from(cleanedAi.matchAll(/\[EGRESO_UPSERT:\s*([^\]]+)\]/gi)) : [];
+        for (const match of egresoMatches) {
+          try {
+            const p = match[1].split('|').map(s => s.trim());
+            const monto = parseFloat(p[0]);
+            if (isNaN(monto) || monto <= 0) { console.log('⚠️ EGRESO_UPSERT: monto inválido'); continue; }
+
+            const categoria = p[1] || 'otro';
+            const descripcion = p[2] || 'Gasto registrado por el bot';
+            const placa = (p[3] || '').toUpperCase().replace(/\s+/g, '') || null;
+            const proveedor = p[4] || null;
+            const metodoPago = p[5] || null;
+            const sedeEg = p[6] || ctx.adminSedeId || ctx.sede_id || DEFAULT_SEDE_ID;
+
+            const egresoRow: any = {
+              fecha: new Date().toISOString().slice(0, 10),
+              hora: new Date().toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', hour12: false }),
+              categoria,
+              total_egresos: monto,
+              notas: descripcion,
+              desglose: [{ descripcion, cantidad: 1, precio_unitario: monto, total: monto }],
+              proveedor,
+              cliente: proveedor,          // compat: columna `cliente` = "pagado a"
+              metodo_pago: metodoPago,
+              moneda: 'USD',
+              origen: 'bot',
+              creado_por: `Bot (${ctx.adminName || 'Admin'})`,
+              sede_id: sedeEg,
+              placa,
+            };
+
+            // Asocia el gasto al vehículo (y a su dueño) si se indicó la placa.
+            if (placa) {
+              const { data: veh } = await db.from('vehiculos')
+                .select('id, cliente_id, marca, modelo, placa, clientes(nombre, apellido)')
+                .ilike('placa', placa).limit(1).maybeSingle();
+              if (veh) {
+                egresoRow.vehiculo_id = veh.id;
+                egresoRow.cliente_id = veh.cliente_id;
+                egresoRow.placa = veh.placa;
+                egresoRow.vehiculo_info = `${veh.marca || ''} ${veh.modelo || ''}`.trim();
+                const cl: any = veh.clientes;
+                if (cl) egresoRow.cliente_nombre = `${cl.nombre || ''} ${cl.apellido || ''}`.trim();
+
+                // Si el vehículo tiene un servicio activo, se enlaza a esa orden.
+                const { data: srv } = await db.from('servicios')
+                  .select('id').eq('vehiculo_id', veh.id)
+                  .in('estado', ['pendiente', 'en_proceso', 'en_progreso', 'en_revision', 'confirmada'])
+                  .order('created_at', { ascending: false }).limit(1).maybeSingle();
+                if (srv) egresoRow.servicio_id = srv.id;
+              }
+            }
+
+            const { error: egErr } = await db.from('egresos').insert(egresoRow);
+            if (egErr) {
+              console.error('❌ Error en EGRESO_UPSERT:', egErr.message);
+            } else {
+              console.log(`✅ EGRESO_UPSERT: $${monto} (${categoria})${placa ? ' → ' + placa : ''}`);
+              await db.from('logs_actividad').insert({
+                usuario: `Bot (${ctx.adminName || 'Admin'})`, modulo: 'egresos',
+                accion: 'Egreso registrado desde WhatsApp',
+                detalles: `$${monto.toFixed(2)} · ${categoria}${placa ? ` · Vehículo ${placa}` : ''}${proveedor ? ` · Pagado a ${proveedor}` : ''}`,
+                referencia_tabla: 'egresos', sede_id: sedeEg,
+              });
+            }
+          } catch (e) {
+            console.error('❌ Error en EGRESO_UPSERT:', e);
+          }
+        }
+
         // 1. [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca]
         // Regex más flexible que captura el interior del tag
         const stockUpsertMatchesArray = canBotWrite('inventario') ? Array.from(cleanedAi.matchAll(/\[STOCK_?UPSERT:\s*([^\]]+)\]/gi)) : [];
@@ -4950,6 +5118,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
         // Remove management tags from final message
         cleanedAi = cleanedAi
+          .replace(/\[EGRESO_UPSERT:[^\]]+\]/gi, '')
           .replace(/\[STOCK_UPSERT:[^\]]+\]/gi, '')
           .replace(/\[STOCK_DELETE:[^\]]+\]/gi, '')
           .replace(/\[VEHICULO_UPSERT:[^\]]+\]/gi, '')

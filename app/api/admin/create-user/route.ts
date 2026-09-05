@@ -30,7 +30,7 @@ export async function POST(req: Request) {
       }
     });
 
-    const { email, nombre, apellido, sede_id, rol, activo, password_hash, telefono, username: manualUsername } = await req.json();
+    const { email, nombre, apellido, sede_id, rol, activo, password_hash, telefono, username: manualUsername, cedula, especialidad, foto_url } = await req.json();
 
     if (!nombre || !rol) {
       return NextResponse.json({ error: 'Faltan datos requeridos (nombre, rol)' }, { status: 400 });
@@ -85,7 +85,10 @@ export async function POST(req: Request) {
       // permisos de su rol (permisos por-usuario quedan en NULL).
       activo: activo !== undefined ? activo : true,
       sede_id: sede_id,
-      telefono: telefono || null
+      telefono: telefono || null,
+      cedula: cedula || null,
+      especialidad: especialidad || null,
+      foto_url: foto_url || null,
     }).select().single();
 
     if (error) {

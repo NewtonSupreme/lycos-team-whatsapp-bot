@@ -29,13 +29,14 @@ export interface Permisos {
   empleados: CrudPermiso;
   distribuidor: CrudPermiso;
   presupuestos: CrudPermiso;
+  nomina: CrudPermiso;
 }
 
 export const MODULES: (keyof Permisos)[] = [
   'dashboard', 'clientes', 'vehiculos', 'servicios', 'taller',
   'agenda', 'whatsapp', 'leads', 'inventario', 'papelera',
   'ventas', 'ia_asistente', 'reportes', 'actividad', 'calculadora',
-  'configuracion', 'empleados', 'distribuidor', 'presupuestos'
+  'configuracion', 'empleados', 'distribuidor', 'presupuestos', 'nomina'
 ];
 
 export function accesoToCrud(acceso: boolean): CrudPermiso {
@@ -175,14 +176,14 @@ export const PERMISOS_DEFAULT: Record<string, Permisos> = {
     dashboard: full(true), clientes: full(true), vehiculos: full(true), servicios: full(true), taller: full(true),
     agenda: full(true), whatsapp: full(true), leads: full(true), inventario: full(true), papelera: full(true),
     ventas: full(true), ia_asistente: full(true), reportes: full(true), actividad: full(true),
-    calculadora: full(true), configuracion: full(true), empleados: full(true), distribuidor: full(true), presupuestos: full(true)
+    calculadora: full(true), configuracion: full(true), empleados: full(true), distribuidor: full(true), presupuestos: full(true), nomina: full(true)
   },
   // Dueño — ve absolutamente todo en todas las sedes. Solo lectura (no crea, edita ni elimina).
   dueno: {
     dashboard: ver(), clientes: ver(), vehiculos: ver(), servicios: ver(), taller: ver(),
     agenda: ver(), whatsapp: ver(), leads: ver(), inventario: ver(), papelera: ver(),
     ventas: ver(), ia_asistente: ver(), reportes: ver(), actividad: ver(),
-    calculadora: full(true), configuracion: ver(), empleados: ver(), distribuidor: ver(), presupuestos: ver()
+    calculadora: full(true), configuracion: ver(), empleados: ver(), distribuidor: ver(), presupuestos: ver(), nomina: ver()
   },
   // Supervisor de Sede — amplio en su sede; sin configuración del sistema; gestiona personal. Sin eliminar.
   supervisor: {
@@ -190,7 +191,7 @@ export const PERMISOS_DEFAULT: Record<string, Permisos> = {
     servicios: manage(true, true, true), taller: manage(true, true, true), agenda: manage(true, true, true), whatsapp: manage(true, true, true),
     leads: manage(true, true, true), inventario: manage(true, true, true), papelera: manage(false, true, true),
     ventas: manage(true, true, true), ia_asistente: manage(true, true, true), reportes: ver(), actividad: ver(),
-    calculadora: full(true), configuracion: none(), empleados: manage(true, true, true), distribuidor: manage(true, true, true), presupuestos: manage(true, true, true)
+    calculadora: full(true), configuracion: none(), empleados: manage(true, true, true), distribuidor: manage(true, true, true), presupuestos: manage(true, true, true), nomina: manage(true, true, true)
   },
   // Cobranza — facturación, ventas y presupuestos; lectura de clientes/servicios/inventario para facturar.
   cobranza: {
@@ -198,7 +199,7 @@ export const PERMISOS_DEFAULT: Record<string, Permisos> = {
     servicios: ver(), taller: none(), agenda: none(), whatsapp: ver(),
     leads: none(), inventario: ver(), papelera: none(), ventas: manage(true, true, true),
     ia_asistente: none(), reportes: ver(), actividad: none(), calculadora: full(true),
-    configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: manage(true, true, true)
+    configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: manage(true, true, true), nomina: ver()
   },
   // Atención al Cliente — recepción: clientes, vehículos, citas, mensajería y presupuestos.
   atencion_cliente: {
@@ -206,7 +207,7 @@ export const PERMISOS_DEFAULT: Record<string, Permisos> = {
     servicios: ver(), taller: ver(), agenda: manage(true, true, true), whatsapp: manage(true, true, true),
     leads: manage(true, true, true), inventario: ver(), papelera: none(), ventas: none(),
     ia_asistente: manage(true, true, true), reportes: none(), actividad: none(), calculadora: full(true),
-    configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: manage(true, true, true)
+    configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: manage(true, true, true), nomina: none()
   },
   // Jefe de Taller — manda en el taller: servicios, vehículos e inventario.
   jefe_taller: {
@@ -214,7 +215,7 @@ export const PERMISOS_DEFAULT: Record<string, Permisos> = {
     servicios: manage(true, true, true), taller: manage(true, true, true), agenda: ver(), whatsapp: none(),
     leads: none(), inventario: manage(true, true, true), papelera: none(), ventas: none(),
     ia_asistente: none(), reportes: ver(), actividad: none(), calculadora: full(true),
-    configuracion: none(), empleados: none(), distribuidor: ver(), presupuestos: manage(true, true, false)
+    configuracion: none(), empleados: none(), distribuidor: ver(), presupuestos: manage(true, true, false), nomina: manage(true, true, false)
   },
   // Mecánico — ejecuta servicios; sin eliminar, sin áreas administrativas.
   mecanico: {
@@ -222,7 +223,7 @@ export const PERMISOS_DEFAULT: Record<string, Permisos> = {
     servicios: manage(true, true, true), taller: manage(false, true, true), agenda: none(), whatsapp: none(),
     leads: none(), inventario: ver(), papelera: none(), ventas: none(),
     ia_asistente: none(), reportes: none(), actividad: none(), calculadora: full(true),
-    configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: none()
+    configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: none(), nomina: ver()
   },
 };
 
@@ -246,7 +247,7 @@ const MINIMAL_PERMISOS: Permisos = {
   dashboard: perm(false, true, false, false), clientes: full(false), vehiculos: full(false), servicios: full(false),
   taller: full(false), agenda: full(false), whatsapp: full(false), leads: full(false), inventario: full(false),
   papelera: full(false), ventas: full(false), ia_asistente: full(false), reportes: full(false), actividad: full(false),
-  calculadora: full(true), configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(false)
+  calculadora: full(true), configuracion: full(false), empleados: full(false), distribuidor: full(false), presupuestos: full(false), nomina: full(false)
 };
 
 export function getPermisos(
@@ -255,17 +256,32 @@ export function getPermisos(
   defaultsOverride?: Record<string, Permisos> | null
 ): Permisos {
   const canonical = resolveRol(rol);
+  const codeDefaults = PERMISOS_DEFAULT[canonical] || (rol ? PERMISOS_DEFAULT[rol] : undefined) || MINIMAL_PERMISOS;
   const source = defaultsOverride ?? PERMISOS_DEFAULT;
-  // Defaults del rol: BD (override) → catálogo de código → mínimo seguro.
-  const defaults = source[canonical] || (rol ? source[rol] : undefined) || PERMISOS_DEFAULT[canonical] || MINIMAL_PERMISOS;
-  if (!storedPermisos) return defaults;
+  const rawDefaults = source[canonical] || (rol ? source[rol] : undefined) || codeDefaults;
+
+  // Asegurar que todos los módulos existan en defaults por si el rol en BD
+  // se guardó antes de añadir un nuevo módulo (p.ej. nomina, presupuestos).
+  const defaults: any = {};
+  for (const mod of MODULES) {
+    if (rawDefaults[mod] !== undefined && rawDefaults[mod] !== null) {
+      defaults[mod] = normalizePermiso(rawDefaults[mod]);
+    } else if (codeDefaults[mod] !== undefined && codeDefaults[mod] !== null) {
+      defaults[mod] = normalizePermiso(codeDefaults[mod]);
+    } else {
+      defaults[mod] = { crear: false, leer: false, editar: false, eliminar: false };
+    }
+  }
+
+  if (!storedPermisos) return defaults as Permisos;
+  
   const merged = { ...defaults };
   for (const [key, val] of Object.entries(storedPermisos)) {
-    if (key in defaults) {
+    if (key in defaults && val !== undefined && val !== null) {
       merged[key as keyof Permisos] = normalizePermiso(val);
     }
   }
-  return merged;
+  return merged as Permisos;
 }
 
 // ── Reglas de sistema ───────────────────────────────────────────────────────
@@ -623,6 +639,183 @@ export interface Presupuesto {
   created_at: string;
   updated_at: string;
   sede_id?: string | null;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  NÓMINA · COMISIONES DINÁMICAS · ABONOS  (Motor v2.0)
+// ══════════════════════════════════════════════════════════════════════════
+
+/** Monedas soportadas por el motor de nómina (canónico = USD). */
+export type MonedaNomina = 'USD' | 'EUR' | 'VES';
+
+/** Zonas operativas — coinciden con las categorías de ventas_dia. */
+export type ZonaTrabajo =
+  | 'alineacion' | 'mecanica' | 'escape' | 'frenos'
+  | 'autolavado' | 'cauchera' | 'electronica' | 'latoneria' | 'general' | 'all';
+
+export const ZONAS_TRABAJO: { key: ZonaTrabajo; label: string }[] = [
+  { key: 'alineacion', label: 'Alineación y Balanceo' },
+  { key: 'mecanica', label: 'Mecánica' },
+  { key: 'escape', label: 'Escapes / Silenciadores' },
+  { key: 'frenos', label: 'Frenos' },
+  { key: 'autolavado', label: 'Autolavado' },
+  { key: 'cauchera', label: 'Cauchera' },
+  { key: 'electronica', label: 'Electrónica' },
+  { key: 'latoneria', label: 'Latonería y Pintura' },
+  { key: 'general', label: 'General' },
+];
+
+export type TipoReglaComision = 'porcentaje' | 'fijo_semanal' | 'override_cascada' | 'tarifa_flat';
+export type BaseComision = 'mano_obra' | 'ingreso_total';
+
+/** Regla de comisión dinámica vinculada a un empleado (sin hardcodear nombres). */
+export interface CommissionRule {
+  id: string;
+  empleado_id: string | null;
+  zona: ZonaTrabajo;
+  tipo_regla: TipoReglaComision;
+  base: BaseComision;
+  valor: number;                 // % (25, 40, 7) o monto fijo semanal (40)
+  moneda: MonedaNomina;
+  aplica_monedas: MonedaNomina[] | null;   // null = cualquier moneda
+  proveedor_pct: number;         // % al proveedor externo (puente)
+  proveedor_nombre: string | null;
+  prioridad: number;
+  condiciones: Record<string, any>;
+  descripcion: string | null;
+  activo: boolean;
+  vigencia_desde: string;
+  vigencia_hasta: string | null;
+  sede_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Tarifa a destajo (Freddy, revisión $2, etc.). */
+export interface FlatRate {
+  id: string;
+  empleado_id: string | null;
+  zona: ZonaTrabajo;
+  servicio_key: string;
+  label: string;
+  monto: number;
+  moneda: MonedaNomina;
+  activo: boolean;
+  sede_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type EstadoJob = 'pendiente' | 'liquidado' | 'anulado';
+
+/** Asignación de trabajo a técnico con snapshot congelado del cálculo. */
+export interface JobAssignment {
+  id: string;
+  fecha: string;
+  empleado_id: string | null;
+  es_taller: boolean;
+  empleado_nombre: string | null;
+  zona: ZonaTrabajo;
+  tipo_trabajo: string | null;
+  servicio_key: string | null;
+  descripcion: string | null;
+  referencia_tabla: string | null;
+  referencia_id: string | null;
+  ingreso_total: number;
+  mano_obra: number;
+  cantidad: number;
+  moneda: MonedaNomina;
+  tasa_cambio: number;
+  ingreso_usd: number;
+  mano_obra_usd: number;
+  regla_id: string | null;
+  tipo_regla: TipoReglaComision | null;
+  comision: number;
+  comision_moneda: MonedaNomina;
+  comision_usd: number;
+  es_override: boolean;
+  override_de: string | null;
+  proveedor_monto: number;
+  proveedor_monto_usd: number;
+  proveedor_nombre: string | null;
+  lycos_neto: number;
+  desglose: Record<string, any>;
+  estado: EstadoJob;
+  payroll_ledger_id: string | null;
+  sede_id: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type EstadoLiquidacion = 'borrador' | 'pagado' | 'anulado';
+
+/** Liquidación de nómina por empleado y período. */
+export interface PayrollLedger {
+  id: string;
+  empleado_id: string | null;
+  empleado_nombre: string | null;
+  periodo_inicio: string;
+  periodo_fin: string;
+  moneda: MonedaNomina;
+  sueldo_base: number;
+  total_comisiones: number;
+  total_overrides: number;
+  total_flat: number;
+  bruto: number;
+  deducciones: number;
+  total_pagar: number;
+  desglose_monedas: Record<string, number>;
+  detalle: unknown[];
+  recibo_numero: string | null;
+  nota: string | null;
+  estado: EstadoLiquidacion;
+  pagado_at: string | null;
+  pagado_por: string | null;
+  metodo_pago: string | null;
+  sede_id: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type EstadoAdelanto = 'pendiente' | 'aplicado' | 'anulado';
+
+export interface PayrollAdvance {
+  id: string;
+  empleado_id: string | null;
+  empleado_nombre: string | null;
+  fecha: string;
+  monto: number;
+  moneda: MonedaNomina;
+  tasa_cambio: number;
+  monto_usd: number;
+  motivo: string | null;
+  estado: EstadoAdelanto;
+  payroll_ledger_id: string | null;
+  sede_id: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+/** Resumen calculado de las ganancias de un empleado en un período. */
+export interface EmployeeEarnings {
+  empleado_id: string;
+  empleado_nombre: string;
+  rol: string;
+  periodo_inicio: string;
+  periodo_fin: string;
+  sueldo_base: number;          // USD
+  total_comisiones: number;     // USD (comisiones directas, sin overrides)
+  total_overrides: number;      // USD (cascada, p.ej. Jim 7%)
+  total_flat: number;           // USD (destajo)
+  bruto: number;                // USD
+  deducciones: number;          // USD (adelantos pendientes)
+  total_pagar: number;          // USD
+  desglose_monedas: Record<string, number>;
+  jobs: JobAssignment[];
+  adelantos: PayrollAdvance[];
+  liquidado: boolean;
 }
 
 export interface Abono {

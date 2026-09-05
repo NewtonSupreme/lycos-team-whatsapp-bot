@@ -5,6 +5,7 @@ import {
   supabase as client
 } from '@/lib/supabase';
 import { withSedeFilterServer, withSedeInsertServer } from '@/lib/db-filters';
+import { getPayrollService } from '@/lib/payroll/service';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
@@ -483,6 +484,14 @@ async function loadDbContext(sedeId: string | null): Promise<string> {
     console.error('Error loading employees:', e);
   }
 
+  // Nómina y comisiones (semana actual) — vía PayrollCalculationService
+  try {
+    const ctx = await buildNominaContext(sedeId);
+    if (ctx) sections.push(ctx);
+  } catch (e) {
+    console.error('Error loading nomina context:', e);
+  }
+
   // Actividad de WhatsApp (Hoy)
   try {
     const today = new Date().toISOString().split('T')[0];
@@ -499,6 +508,36 @@ async function loadDbContext(sedeId: string | null): Promise<string> {
   }
 
   return sections.join('\n\n');
+}
+
+// ─── Contexto de Nómina para el chatbot (Modo Dios) ─────────────────────────────
+// Consume el PayrollCalculationService para que el bot responda al admin por WhatsApp
+// preguntas como "¿cuánto le toca a Rafael esta semana?" o "¿quién tiene más comisiones?".
+async function buildNominaContext(sedeId: string | null): Promise<string> {
+  try {
+    const svc = getPayrollService();
+    // Semana actual (lunes → domingo)
+    const hoy = new Date();
+    const day = (hoy.getDay() + 6) % 7;
+    const lunes = new Date(hoy); lunes.setDate(hoy.getDate() - day);
+    const domingo = new Date(lunes); domingo.setDate(lunes.getDate() + 6);
+    const inicio = lunes.toISOString().slice(0, 10);
+    const fin = domingo.toISOString().slice(0, 10);
+
+    const summary = await svc.getPayrollSummary({ inicio, fin, sedeId });
+    if (!summary.length) {
+      return `=== NÓMINA Y COMISIONES (semana ${inicio} → ${fin}) ===\nSin comisiones ni sueldos calculados esta semana.`;
+    }
+    const totalPagar = summary.reduce((s, e) => s + e.total_pagar, 0);
+    const lines = summary.map(e =>
+      `• ${e.empleado_nombre} (${e.rol}): sueldo base $${e.sueldo_base.toFixed(2)} | comisiones $${(e.total_comisiones + e.total_flat).toFixed(2)} | override $${e.total_overrides.toFixed(2)} | adelantos -$${e.deducciones.toFixed(2)} | TOTAL A PAGAR $${e.total_pagar.toFixed(2)} | ${e.jobs.length} trabajo(s)`
+    );
+    return `=== NÓMINA Y COMISIONES (semana ${inicio} → ${fin}) — Total a pagar: $${totalPagar.toFixed(2)} ===\n` +
+      lines.join('\n') +
+      `\n(Montos en USD. Reglas de comisión dinámicas por empleado/zona. Cálculo en tiempo real.)`;
+  } catch (e) {
+    return '';
+  }
 }
 
 // ─── Execute Write Actions ─────────────────────────────────────────────────────
