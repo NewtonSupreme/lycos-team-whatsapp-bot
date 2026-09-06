@@ -513,37 +513,39 @@ function JobsTable({ jobs, onSelectJob }: { jobs: JobAssignment[]; onSelectJob?:
   if (!jobs || jobs.length === 0) return <div className="text-center py-8 text-slate-400 text-sm">Sin trabajos registrados.</div>;
   return (
     <>
-      <table className="w-full text-sm">
-        <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 text-xs uppercase">
-          <tr>
-            <th className="text-left px-4 py-2">Fecha</th>
-            <th className="text-left px-3 py-2">Zona</th>
-            <th className="text-left px-3 py-2">Detalle</th>
-            <th className="text-left px-3 py-2">Cliente / Vehículo</th>
-            <th className="text-right px-3 py-2">Mano obra</th>
-            <th className="text-right px-4 py-2">Comisión</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-          {jobs.map(j => (
-            <tr
-              key={j.id}
-              onClick={() => onSelectJob ? onSelectJob(j) : setSelectedJob(j)}
-              className={`cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50 ${j.es_override ? 'bg-violet-50/40 dark:bg-violet-950/10' : ''}`}
-            >
-              <td className="px-4 py-2 text-slate-500">{j.fecha}</td>
-              <td className="px-3 py-2"><span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 font-medium">{zonaLabel(j.zona)}</span></td>
-              <td className="px-3 py-2 font-medium text-slate-700 dark:text-slate-200">{j.es_override ? '↳ Override (cascada)' : (j.descripcion || j.tipo_trabajo || '—')}</td>
-              <td className="px-3 py-2 text-xs text-slate-500">
-                <div className="font-semibold text-slate-700 dark:text-slate-300">{String(j.desglose?.cliente || 'Consumidor Final')}</div>
-                <div className="text-[11px] text-slate-400 truncate max-w-[180px]">{String(j.desglose?.vehiculo || 'Vehículo de Taller')}</div>
-              </td>
-              <td className="text-right px-3 py-2 text-slate-500 font-mono">{money(j.mano_obra_usd)}</td>
-              <td className="text-right px-4 py-2 font-bold text-emerald-600 font-mono">{money(j.comision_usd)}</td>
+      <div className="w-full overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 text-xs uppercase">
+            <tr>
+              <th className="text-left px-4 py-2">Fecha</th>
+              <th className="text-left px-3 py-2">Zona</th>
+              <th className="text-left px-3 py-2">Detalle</th>
+              <th className="text-left px-3 py-2">Cliente / Vehículo</th>
+              <th className="text-right px-3 py-2">Mano obra</th>
+              <th className="text-right px-4 py-2">Comisión</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            {jobs.map(j => (
+              <tr
+                key={j.id}
+                onClick={() => onSelectJob ? onSelectJob(j) : setSelectedJob(j)}
+                className={`cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50 ${j.es_override ? 'bg-violet-50/40 dark:bg-violet-950/10' : ''}`}
+              >
+                <td className="px-4 py-2 text-slate-500">{j.fecha}</td>
+                <td className="px-3 py-2"><span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 font-medium">{zonaLabel(j.zona)}</span></td>
+                <td className="px-3 py-2 font-medium text-slate-700 dark:text-slate-200">{j.es_override ? '↳ Override (cascada)' : (j.descripcion || j.tipo_trabajo || '—')}</td>
+                <td className="px-3 py-2 text-xs text-slate-500">
+                  <div className="font-semibold text-slate-700 dark:text-slate-300">{String(j.desglose?.cliente || 'Consumidor Final')}</div>
+                  <div className="text-[11px] text-slate-400 truncate max-w-[180px]">{String(j.desglose?.vehiculo || 'Vehículo de Taller')}</div>
+                </td>
+                <td className="text-right px-3 py-2 text-slate-500 font-mono">{money(j.mano_obra_usd)}</td>
+                <td className="text-right px-4 py-2 font-bold text-emerald-600 font-mono">{money(j.comision_usd)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       {selectedJob && <JobDetailModal job={selectedJob} onClose={() => setSelectedJob(null)} />}
     </>
   );

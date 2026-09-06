@@ -2123,22 +2123,24 @@ export default function VentasPage() {
                   </div>
                 </div>
                 <div className="rounded-2xl border border-border/50 overflow-hidden">
-                   <table className="w-full text-left text-xs">
-                     <thead className="bg-muted/50 border-b border-border/30 font-black">
-                       <tr><th className="px-4 py-3 uppercase">ARTÍCULO</th><th className="px-4 py-3 text-center uppercase">CANT</th><th className="px-4 py-3 text-right uppercase">TOTAL</th></tr>
-                     </thead>
-                     <tbody className="divide-y divide-border/20">
-                       {(selectedSale.desglose || []).flatMap((item: any, idx: number) =>
-                         parseDescripcionItems(item.descripcion || '', item.total ?? item.precio_unitario ?? 0).map((parsed, pidx) => (
-                           <tr key={`${idx}-${pidx}`}>
-                             <td className="px-4 py-3 uppercase font-bold">{parsed.descripcion}</td>
-                             <td className="px-4 py-3 text-center font-black">{parsed.cantidad}</td>
-                             <td className="px-4 py-3 text-right font-black">{symbol}{parsed.total?.toFixed(2)}</td>
-                           </tr>
-                         ))
-                       )}
-                     </tbody>
-                   </table>
+                   <div className="w-full overflow-x-auto">
+                     <table className="w-full text-left text-xs">
+                       <thead className="bg-muted/50 border-b border-border/30 font-black">
+                         <tr><th className="px-4 py-3 uppercase">ARTÍCULO</th><th className="px-4 py-3 text-center uppercase">CANT</th><th className="px-4 py-3 text-right uppercase">TOTAL</th></tr>
+                       </thead>
+                       <tbody className="divide-y divide-border/20">
+                         {(selectedSale.desglose || []).flatMap((item: any, idx: number) =>
+                           parseDescripcionItems(item.descripcion || '', item.total ?? item.precio_unitario ?? 0).map((parsed, pidx) => (
+                             <tr key={`${idx}-${pidx}`}>
+                               <td className="px-4 py-3 uppercase font-bold">{parsed.descripcion}</td>
+                               <td className="px-4 py-3 text-center font-black">{parsed.cantidad}</td>
+                               <td className="px-4 py-3 text-right font-black">{symbol}{parsed.total?.toFixed(2)}</td>
+                             </tr>
+                           ))
+                         )}
+                       </tbody>
+                     </table>
+                   </div>
                 </div>
               </div>
               <DialogFooter className="p-8 bg-muted/20 flex flex-col gap-4">

@@ -2004,26 +2004,28 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
               </div>
             </div>
 
-            <table className="w-full text-xs mb-8">
-              <thead>
-                <tr className="border-b-2 border-slate-900">
-                  <th className="text-left py-2 font-bold text-slate-900">Descripción</th>
-                  <th className="text-center py-2 font-bold text-slate-900 w-16">Cant.</th>
-                  <th className="text-right py-2 font-bold text-slate-900 w-24">Precio</th>
-                  <th className="text-right py-2 font-bold text-slate-900 w-24">Total</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {parsedItems.map((item: any, i: number) => (
-                  <tr key={i}>
-                    <td className="py-3 text-slate-700">{item.descripcion}</td>
-                    <td className="py-3 text-center text-slate-600">{item.cantidad}</td>
-                    <td className="py-3 text-right text-slate-600">${Number(item.precio_unitario ?? 0).toFixed(2)}</td>
-                    <td className="py-3 text-right font-medium text-slate-900">${Number(item.total ?? 0).toFixed(2)}</td>
+            <div className="w-full overflow-x-auto">
+              <table className="w-full text-xs mb-8">
+                <thead>
+                  <tr className="border-b-2 border-slate-900">
+                    <th className="text-left py-2 font-bold text-slate-900">Descripción</th>
+                    <th className="text-center py-2 font-bold text-slate-900 w-16">Cant.</th>
+                    <th className="text-right py-2 font-bold text-slate-900 w-24">Precio</th>
+                    <th className="text-right py-2 font-bold text-slate-900 w-24">Total</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {parsedItems.map((item: any, i: number) => (
+                    <tr key={i}>
+                      <td className="py-3 text-slate-700">{item.descripcion}</td>
+                      <td className="py-3 text-center text-slate-600">{item.cantidad}</td>
+                      <td className="py-3 text-right text-slate-600">${Number(item.precio_unitario ?? 0).toFixed(2)}</td>
+                      <td className="py-3 text-right font-medium text-slate-900">${Number(item.total ?? 0).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
             <div className="flex justify-end pt-4">
               <div className="w-48 space-y-2">
@@ -2303,26 +2305,28 @@ function EgresoPreviewModal({ egreso, onClose }: { egreso: Egreso; onClose: () =
               </div>
             </div>
 
-            <table className="w-full text-xs mb-8">
-              <thead>
-                <tr className="border-b-2 border-slate-900">
-                  <th className="text-left py-2 font-bold text-slate-900">Concepto</th>
-                  <th className="text-center py-2 font-bold text-slate-900 w-16">Cant.</th>
-                  <th className="text-right py-2 font-bold text-slate-900 w-24">Precio</th>
-                  <th className="text-right py-2 font-bold text-slate-900 w-24">Total</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {egreso.desglose.map((item, i) => (
-                  <tr key={i}>
-                    <td className="py-3 text-slate-700">{item.descripcion}</td>
-                    <td className="py-3 text-center text-slate-600">{item.cantidad}</td>
-                    <td className="py-3 text-right text-slate-600">${item.precio_unitario.toFixed(2)}</td>
-                    <td className="py-3 text-right font-medium text-slate-900">${item.total.toFixed(2)}</td>
+            <div className="w-full overflow-x-auto">
+              <table className="w-full text-xs mb-8">
+                <thead>
+                  <tr className="border-b-2 border-slate-900">
+                    <th className="text-left py-2 font-bold text-slate-900">Concepto</th>
+                    <th className="text-center py-2 font-bold text-slate-900 w-16">Cant.</th>
+                    <th className="text-right py-2 font-bold text-slate-900 w-24">Precio</th>
+                    <th className="text-right py-2 font-bold text-slate-900 w-24">Total</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {egreso.desglose.map((item, i) => (
+                    <tr key={i}>
+                      <td className="py-3 text-slate-700">{item.descripcion}</td>
+                      <td className="py-3 text-center text-slate-600">{item.cantidad}</td>
+                      <td className="py-3 text-right text-slate-600">${item.precio_unitario.toFixed(2)}</td>
+                      <td className="py-3 text-right font-medium text-slate-900">${item.total.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
             <div className="flex justify-end pt-4">
               <div className="w-48 space-y-2">

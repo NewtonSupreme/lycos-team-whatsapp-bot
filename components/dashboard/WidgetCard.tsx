@@ -169,7 +169,17 @@ export default function WidgetCard({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-auto p-4">
+      {/*
+        Los graficos van con overflow oculto: con `auto`, recharts mide, dibuja,
+        aparece la barra de scroll, vuelve a medir y entra en bucle. Las listas
+        si necesitan desplazarse.
+      */}
+      <div
+        className={cn(
+          'min-h-0 flex-1 p-4',
+          instance.visual === 'lista' ? 'overflow-y-auto' : 'overflow-hidden',
+        )}
+      >
         {estado === 'cargando' && (
           <div className="flex h-full min-h-[5rem] flex-col justify-center gap-2" aria-busy>
             <div className="h-7 w-2/5 animate-pulse rounded bg-muted" />

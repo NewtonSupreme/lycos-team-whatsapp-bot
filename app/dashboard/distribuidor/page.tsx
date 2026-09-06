@@ -754,39 +754,41 @@ function DetailModal({ dist, onClose, tasaBCV }: {
             <div className="bg-muted/20 px-4 py-2">
               <p className="text-xs font-bold text-muted-foreground uppercase">Productos distribuidos</p>
             </div>
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-muted/10 border-b border-border/20">
-                  <th className="px-3 py-2 text-left font-bold text-muted-foreground">Producto</th>
-                  <th className="px-3 py-2 text-center font-bold text-muted-foreground">Cant.</th>
-                  <th className="px-3 py-2 text-right font-bold text-muted-foreground">P. Unit.</th>
-                  <th className="px-3 py-2 text-right font-bold text-muted-foreground">Subtotal</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/10">
-                {dist.items.map((item, i) => (
-                  <tr key={i} className="hover:bg-white/2">
-                    <td className="px-3 py-2">
-                      <p className="font-bold">{item.nombre}</p>
-                      <p className="text-[9px] text-muted-foreground">{item.codigo || item.categoria}</p>
-                    </td>
-                    <td className="px-3 py-2 text-center font-black text-indigo-300">{item.cantidad}</td>
-                    <td className="px-3 py-2 text-right text-muted-foreground">${item.precio_usd.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right font-bold text-green-400">
-                      ${(item.cantidad * item.precio_usd).toFixed(2)}
+            <div className="w-full overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-muted/10 border-b border-border/20">
+                    <th className="px-3 py-2 text-left font-bold text-muted-foreground">Producto</th>
+                    <th className="px-3 py-2 text-center font-bold text-muted-foreground">Cant.</th>
+                    <th className="px-3 py-2 text-right font-bold text-muted-foreground">P. Unit.</th>
+                    <th className="px-3 py-2 text-right font-bold text-muted-foreground">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/10">
+                  {dist.items.map((item, i) => (
+                    <tr key={i} className="hover:bg-white/2">
+                      <td className="px-3 py-2">
+                        <p className="font-bold">{item.nombre}</p>
+                        <p className="text-[9px] text-muted-foreground">{item.codigo || item.categoria}</p>
+                      </td>
+                      <td className="px-3 py-2 text-center font-black text-indigo-300">{item.cantidad}</td>
+                      <td className="px-3 py-2 text-right text-muted-foreground">${item.precio_usd.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right font-bold text-green-400">
+                        ${(item.cantidad * item.precio_usd).toFixed(2)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-muted/10 border-t border-border/20">
+                    <td colSpan={3} className="px-3 py-2 text-right font-black text-xs text-muted-foreground">TOTAL:</td>
+                    <td className="px-3 py-2 text-right font-black text-green-400 text-sm">
+                      ${dist.valor_total_usd.toFixed(2)}
                     </td>
                   </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="bg-muted/10 border-t border-border/20">
-                  <td colSpan={3} className="px-3 py-2 text-right font-black text-xs text-muted-foreground">TOTAL:</td>
-                  <td className="px-3 py-2 text-right font-black text-green-400 text-sm">
-                    ${dist.valor_total_usd.toFixed(2)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
+                </tfoot>
+              </table>
+            </div>
           </div>
 
           {dist.observaciones && (
@@ -1250,31 +1252,33 @@ function GananciaDetailModal({ row, onClose, tasaBCV }: {
           </div>
 
           <div className="rounded-xl border border-border/30 overflow-hidden">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-muted/10 border-b border-border/20 text-[9px] uppercase text-muted-foreground font-bold">
-                  <th className="px-3 py-2 text-left">Producto</th>
-                  <th className="px-3 py-2 text-center">Cant.</th>
-                  <th className="px-3 py-2 text-right">Costo</th>
-                  <th className="px-3 py-2 text-right">Reventa</th>
-                  <th className="px-3 py-2 text-right">Ganancia</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/10">
-                {items.map((it, i) => (
-                  <tr key={i}>
-                    <td className="px-3 py-2">
-                      <p className="font-bold">{it.nombre}</p>
-                      {it.codigo && <p className="text-[9px] text-muted-foreground">{it.codigo}</p>}
-                    </td>
-                    <td className="px-3 py-2 text-center font-black">{it.cantidad}</td>
-                    <td className="px-3 py-2 text-right text-amber-400">${it.costo.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">${it.venta.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right font-bold text-green-400">${((it.venta - it.costo) * it.cantidad).toFixed(2)}</td>
+            <div className="w-full overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-muted/10 border-b border-border/20 text-[9px] uppercase text-muted-foreground font-bold">
+                    <th className="px-3 py-2 text-left">Producto</th>
+                    <th className="px-3 py-2 text-center">Cant.</th>
+                    <th className="px-3 py-2 text-right">Costo</th>
+                    <th className="px-3 py-2 text-right">Reventa</th>
+                    <th className="px-3 py-2 text-right">Ganancia</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-border/10">
+                  {items.map((it, i) => (
+                    <tr key={i}>
+                      <td className="px-3 py-2">
+                        <p className="font-bold">{it.nombre}</p>
+                        {it.codigo && <p className="text-[9px] text-muted-foreground">{it.codigo}</p>}
+                      </td>
+                      <td className="px-3 py-2 text-center font-black">{it.cantidad}</td>
+                      <td className="px-3 py-2 text-right text-amber-400">${it.costo.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right">${it.venta.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right font-bold text-green-400">${((it.venta - it.costo) * it.cantidad).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           {row.origen === 'manual' && row.nota && (
