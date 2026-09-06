@@ -233,8 +233,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     );
   }
 
+  // El lanzador ocupa la pantalla entera: ya conserva la verificacion de sesion
+  // de arriba, pero no lleva sidebar ni cabecera porque es el punto de partida,
+  // no un modulo mas.
+  if (pathname === '/dashboard/apps') {
+    return <div className="min-h-dvh bg-background">{children}</div>;
+  }
+
   return (
-    <div suppressHydrationWarning className="min-h-screen bg-background dot-pattern overflow-x-clip">
+    <div suppressHydrationWarning className="min-h-screen bg-background overflow-x-clip">
       <Sidebar />
       <div className={cn(
         'flex flex-col min-h-screen transition-all duration-300 overflow-x-clip',
@@ -246,8 +253,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="page-enter">
             {accessDenied ? (
               <div className="flex flex-col items-center justify-center min-h-[60vh] text-center space-y-4">
-                <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center border border-red-500/20">
-                  <ShieldAlert className="w-10 h-10 text-red-500" />
+                <div className="flex h-20 w-20 items-center justify-center rounded-full border border-danger/25 bg-danger-subtle">
+                  <ShieldAlert className="h-10 w-10 text-danger" aria-hidden />
                 </div>
                 <h1 className="text-3xl font-bold">Acceso Denegado</h1>
                 <p className="text-muted-foreground max-w-md">
@@ -262,14 +269,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             )}
           </div>
         </main>
-        <footer className="hidden lg:flex px-6 py-3 border-t border-border/20 text-[10px] text-muted-foreground items-center justify-between">
+        <footer className="hidden lg:flex items-center justify-between border-t border-border px-6 py-3 text-xs text-muted-foreground">
           <span>© 2026 Lycos Team · Desarrollado por Leandro Márquez</span>
           <span className="flex items-center gap-2">
             <a href="/privacidad" className="hover:text-foreground transition-colors">Privacidad</a>
             <span>·</span>
             <a href="/terminos" className="hover:text-foreground transition-colors">Términos</a>
             <span>·</span>
-            <span className="text-green-400">● Online</span>
+            <span className="text-success">● En línea</span>
           </span>
         </footer>
       </div>

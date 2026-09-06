@@ -29,7 +29,9 @@ export default function LoginPage() {
       }));
     }
     const searchParams = new URLSearchParams(window.location.search);
-    const from = searchParams.get('from') || '/dashboard';
+    // Sin destino explicito se entra por el lanzador: elegir modulo es el
+    // primer paso real del dia, no el panel de metricas.
+    const from = searchParams.get('from') || '/dashboard/apps';
     router.push(from);
   };
 

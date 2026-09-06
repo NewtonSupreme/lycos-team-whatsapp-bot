@@ -1,6 +1,7 @@
 'use client';
 import React, { useState, useEffect, useCallback } from 'react';
-import { Bell, Search, Menu, X, MessageSquare, Calendar, Wrench } from 'lucide-react';
+import Link from 'next/link';
+import { Bell, Search, Menu, X, MessageSquare, Calendar, Wrench, LayoutGrid } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -141,6 +142,16 @@ export default function Header() {
         {mounted && sidebarOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
       </Button>
 
+      {/* Lanzador de modulos */}
+      <Link
+        href="/dashboard/apps"
+        aria-label="Ver todos los módulos"
+        title="Todos los módulos"
+        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      >
+        <LayoutGrid className="h-4 w-4" aria-hidden />
+      </Link>
+
       {/* Search */}
       <div className={cn('flex-1 max-w-md transition-all duration-200', showSearch ? 'flex' : 'hidden md:flex')}>
         <Input
@@ -157,7 +168,7 @@ export default function Header() {
       <div className="flex-1" />
 
       {/* Status pill - Solo en pantallas medianas o si hay espacio */}
-      <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-500/10 border border-green-500/20">
+      <div className="hidden lg:flex items-center gap-1.5 rounded-full border border-success/25 bg-success-subtle px-2.5 py-1">
         <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
         <span className="text-[10px] text-green-400 font-medium">Bot activo</span>
       </div>
