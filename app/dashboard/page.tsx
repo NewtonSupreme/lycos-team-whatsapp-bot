@@ -11,9 +11,11 @@ import {
   Tooltip, ResponsiveContainer
 } from 'recharts';
 import StatCard from '@/components/dashboard/StatCard';
+import { PageHeader } from '@/components/ui/page-header';
+import { StatusPill } from '@/components/ui/status-pill';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import StatusBadge from '@/components/ui/status-badge';
-import { formatCurrency, formatRelativeTime, tipoServicioLabel } from '@/lib/utils';
+import { formatCurrency, formatRelativeTime, tipoServicioLabel, cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { withSedeFilter } from '@/lib/db-filters';
 import { useSedeStore } from '@/lib/store/useSedeStore';
@@ -392,93 +394,57 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
-            Panel Principal
-          </h1>
-          <div className="flex flex-wrap items-center gap-3 mt-1">
-            <p className="text-sm text-muted-foreground">
-            Bienvenido de vuelta · {new Date().toLocaleDateString('es-VE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-            </p>
-            <div className="flex items-center gap-2 border-l border-border pl-3">
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-500 text-[11px] font-semibold">
-                <MapPin className="w-3 h-3" />
-                {currentSede?.nombre || 'Sede no seleccionada'}
-              </div>
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-500 text-[10px] font-bold uppercase tracking-wider">
-                <ShieldCheck className="w-3 h-3" />
-                {userRole}
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-500/10 border border-green-500/20">
-            <Zap className="w-3.5 h-3.5 text-green-400" />
-            <span className="text-xs text-green-400 font-medium">Bot IA Activo</span>
-          </div>
+      <PageHeader
+        title="Panel principal"
+        description={`Bienvenido de vuelta · ${new Date().toLocaleDateString('es-VE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`}
+        meta={
+          <>
+            <StatusPill tone="neutral" icon={<MapPin className="h-3.5 w-3.5" aria-hidden />}>
+              {currentSede?.nombre || 'Sede no seleccionada'}
+            </StatusPill>
+            <StatusPill tone="neutral" icon={<ShieldCheck className="h-3.5 w-3.5" aria-hidden />}>
+              {userRole}
+            </StatusPill>
+            <StatusPill tone="success" icon={<Zap className="h-3.5 w-3.5" aria-hidden />}>
+              Bot IA activo
+            </StatusPill>
+          </>
+        }
+        actions={
           <button
             onClick={loadData}
-            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg hover:bg-white/5"
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            Actualizar
+            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} aria-hidden />
+            {loading ? 'Actualizando...' : 'Actualizar'}
           </button>
-        </div>
-      </div>
+        }
+      />
 
-      {/* Exchange Rates Bar */}
+      {/* Tasas de cambio: dato operativo, no decoracion. */}
       {rates && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Card className="bg-gradient-to-br from-blue-500/5 to-transparent border-blue-500/10 shadow-sm overflow-hidden relative group">
-            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
-              <DollarSign className="w-12 h-12 text-blue-500" />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {[
+            { label: 'Tasa oficial BCV', value: rates.bcv, icon: TrendingUp },
+            { label: 'Binance P2P (USDT)', value: rates.binance, icon: Coins },
+          ].map(({ label, value, icon: RateIcon }) => (
+            <div key={label} className="rounded-xl border border-border bg-card p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-sm font-medium text-muted-foreground">{label}</p>
+                <RateIcon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+              </div>
+              <p className="num mt-2 text-2xl font-bold tracking-tight">
+                Bs. {value.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Actualizada a las{' '}
+                <span className="num">
+                  {new Date(rates.fetchedAt).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </p>
             </div>
-            <CardContent className="p-4 flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-                <TrendingUp className="w-6 h-6 text-blue-500" />
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] text-blue-500 font-bold uppercase tracking-widest mb-0.5">Tasa Oficial BCV</p>
-                  <span className="text-[9px] text-muted-foreground bg-white/5 px-1.5 py-0.5 rounded">
-                    {new Date(rates.fetchedAt).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                  </span>
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
-                    Bs. {rates.bcv.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-gradient-to-br from-orange-500/5 to-transparent border-orange-500/10 shadow-sm overflow-hidden relative group">
-            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
-              <Coins className="w-12 h-12 text-orange-500" />
-            </div>
-            <CardContent className="p-4 flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center">
-                <RefreshCw className="w-6 h-6 text-orange-500" />
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] text-orange-500 font-bold uppercase tracking-widest mb-0.5">Binance P2P (USDT)</p>
-                  <span className="text-[9px] text-muted-foreground bg-white/5 px-1.5 py-0.5 rounded">
-                    {new Date(rates.fetchedAt).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                  </span>
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
-                    Bs. {rates.binance.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          ))}
         </div>
       )}
 
