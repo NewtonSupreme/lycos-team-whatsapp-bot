@@ -11,6 +11,7 @@ import {
   Tooltip, ResponsiveContainer
 } from 'recharts';
 import StatCard from '@/components/dashboard/StatCard';
+import QuickActions from '@/components/dashboard/QuickActions';
 import { PageHeader } from '@/components/ui/page-header';
 import { StatusPill } from '@/components/ui/status-pill';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -448,22 +449,66 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard title="Clientes" value={fmt(stats.totalClientes)} icon={Users} color="blue" delay={0} />
-        <StatCard title="Vehículos" value={fmt(stats.totalVehiculos)} icon={Car} color="cyan" delay={50} />
-        <StatCard title="Servicios Activos" value={fmt(stats.serviciosActivos)} icon={Wrench} subtitle="en taller ahora" color="orange" delay={100} />
-        <StatCard title="Mensajes Hoy" value={fmt(stats.mensajesHoy)} icon={MessageSquare} subtitle={`${stats.conversacionesHoy ?? '...'} chats activos hoy`} color="purple" delay={150} />
-        <StatCard title="Citas Hoy" value={fmt(stats.citasHoy)} icon={Calendar} subtitle="programadas" color="blue" delay={200} />
-        <StatCard title="Completados" value={fmt(stats.serviciosCompletados)} icon={CheckCircle} subtitle="servicios totales" color="green" delay={250} />
-        <StatCard title="Respuestas IA" value={fmt(stats.mensajesIA)} icon={Bot} subtitle="mensajes automáticos" color="purple" delay={300} />
-        <StatCard title="Cuota WA (Mes)" value={`${stats.conversacionesMes ?? 0}/1000`} icon={MessageSquare} subtitle="conversaciones gratis" color="green" delay={350} />
+      {/*
+        Cuatro metricas principales con su tendencia, y el resto en una fila
+        secundaria compacta. Antes eran ocho tarjetas del mismo peso: nada
+        destacaba porque todo pesaba igual.
+      */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          title="Clientes"
+          value={fmt(stats.totalClientes)}
+          icon={Users}
+          color="blue"
+          subtitle="registrados en total"
+        />
+        <StatCard
+          title="Vehiculos"
+          value={fmt(stats.totalVehiculos)}
+          icon={Car}
+          color="cyan"
+          subtitle="en el sistema"
+        />
+        <StatCard
+          title="Servicios activos"
+          value={fmt(stats.serviciosActivos)}
+          icon={Wrench}
+          color="orange"
+          subtitle="en taller ahora"
+          series={serviciosChart.map(p => p.trabajos)}
+        />
+        <StatCard
+          title="Mensajes hoy"
+          value={fmt(stats.mensajesHoy)}
+          icon={MessageSquare}
+          color="purple"
+          subtitle={`${stats.conversacionesHoy ?? '—'} chats activos`}
+          series={waChart.map(p => p.mensajes)}
+        />
       </div>
 
-      {/* Charts Array */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard title="Citas hoy" value={fmt(stats.citasHoy)} icon={Calendar} color="blue" subtitle="programadas" />
+        <StatCard title="Completados" value={fmt(stats.serviciosCompletados)} icon={CheckCircle} color="green" subtitle="servicios historicos" />
+        <StatCard title="Respuestas IA" value={fmt(stats.mensajesIA)} icon={Bot} color="purple" subtitle="automaticas" />
+        <StatCard
+          title="Cuota WhatsApp"
+          value={`${stats.conversacionesMes ?? 0}/1000`}
+          icon={MessageSquare}
+          color={(stats.conversacionesMes ?? 0) > 850 ? 'red' : 'green'}
+          subtitle="conversaciones del mes"
+          goodWhen="down"
+        />
+      </div>
+
+      {/*
+        Doce columnas con pesos distintos en vez de tres iguales. Que todo
+        mida lo mismo es lo que hacia que la pantalla se leyera como un muro:
+        sin un bloque dominante no hay por donde empezar a mirar.
+      */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         {/* Chart: mensajes WhatsApp hoy por hora */}
-        <Card>
+        <Card className="lg:col-span-5">
           <CardHeader className="pb-0">
             <div className="flex items-center justify-between">
               <div>
@@ -498,7 +543,7 @@ export default function DashboardPage() {
         </Card>
 
         {/* Chart: Ventas de Silenciadores */}
-        <Card>
+        <Card className="lg:col-span-4">
           <CardHeader className="pb-0">
             <div className="flex items-center justify-between">
               <div>
@@ -536,7 +581,7 @@ export default function DashboardPage() {
         </Card>
 
         {/* Chart: Registro de Taller (Servicios) */}
-        <Card>
+        <Card className="lg:col-span-3">
           <CardHeader className="pb-0">
             <div className="flex items-center justify-between">
               <div>
@@ -575,9 +620,20 @@ export default function DashboardPage() {
       </div>
 
       {/* Bottom row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+        {/* Acciones rapidas: lo que se hace veinte veces al dia, a mano */}
+        <Card className="lg:col-span-3">
+          <CardHeader>
+            <CardTitle className="text-base">Acciones rápidas</CardTitle>
+            <CardDescription className="text-xs">Los atajos del día a día</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <QuickActions />
+          </CardContent>
+        </Card>
+
         {/* Recent services */}
-        <Card>
+        <Card className="lg:col-span-5">
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="text-base">Servicios Recientes</CardTitle>
@@ -634,7 +690,7 @@ export default function DashboardPage() {
         </Card>
 
         {/* Recent WhatsApp conversations */}
-        <Card>
+        <Card className="lg:col-span-4">
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="text-base">Conversaciones WhatsApp</CardTitle>
@@ -678,7 +734,7 @@ export default function DashboardPage() {
         </Card>
 
         {/* Recent Sales */}
-        <Card>
+        <Card className="lg:col-span-12 xl:col-span-6">
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="text-base">Ventas Recientes</CardTitle>

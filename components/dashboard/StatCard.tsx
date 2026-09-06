@@ -2,6 +2,7 @@
 import React from 'react';
 import { LucideIcon, ArrowDownRight, ArrowUpRight, Minus } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Sparkline } from '@/components/ui/sparkline';
 
 interface StatCardProps {
   title: string;
@@ -18,6 +19,8 @@ interface StatCardProps {
   color?: 'orange' | 'blue' | 'green' | 'purple' | 'red' | 'cyan';
   /** Solo indica si subir es bueno. Sin esto el verde puede mentir. */
   goodWhen?: 'up' | 'down';
+  /** Serie de tendencia. El numero sigue siendo el dato; esto da el contexto. */
+  series?: readonly number[];
   delay?: number;
 }
 
@@ -39,6 +42,7 @@ export default function StatCard({
   trendLabel,
   color = 'orange',
   goodWhen = 'up',
+  series,
   delay = 0,
 }: StatCardProps) {
   const hasTrend = trend !== undefined && Number.isFinite(trend);
@@ -65,6 +69,16 @@ export default function StatCard({
       </div>
 
       <p className="num mt-2 text-2xl font-bold tracking-tight text-foreground">{value}</p>
+
+      {series && series.length > 1 && (
+        <div className="-mx-1 mt-2">
+          <Sparkline
+            data={series}
+            height={30}
+            tone={color === 'green' ? 'success' : color === 'red' ? 'danger' : color === 'orange' ? 'brand' : 'info'}
+          />
+        </div>
+      )}
 
       {(subtitle || hasTrend || trendLabel) && (
         <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
