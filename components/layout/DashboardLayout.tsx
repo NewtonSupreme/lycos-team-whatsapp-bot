@@ -237,7 +237,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // El lanzador ocupa la pantalla entera: ya conserva la verificacion de sesion
   // de arriba, pero no lleva sidebar ni cabecera porque es el punto de partida,
   // no un modulo mas.
-  if (pathname === '/dashboard/apps') {
+  // Pantallas con armazón propio: no llevan el sidebar ni la cabecera
+  // generales, pero conservan la verificación de sesión de arriba.
+  const PANTALLA_COMPLETA = ['/dashboard/apps', '/dashboard/ventas/nueva'];
+  if (PANTALLA_COMPLETA.includes(pathname)) {
     return <div className="min-h-dvh bg-background">{children}</div>;
   }
 
