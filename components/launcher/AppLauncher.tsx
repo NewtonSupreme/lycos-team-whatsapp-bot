@@ -3,12 +3,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Clock, MapPin, Search, Star, X } from 'lucide-react';
+import { Search, Star, X } from 'lucide-react';
 import { cn, getInitials } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { glyphFor } from './glyphs';
 import {
   GROUP_LABEL, GROUP_ORDER, MODULES, searchModules,
   type AppModule, type ModuleGroup,
@@ -35,22 +36,45 @@ function saludo(hora: number): string {
   return 'Buenas noches';
 }
 
+/** Columnas reales de la retícula: las flechas tienen que moverse por donde se ve. */
+function useColumnCount(): number {
+  const [cols, setCols] = useState(6);
+  useEffect(() => {
+    const queries: [string, number][] = [
+      ['(min-width: 1024px)', 6],
+      ['(min-width: 640px)', 5],
+      ['(min-width: 0px)', 3],
+    ];
+    const mqls = queries.map(([q]) => window.matchMedia(q));
+    const update = () => {
+      const hit = queries.find(([, ], i) => mqls[i]!.matches);
+      setCols(hit ? hit[1] : 3);
+    };
+    update();
+    mqls.forEach(m => m.addEventListener('change', update));
+    return () => mqls.forEach(m => m.removeEventListener('change', update));
+  }, []);
+  return cols;
+}
+
 /**
  * Lanzador de módulos.
  *
- * Cada módulo tiene un color fijo: en una cuadrícula de veintipico destinos el
- * color es lo que deja encontrar el que buscás sin leer las etiquetas. Es
- * identidad, no adorno — y por eso ese tono se queda en la baldosa y no entra
- * a la pantalla del módulo.
+ * Retícula de baldosas al estilo de un cajón de aplicaciones: cuadrado claro,
+ * glifo de colores planos y etiqueta debajo. El color vive en el glifo y no
+ * en el fondo, que es lo que deja reconocer un módulo sin leerlo y a la vez
+ * mantiene la pantalla en calma.
  *
- * Se opera entero con el teclado porque quien lo usa todos los días no debería
- * necesitar el ratón: escribís y se filtra, las flechas mueven, Enter abre.
+ * El foco se trata como en un selector de perfiles de consola: la baldosa
+ * crece, se levanta y proyecta un halo del color del módulo. Se opera entero
+ * con el teclado porque quien entra todos los días no debería tocar el ratón.
  */
 export default function AppLauncher() {
   const router = useRouter();
   const { user } = useAppStore();
   const { currentSede } = useSedeStore();
   const { can } = useRolePermissions();
+  const cols = useColumnCount();
 
   const [query, setQuery] = useState('');
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -66,15 +90,10 @@ export default function AppLauncher() {
     setRecents(readList(RECENTS_KEY));
   }, []);
 
-  const allowed = useMemo(
-    () => MODULES.filter(m => !m.permKey || can(m.permKey)),
-    [can],
-  );
-
+  const allowed = useMemo(() => MODULES.filter(m => !m.permKey || can(m.permKey)), [can]);
   const results = useMemo(() => searchModules(allowed, query), [allowed, query]);
   const searching = query.trim().length > 0;
 
-  /** Al buscar la cuadrícula es plana; en reposo se agrupa por dominio. */
   const sections = useMemo(() => {
     if (searching) return [{ key: 'resultados', label: 'Resultados', items: results }];
 
@@ -88,19 +107,18 @@ export default function AppLauncher() {
       .slice(0, MAX_RECENTS);
 
     const grouped = GROUP_ORDER.map((g: ModuleGroup) => ({
-      key: g,
+      key: g as string,
       label: GROUP_LABEL[g],
       items: allowed.filter(m => m.group === g),
     })).filter(s => s.items.length > 0);
 
     return [
       ...(favItems.length ? [{ key: 'favoritos', label: 'Favoritos', items: favItems }] : []),
-      ...(recentItems.length ? [{ key: 'recientes', label: 'Usados recientemente', items: recentItems }] : []),
+      ...(recentItems.length ? [{ key: 'recientes', label: 'Recientes', items: recentItems }] : []),
       ...grouped,
     ];
   }, [searching, results, allowed, favorites, recents]);
 
-  /** Orden lineal para que las flechas recorran lo mismo que se ve. */
   const flat = useMemo(() => sections.flatMap(s => s.items), [sections]);
 
   useEffect(() => setCursor(0), [query]);
@@ -123,7 +141,6 @@ export default function AppLauncher() {
 
   function onKeyDown(e: React.KeyboardEvent) {
     if (flat.length === 0) return;
-    const cols = 4;
     let next = cursor;
     if (e.key === 'ArrowRight') next = Math.min(cursor + 1, flat.length - 1);
     else if (e.key === 'ArrowLeft') next = Math.max(cursor - 1, 0);
@@ -144,119 +161,98 @@ export default function AppLauncher() {
     tileRefs.current[next]?.focus();
   }
 
-  const hora = new Date().getHours();
   let index = -1;
 
   return (
-    <div
-      onKeyDown={onKeyDown}
-      className="relative min-h-dvh overflow-hidden bg-background"
-    >
-      {/* Ambiente: un halo tenue tras el contenido, no un degradado sobre él. */}
+    <div onKeyDown={onKeyDown} className="relative min-h-dvh overflow-hidden bg-surface-sunken">
+      {/* Ambiente: halo difuso detrás del contenido, nunca encima. */}
       <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -top-40 left-1/2 h-[38rem] w-[38rem] -translate-x-1/2 rounded-full bg-primary/10 blur-[120px]" />
-        <div className="absolute -bottom-56 -right-24 h-[32rem] w-[32rem] rounded-full bg-info/10 blur-[120px]" />
+        <div className="absolute -top-52 left-1/2 h-[42rem] w-[42rem] -translate-x-1/2 rounded-full bg-primary/[0.07] blur-[130px]" />
+        <div className="absolute -bottom-60 -right-32 h-[34rem] w-[34rem] rounded-full bg-info/[0.07] blur-[130px]" />
       </div>
 
-      <div className="relative mx-auto w-full max-w-6xl px-5 py-10 sm:px-8 sm:py-14">
-        <header className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-4">
-            <Avatar className="h-14 w-14 border border-border">
-              <AvatarImage src={user?.avatar_url} alt="" />
-              <AvatarFallback className="bg-primary/10 text-base font-semibold text-primary">
-                {mounted && user ? getInitials(user.nombre) : '—'}
-              </AvatarFallback>
-            </Avatar>
-            <div className="min-w-0">
-              <p className="text-sm text-muted-foreground">{saludo(hora)},</p>
-              <h1 className="truncate text-3xl font-bold tracking-tight">
-                {mounted ? (user?.nombre ?? 'Bienvenido') : 'Bienvenido'}
-              </h1>
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1">
-                  <MapPin className="h-3.5 w-3.5" aria-hidden />
-                  {currentSede?.nombre ?? 'Sin sede'}
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <Clock className="h-3.5 w-3.5" aria-hidden />
-                  {new Date().toLocaleDateString('es-VE', { weekday: 'long', day: 'numeric', month: 'long' })}
-                </span>
-              </div>
-            </div>
-          </div>
+      <div className="relative mx-auto flex min-h-dvh w-full max-w-5xl flex-col items-center px-5 py-12 sm:py-16">
+        {/* Identidad: quién entra y a qué sede. */}
+        <Avatar className="h-16 w-16 border border-border shadow-sm">
+          <AvatarImage src={user?.avatar_url} alt="" />
+          <AvatarFallback className="bg-card text-lg font-semibold text-primary">
+            {mounted && user ? getInitials(user.nombre) : '—'}
+          </AvatarFallback>
+        </Avatar>
 
-          <div className="relative w-full sm:w-80">
-            <Search
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-              aria-hidden
-            />
-            <input
-              ref={searchRef}
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              placeholder="Buscar módulo…"
-              aria-label="Buscar módulo"
-              autoFocus
-              className="h-11 w-full rounded-xl border border-border bg-card pl-9 pr-9 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:border-primary"
-            />
-            {query && (
-              <button
-                onClick={() => { setQuery(''); searchRef.current?.focus(); }}
-                aria-label="Limpiar búsqueda"
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-              >
-                <X className="h-4 w-4" aria-hidden />
-              </button>
-            )}
-          </div>
-        </header>
+        <p className="mt-4 text-sm text-muted-foreground">{saludo(new Date().getHours())},</p>
+        <h1 className="mt-0.5 text-center text-2xl font-bold tracking-tight sm:text-3xl">
+          {mounted ? (user?.nombre ?? 'Bienvenido') : 'Bienvenido'}
+        </h1>
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          {currentSede?.nombre ?? 'Sin sede'}
+          <span className="mx-2 opacity-40">·</span>
+          {new Date().toLocaleDateString('es-VE', { weekday: 'long', day: 'numeric', month: 'long' })}
+        </p>
 
-        <div className="mt-10 space-y-9">
+        <div className="relative mt-7 w-full max-w-sm">
+          <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+          <input
+            ref={searchRef}
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Buscar módulo…"
+            aria-label="Buscar módulo"
+            autoFocus
+            className="h-11 w-full rounded-full border border-border bg-card pl-10 pr-10 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:border-primary"
+          />
+          {query && (
+            <button
+              onClick={() => { setQuery(''); searchRef.current?.focus(); }}
+              aria-label="Limpiar búsqueda"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <X className="h-4 w-4" aria-hidden />
+            </button>
+          )}
+        </div>
+
+        <div className="mt-11 w-full space-y-10">
           {sections.map(section => (
             <section key={section.key}>
-              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <h2 className="mb-5 text-center text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                 {section.label}
-                <span className="num ml-2 font-normal normal-case tracking-normal opacity-70">
-                  {section.items.length}
-                </span>
               </h2>
 
-              <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              <ul className="mx-auto grid grid-cols-3 justify-items-center gap-x-3 gap-y-7 sm:grid-cols-5 lg:grid-cols-6">
                 {section.items.map(m => {
                   index += 1;
                   const i = index;
-                  const Icon = m.icon;
+                  const Glyph = glyphFor(m.id);
                   const isFav = favorites.includes(m.id);
                   return (
-                    <li key={`${section.key}-${m.id}`} className="relative">
+                    <li key={`${section.key}-${m.id}`} className="group relative w-full max-w-[6.5rem]">
                       <Link
                         ref={el => { tileRefs.current[i] = el; }}
                         href={m.href}
                         onClick={() => remember(m.id)}
                         onFocus={() => setCursor(i)}
+                        title={m.description}
                         style={{ ['--tint' as string]: m.tint }}
-                        className={cn(
-                          'group flex h-full flex-col gap-3 rounded-2xl border border-border bg-card p-4',
-                          'shadow-sm transition-[transform,box-shadow,border-color] duration-200',
-                          'hover:-translate-y-1 hover:border-[hsl(var(--tint)/0.45)] hover:shadow-lg',
-                          'focus-visible:-translate-y-1 focus-visible:border-[hsl(var(--tint)/0.55)] focus-visible:shadow-lg',
-                        )}
+                        className="flex flex-col items-center gap-2.5 rounded-2xl outline-none"
                       >
+                        {/* Baldosa: el color vive en el glifo, no en el fondo. */}
                         <span
-                          className="flex h-12 w-12 items-center justify-center rounded-xl transition-transform duration-200 group-hover:scale-[1.06]"
-                          style={{
-                            backgroundColor: 'hsl(var(--tint) / 0.14)',
-                            color: 'hsl(var(--tint))',
-                            boxShadow: 'inset 0 0 0 1px hsl(var(--tint) / 0.22)',
-                          }}
+                          className={cn(
+                            'flex h-[4.5rem] w-[4.5rem] items-center justify-center rounded-[1.375rem]',
+                            'border border-border bg-card shadow-sm',
+                            'transition-[transform,box-shadow] duration-200 ease-out',
+                            'group-hover:-translate-y-1.5 group-hover:scale-[1.06]',
+                            'group-focus-visible:-translate-y-1.5 group-focus-visible:scale-[1.06]',
+                            'group-hover:shadow-[0_14px_30px_-10px_hsl(var(--tint)/0.55)]',
+                            'group-focus-visible:shadow-[0_14px_30px_-10px_hsl(var(--tint)/0.65)]',
+                            'group-focus-visible:ring-2 group-focus-visible:ring-[hsl(var(--tint))] group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-[hsl(var(--surface-sunken))]',
+                          )}
                         >
-                          <Icon className="h-6 w-6" aria-hidden />
+                          <Glyph className="h-10 w-10" />
                         </span>
-                        <span className="min-w-0">
-                          <span className="block truncate font-semibold leading-tight">{m.label}</span>
-                          <span className="mt-1 block text-xs leading-snug text-muted-foreground line-clamp-2">
-                            {m.description}
-                          </span>
+                        <span className="line-clamp-2 text-center text-[0.8125rem] font-medium leading-tight text-foreground transition-colors group-hover:text-primary">
+                          {m.label}
                         </span>
                       </Link>
 
@@ -265,13 +261,13 @@ export default function AppLauncher() {
                         aria-label={isFav ? `Quitar ${m.label} de favoritos` : `Fijar ${m.label} en favoritos`}
                         aria-pressed={isFav}
                         className={cn(
-                          'absolute right-2 top-2 rounded-lg p-1.5 transition-colors',
+                          'absolute -right-0.5 -top-0.5 rounded-full border border-border bg-card p-1.5 shadow-sm transition-opacity',
                           isFav
-                            ? 'text-warning'
-                            : 'text-muted-foreground opacity-0 hover:bg-accent focus-visible:opacity-100 group-hover:opacity-100 md:opacity-0',
+                            ? 'text-warning opacity-100'
+                            : 'text-muted-foreground opacity-0 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100',
                         )}
                       >
-                        <Star className={cn('h-4 w-4', isFav && 'fill-current')} aria-hidden />
+                        <Star className={cn('h-3.5 w-3.5', isFav && 'fill-current')} aria-hidden />
                       </button>
                     </li>
                   );
@@ -281,13 +277,13 @@ export default function AppLauncher() {
           ))}
 
           {searching && results.length === 0 && (
-            <p className="rounded-xl border border-dashed border-border py-12 text-center text-sm text-muted-foreground">
+            <p className="rounded-2xl border border-dashed border-border py-14 text-center text-sm text-muted-foreground">
               Ningún módulo coincide con «{query}».
             </p>
           )}
         </div>
 
-        <p className="mt-12 text-center text-xs text-muted-foreground">
+        <p className="mt-14 text-center text-xs text-muted-foreground">
           Escribí para filtrar · flechas para moverte · Enter para abrir · Esc para limpiar
         </p>
       </div>
