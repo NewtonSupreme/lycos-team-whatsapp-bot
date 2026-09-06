@@ -4,6 +4,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
 import MobileBottomNav from '@/components/layout/MobileBottomNav';
+import LauncherFab from '@/components/launcher/LauncherFab';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { supabase } from '@/lib/supabase';
@@ -282,6 +283,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </div>
       {/* Mobile bottom navigation — solo móvil, sidebar untouched */}
       <MobileBottomNav />
+
+      {/* Lanzador flotante: disponible desde cualquier pantalla del sistema. */}
+      <LauncherFab />
     </div>
   );
 }

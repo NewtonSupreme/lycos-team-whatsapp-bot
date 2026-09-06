@@ -98,6 +98,10 @@ const config: Config = {
         display: ["var(--font-display)", "system-ui", "sans-serif"],
       },
       keyframes: {
+        "sheet-right": {
+          from: { transform: "translateX(100%)", opacity: "0.6" },
+          to: { transform: "translateX(0)", opacity: "1" },
+        },
         "accordion-down": {
           from: { height: "0" },
           to: { height: "var(--radix-accordion-content-height)" },
@@ -124,6 +128,8 @@ const config: Config = {
         },
       },
       animation: {
+        // El panel del lanzador entra desde el borde derecho.
+        "sheet-right": "sheet-right 0.22s cubic-bezier(0.32, 0.72, 0, 1)",
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
         "fade-in": "fade-in 0.4s ease-out",

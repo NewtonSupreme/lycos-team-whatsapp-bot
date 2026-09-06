@@ -69,7 +69,18 @@ function useColumnCount(): number {
  * El foco se trata como en un selector de perfiles de consola: la baldosa
  * crece, se levanta y proyecta un halo del color del módulo.
  */
-export default function AppLauncher() {
+interface AppLauncherProps {
+  /**
+   * `pagina` ocupa la ventana entera; `capa` va dentro de un diálogo y por eso
+   * no vuelve a pintar el fondo ambiental ni fuerza el alto de la ventana.
+   */
+  variant?: 'pagina' | 'capa';
+  /** Se llama al abrir un módulo, para que la capa se cierre sola. */
+  onNavigate?: () => void;
+}
+
+export default function AppLauncher({ variant = 'pagina', onNavigate }: AppLauncherProps = {}) {
+  const esCapa = variant === 'capa';
   const router = useRouter();
   const { user } = useAppStore();
   const { currentSede } = useSedeStore();
@@ -131,7 +142,7 @@ export default function AppLauncher() {
     else if (e.key === 'ArrowUp') next = Math.max(cursor - cols, 0);
     else if (e.key === 'Enter') {
       const target = tiles[cursor];
-      if (target) { remember(target.id); router.push(target.href); }
+      if (target) { remember(target.id); onNavigate?.(); router.push(target.href); }
       return;
     } else if (e.key === 'Escape') {
       setQuery('');
@@ -149,16 +160,22 @@ export default function AppLauncher() {
   return (
     <div
       onKeyDown={onKeyDown}
-      className="relative flex min-h-dvh flex-col overflow-hidden bg-surface-sunken"
+      className={cn(
+        'relative flex flex-col overflow-hidden',
+        esCapa ? 'h-full' : 'min-h-dvh bg-surface-sunken',
+      )}
     >
       {/* Ambiente: halo difuso detrás del contenido, nunca encima. */}
-      <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -top-52 left-1/2 h-[42rem] w-[42rem] -translate-x-1/2 rounded-full bg-primary/[0.07] blur-[130px]" />
-        <div className="absolute -bottom-64 -right-40 h-[34rem] w-[34rem] rounded-full bg-info/[0.07] blur-[130px]" />
-      </div>
+      {!esCapa && (
+        <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute -top-52 left-1/2 h-[42rem] w-[42rem] -translate-x-1/2 rounded-full bg-primary/[0.07] blur-[130px]" />
+          <div className="absolute -bottom-64 -right-40 h-[34rem] w-[34rem] rounded-full bg-info/[0.07] blur-[130px]" />
+        </div>
+      )}
 
       <div className="relative mx-auto flex w-full max-w-[64rem] flex-1 flex-col items-center justify-center px-5 py-4 [@media(min-height:900px)]:py-10">
-        {/* Identidad */}
+        {/* Identidad. En la capa se omite: ya venís de una pantalla del sistema. */}
+        {!esCapa && <>
         <Avatar className="h-11 w-11 border border-border shadow-sm [@media(min-height:900px)]:h-14 [@media(min-height:900px)]:w-14">
           <AvatarImage src={user?.avatar_url} alt="" />
           <AvatarFallback className="bg-card font-semibold text-primary">
@@ -175,6 +192,7 @@ export default function AppLauncher() {
           <span className="mx-2 opacity-40">·</span>
           {new Date().toLocaleDateString('es-VE', { weekday: 'long', day: 'numeric', month: 'long' })}
         </p>
+        </>}
 
         {/* Búsqueda */}
         <div className="relative mt-3 w-full max-w-sm [@media(min-height:900px)]:mt-6">
@@ -216,7 +234,7 @@ export default function AppLauncher() {
                 <Link
                   ref={el => { tileRefs.current[i] = el; }}
                   href={m.href}
-                  onClick={() => remember(m.id)}
+                  onClick={() => { remember(m.id); onNavigate?.(); }}
                   onFocus={() => setCursor(i)}
                   title={m.description}
                   style={{ ['--tint' as string]: m.tint }}

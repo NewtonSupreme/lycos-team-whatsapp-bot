@@ -1,7 +1,7 @@
 'use client';
 import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { Bell, Search, Menu, X, MessageSquare, Calendar, Wrench, LayoutGrid } from 'lucide-react';
+import { Bell, Search, Menu, X, MessageSquare, Calendar, Wrench } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -141,16 +141,6 @@ export default function Header() {
       <Button variant="ghost" size="icon-sm" className="lg:hidden" onClick={toggleSidebar}>
         {mounted && sidebarOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
       </Button>
-
-      {/* Lanzador de modulos */}
-      <Link
-        href="/dashboard/apps"
-        aria-label="Ver todos los módulos"
-        title="Todos los módulos"
-        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-      >
-        <LayoutGrid className="h-4 w-4" aria-hidden />
-      </Link>
 
       {/* Search */}
       <div className={cn('flex-1 max-w-md transition-all duration-200', showSearch ? 'flex' : 'hidden md:flex')}>
