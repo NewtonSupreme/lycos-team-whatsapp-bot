@@ -1,88 +1,200 @@
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ==========================================================================
+   SISTEMA DE DISENO — Lycos ERP
+   --------------------------------------------------------------------------
+   Un solo acento (naranja de marca) reservado para la accion primaria y la
+   navegacion activa. Los demas colores SOLO comunican estado, nunca decoran.
+   Neutros con matiz calido para que convivan con el naranja sin ensuciarse.
+   ========================================================================== */
+
 @layer base {
   :root {
-    --background: 0 0% 98%;
-    --foreground: 220 10% 8%;
+    /* Superficies — escala de elevacion, no colores sueltos */
+    --background: 30 20% 98%;
+    --surface-sunken: 30 16% 95%;
     --card: 0 0% 100%;
-    --card-foreground: 220 10% 8%;
+    --card-foreground: 24 10% 10%;
     --popover: 0 0% 100%;
-    --popover-foreground: 220 10% 8%;
-    --primary: 24 95% 53%;
+    --popover-foreground: 24 10% 10%;
+    --foreground: 24 10% 10%;
+
+    /* Acento de marca — accion primaria y estado activo. Nada mas. */
+    --primary: 24 95% 48%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 220 10% 95%;
-    --secondary-foreground: 220 10% 8%;
-    --muted: 220 10% 95%;
-    --muted-foreground: 220 10% 40%;
-    --accent: 220 10% 95%;
-    --accent-foreground: 220 10% 8%;
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 220 10% 90%;
-    --input: 220 10% 90%;
-    --ring: 24 95% 53%;
+    --primary-subtle: 24 95% 96%;
+
+    --secondary: 30 12% 94%;
+    --secondary-foreground: 24 10% 18%;
+    --muted: 30 12% 95%;
+    --muted-foreground: 24 6% 42%;
+    --accent: 30 12% 94%;
+    --accent-foreground: 24 10% 14%;
+
+    /* Estado — con significado fijo. Nunca usar por estetica. */
+    --success: 142 60% 32%;
+    --success-foreground: 0 0% 100%;
+    --success-subtle: 142 55% 95%;
+    --warning: 32 90% 40%;
+    --warning-foreground: 0 0% 100%;
+    --warning-subtle: 38 92% 95%;
+    --danger: 0 72% 46%;
+    --danger-foreground: 0 0% 100%;
+    --danger-subtle: 0 80% 96%;
+    --info: 214 80% 46%;
+    --info-foreground: 0 0% 100%;
+    --info-subtle: 214 90% 96%;
+
+    --destructive: 0 72% 46%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 30 10% 89%;
+    --border-strong: 30 10% 80%;
+    --input: 30 10% 87%;
+    --ring: 24 95% 48%;
     --radius: 0.625rem;
+
     --font-display: 'Syne', sans-serif;
-    --glass-bg: rgba(255, 255, 255, 0.3);
-    --glass-border: rgba(0, 0, 0, 0.06);
-    --chart-grid: rgba(0, 0, 0, 0.05);
+
+    /* Elevacion — tres niveles, nada mas */
+    --shadow-sm: 0 1px 2px 0 hsl(24 20% 12% / 0.05);
+    --shadow-md: 0 2px 4px -1px hsl(24 20% 12% / 0.06), 0 4px 12px -2px hsl(24 20% 12% / 0.06);
+    --shadow-lg: 0 8px 24px -6px hsl(24 20% 12% / 0.12), 0 2px 6px -2px hsl(24 20% 12% / 0.06);
+
+    --glass-bg: rgba(255, 255, 255, 0.72);
+    --glass-border: hsl(30 10% 89%);
+    --chart-grid: hsl(30 10% 91%);
     --logo-filter: none;
   }
 
   .dark {
-    --background: 20 14% 4%;
-    --foreground: 30 10% 95%;
-    --card: 20 14% 6%;
-    --card-foreground: 30 10% 95%;
-    --popover: 20 14% 6%;
-    --popover-foreground: 30 10% 95%;
-    --primary: 24 95% 53%;
-    --primary-foreground: 20 14% 4%;
-    --secondary: 20 14% 10%;
-    --secondary-foreground: 30 10% 95%;
-    --muted: 20 14% 10%;
-    --muted-foreground: 30 10% 55%;
-    --accent: 24 95% 53%;
-    --accent-foreground: 20 14% 4%;
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 20 14% 14%;
-    --input: 20 14% 14%;
-    --ring: 24 95% 53%;
-    --glass-bg: rgba(255, 255, 255, 0.03);
-    --glass-border: rgba(255, 255, 255, 0.06);
-    --chart-grid: rgba(255, 255, 255, 0.05);
+    --background: 24 12% 7%;
+    --surface-sunken: 24 12% 5%;
+    --card: 24 10% 10%;
+    --card-foreground: 30 12% 94%;
+    --popover: 24 10% 11%;
+    --popover-foreground: 30 12% 94%;
+    --foreground: 30 12% 94%;
+
+    --primary: 24 95% 56%;
+    --primary-foreground: 24 30% 8%;
+    --primary-subtle: 24 60% 14%;
+
+    --secondary: 24 10% 15%;
+    --secondary-foreground: 30 12% 94%;
+    --muted: 24 10% 15%;
+    --muted-foreground: 30 8% 63%;
+    --accent: 24 10% 16%;
+    --accent-foreground: 30 12% 94%;
+
+    --success: 142 55% 55%;
+    --success-foreground: 142 60% 8%;
+    --success-subtle: 142 40% 14%;
+    --warning: 38 92% 58%;
+    --warning-foreground: 38 90% 8%;
+    --warning-subtle: 38 50% 14%;
+    --danger: 0 78% 63%;
+    --danger-foreground: 0 70% 8%;
+    --danger-subtle: 0 50% 15%;
+    --info: 214 90% 65%;
+    --info-foreground: 214 80% 8%;
+    --info-subtle: 214 50% 15%;
+
+    --destructive: 0 78% 63%;
+    --destructive-foreground: 0 70% 8%;
+
+    --border: 24 8% 19%;
+    --border-strong: 24 8% 28%;
+    --input: 24 8% 21%;
+    --ring: 24 95% 56%;
+
+    --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.3);
+    --shadow-md: 0 2px 4px -1px hsl(0 0% 0% / 0.35), 0 4px 12px -2px hsl(0 0% 0% / 0.3);
+    --shadow-lg: 0 8px 24px -6px hsl(0 0% 0% / 0.5), 0 2px 6px -2px hsl(0 0% 0% / 0.3);
+
+    --glass-bg: hsl(24 10% 10% / 0.78);
+    --glass-border: hsl(24 8% 19%);
+    --chart-grid: hsl(24 8% 18%);
     --logo-filter: none;
   }
+
   * { @apply border-border; }
-  body { @apply bg-background text-foreground antialiased; font-family: 'DM Sans', system-ui, sans-serif; }
-  h1,h2,h3,h4,h5,h6 { font-family: 'Syne', system-ui, sans-serif; }
-  ::-webkit-scrollbar { width: 4px; height: 4px; }
-  ::-webkit-scrollbar-track { background: hsl(var(--background)); }
-  ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 2px; }
-  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--primary)); }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    font-synthesis-weight: none;
+  }
+
+  /* Syne solo para titulos de pantalla y la marca. El cuerpo es DM Sans. */
+  h1, h2 { font-family: 'Syne', system-ui, sans-serif; letter-spacing: -0.02em; }
+  h3, h4, h5, h6 { font-weight: 600; letter-spacing: -0.01em; }
+
+  /* Cifras alineadas: sin esto las columnas de dinero bailan al actualizarse */
+  table, .tabular, [data-numeric] { font-variant-numeric: tabular-nums; }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: hsl(var(--border-strong)); border-radius: 99px; border: 3px solid hsl(var(--background)); }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+
+  /* Foco visible siempre: quitarlo rompe la navegacion por teclado */
+  :focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; border-radius: 4px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }
 
 @layer utilities {
-  .glass { background: var(--glass-bg); backdrop-filter: blur(12px); border: 1px solid var(--glass-border); }
-  .glass-card { background: var(--glass-bg); backdrop-filter: blur(16px); border: 1px solid var(--glass-border); }
-  .glow { box-shadow: 0 0 20px rgba(249,115,22,0.15); }
-  .glow-sm { box-shadow: 0 0 10px rgba(249,115,22,0.1); }
-  .text-gradient { background: linear-gradient(135deg,#f97316,#fb923c,#fdba74); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-  .sidebar-item { @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer text-muted-foreground; }
+  /* Superficies. `glass` ya no difumina de adorno: solo separa capas flotantes. */
+  .glass, .glass-card {
+    background: var(--glass-bg);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+  }
+
+  /* `glow` era un halo naranja decorativo. Ahora es elevacion real y sobria. */
+  .glow { box-shadow: var(--shadow-lg); }
+  .glow-sm { box-shadow: var(--shadow-sm); }
+
+  .elev-sm { box-shadow: var(--shadow-sm); }
+  .elev-md { box-shadow: var(--shadow-md); }
+  .elev-lg { box-shadow: var(--shadow-lg); }
+
+  /* Texto en degradado: se queda como color solido de marca. Un degradado en
+     texto baja el contraste y falla WCAG en el extremo claro. */
+  .text-gradient { color: hsl(var(--primary)); }
+
+  .sidebar-item {
+    @apply flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors duration-150 cursor-pointer;
+  }
   .sidebar-item:hover { @apply bg-secondary text-foreground; }
-  .sidebar-item.active { @apply bg-primary/10 text-primary; box-shadow: inset 0 0 0 1px rgba(249,115,22,0.2); }
-  .stat-card { @apply relative overflow-hidden rounded-xl border border-border/50 p-5 bg-card transition-all duration-300; }
-  .stat-card:hover { @apply border-primary/20; transform: translateY(-1px); }
-  .chat-bubble-in { @apply bg-card border border-border/50 rounded-2xl rounded-bl-sm px-4 py-2.5 max-w-xs; }
-  .chat-bubble-out { @apply bg-primary/10 border border-primary/20 rounded-2xl rounded-br-sm px-4 py-2.5 max-w-xs; }
+  .sidebar-item.active { @apply bg-primary/10 text-primary font-semibold; }
+
+  .stat-card {
+    @apply relative overflow-hidden rounded-xl border border-border bg-card p-5 transition-colors duration-150;
+    box-shadow: var(--shadow-sm);
+  }
+  .stat-card:hover { @apply border-border-strong; }
+
+  .chat-bubble-in { @apply bg-secondary rounded-2xl rounded-bl-sm px-4 py-2.5 max-w-xs text-sm; }
+  .chat-bubble-out { @apply bg-primary text-primary-foreground rounded-2xl rounded-br-sm px-4 py-2.5 max-w-xs text-sm; }
+
   .dot-pattern { position: relative; }
-  .dot-pattern::before { content: ''; position: absolute; inset: 0; background-image: radial-gradient(circle, var(--border) 1.5px, transparent 1.5px); background-size: 24px 24px; opacity: 0.4; pointer-events: none; z-index: 0; }
-  .page-enter { animation: fadeIn 0.35s ease-out forwards; }
+  .page-enter { animation: fadeIn 0.25s ease-out forwards; }
+
+  /* Numeros de dinero y metricas: ancho fijo por digito */
+  .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
 }
 
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -141,28 +253,28 @@
 .markdown-content strong { @apply font-semibold text-primary; }
 
 .markdown-content table {
-  @apply block w-full overflow-x-auto border-collapse my-6 rounded-xl border-2 border-border/60 text-[10px] sm:text-[11px] shadow-md bg-card/50;
+  @apply block w-full overflow-x-auto border-collapse my-6 rounded-xl border-2 border-border/60 text-sm shadow-sm bg-card;
   -webkit-overflow-scrolling: touch;
 }
 .markdown-content thead {
-  @apply bg-primary/20;
+  @apply bg-muted;
 }
 .markdown-content th {
-  @apply px-3 sm:px-4 py-3 text-left font-bold border border-border/40 uppercase tracking-wider text-primary whitespace-nowrap;
+  @apply px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground border-b border-border whitespace-nowrap;
 }
 .markdown-content td {
-  @apply px-3 sm:px-4 py-2.5 border border-border/30 text-foreground/90 leading-relaxed;
+  @apply px-4 py-2.5 border-b border-border text-foreground leading-relaxed;
 }
 .markdown-content tr:nth-child(even) {
-  @apply bg-primary/5;
+  @apply bg-muted/40;
 }
 .markdown-content tr:hover {
-  @apply bg-primary/10 transition-colors;
+  @apply bg-muted transition-colors;
 }
 
 .markdown-content code {
-  @apply px-1.5 py-0.5 rounded-md bg-primary/10 text-primary font-mono text-[10px] border border-primary/5;
+  @apply px-1.5 py-0.5 rounded-md bg-primary/10 text-primary font-mono text-[13px] border border-border;
 }
 .markdown-content pre {
-  @apply my-6 p-5 rounded-xl bg-slate-950 border-2 border-border/60 overflow-x-auto font-mono text-[11px] leading-relaxed shadow-2xl text-slate-300;
+  @apply my-6 p-5 rounded-xl bg-secondary border border-border overflow-x-auto font-mono text-[13px] leading-relaxed text-foreground;
 }

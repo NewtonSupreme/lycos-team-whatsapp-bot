@@ -15,37 +15,60 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { supabase } from '@/lib/supabase';
 import { getPermisos, hasPermiso, resolveRol, type Permisos } from '@/types';
 
+type NavGroup = 'Operacion' | 'Clientes' | 'Ventas' | 'Inventario' | 'Finanzas' | 'Sistema';
+
 interface NavItem {
   href: string;
   icon: any;
   label: string;
   badge: string | null;
   permKey?: keyof Permisos;
+  group: NavGroup;
 }
 
-const navItemsConfig: NavItem[] = [
-  { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', badge: null, permKey: 'dashboard' },
-  { href: '/dashboard/clientes', icon: Users, label: 'Clientes', badge: null, permKey: 'clientes' },
-  { href: '/dashboard/vehiculos', icon: Car, label: 'Vehículos', badge: null, permKey: 'vehiculos' },
-  { href: '/dashboard/servicios', icon: Wrench, label: 'Servicios', badge: null, permKey: 'servicios' },
-  { href: '/dashboard/taller', icon: Wrench, label: 'Taller', badge: null, permKey: 'taller' },
-  { href: '/dashboard/agenda', icon: Calendar, label: 'Agenda', badge: null, permKey: 'agenda' },
-  { href: '/dashboard/whatsapp', icon: MessageSquare, label: 'WhatsApp', badge: null, permKey: 'whatsapp' },
-  { href: '/dashboard/leads', icon: TrendingUp, label: 'Leads', badge: null, permKey: 'leads' },
-  { href: '/dashboard/inventario', icon: Package, label: 'Inventario', badge: null, permKey: 'inventario' },
-  { href: '/dashboard/inventario/papelera', icon: Trash2, label: 'Papelera', badge: null, permKey: 'papelera' },
-  { href: '/dashboard/distribuidor', icon: Truck, label: 'Distribuidor', badge: null, permKey: 'distribuidor' },
-  { href: '/dashboard/silenciadores', icon: ShoppingCart, label: 'Ventas', badge: null, permKey: 'ventas' },
-  { href: '/dashboard/facturas', icon: Receipt, label: 'Facturas', badge: null, permKey: 'ventas' },
-  { href: '/dashboard/presupuestos', icon: FileSpreadsheet, label: 'Presupuestos', badge: null, permKey: 'presupuestos' },
-  { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente', badge: null, permKey: 'ia_asistente' },
-  { href: '/dashboard/nomina', icon: Banknote, label: 'Nómina', badge: null, permKey: 'nomina' },
-  { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', badge: null, permKey: 'reportes' },
-  { href: '/dashboard/actividad', icon: Activity, label: 'Actividad', badge: null, permKey: 'actividad' },
-  { href: '/dashboard/calculadora', icon: Calculator, label: 'Calculadora', badge: null, permKey: 'calculadora' },
+/** Orden de los grupos en la barra. Refleja el flujo de trabajo del taller. */
+const GROUP_ORDER: readonly NavGroup[] = [
+  'Operacion', 'Clientes', 'Ventas', 'Inventario', 'Finanzas', 'Sistema',
 ];
 
-const bottomItems: NavItem[] = [
+const GROUP_LABEL: Record<NavGroup, string> = {
+  Operacion: 'Operación',
+  Clientes: 'Clientes',
+  Ventas: 'Ventas',
+  Inventario: 'Inventario',
+  Finanzas: 'Finanzas',
+  Sistema: 'Sistema',
+};
+
+const navItemsConfig: NavItem[] = [
+  { href: '/dashboard', icon: LayoutDashboard, label: 'Panel', badge: null, permKey: 'dashboard', group: 'Operacion' },
+  { href: '/dashboard/agenda', icon: Calendar, label: 'Agenda', badge: null, permKey: 'agenda', group: 'Operacion' },
+  { href: '/dashboard/taller', icon: Wrench, label: 'Taller', badge: null, permKey: 'taller', group: 'Operacion' },
+  { href: '/dashboard/servicios', icon: Wrench, label: 'Servicios', badge: null, permKey: 'servicios', group: 'Operacion' },
+
+  { href: '/dashboard/clientes', icon: Users, label: 'Clientes', badge: null, permKey: 'clientes', group: 'Clientes' },
+  { href: '/dashboard/vehiculos', icon: Car, label: 'Vehículos', badge: null, permKey: 'vehiculos', group: 'Clientes' },
+  { href: '/dashboard/whatsapp', icon: MessageSquare, label: 'WhatsApp', badge: null, permKey: 'whatsapp', group: 'Clientes' },
+  { href: '/dashboard/leads', icon: TrendingUp, label: 'Leads', badge: null, permKey: 'leads', group: 'Clientes' },
+
+  { href: '/dashboard/silenciadores', icon: ShoppingCart, label: 'Punto de venta', badge: null, permKey: 'ventas', group: 'Ventas' },
+  { href: '/dashboard/facturas', icon: Receipt, label: 'Facturas', badge: null, permKey: 'ventas', group: 'Ventas' },
+  { href: '/dashboard/presupuestos', icon: FileSpreadsheet, label: 'Presupuestos', badge: null, permKey: 'presupuestos', group: 'Ventas' },
+
+  { href: '/dashboard/inventario', icon: Package, label: 'Inventario', badge: null, permKey: 'inventario', group: 'Inventario' },
+  { href: '/dashboard/distribuidor', icon: Truck, label: 'Distribución', badge: null, permKey: 'distribuidor', group: 'Inventario' },
+  { href: '/dashboard/inventario/papelera', icon: Trash2, label: 'Papelera', badge: null, permKey: 'papelera', group: 'Inventario' },
+
+  { href: '/dashboard/nomina', icon: Banknote, label: 'Nómina', badge: null, permKey: 'nomina', group: 'Finanzas' },
+  { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', badge: null, permKey: 'reportes', group: 'Finanzas' },
+  { href: '/dashboard/calculadora', icon: Calculator, label: 'Calculadora', badge: null, permKey: 'calculadora', group: 'Finanzas' },
+
+  { href: '/dashboard/ia', icon: Bot, label: 'Asistente IA', badge: null, permKey: 'ia_asistente', group: 'Sistema' },
+  { href: '/dashboard/actividad', icon: Activity, label: 'Actividad', badge: null, permKey: 'actividad', group: 'Sistema' },
+];
+
+/** Ajustes y cuenta. Van al pie, fuera de los grupos de trabajo. */
+const bottomItems: Omit<NavItem, 'group'>[] = [
   { href: '/dashboard/configuracion', icon: Settings, label: 'Configuración', badge: null, permKey: 'configuracion' },
   { href: '/dashboard/ajustes/empleados', icon: Users, label: 'Gestión Empleados', badge: null, permKey: 'empleados' },
   { href: '/dashboard/ajustes/permisos', icon: Shield, label: 'Permisos por Rol', badge: null, permKey: 'empleados' },
@@ -153,47 +176,68 @@ export default function Sidebar() {
           </div>
           {sidebarOpen && (
             <div className="flex flex-col min-w-0">
-              <span className="font-bold text-sm tracking-tight" style={{ fontFamily: 'Syne, sans-serif' }}>
-                LYCOS TEAM
+              <span className="font-display text-sm font-bold tracking-tight">
+                Lycos Team
               </span>
-              <span className="text-[10px] text-muted-foreground uppercase tracking-widest">
-                Taller Pro
+              <span className="text-xs text-muted-foreground">
+                Gestión de taller
               </span>
             </div>
           )}
         </div>
 
-        <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
-          {navItems.map(({ href, icon: Icon, label, badge }) => {
-            const isActive = pathname === href || (href !== '/dashboard' && pathname.startsWith(href));
+        <nav aria-label="Navegación principal" className="flex-1 space-y-4 overflow-y-auto p-2">
+          {GROUP_ORDER.map(group => {
+            const items = navItems.filter(i => i.group === group);
+            if (items.length === 0) return null;
             return (
-              <Link
-                key={href}
-                href={href}
-                className={cn(
-                  'sidebar-item group relative',
-                  isActive && 'active',
-                  !sidebarOpen && 'justify-center px-2'
+              <div key={group} className="space-y-0.5">
+                {sidebarOpen ? (
+                  <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {GROUP_LABEL[group]}
+                  </p>
+                ) : (
+                  <div className="mx-auto my-2 h-px w-6 bg-border" aria-hidden />
                 )}
-                title={!sidebarOpen ? label : undefined}
-              >
-                <Icon className={cn('flex-shrink-0 w-4 h-4', isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground')} />
-                {sidebarOpen && (
-                  <span className={cn('flex-1 text-sm', isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground')}>
-                    {label}
-                  </span>
-                )}
-                {sidebarOpen && badge && (
-                  <span className="ml-auto flex h-5 w-5 items-center justify-center rounded-full bg-primary/20 text-primary text-[10px] font-bold">
-                    {badge}
-                  </span>
-                )}
-                {!sidebarOpen && badge && (
-                  <span className="absolute top-1 right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-primary text-[8px] text-primary-foreground font-bold">
-                    {badge}
-                  </span>
-                )}
-              </Link>
+                {items.map(({ href, icon: Icon, label, badge }) => {
+                  const isActive = pathname === href || (href !== '/dashboard' && pathname.startsWith(href));
+                  return (
+                    <Link
+                      key={href}
+                      href={href}
+                      aria-current={isActive ? 'page' : undefined}
+                      aria-label={!sidebarOpen ? label : undefined}
+                      title={!sidebarOpen ? label : undefined}
+                      className={cn(
+                        'sidebar-item group relative',
+                        isActive && 'active',
+                        !sidebarOpen && 'justify-center px-2',
+                      )}
+                    >
+                      <Icon
+                        aria-hidden
+                        className={cn(
+                          'h-4 w-4 flex-shrink-0',
+                          isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground',
+                        )}
+                      />
+                      {sidebarOpen && <span className="flex-1 truncate">{label}</span>}
+                      {badge && (
+                        sidebarOpen ? (
+                          <span className="num ml-auto inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-primary px-1.5 text-xs font-semibold text-primary-foreground">
+                            {badge}
+                          </span>
+                        ) : (
+                          <span
+                            className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-primary ring-2 ring-card"
+                            aria-label={`${badge} sin leer`}
+                          />
+                        )
+                      )}
+                    </Link>
+                  );
+                })}
+              </div>
             );
           })}
         </nav>
@@ -204,24 +248,26 @@ export default function Sidebar() {
               key={href}
               href={href}
               className={cn('sidebar-item group', pathname === href && 'active', !sidebarOpen && 'justify-center px-2')}
+              aria-current={pathname === href ? 'page' : undefined}
+              aria-label={!sidebarOpen ? label : undefined}
               title={!sidebarOpen ? label : undefined}
             >
-              <Icon className="flex-shrink-0 w-4 h-4 text-muted-foreground group-hover:text-foreground" />
-              {sidebarOpen && <span className="text-sm text-muted-foreground group-hover:text-foreground">{label}</span>}
+              <Icon aria-hidden className="h-4 w-4 flex-shrink-0" />
+              {sidebarOpen && <span className="truncate">{label}</span>}
             </Link>
           ))}
 
           <div className={cn('flex items-center gap-2 px-2 py-2 mt-1 rounded-lg', !sidebarOpen && 'justify-center')}>
             <Avatar className="w-7 h-7 flex-shrink-0">
               <AvatarImage src={user?.avatar_url} />
-              <AvatarFallback className="text-[10px]">
+              <AvatarFallback className="text-xs">
                 {mounted && user ? getInitials(user.nombre) : 'AD'}
               </AvatarFallback>
             </Avatar>
             {sidebarOpen && mounted && (
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium truncate">{user?.nombre || 'Admin'}</p>
-                <p className="text-[10px] text-muted-foreground truncate">{user?.email}</p>
+                <p className="truncate text-sm font-medium">{user?.nombre || 'Admin'}</p>
+                <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
               </div>
             )}
             {sidebarOpen && !mounted && (
