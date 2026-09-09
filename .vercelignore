@@ -1,0 +1,39 @@
+# Qué NO se sube a Vercel.
+#
+# Hace falta este archivo aparte: `vercel deploy` NO lee `.gitignore`, así que
+# sin él intentaba subir 416 MB y el despliegue moría con «File size limit
+# exceeded (100 MB)».
+
+# ── El tutorial en bruto: 427 MB, muy por encima del límite de 100 MB por
+#    archivo. La versión comprimida (36 MB) sí se sube, que es la que usa el
+#    Asistente IA.
+public/Tutorial/tutorial_Lycos_Team.mp4
+
+# ── Secretos y entorno local. Vercel inyecta los suyos desde el proyecto.
+.env
+.env.local
+.env.*.local
+
+# ── Utilidades que no forman parte de la aplicación ─────────────────────────
+# Parches de una sola vez, pruebas de andar por casa y volcados. Next no los
+# compila y solo engordan la subida.
+scratch/
+scripts/
+supabase_*.sql
+*.bak
+
+# ── Artefactos y dependencias: Vercel los reconstruye ───────────────────────
+node_modules
+.next
+out
+build
+coverage
+
+# ── Ruido del sistema y del editor ──────────────────────────────────────────
+.git
+.vscode
+.idea
+.claude
+Thumbs.db
+.DS_Store
+*.log

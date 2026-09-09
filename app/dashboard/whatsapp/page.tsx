@@ -1528,7 +1528,7 @@ export default function WhatsAppPage() {
             </div>
           )}
 
-          <div className="flex-1 overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto">
             {filtered.length === 0 && (
               <div className="flex flex-col items-center justify-center h-40 text-center p-4">
                 <MessageSquare className="w-8 h-8 mb-2" style={{ color: 'rgba(255,255,255,0.2)' }} />
@@ -1760,7 +1760,7 @@ export default function WhatsAppPage() {
                 <div
                   ref={chatScrollRef}
                   onScroll={handleScrollEvents}
-                  className="flex-1 overflow-y-auto px-4 pt-4 pb-4 space-y-1 w-full"
+                  className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-4 space-y-1 w-full"
                   style={{ minHeight: 0, background: '#0b141a' }}
                 >
                   {/* Load more above */}
@@ -2215,7 +2215,7 @@ export default function WhatsAppPage() {
               </button>
             </div>
             
-            <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
+            <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
               {loadingAudit ? (
                 <div className="flex flex-col items-center justify-center py-20 gap-3">
                   <RefreshCw className="w-10 h-10 animate-spin text-white/10" />

@@ -28,24 +28,92 @@ export const dynamic = 'force-dynamic';
  * (descripción/tipo), p. ej. "Rotación" → 40% en la cauchera.
  */
 
-interface TemplateMeta { cedula: string; alias?: string; especialidad: string; nombreCompleto: string; }
+interface TemplateMeta {
+  cedula: string;
+  alias?: string;
+  /** Zona de trabajo del catálogo (`ZONAS_TRABAJO`), no texto libre. */
+  especialidad: string;
+  nombreCompleto: string;
+  /** Rol del panel: define qué puede ver y hacer. */
+  rol: string;
+  /** Puesto real. El rol da permisos; el cargo describe el trabajo. */
+  cargo: string;
+  area: string;
+  tipo_contrato: string;
+  /** Nombres con los que aparece en las hojas de pago, para reconocerlo. */
+  alterno?: string[];
+}
 
+/**
+ * El personal del taller tal como está en las relaciones de pago.
+ *
+ * `especialidad` usa siempre una zona válida del catálogo: la jefatura y el
+ * almacén no son zonas de trabajo, así que van en `cargo`/`area` —que es donde
+ * RRHH los muestra— y su zona queda en la que realmente supervisan o atienden.
+ */
 const META: Record<string, TemplateMeta> = {
-  rafael:  { cedula: 'V-16.278.639', especialidad: 'alineacion', nombreCompleto: 'Rafael Antonio Ramirez' },
-  roger:   { cedula: 'V-10.279.435', especialidad: 'mecanica',   nombreCompleto: 'Roger Rafael Rodriguez Bello' },
-  jim:     { cedula: 'V-11.038.792', especialidad: 'jefatura',   nombreCompleto: 'Jim Carboney Rincon Perez' },
-  acevedo: { cedula: 'V-3.882.980',  especialidad: 'almacen',    nombreCompleto: 'Antonio Jose Acevedo Colmenares' },
-  freddy:  { cedula: 'V-11.098.823', especialidad: 'escape',     nombreCompleto: 'Freddy Ramón Rodriguez Cordova' },
-  nelson:  { cedula: 'V-8.683.914',  alias: 'NELSON', especialidad: 'cauchera', nombreCompleto: 'Margarito Carvajal' },
-  angel:   { cedula: 'V-16.888.296', especialidad: 'latoneria',  nombreCompleto: 'Angel Luis Perez Espinoza' },
-  frank:   { cedula: 'V-9.284.889',  especialidad: 'mecanica',   nombreCompleto: 'Francisco Antonio Hernandez Ruiz' },
-  dyan:    { cedula: 'V-29.622.223', especialidad: 'autolavado', nombreCompleto: 'Dyan Andres Anchundia Mota' },
+  rafael:  { cedula: 'V-16.278.639', especialidad: 'alineacion', nombreCompleto: 'Rafael Antonio Ramirez',
+             rol: 'mecanico', cargo: 'Alineación y balanceo', area: 'Taller', tipo_contrato: 'Por comisión' },
+  roger:   { cedula: 'V-10.279.435', especialidad: 'mecanica', nombreCompleto: 'Roger Rafael Rodriguez Bello',
+             rol: 'mecanico', cargo: 'Mecánico', area: 'Taller', tipo_contrato: 'Tiempo completo',
+             alterno: ['MECANICO ROGER', 'ROGER'] },
+  jim:     { cedula: 'V-11.038.792', especialidad: 'mecanica', nombreCompleto: 'Jim Carboney Rincon Perez',
+             rol: 'jefe_taller', cargo: 'Jefe de taller', area: 'Taller', tipo_contrato: 'Tiempo completo',
+             alterno: ['JIM'] },
+  acevedo: { cedula: 'V-3.882.980', especialidad: 'general', nombreCompleto: 'Antonio Jose Acevedo Colmenares',
+             rol: 'registrador', cargo: 'Almacén e inventario', area: 'Almacén', tipo_contrato: 'Tiempo completo',
+             alterno: ['ACEVEDO'] },
+  freddy:  { cedula: 'V-11.098.823', especialidad: 'escape', nombreCompleto: 'Freddy Ramón Rodriguez Cordova',
+             rol: 'mecanico', cargo: 'Técnico en silenciadores', area: 'Taller', tipo_contrato: 'Por comisión',
+             alterno: ['FREDDY'] },
+  nelson:  { cedula: 'V-8.683.914', alias: 'NELSON', especialidad: 'cauchera', nombreCompleto: 'Margarito Carvajal',
+             rol: 'mecanico', cargo: 'Cauchera', area: 'Taller', tipo_contrato: 'Por comisión',
+             alterno: ['NELSON', 'MARGARITO'] },
+  angel:   { cedula: 'V-16.888.296', especialidad: 'latoneria', nombreCompleto: 'Angel Luis Perez Espinoza',
+             rol: 'mecanico', cargo: 'Latonería y pintura', area: 'Taller', tipo_contrato: 'Por comisión',
+             alterno: ['ANGEL'] },
+  frank:   { cedula: 'V-9.284.889', especialidad: 'mecanica', nombreCompleto: 'Francisco Antonio Hernandez Ruiz',
+             rol: 'mecanico', cargo: 'Mecánico', area: 'Taller', tipo_contrato: 'Por comisión',
+             alterno: ['FRANK', 'FRANCISCO'] },
+  dyan:    { cedula: 'V-29.622.223', especialidad: 'autolavado', nombreCompleto: 'Dyan Andres Anchundia Mota',
+             rol: 'mecanico', cargo: 'Autolavado', area: 'Taller', tipo_contrato: 'Por comisión',
+             alterno: ['DYAN'] },
 };
 
+export const PLANTILLAS_PERSONAL = META;
+
+const sinAcentos = (s: string) =>
+  s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+
+/** Contraseña larga y aleatoria: la cuenta nace sin que nadie pueda entrar. */
+function claveAleatoria(): string {
+  const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  let out = '';
+  for (let i = 0; i < 20; i++) out += abc[Math.floor(Math.random() * abc.length)];
+  return out;
+}
+
+/** Fila lista para insertar en `commission_rules` / `flat_rate_catalog`. */
+type FilaRegla = Record<string, unknown>;
+
 function buildTemplate(key: string, empleadoId: string, sede: string | null, proveedor: string) {
-  const rules: any[] = [];
-  const flats: any[] = [];
-  const base = { empleado_id: empleadoId, sede_id: sede, activo: true, moneda: 'USD' };
+  const rules: FilaRegla[] = [];
+  const flats: FilaRegla[] = [];
+  // Todas las claves opcionales van aquí con su valor neutro. Al insertar el
+  // lote, PostgREST iguala las columnas entre filas y manda NULL explícito en
+  // las que falten: sin esto, una sola regla con `proveedor_pct` hacía que el
+  // resto llegara con NULL y el insert entero se caía.
+  const base = {
+    empleado_id: empleadoId,
+    sede_id: sede,
+    activo: true,
+    moneda: 'USD',
+    aplica_monedas: null as string[] | null,
+    proveedor_pct: 0,
+    proveedor_nombre: null as string | null,
+    condiciones: {} as Record<string, unknown>,
+    vigencia_hasta: null as string | null,
+  };
 
   switch (key) {
     case 'rafael':
@@ -143,11 +211,71 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Sólo el Administrador puede aplicar plantillas de comisión.' }, { status: 403 });
   }
 
-  let body: any;
+  let body: Record<string, unknown>;
   try { body = await req.json(); } catch { return NextResponse.json({ error: 'JSON inválido' }, { status: 400 }); }
-  const assignments: Record<string, string> = body.assignments || {};
-  const sede = auth.effectiveSede(body.sede_id ?? null);
-  const proveedor = body.proveedor_nombre || 'Proveedor Puente Alineación';
+  const assignments: Record<string, string> = (body.assignments as Record<string, string>) || {};
+  const sede = auth.effectiveSede((body.sede_id as string) ?? null);
+  const proveedor = (body.proveedor_nombre as string) || 'Proveedor Puente Alineación';
+
+  // ── Alta o reconocimiento del personal ───────────────────────────────────
+  // Con `crearFaltantes` el sembrado deja de necesitar que alguien mapee a mano
+  // cada plantilla: reconoce a quien ya está —aunque lo hayan dado de baja o
+  // guardado con apodo— y da de alta al que falta con su ficha completa.
+  const creados: { key: string; nombre: string; id: string }[] = [];
+  const reactivados: { key: string; nombre: string; id: string }[] = [];
+
+  if (body.crearFaltantes) {
+    const { data: existentes } = await auth.db
+      .from('usuarios').select('id, nombre, username, cedula, rol, activo, sede_id');
+    const gente = existentes || [];
+
+    for (const [key, meta] of Object.entries(META)) {
+      if (assignments[key]) continue;   // ya viene mapeado a mano
+
+      // 1º por cédula (identidad dura), 2º por nombre o apodo de las hojas.
+      const nombres = [meta.nombreCompleto, ...(meta.alterno || [])].map(sinAcentos);
+      const hallado = gente.find(u => u.cedula && u.cedula === meta.cedula)
+        || gente.find(u => {
+          const n = sinAcentos(u.nombre || '');
+          return nombres.some(x => n === x || n.startsWith(x + ' ') || x.startsWith(n));
+        });
+
+      const ficha = {
+        nombre: meta.nombreCompleto,
+        cedula: meta.cedula,
+        alias: meta.alias ?? null,
+        especialidad: meta.especialidad,
+        rol: meta.rol,
+        cargo: meta.cargo,
+        area: meta.area,
+        tipo_contrato: meta.tipo_contrato,
+        sede_id: sede ?? auth.user!.sede_id ?? null,
+        activo: true,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (hallado) {
+        // Estaban dados de baja con el nombre a medias. Se completan y se
+        // reactivan, en vez de crear un duplicado al lado.
+        await auth.db.from('usuarios').update({ ...ficha, fecha_egreso: null }).eq('id', hallado.id);
+        assignments[key] = hallado.id;
+        if (hallado.activo === false) reactivados.push({ key, nombre: meta.nombreCompleto, id: hallado.id });
+      } else {
+        const usuario = sinAcentos(meta.nombreCompleto).split(' ').slice(0, 2).join('.').replace(/[^a-z.]/g, '');
+        const { data: nuevo, error } = await auth.db.from('usuarios').insert({
+          ...ficha,
+          username: `${usuario}.${Date.now().toString(36)}`,
+          email: `${usuario}@lycosteam.internal`,
+          // Nace sin clave utilizable: se le pone una desde su ficha de RRHH
+          // cuando de verdad necesite entrar al panel.
+          password_hash: claveAleatoria(),
+        }).select('id').single();
+        if (error) return NextResponse.json({ error: `No se pudo crear a ${meta.nombreCompleto}: ${error.message}` }, { status: 500 });
+        assignments[key] = nuevo!.id;
+        creados.push({ key, nombre: meta.nombreCompleto, id: nuevo!.id });
+      }
+    }
+  }
 
   const empleadoIds = Object.values(assignments).filter(Boolean);
   if (empleadoIds.length === 0) {
@@ -163,8 +291,8 @@ export async function POST(req: NextRequest) {
     await dr; await df;
   }
 
-  const allRules: any[] = [];
-  const allFlats: any[] = [];
+  const allRules: FilaRegla[] = [];
+  const allFlats: FilaRegla[] = [];
   for (const [key, empId] of Object.entries(assignments)) {
     if (!empId) continue;
     const { rules, flats } = buildTemplate(key, empId, sede, proveedor);
@@ -178,6 +306,9 @@ export async function POST(req: NextRequest) {
         cedula: meta.cedula,
         alias: meta.alias ?? null,
         especialidad: meta.especialidad,
+        cargo: meta.cargo,
+        area: meta.area,
+        tipo_contrato: meta.tipo_contrato,
         updated_at: new Date().toISOString(),
       }).eq('id', empId);
     }
@@ -197,5 +328,12 @@ export async function POST(req: NextRequest) {
     detalles: `${empleadoIds.length} empleado(s) · ${allRules.length} reglas · cédulas/áreas actualizadas`,
     sede_id: sede,
   });
-  return NextResponse.json({ success: true, rules: allRules.length, flats: allFlats.length });
+  return NextResponse.json({
+    success: true,
+    rules: allRules.length,
+    flats: allFlats.length,
+    empleados: empleadoIds.length,
+    creados,
+    reactivados,
+  });
 }

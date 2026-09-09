@@ -30,7 +30,8 @@ export async function POST(req: Request) {
       }
     });
 
-    const { email, nombre, apellido, sede_id, rol, activo, password_hash, telefono, username: manualUsername, cedula, especialidad, foto_url } = await req.json();
+    const { email, nombre, apellido, sede_id, rol, activo, password_hash, telefono, username: manualUsername, cedula, especialidad, foto_url,
+            cargo, area, tipo_contrato, fecha_ingreso, fecha_nacimiento } = await req.json();
 
     if (!nombre || !rol) {
       return NextResponse.json({ error: 'Faltan datos requeridos (nombre, rol)' }, { status: 400 });
@@ -89,6 +90,11 @@ export async function POST(req: Request) {
       cedula: cedula || null,
       especialidad: especialidad || null,
       foto_url: foto_url || null,
+      cargo: cargo || null,
+      area: area || null,
+      tipo_contrato: tipo_contrato || null,
+      fecha_ingreso: fecha_ingreso || null,
+      fecha_nacimiento: fecha_nacimiento || null,
     }).select().single();
 
     if (error) {

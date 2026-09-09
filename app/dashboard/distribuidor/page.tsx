@@ -308,7 +308,7 @@ function NuevaDistribucionWizard({
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5 space-y-4">
 
           {/* ─── STEP 1: Destino ─────────────────────────────── */}
           {step === 1 && (
@@ -425,7 +425,7 @@ function NuevaDistribucionWizard({
                       {filteredInventario.length} productos con stock disponible
                     </p>
                   </div>
-                  <div className="flex-1 overflow-y-auto">
+                  <div className="min-h-0 flex-1 overflow-y-auto">
                     {filteredInventario.length === 0 ? (
                       <div className="flex flex-col items-center justify-center h-full text-muted-foreground/40 gap-2">
                         <Package className="w-10 h-10" />
@@ -494,7 +494,7 @@ function NuevaDistribucionWizard({
                       {selectedItems.length} productos
                     </span>
                   </div>
-                  <div className="flex-1 overflow-y-auto">
+                  <div className="min-h-0 flex-1 overflow-y-auto">
                     {selectedItems.length === 0 ? (
                       <div className="flex flex-col items-center justify-center h-full text-muted-foreground/30 gap-2 p-4">
                         <Boxes className="w-8 h-8" />
@@ -1035,7 +1035,7 @@ function NuevaNotaGananciaWizard({
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="space-y-1.5 sm:col-span-1">
               <Label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Cliente / Reventa a *</Label>

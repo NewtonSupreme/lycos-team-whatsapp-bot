@@ -18,6 +18,7 @@ import {
   X, Loader2, Wrench, Clock, Car, Banknote, Receipt, ShieldCheck, ShieldAlert,
   TrendingDown, Wallet, User, FileText, ExternalLink, Activity, CheckCircle2,
 } from 'lucide-react';
+import ModalPortal from '@/components/ui/modal-portal';
 import { categoriaLabel, metodoPagoLabel, sumaMetodos } from '@/lib/categorias';
 
 const money = (n: number) => `$${(n ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -140,10 +141,11 @@ export default function ServicioDetalleModal({ servicio, onClose }: { servicio: 
   const tasaMostrar = tasaReal || tasaGuardada;
 
   return (
-    <div
-      className="fixed inset-0 z-[140] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-0 sm:p-4"
-      onClick={onClose}
-    >
+    <ModalPortal>
+      <div
+        className="fixed inset-0 z-[140] flex items-end justify-center bg-black/60 p-0 sm:items-center sm:p-4"
+        onClick={onClose}
+      >
       <div
         className="w-full sm:max-w-2xl h-[92dvh] sm:h-auto sm:max-h-[90vh] flex flex-col bg-card border border-border rounded-t-2xl sm:rounded-2xl shadow-2xl animate-in slide-in-from-bottom sm:zoom-in-95 duration-200 overflow-hidden"
         onClick={e => e.stopPropagation()}
@@ -177,7 +179,7 @@ export default function ServicioDetalleModal({ servicio, onClose }: { servicio: 
         {loading ? (
           <div className="flex justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-primary" /></div>
         ) : (
-          <div className="flex-1 overflow-y-auto overscroll-contain p-3 sm:p-4 space-y-3 sm:space-y-4">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 sm:p-4 space-y-3 sm:space-y-4">
 
             {/* Resumen financiero */}
             <div className="grid grid-cols-3 gap-2">
@@ -380,8 +382,9 @@ export default function ServicioDetalleModal({ servicio, onClose }: { servicio: 
             )}
           </div>
         )}
+        </div>
       </div>
-    </div>
+    </ModalPortal>
   );
 }
 

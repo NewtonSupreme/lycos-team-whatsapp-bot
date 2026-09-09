@@ -80,7 +80,7 @@ export default function TransferVehiculoModal({
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 pt-2 space-y-4 custom-scrollbar">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-6 pt-2 space-y-4 custom-scrollbar">
           {/* Vehículo */}
           {vehiculo && (
             <div className="flex items-center gap-3 p-3 rounded-xl bg-muted/30 border border-border/30">

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/lib/store';
@@ -8,18 +9,32 @@ import { useSedeStore } from '@/lib/store/useSedeStore';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
-  Banknote, Loader2, Wallet, TrendingUp, Users, Calendar, RefreshCw, Plus,
-  CheckCircle2, FileText, AlertTriangle, Settings2, ChevronRight, Building2, Download, X, Coins,
-  Sparkles, Check, AlertCircle, Bot, Wand2, Save,
+  Banknote, Loader2, Wallet, TrendingUp, Calendar, RefreshCw, Plus,
+  CheckCircle2, FileText, AlertTriangle, Settings2, ChevronLeft, ChevronRight, Download, X, Coins,
+  AlertCircle, Bot, Save,
 } from 'lucide-react';
 import {
   getPermisos, hasPermiso, resolveRol, getRoleMeta, ZONAS_TRABAJO,
-  type EmployeeEarnings, type CommissionRule, type FlatRate, type PayrollLedger, type JobAssignment,
+  type EmployeeEarnings, type PayrollLedger, type JobAssignment,
 } from '@/types';
 import { generateReciboNominaPDF } from '@/lib/recibo-nomina-pdf';
-import AsignacionTecnicos, { type JobSpec } from '@/components/nomina/AsignacionTecnicos';
+import { generateNominaConsolidadaPDF, generateRelacionPagoPDF } from '@/lib/nomina/relacion-pago-pdf';
+import PanelReglas from '@/components/nomina/reglas/PanelReglas';
+import DetectarTrabajos from '@/components/nomina/DetectarTrabajos';
+import PersonalYComisiones, { type AsignacionEmpleado } from '@/components/nomina/PersonalYComisiones';
+import { asignacionesValidas, buildJobsDesdeAsignacion } from '@/lib/nomina/asignaciones';
+import { categoriaToZona, inferirCategoria } from '@/lib/categorias';
+import { cn } from '@/lib/utils';
+import ErpShell, { NominaIcon } from '@/components/erp/ErpShell';
+import NominaKpis from '@/components/nomina/v2/NominaKpis';
+import EmpleadosPanel from '@/components/nomina/v2/EmpleadosPanel';
+import DetalleEmpleado from '@/components/nomina/DetalleEmpleado';
+import ReconciliarEncargados from '@/components/nomina/ReconciliarEncargados';
+import NominaRail, { type AccionRapida, type NominaCerrada } from '@/components/nomina/v2/NominaRail';
+import ProcesarNominaModal from '@/components/nomina/v2/ProcesarNominaModal';
+import { formatoMonto, iniciales, type FilaEmpleado, type Moneda } from '@/components/nomina/v2/tipos';
 
-type Tab = 'resumen' | 'ia' | 'trabajos' | 'reglas' | 'adelantos' | 'historial';
+type Tab = 'resumen' | 'empleados' | 'trabajos' | 'conceptos' | 'deducciones' | 'reportes' | 'ia' | 'configuracion';
 
 const money = (n: number) => `$${(n ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const zonaLabel = (z: string) => ZONAS_TRABAJO.find(x => x.key === z)?.label || z;
@@ -43,24 +58,106 @@ function addDays(iso: string, n: number) {
 function monthStart(d: Date = new Date()) { return getLocalISODate(new Date(d.getFullYear(), d.getMonth(), 1)); }
 function monthEnd(d: Date = new Date()) { return getLocalISODate(new Date(d.getFullYear(), d.getMonth() + 1, 0)); }
 
+/**
+ * Los períodos con los que se paga.
+ *
+ * El taller cierra por semana, pero administración también liquida por
+ * quincena y revisa el mes completo. La quincena es 1–15 y 16–fin de mes, como
+ * se usa aquí. El sueldo fijo se prorratea solo: `semanasEnPeriodo` divide los
+ * días entre 7, así que $40 semanales dan $85,71 en una quincena y $171,43 en
+ * un mes de 30 días, sin que haya que configurar nada.
+ */
 const PRESETS = [
-  { key: 'semana', label: 'Esta semana' },
-  { key: 'semana_pasada', label: 'Semana pasada' },
-  { key: 'mes', label: 'Este mes' },
-  { key: 'mes_pasado', label: 'Mes pasado' },
-  { key: 'custom', label: 'Personalizado' },
+  { key: 'semana', label: 'Esta semana', tipo: 'Semanal' },
+  { key: 'semana_pasada', label: 'Semana pasada', tipo: 'Semanal' },
+  { key: 'quincena', label: 'Esta quincena', tipo: 'Quincenal' },
+  { key: 'quincena_pasada', label: 'Quincena pasada', tipo: 'Quincenal' },
+  { key: 'mes', label: 'Este mes', tipo: 'Mensual' },
+  { key: 'mes_pasado', label: 'Mes pasado', tipo: 'Mensual' },
+  { key: 'custom', label: 'Personalizado', tipo: 'A medida' },
 ];
+
+export const tipoPeriodo = (key: string) => PRESETS.find(p => p.key === key)?.tipo || 'A medida';
+
+/** La quincena que contiene esa fecha: del 1 al 15, o del 16 al último día. */
+function quincenaDe(d: Date): { inicio: string; fin: string } {
+  const y = d.getFullYear(), m = d.getMonth();
+  if (d.getDate() <= 15) {
+    return { inicio: getLocalISODate(new Date(y, m, 1)), fin: getLocalISODate(new Date(y, m, 15)) };
+  }
+  return { inicio: getLocalISODate(new Date(y, m, 16)), fin: getLocalISODate(new Date(y, m + 1, 0)) };
+}
 
 function presetRange(key: string): { inicio: string; fin: string } {
   const hoy = new Date();
   if (key === 'semana') { const i = isoWeekStart(hoy); return { inicio: i, fin: addDays(i, 6) }; }
   if (key === 'semana_pasada') { const i = addDays(isoWeekStart(hoy), -7); return { inicio: i, fin: addDays(i, 6) }; }
+  if (key === 'quincena') return quincenaDe(hoy);
+  if (key === 'quincena_pasada') {
+    // Un día antes del inicio de la quincena actual cae siempre en la anterior.
+    const actual = quincenaDe(hoy);
+    const previo = new Date(actual.inicio + 'T00:00:00');
+    previo.setDate(previo.getDate() - 1);
+    return quincenaDe(previo);
+  }
   if (key === 'mes') return { inicio: monthStart(hoy), fin: monthEnd(hoy) };
   if (key === 'mes_pasado') { const p = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 15); return { inicio: monthStart(p), fin: monthEnd(p) }; }
   const i = isoWeekStart(hoy); return { inicio: i, fin: addDays(i, 6) };
 }
 
+const MESES_LARGO = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'] as const;
+const MESES_CORTO = ['ene.', 'feb.', 'mar.', 'abr.', 'may.', 'jun.', 'jul.', 'ago.', 'sep.', 'oct.', 'nov.', 'dic.'] as const;
+
+const fechaCorta = (iso: string) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return `${d} ${MESES_CORTO[m - 1]} ${y}`;
+};
+
+/** El título del selector de período: mes con nombre, o el rango exacto. */
+function etiquetaPeriodo(preset: string, range: { inicio: string; fin: string }): string {
+  if (preset === 'mes' || preset === 'mes_pasado') {
+    const [y, m] = range.inicio.split('-').map(Number);
+    return `${MESES_LARGO[m - 1]}, ${y}`;
+  }
+  if (preset === 'quincena' || preset === 'quincena_pasada') {
+    const [y, m, d] = range.inicio.split('-').map(Number);
+    return `${d === 1 ? '1ª' : '2ª'} quincena · ${MESES_LARGO[m - 1]} ${y}`;
+  }
+  return `${fechaCorta(range.inicio)} – ${fechaCorta(range.fin)}`;
+}
+
+/** Corre el período un paso adelante o atrás, respetando su unidad. */
+function correrPeriodo(preset: string, range: { inicio: string; fin: string }, paso: number) {
+  if (preset === 'quincena' || preset === 'quincena_pasada') {
+    const ref = new Date(range.inicio + 'T00:00:00');
+    // Saltar 16 días desde el día 1, o 16 hacia atrás desde el 16, cae siempre
+    // en la quincena vecina sin importar si el mes tiene 28, 30 o 31 días.
+    ref.setDate(ref.getDate() + paso * 16);
+    return quincenaDe(ref);
+  }
+  if (preset === 'mes' || preset === 'mes_pasado') {
+    const [y, m] = range.inicio.split('-').map(Number);
+    const base = new Date(y, m - 1 + paso, 1);
+    return { inicio: monthStart(base), fin: monthEnd(base) };
+  }
+  const dias = Math.round(
+    (new Date(range.fin + 'T00:00:00').getTime() - new Date(range.inicio + 'T00:00:00').getTime()) / 86400000,
+  ) + 1;
+  return { inicio: addDays(range.inicio, paso * dias), fin: addDays(range.fin, paso * dias) };
+}
+
+interface UsuarioMeta {
+  cedula?: string | null;
+  especialidad?: string | null;
+  foto_url?: string | null;
+  rol?: string | null;
+  alias?: string | null;
+  cargo?: string | null;
+  area?: string | null;
+}
+
 export default function NominaPage() {
+  const router = useRouter();
   const { user } = useAppStore();
   const roleDefaults = useAppStore(s => s.roleDefaults);
   const { currentSede } = useSedeStore();
@@ -77,13 +174,22 @@ export default function NominaPage() {
   const [tab, setTab] = useState<Tab>('resumen');
   const [preset, setPreset] = useState('semana');
   const [range, setRange] = useState(presetRange('semana'));
+  const [menuPeriodo, setMenuPeriodo] = useState(false);
+
   const [summary, setSummary] = useState<EmployeeEarnings[]>([]);
+  const [usuarios, setUsuarios] = useState<Record<string, UsuarioMeta>>({});
+  const [ledgers, setLedgers] = useState<PayrollLedger[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  const [moneda, setMoneda] = useState<Moneda>('usd');
+  const [tasa, setTasa] = useState(0);
+
   const [liquidarTarget, setLiquidarTarget] = useState<EmployeeEarnings | null>(null);
   const [registrarOpen, setRegistrarOpen] = useState(false);
-  const [detalle, setDetalle] = useState<EmployeeEarnings | null>(null);
+  const [detalle, setDetalle] = useState<FilaEmpleado | null>(null);
+  const [procesarOpen, setProcesarOpen] = useState(false);
+  const [seedOpen, setSeedOpen] = useState(false);
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -94,235 +200,670 @@ export default function NominaPage() {
       if (sedeId) qs.set('sede', sedeId);
       const r = await fetch(`/api/nomina/summary?${qs}`);
       const d = await r.json();
-      if (r.ok) setSummary(d.summary || []);
-      else setSummary([]);
+      setSummary(r.ok ? (d.summary || []) : []);
     } catch { setSummary([]); }
     finally { setLoading(false); setRefreshing(false); }
   }, [range, sedeId]);
 
-  useEffect(() => { if (mounted) loadSummary(); }, [mounted, loadSummary]);
+  /** Ficha del personal: cédula, especialidad y foto para la tabla. */
+  const loadUsuarios = useCallback(async () => {
+    try {
+      const qs = sedeId ? `?sede=${sedeId}` : '';
+      const r = await fetch(`/api/nomina/technicians${qs}`);
+      const d = await r.json();
+      const mapa: Record<string, UsuarioMeta> = {};
+      const gente = (d.technicians || []) as (UsuarioMeta & { id: string })[];
+      gente.forEach(u => {
+        mapa[u.id] = {
+          cedula: u.cedula, especialidad: u.especialidad, foto_url: u.foto_url,
+          rol: u.rol, alias: u.alias, cargo: u.cargo, area: u.area,
+        };
+      });
+      setUsuarios(mapa);
+    } catch { /* la tabla funciona igual sin la ficha */ }
+  }, [sedeId]);
 
-  // Tiempo real: cualquier cambio en trabajos o liquidaciones refresca el resumen.
+  const loadLedgers = useCallback(async () => {
+    try {
+      const qs = sedeId ? `?sede=${sedeId}` : '';
+      const r = await fetch(`/api/nomina/ledger${qs}`);
+      const d = await r.json();
+      setLedgers(d.ledgers || []);
+    } catch { setLedgers([]); }
+  }, [sedeId]);
+
+  useEffect(() => { if (mounted) loadSummary(); }, [mounted, loadSummary]);
+  useEffect(() => { if (mounted) { loadUsuarios(); loadLedgers(); } }, [mounted, loadUsuarios, loadLedgers]);
+
+  // La tasa solo se pide si se va a mostrar en bolívares.
+  useEffect(() => {
+    if (moneda !== 'ves' || tasa > 0) return;
+    fetch('/api/nomina/rates')
+      .then(r => r.json())
+      .then(d => setTasa(Number(d?.ves?.bcv ?? d?.bcv ?? d?.ves ?? 0) || 0))
+      .catch(() => setTasa(0));
+  }, [moneda, tasa]);
+
+  // Tiempo real: cualquier cambio en trabajos o liquidaciones refresca todo.
   useEffect(() => {
     if (!supabase || !mounted) return;
+    const refrescar = () => { loadSummary(true); loadLedgers(); };
     const ch = supabase.channel('nomina-rt')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'job_assignments' }, () => loadSummary(true))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'payroll_ledger' }, () => loadSummary(true))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'job_assignments' }, refrescar)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payroll_ledger' }, refrescar)
       .subscribe();
     return () => { supabase?.removeChannel(ch); };
-  }, [mounted, loadSummary]);
+  }, [mounted, loadSummary, loadLedgers]);
 
   const onPreset = (k: string) => {
     setPreset(k);
+    setMenuPeriodo(false);
     if (k !== 'custom') setRange(presetRange(k));
   };
 
-  const totales = useMemo(() => summary.reduce((a, e) => ({
-    base: a.base + e.sueldo_base, com: a.com + e.total_comisiones + e.total_flat,
-    over: a.over + e.total_overrides, ded: a.ded + e.deducciones, pagar: a.pagar + e.total_pagar,
-  }), { base: 0, com: 0, over: 0, ded: 0, pagar: 0 }), [summary]);
+  // ── Modelo de vista de la tabla ─────────────────────────────────────────
+  const filas: FilaEmpleado[] = useMemo(() => summary.map(e => {
+    const u = usuarios[e.empleado_id] || {};
+    return {
+      id: e.empleado_id,
+      nombre: e.empleado_nombre,
+      cedula: u.cedula || '',
+      cargo: getRoleMeta(e.rol)?.label || e.rol || '—',
+      departamento: u.especialidad ? zonaLabel(u.especialidad) : '—',
+      fotoUrl: u.foto_url,
+      sueldoBase: e.sueldo_base,
+      comisiones: e.total_comisiones + e.total_flat,
+      overrides: e.total_overrides,
+      devengado: e.bruto,
+      deducciones: e.deducciones,
+      neto: e.total_pagar,
+      trabajos: e.jobs?.length || 0,
+      liquidado: e.liquidado,
+      earnings: e,
+    };
+  }), [summary, usuarios]);
+
+  const totales = useMemo(() => filas.reduce((a, f) => ({
+    bruto: a.bruto + f.devengado,
+    deducciones: a.deducciones + f.deducciones,
+    neto: a.neto + f.neto,
+    pendientes: a.pendientes + (f.liquidado ? 0 : 1),
+  }), { bruto: 0, deducciones: 0, neto: 0, pendientes: 0 }), [filas]);
+
+  /** Liquidaciones agrupadas por período: la historia real de la nómina. */
+  const periodosCerrados = useMemo(() => {
+    const grupos = new Map<string, { inicio: string; fin: string; bruto: number; deducciones: number; neto: number; recibos: number; anulados: number; fecha: string }>();
+    ledgers.forEach(l => {
+      const clave = `${l.periodo_inicio}|${l.periodo_fin}`;
+      const g = grupos.get(clave) || { inicio: l.periodo_inicio, fin: l.periodo_fin, bruto: 0, deducciones: 0, neto: 0, recibos: 0, anulados: 0, fecha: '' };
+      const anulado = l.estado === 'anulado';
+      if (!anulado) {
+        g.bruto += l.bruto || 0;
+        g.deducciones += l.deducciones || 0;
+        g.neto += l.total_pagar || 0;
+        g.recibos += 1;
+      } else {
+        g.anulados += 1;
+      }
+      const cuando = (l as PayrollLedger & { created_at?: string }).created_at || l.periodo_fin;
+      if (cuando > g.fecha) g.fecha = cuando;
+      grupos.set(clave, g);
+    });
+    return Array.from(grupos.values()).sort((a, b) => a.inicio.localeCompare(b.inicio));
+  }, [ledgers]);
+
+  const series = useMemo(() => {
+    const ultimos = periodosCerrados.slice(-12);
+    return {
+      empleados: ultimos.map(p => p.recibos),
+      bruto: ultimos.map(p => p.bruto),
+      deducciones: ultimos.map(p => p.deducciones),
+      neto: ultimos.map(p => p.neto),
+    };
+  }, [periodosCerrados]);
+
+  /** Período cerrado más reciente que no sea el que se está viendo. */
+  const anterior = useMemo(
+    () => [...periodosCerrados].reverse().find(p => p.inicio !== range.inicio),
+    [periodosCerrados, range.inicio],
+  );
+
+  const variacionBruto = anterior && anterior.bruto > 0
+    ? Math.round(((totales.bruto - anterior.bruto) / anterior.bruto) * 100)
+    : null;
+  const variacionEmpleados = anterior ? filas.length - anterior.recibos : null;
+
+  const ultimas: NominaCerrada[] = useMemo(
+    () => [...periodosCerrados].reverse().slice(0, 3).map(p => ({
+      clave: `${p.inicio}|${p.fin}`,
+      titulo: etiquetaPeriodo(p.inicio.slice(8) === '01' && p.fin === monthEnd(new Date(p.fin + 'T00:00:00')) ? 'mes' : 'rango', p),
+      monto: p.neto,
+      fecha: fechaCorta(p.fecha.slice(0, 10)),
+      recibos: p.recibos,
+      anulada: p.recibos === 0 && p.anulados > 0,
+    })),
+    [periodosCerrados],
+  );
+
+  const periodoLabel = etiquetaPeriodo(preset, range);
+
+  // ── Acciones ────────────────────────────────────────────────────────────
+  const exportarCSV = () => {
+    const cab = ['Empleado', 'Cedula', 'Cargo', 'Departamento', 'Sueldo base USD', 'Comisiones USD', 'Override USD', 'Devengado USD', 'Deducciones USD', 'Neto USD', 'Trabajos', 'Estado'];
+    const filasCsv = filas.map(f => [
+      f.nombre, f.cedula, f.cargo, f.departamento,
+      f.sueldoBase.toFixed(2), f.comisiones.toFixed(2), f.overrides.toFixed(2),
+      f.devengado.toFixed(2), f.deducciones.toFixed(2), f.neto.toFixed(2),
+      String(f.trabajos), f.liquidado ? 'Liquidado' : 'Pendiente',
+    ]);
+    const escapa = (v: string) => `"${v.replace(/"/g, '""')}"`;
+    // BOM para que Excel abra los acentos bien.
+    const csv = '﻿' + [cab, ...filasCsv].map(r => r.map(escapa).join(';')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `nomina_${range.inicio}_${range.fin}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  /** Relación de pago de una persona: la hoja con todos sus trabajos. */
+  const descargarHoja = (f: FilaEmpleado) => {
+    const e = f.earnings;
+    const u = usuarios[f.id] || {};
+    generateRelacionPagoPDF({
+      empleado_nombre: e.empleado_nombre,
+      cedula: u.cedula, alias: u.alias, cargo: f.cargo, area: u.area, rol: e.rol,
+      periodo_inicio: range.inicio, periodo_fin: range.fin,
+      sede_nombre: currentSede?.nombre,
+      sueldo_base: e.sueldo_base, total_comisiones: e.total_comisiones,
+      total_overrides: e.total_overrides, total_flat: e.total_flat,
+      bruto: e.bruto, deducciones: e.deducciones, total_pagar: e.total_pagar,
+      trabajos: (e.jobs || []).map(j => ({
+        fecha: j.fecha, zona: j.zona, tipo_trabajo: j.tipo_trabajo, descripcion: j.descripcion,
+        ingreso_total: j.ingreso_total, ingreso_usd: (j as { ingreso_usd?: number }).ingreso_usd,
+        mano_obra_usd: (j as { mano_obra_usd?: number }).mano_obra_usd,
+        comision_usd: j.comision_usd, es_override: j.es_override, moneda: j.moneda,
+        desglose: (j as { desglose?: Record<string, unknown> }).desglose as never,
+      })),
+      adelantos: (e.adelantos || []).map(a => ({
+        fecha: a.fecha, motivo: a.motivo, monto_usd: a.monto_usd,
+      })),
+      tasa_bs: moneda === 'ves' ? tasa : null,
+      borrador: !e.liquidado,
+    });
+  };
+
+  /** La hoja que se firma para pagar: una fila por persona y el total. */
+  const descargarNomina = () => {
+    if (filas.length === 0) { alert('No hay nómina que imprimir en este período.'); return; }
+    generateNominaConsolidadaPDF({
+      filas: filas.map(f => ({
+        empleado_nombre: f.nombre,
+        cedula: f.cedula || usuarios[f.id]?.cedula || null,
+        cargo: f.cargo,
+        trabajos: f.trabajos,
+        sueldo_base: f.sueldoBase,
+        comisiones: f.comisiones,
+        overrides: f.overrides,
+        bruto: f.devengado,
+        deducciones: f.deducciones,
+        total_pagar: f.neto,
+      })),
+      periodo_inicio: range.inicio,
+      periodo_fin: range.fin,
+      sede_nombre: currentSede?.nombre,
+      tasa_bs: moneda === 'ves' ? tasa : null,
+      borrador: totales.pendientes > 0,
+    });
+  };
+
+  const onAccionRapida = (a: AccionRapida) => {
+    if (a === 'nuevo-empleado') router.push('/dashboard/ajustes/empleados');
+    else if (a === 'ajuste-salarial') setTab('conceptos');
+    else if (a === 'registrar-trabajo') setRegistrarOpen(true);
+    else if (a === 'generar-recibos') descargarNomina();
+    else if (a === 'exportar') exportarCSV();
+    else setTab('configuracion');
+  };
 
   if (!mounted) return null;
 
   const tabs: { key: Tab; label: string; show: boolean }[] = [
-    { key: 'resumen', label: esTecnico ? 'Mi Resumen' : 'Resumen', show: true },
-    { key: 'ia', label: '✨ Análisis IA', show: canEdit },
+    { key: 'resumen', label: esTecnico ? 'Mi resumen' : 'Resumen', show: true },
+    { key: 'empleados', label: 'Empleados', show: !esTecnico },
     { key: 'trabajos', label: 'Trabajos', show: true },
-    { key: 'reglas', label: 'Reglas & Tarifas', show: canEdit },
-    { key: 'adelantos', label: 'Adelantos', show: canLiquidar },
-    { key: 'historial', label: 'Historial de Pagos', show: true },
+    { key: 'conceptos', label: 'Conceptos', show: canEdit },
+    { key: 'deducciones', label: 'Deducciones', show: canLiquidar },
+    { key: 'reportes', label: 'Reportes', show: true },
+    { key: 'ia', label: 'Sin asignar', show: canEdit },
+    { key: 'configuracion', label: 'Configuración', show: canEdit },
   ];
 
-  return (
-    <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-5">
-      {/* Header */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
-            <Banknote className="h-7 w-7 text-emerald-600" /> Nómina & Comisiones
-          </h1>
-          <p className="text-sm text-slate-500 mt-1 flex items-center gap-1.5">
-            <Building2 className="w-3.5 h-3.5" /> {currentSede?.nombre || 'Todas las sedes'} · cálculo dinámico en tiempo real
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {canEdit && (
-            <Button onClick={() => setRegistrarOpen(true)} className="bg-amber-500 hover:bg-amber-600 text-white">
-              <Plus className="w-4 h-4 mr-1.5" /> Registrar trabajo
-            </Button>
-          )}
-          <Button variant="outline" onClick={() => loadSummary(true)} disabled={refreshing}>
-            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-          </Button>
-        </div>
-      </div>
+  const tasaLista = moneda === 'usd' || tasa > 0;
 
-      {/* Período */}
-      <Card className="border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 shadow-sm">
-        <CardContent className="p-3 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+  return (
+    <ErpShell buscador="Buscar empleados, cédula, cargo..." lema={['Nuestro equipo', 'hace que todo', 'avance']}>
+      {/* Encabezado y pestañas */}
+      <div className="mb-3.5 rounded-xl border border-[#e8eaed] bg-white px-5 pt-4">
+        <header className="flex flex-wrap items-center gap-3">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#fff1e7] text-[#f97316]">
+            <NominaIcon className="h-[24px] w-[24px]" />
+          </span>
+
+          <div className="min-w-0 flex-1">
+            <h1 className="text-[26px] font-extrabold leading-tight tracking-tight text-[#16181d]">Nómina</h1>
+            <p className="text-[13px] text-[#8a909c]">
+              Gestiona sueldos, comisiones, deducciones y pagos de todo el equipo
+              {currentSede?.nombre ? ` · ${currentSede.nombre}` : ''}.
+            </p>
+          </div>
+
           <div className="flex flex-wrap items-center gap-2">
-            <Calendar className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <span className="text-xs font-bold text-slate-700 dark:text-slate-200 mr-1">Período:</span>
-            {PRESETS.map(p => (
-              <button key={p.key} onClick={() => onPreset(p.key)}
-                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all shadow-sm ${preset === p.key ? 'bg-emerald-600 text-white shadow-emerald-500/20 scale-105' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 border border-slate-200 dark:border-slate-700'}`}>
-                {p.label}
+            {/* Moneda: el motor calcula en dólares; los bolívares son conversión. */}
+            <div className="flex h-[44px] items-center rounded-lg border border-[#e2e5ea] p-1">
+              {(['usd', 'ves'] as const).map(m => (
+                <button
+                  key={m}
+                  onClick={() => setMoneda(m)}
+                  aria-pressed={moneda === m}
+                  className={cn(
+                    'h-[34px] rounded-md px-2.5 text-[12px] font-semibold transition-colors',
+                    moneda === m ? 'bg-[#fff4ec] text-[#f97316]' : 'text-[#8a909c] hover:text-[#16181d]',
+                  )}
+                >
+                  {m === 'usd' ? 'USD' : 'Bs.'}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative flex h-[44px] items-center gap-2 rounded-lg border border-[#e2e5ea] py-1 pl-1 pr-1">
+              <button
+                onClick={() => setMenuPeriodo(v => !v)}
+                aria-expanded={menuPeriodo}
+                className="flex h-[34px] items-center gap-2 rounded-md px-2.5 hover:bg-[#f6f7f9]"
+              >
+                <Calendar className="h-[17px] w-[17px] text-[#5b616e]" aria-hidden />
+                <span className="num text-[13px] font-medium text-[#16181d]">{periodoLabel}</span>
+              </button>
+              <button
+                onClick={() => setRange(r => correrPeriodo(preset, r, -1))}
+                aria-label="Período anterior"
+                className="flex h-[34px] w-[30px] items-center justify-center rounded-md border-l border-[#eef0f3] text-[#5b616e] hover:bg-[#f6f7f9]"
+              >
+                <ChevronLeft className="h-4 w-4" aria-hidden />
+              </button>
+
+              {menuPeriodo && (
+                <div className="absolute right-0 top-[50px] z-30 w-[240px] rounded-lg border border-[#e8eaed] bg-white py-1 shadow-lg">
+                  {PRESETS.map(p => (
+                    <button
+                      key={p.key}
+                      onClick={() => onPreset(p.key)}
+                      className={cn(
+                        'block w-full px-3 py-2 text-left text-[12.5px] hover:bg-[#f6f7f9]',
+                        preset === p.key ? 'font-semibold text-[#f97316]' : 'text-[#3d4350]',
+                      )}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                  {preset === 'custom' && (
+                    <div className="flex items-center gap-1.5 border-t border-[#f2f3f5] px-3 py-2">
+                      <input type="date" value={range.inicio} onChange={e => setRange(r => ({ ...r, inicio: e.target.value }))}
+                        className="num h-8 w-full rounded-md border border-[#e2e5ea] px-1.5 text-[11.5px]" />
+                      <span className="text-[#9ba1ab]">→</span>
+                      <input type="date" value={range.fin} onChange={e => setRange(r => ({ ...r, fin: e.target.value }))}
+                        className="num h-8 w-full rounded-md border border-[#e2e5ea] px-1.5 text-[11.5px]" />
+                    </div>
+                  )}
+                  <p className="num border-t border-[#f2f3f5] px-3 py-2 text-[10.5px] text-[#9ba1ab]">
+                    {range.inicio} → {range.fin}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={() => setRange(r => correrPeriodo(preset, r, 1))}
+              aria-label="Período siguiente"
+              className="flex h-[44px] w-[38px] items-center justify-center rounded-lg border border-[#e2e5ea] text-[#5b616e] hover:bg-[#f6f7f9]"
+            >
+              <ChevronRight className="h-4 w-4" aria-hidden />
+            </button>
+
+            <button
+              onClick={() => loadSummary(true)}
+              disabled={refreshing}
+              aria-label="Recalcular"
+              className="flex h-[44px] w-[38px] items-center justify-center rounded-lg border border-[#e2e5ea] text-[#5b616e] hover:bg-[#f6f7f9] disabled:opacity-50"
+            >
+              <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} aria-hidden />
+            </button>
+
+            <button
+              onClick={() => setProcesarOpen(true)}
+              disabled={!canLiquidar || totales.pendientes === 0}
+              title={!canLiquidar ? 'Solo administración o supervisión pueden liquidar' : undefined}
+              className="flex h-[44px] items-center gap-1.5 rounded-lg bg-[#f97316] px-4 text-[13.5px] font-semibold text-white transition-colors hover:bg-[#ea580c] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-[#f97316]"
+            >
+              <Plus className="h-[17px] w-[17px]" aria-hidden />
+              Procesar nómina
+            </button>
+          </div>
+        </header>
+
+        <div className="-mx-5 mt-3.5 overflow-x-auto border-t border-[#eef0f3] px-5" role="tablist">
+          <div className="flex min-w-max gap-6">
+            {tabs.filter(t => t.show).map(t => (
+              <button
+                key={t.key}
+                role="tab"
+                aria-selected={tab === t.key}
+                onClick={() => setTab(t.key)}
+                className={cn(
+                  'relative py-2.5 text-[13px] transition-colors',
+                  tab === t.key ? 'font-semibold text-[#f97316]' : 'text-[#8a909c] hover:text-[#16181d]',
+                )}
+              >
+                {t.label}
+                {tab === t.key && <span className="absolute inset-x-0 -bottom-px h-[2px] rounded-full bg-[#f97316]" />}
               </button>
             ))}
-            {preset === 'custom' && (
-              <div className="flex items-center gap-2 ml-1">
-                <input type="date" value={range.inicio} onChange={e => setRange(r => ({ ...r, inicio: e.target.value }))}
-                  className="h-8 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-xs font-mono" />
-                <span className="text-slate-400 font-bold">→</span>
-                <input type="date" value={range.fin} onChange={e => setRange(r => ({ ...r, fin: e.target.value }))}
-                  className="h-8 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-xs font-mono" />
-              </div>
-            )}
           </div>
-          <div className="flex items-center gap-2 bg-emerald-100/80 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 px-3 py-1.5 rounded-xl self-end sm:self-auto shrink-0 animate-in fade-in duration-300">
-            <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300">📅 Activo (Lunes a Domingo):</span>
-            <span className="text-xs font-mono font-black text-emerald-950 dark:text-emerald-200 tracking-tight">{range.inicio} → {range.fin}</span>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Tabs */}
-      <div className="flex gap-1 overflow-x-auto border-b border-slate-200 dark:border-slate-800">
-        {tabs.filter(t => t.show).map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${tab === t.key ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-            {t.label}
-          </button>
-        ))}
+        </div>
       </div>
 
-      {loading ? (
-        <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-emerald-500" /></div>
-      ) : (
-        <>
-          {tab === 'resumen' && (
-            esTecnico
-              ? <MiResumen earnings={summary[0]} />
-              : <ResumenAdmin summary={summary} totales={totales} canLiquidar={canLiquidar}
-                  range={range} sedeNombre={currentSede?.nombre}
-                  onLiquidar={setLiquidarTarget} onDetalle={setDetalle} />
-          )}
-          {tab === 'trabajos' && <TrabajosTab range={range} sedeId={sedeId} canEdit={canEdit} canLiquidar={canLiquidar} esTecnico={esTecnico} userId={user?.id} />}
-          {tab === 'ia' && canEdit && <AnalisisIATab range={range} sedeId={sedeId} onDone={() => loadSummary(true)} />}
-          {tab === 'reglas' && canEdit && <ReglasTab sedeId={sedeId} isAdmin={isAdmin} />}
-          {tab === 'adelantos' && canLiquidar && <AdelantosTab sedeId={sedeId} onChange={() => loadSummary(true)} />}
-          {tab === 'historial' && <HistorialTab sedeId={sedeId} isAdmin={isAdmin} />}
-        </>
+      {tab === 'resumen' && (
+        esTecnico ? (
+          <div className="rounded-xl border border-[#e8eaed] bg-white p-4">
+            <MiResumen earnings={summary[0]} />
+          </div>
+        ) : !tasaLista ? (
+          <div className="flex justify-center py-16"><Loader2 className="h-7 w-7 animate-spin text-[#f97316]" /></div>
+        ) : (
+          <>
+            <NominaKpis
+              empleados={filas.length}
+              bruto={totales.bruto}
+              deducciones={totales.deducciones}
+              neto={totales.neto}
+              pendientes={totales.pendientes}
+              variacionBruto={variacionBruto}
+              variacionEmpleados={variacionEmpleados}
+              series={series}
+              moneda={moneda}
+              tasa={tasa}
+            />
+
+            <div className="flex flex-col gap-3.5 lg:flex-row">
+              <EmpleadosPanel
+                filas={filas}
+                moneda={moneda}
+                tasa={tasa}
+                cargando={loading}
+                canLiquidar={canLiquidar}
+                onDetalle={setDetalle}
+                onLiquidar={f => setLiquidarTarget(f.earnings)}
+                onRecibo={descargarHoja}
+                onNuevoEmpleado={() => router.push('/dashboard/ajustes/empleados')}
+                onExportar={exportarCSV}
+                onImportar={() => router.push('/dashboard/ajustes/empleados')}
+              />
+              <NominaRail
+                periodoLabel={periodoLabel}
+                empleados={filas.length}
+                pendientes={totales.pendientes}
+                deducciones={totales.deducciones}
+                ultimas={ultimas}
+                canLiquidar={canLiquidar}
+                procesando={procesarOpen}
+                moneda={moneda}
+                tasa={tasa}
+                onIniciarProceso={() => setProcesarOpen(true)}
+                onAccion={onAccionRapida}
+                onVerTodas={() => setTab('reportes')}
+              />
+            </div>
+          </>
+        )
+      )}
+
+      {tab === 'empleados' && !esTecnico && (
+        <PlantillaTab usuarios={usuarios} filas={filas} moneda={moneda} tasa={tasa} onIrAEmpleados={() => router.push('/dashboard/ajustes/empleados')} />
+      )}
+      {tab === 'trabajos' && <TrabajosTab range={range} sedeId={sedeId} canEdit={canEdit} canLiquidar={canLiquidar} esTecnico={esTecnico} userId={user?.id} />}
+      {tab === 'conceptos' && canEdit && (
+        <PanelReglas
+          sedeId={sedeId}
+          personas={Object.entries(usuarios).map(([id, u]) => ({
+            id,
+            nombre: filas.find(f => f.id === id)?.nombre || u.cargo || 'Empleado',
+            cargo: u.cargo || (u.especialidad ? zonaLabel(u.especialidad) : null),
+            foto_url: u.foto_url,
+            cedula: u.cedula,
+          }))}
+          canEdit={canEdit}
+          isAdmin={isAdmin}
+          onAbrirPlantillas={() => setSeedOpen(true)}
+        />
+      )}
+      {tab === 'deducciones' && canLiquidar && <AdelantosTab sedeId={sedeId} onChange={() => loadSummary(true)} />}
+      {tab === 'reportes' && <HistorialTab sedeId={sedeId} isAdmin={isAdmin} />}
+      {tab === 'ia' && canEdit && (
+        <DetectarTrabajos range={range} sedeId={sedeId} onListo={() => { loadSummary(true); loadLedgers(); }} />
+      )}
+      {tab === 'configuracion' && canEdit && (
+        <ConfiguracionTab
+          sedeId={sedeId}
+          onReconciliado={() => loadSummary(true)}
+          range={range}
+          periodoLabel={periodoLabel}
+          sedeNombre={currentSede?.nombre}
+          isAdmin={isAdmin}
+          onSembrar={() => setSeedOpen(true)}
+        />
       )}
 
       {liquidarTarget && (
         <LiquidarModal target={liquidarTarget} range={range} sedeId={sedeId} sedeNombre={currentSede?.nombre}
-          onClose={() => setLiquidarTarget(null)} onDone={() => { setLiquidarTarget(null); loadSummary(true); }} />
+          onClose={() => setLiquidarTarget(null)} onDone={() => { setLiquidarTarget(null); loadSummary(true); loadLedgers(); }} />
       )}
       {registrarOpen && (
         <RegistrarTrabajoModal sedeId={sedeId} onClose={() => setRegistrarOpen(false)}
           onDone={() => { setRegistrarOpen(false); loadSummary(true); }} />
       )}
-      {detalle && <DetalleEmpleadoModal earnings={detalle} onClose={() => setDetalle(null)} />}
+      {detalle && (
+        <DetalleEmpleado
+          empleadoId={detalle.id}
+          sedeId={sedeId}
+          range={range}
+          periodoLabel={periodoLabel}
+          onClose={() => setDetalle(null)}
+          onHoja={() => descargarHoja(detalle)}
+          onLiquidar={e => { setDetalle(null); setLiquidarTarget(e); }}
+        />
+      )}
+      {seedOpen && (
+        <SeedModal sedeId={sedeId} onClose={() => setSeedOpen(false)}
+          onDone={() => { setSeedOpen(false); loadSummary(true); loadUsuarios(); }} />
+      )}
+      {procesarOpen && (
+        <ProcesarNominaModal
+          filas={filas}
+          range={range}
+          sedeId={sedeId}
+          sedeNombre={currentSede?.nombre}
+          periodoLabel={periodoLabel}
+          moneda={moneda}
+          tasa={tasa}
+          onCerrar={() => setProcesarOpen(false)}
+          onTerminado={() => { loadSummary(true); loadLedgers(); }}
+        />
+      )}
+    </ErpShell>
+  );
+}
+
+// ════════════════════ PLANTILLA (personal registrado) ════════════════════
+function PlantillaTab({ usuarios, filas, moneda, tasa, onIrAEmpleados }: {
+  usuarios: Record<string, UsuarioMeta>;
+  filas: FilaEmpleado[];
+  moneda: Moneda;
+  tasa: number;
+  onIrAEmpleados: () => void;
+}) {
+  const porId = new Map(filas.map(f => [f.id, f]));
+  const gente = Object.entries(usuarios);
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-[#e8eaed] bg-white">
+      <header className="flex flex-wrap items-center gap-3 px-5 py-4">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-[17px] font-extrabold tracking-tight text-[#16181d]">Plantilla</h2>
+          <p className="text-[12.5px] text-[#8a909c]">
+            Personal registrado en esta sede. El alta, la baja y los permisos se manejan en Empleados.
+          </p>
+        </div>
+        <button
+          onClick={onIrAEmpleados}
+          className="flex h-[38px] items-center gap-1.5 rounded-lg bg-[#f97316] px-3.5 text-[12.5px] font-semibold text-white hover:bg-[#ea580c]"
+        >
+          <Plus className="h-4 w-4" aria-hidden />
+          Gestionar empleados
+        </button>
+      </header>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[720px] border-collapse">
+          <thead>
+            <tr className="border-y border-[#eef0f3] bg-[#fafbfc]">
+              {['Empleado', 'Cédula', 'Cargo', 'Especialidad', 'Neto del período'].map(h => (
+                <th key={h} scope="col" className="px-4 py-2.5 text-left text-[11.5px] font-semibold text-[#5b616e]">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {gente.length === 0 && (
+              <tr><td colSpan={5} className="px-5 py-10 text-center text-[13px] text-[#8a909c]">Sin personal registrado en esta sede.</td></tr>
+            )}
+            {gente.map(([id, u]) => {
+              const f = porId.get(id);
+              return (
+                <tr key={id} className="border-b border-[#f2f3f5] last:border-0 hover:bg-[#fafbfc]">
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-2.5">
+                      {u.foto_url
+                        ? <img src={u.foto_url} alt="" className="h-[32px] w-[32px] rounded-full object-cover" />
+                        : <span className="flex h-[32px] w-[32px] items-center justify-center rounded-full bg-[#eef1f5] text-[11px] font-semibold text-[#9ba1ab]" aria-hidden>{iniciales(f?.nombre || '?')}</span>}
+                      <span className="text-[12.5px] font-semibold text-[#16181d]">{f?.nombre || '—'}</span>
+                    </div>
+                  </td>
+                  <td className="num px-4 py-2.5 text-[12px] text-[#5b616e]">{u.cedula || '—'}</td>
+                  <td className="px-4 py-2.5 text-[12px] text-[#3d4350]">{getRoleMeta(u.rol || '')?.label || u.rol || '—'}</td>
+                  <td className="px-4 py-2.5 text-[12px] text-[#3d4350]">{u.especialidad ? zonaLabel(u.especialidad) : '—'}</td>
+                  <td className="num px-4 py-2.5 text-[12px] font-semibold text-[#16181d]">
+                    {f ? formatoMonto(f.neto, moneda, tasa) : '—'}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+// ════════════════════ CONFIGURACIÓN ════════════════════
+function ConfiguracionTab({
+  range, periodoLabel, sedeNombre, isAdmin, onSembrar, sedeId, onReconciliado,
+}: {
+  range: { inicio: string; fin: string };
+  periodoLabel: string;
+  sedeNombre?: string;
+  isAdmin: boolean;
+  onSembrar: () => void;
+  sedeId: string | null;
+  onReconciliado: () => void;
+}) {
+  const [rates, setRates] = useState<any>(null);
+  const [cargando, setCargando] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/nomina/rates')
+      .then(r => r.json())
+      .then(setRates)
+      .catch(() => setRates(null))
+      .finally(() => setCargando(false));
+  }, []);
+
+  return (
+    <div className="space-y-3.5">
+    {isAdmin && <ReconciliarEncargados sedeId={sedeId} onListo={onReconciliado} />}
+    <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
+      <section className="rounded-xl border border-[#e8eaed] bg-white p-5">
+        <h2 className="text-[15px] font-bold text-[#16181d]">Período activo</h2>
+        <dl className="mt-3 space-y-2 text-[12.5px]">
+          <div className="flex justify-between gap-3"><dt className="text-[#8a909c]">Rango</dt><dd className="num font-semibold text-[#16181d]">{periodoLabel}</dd></div>
+          <div className="flex justify-between gap-3"><dt className="text-[#8a909c]">Fechas</dt><dd className="num font-semibold text-[#16181d]">{range.inicio} → {range.fin}</dd></div>
+          <div className="flex justify-between gap-3"><dt className="text-[#8a909c]">Sede</dt><dd className="font-semibold text-[#16181d]">{sedeNombre || 'Todas'}</dd></div>
+        </dl>
+        <p className="mt-3 text-[11.5px] leading-snug text-[#9ba1ab]">
+          El cálculo es en dólares y se convierte a bolívares solo para mostrar.
+          Los recibos se emiten con el monto en dólares.
+        </p>
+      </section>
+
+      <section className="rounded-xl border border-[#e8eaed] bg-white p-5">
+        <h2 className="text-[15px] font-bold text-[#16181d]">Tasas en vivo</h2>
+        {cargando ? (
+          <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-[#f97316]" /></div>
+        ) : rates ? (
+          <dl className="mt-3 space-y-2 text-[12.5px]">
+            {Object.entries(flattenRates(rates)).map(([k, v]) => (
+              <div key={k} className="flex justify-between gap-3">
+                <dt className="text-[#8a909c]">{k}</dt>
+                <dd className="num font-semibold text-[#16181d]">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <p className="mt-3 text-[12.5px] text-[#8a909c]">No se pudieron consultar las tasas.</p>
+        )}
+      </section>
+
+      {isAdmin && (
+        <section className="rounded-xl border border-[#e8eaed] bg-white p-5 lg:col-span-2">
+          <h2 className="text-[15px] font-bold text-[#16181d]">Reglas base</h2>
+          <p className="mt-1 text-[12.5px] leading-snug text-[#8a909c]">
+            Vuelve a cargar las reglas de comisión del taller (porcentajes por técnico,
+            tarifas y cédulas) desde las plantillas. No borra los trabajos ya registrados.
+          </p>
+          <button
+            onClick={onSembrar}
+            className="mt-3 flex h-[38px] items-center gap-2 rounded-lg border border-[#e2e5ea] px-3.5 text-[12.5px] font-medium text-[#3d4350] hover:bg-[#f6f7f9]"
+          >
+            <Settings2 className="h-4 w-4" aria-hidden />
+            Cargar plantillas de reglas
+          </button>
+        </section>
+      )}
+    </div>
     </div>
   );
 }
 
-// ════════════════════ RESUMEN ADMIN (tabla maestra) ════════════════════
-function ResumenAdmin({ summary, totales, canLiquidar, range, sedeNombre, onLiquidar, onDetalle }: {
-  summary: EmployeeEarnings[]; totales: any; canLiquidar: boolean;
-  range: { inicio: string; fin: string }; sedeNombre?: string;
-  onLiquidar: (e: EmployeeEarnings) => void; onDetalle: (e: EmployeeEarnings) => void;
-}) {
-  const descargarHojaEmpleado = (e: EmployeeEarnings) => {
-    generateReciboNominaPDF({
-      recibo_numero: `BORRADOR · ${range.inicio} → ${range.fin}`,
-      empleado_nombre: e.empleado_nombre, rol: e.rol,
-      periodo_inicio: range.inicio, periodo_fin: range.fin, sede_nombre: sedeNombre,
-      sueldo_base: e.sueldo_base, total_comisiones: e.total_comisiones,
-      total_overrides: e.total_overrides, total_flat: e.total_flat,
-      bruto: e.bruto, deducciones: e.deducciones, total_pagar: e.total_pagar,
-      desglose_monedas: e.desglose_monedas,
-      jobs: (e.jobs || []).map(j => ({ fecha: j.fecha, zona: j.zona, tipo_trabajo: j.tipo_trabajo, descripcion: j.descripcion, comision_usd: j.comision_usd, es_override: j.es_override, moneda: j.moneda })),
-    });
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatMini icon={Users} label="Empleados" value={String(summary.length)} color="text-blue-500" />
-        <StatMini icon={Coins} label="Comisiones" value={money(totales.com)} color="text-amber-500" />
-        <StatMini icon={Wallet} label="Sueldos base" value={money(totales.base)} color="text-violet-500" />
-        <StatMini icon={TrendingUp} label="Total a pagar" value={money(totales.pagar)} color="text-emerald-500" highlight />
-      </div>
-
-      <Card className="border-slate-200 dark:border-slate-800 overflow-hidden">
-        <CardContent className="p-0 overflow-x-auto">
-          {summary.length === 0 ? (
-            <div className="text-center py-12 text-slate-400">
-              <Banknote className="w-10 h-10 mx-auto mb-2 opacity-40" />
-              No hay nómina que calcular en este período.
-            </div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 text-xs uppercase tracking-wider">
-                <tr>
-                  <th className="text-left px-4 py-3">Empleado</th>
-                  <th className="text-right px-3 py-3">Sueldo base</th>
-                  <th className="text-right px-3 py-3">Comisiones</th>
-                  <th className="text-right px-3 py-3">Override</th>
-                  <th className="text-right px-3 py-3">Deducciones</th>
-                  <th className="text-right px-3 py-3">Total a pagar</th>
-                  <th className="text-right px-4 py-3"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {summary.map(e => (
-                  <tr key={e.empleado_id} className="hover:bg-slate-50 dark:hover:bg-slate-900/40 cursor-pointer" onClick={() => onDetalle(e)}>
-                    <td className="px-4 py-3">
-                      <div className="font-semibold text-slate-700 dark:text-slate-200">{e.empleado_nombre}</div>
-                      <div className="text-[11px] text-slate-400">{getRoleMeta(e.rol)?.label || e.rol} · {e.jobs.length} trabajo(s)</div>
-                    </td>
-                    <td className="text-right px-3 py-3 text-slate-600 dark:text-slate-300">{money(e.sueldo_base)}</td>
-                    <td className="text-right px-3 py-3 text-amber-600 font-medium">{money(e.total_comisiones + e.total_flat)}</td>
-                    <td className="text-right px-3 py-3 text-violet-600">{money(e.total_overrides)}</td>
-                    <td className="text-right px-3 py-3 text-red-500">{e.deducciones ? `- ${money(e.deducciones)}` : '—'}</td>
-                    <td className="text-right px-3 py-3 font-bold text-emerald-600">{money(e.total_pagar)}</td>
-                    <td className="text-right px-4 py-3" onClick={ev => ev.stopPropagation()}>
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          onClick={() => descargarHojaEmpleado(e)}
-                          title="Descargar hoja de comisiones (borrador)"
-                          className="text-slate-400 hover:text-indigo-600 p-1.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/20 transition-colors">
-                          <Download className="w-4 h-4" />
-                        </button>
-                        {canLiquidar
-                          ? <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white h-8" onClick={() => onLiquidar(e)} disabled={e.total_pagar === 0 && e.jobs.length === 0}>
-                              <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Liquidar
-                            </Button>
-                          : <ChevronRight className="w-4 h-4 text-slate-300 inline" />}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot className="bg-slate-50 dark:bg-slate-900/50 font-bold text-slate-700 dark:text-slate-200">
-                <tr>
-                  <td className="px-4 py-3">TOTAL</td>
-                  <td className="text-right px-3 py-3">{money(totales.base)}</td>
-                  <td className="text-right px-3 py-3 text-amber-600">{money(totales.com)}</td>
-                  <td className="text-right px-3 py-3 text-violet-600">{money(totales.over)}</td>
-                  <td className="text-right px-3 py-3 text-red-500">{money(totales.ded)}</td>
-                  <td className="text-right px-3 py-3 text-emerald-600">{money(totales.pagar)}</td>
-                  <td></td>
-                </tr>
-              </tfoot>
-            </table>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
+/** Aplana la respuesta de tasas para listarla sin asumir su forma exacta. */
+function flattenRates(r: any, prefijo = ''): Record<string, string> {
+  const out: Record<string, string> = {};
+  Object.entries(r || {}).forEach(([k, v]) => {
+    const clave = prefijo ? `${prefijo} · ${k}` : k;
+    if (v && typeof v === 'object') Object.assign(out, flattenRates(v, clave));
+    else if (typeof v === 'number') out[clave] = v.toLocaleString('de-DE', { maximumFractionDigits: 4 });
+    else if (typeof v === 'string') out[clave] = v;
+  });
+  return out;
 }
 
 // ════════════════════ MI RESUMEN (técnico) ════════════════════
@@ -561,38 +1102,6 @@ function StatMini({ icon: Icon, label, value, color, highlight }: any) {
 }
 
 // ════════════════════ DETALLE EMPLEADO (modal) ════════════════════
-function DetalleEmpleadoModal({ earnings, onClose }: { earnings: EmployeeEarnings; onClose: () => void }) {
-  return (
-    <ModalShell onClose={onClose} title={`Detalle · ${earnings.empleado_nombre}`}>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-        <MiniKV k="Sueldo base" v={money(earnings.sueldo_base)} />
-        <MiniKV k="Comisiones" v={money(earnings.total_comisiones + earnings.total_flat)} />
-        <MiniKV k="Override" v={money(earnings.total_overrides)} />
-        <MiniKV k="Total a pagar" v={money(earnings.total_pagar)} hl />
-      </div>
-      <JobsTable jobs={earnings.jobs} />
-      {earnings.adelantos.length > 0 && (
-        <div className="mt-4">
-          <div className="text-xs font-bold uppercase text-slate-400 mb-1">Adelantos / deducciones</div>
-          {earnings.adelantos.map(a => (
-            <div key={a.id} className="flex justify-between text-sm py-1 border-b border-slate-100 dark:border-slate-800">
-              <span className="text-slate-500">{a.fecha} · {a.motivo || 'Adelanto'}</span>
-              <span className="text-red-500">- {money(a.monto_usd)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </ModalShell>
-  );
-}
-
-function MiniKV({ k, v, hl }: { k: string; v: string; hl?: boolean }) {
-  return <div className={`rounded-lg border p-2 ${hl ? 'border-emerald-200 bg-emerald-50/40 dark:border-emerald-900 dark:bg-emerald-950/10' : 'border-slate-200 dark:border-slate-800'}`}>
-    <div className="text-[10px] text-slate-400 uppercase">{k}</div>
-    <div className={`text-base font-bold ${hl ? 'text-emerald-600' : 'text-slate-700 dark:text-slate-200'}`}>{v}</div>
-  </div>;
-}
-
 // ════════════════════ LIQUIDAR (modal) ════════════════════
 function LiquidarModal({ target, range, sedeId, sedeNombre, onClose, onDone }: {
   target: EmployeeEarnings; range: { inicio: string; fin: string }; sedeId: string | null; sedeNombre?: string;
@@ -673,18 +1182,30 @@ function Row({ k, v, red, bold }: { k: string; v: string; red?: boolean; bold?: 
 
 // ════════════════════ REGISTRAR TRABAJO (modal) ════════════════════
 function RegistrarTrabajoModal({ sedeId, onClose, onDone }: { sedeId: string | null; onClose: () => void; onDone: () => void }) {
-  const [specs, setSpecs] = useState<JobSpec[]>([]);
+  const [asignaciones, setAsignaciones] = useState<AsignacionEmpleado[]>([]);
   const [moneda, setMoneda] = useState('USD');
   const [descripcion, setDescripcion] = useState('');
+  const [monto, setMonto] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
   const guardar = async () => {
     setSaving(true); setErr('');
     try {
-      const jobs = specs.map(s => ({ ...s, moneda, descripcion: s.descripcion || descripcion, referencia_tabla: 'manual' }));
-      const invalid = jobs.find(j => !j.empleado_id && !j.es_taller);
-      if (invalid) throw new Error('Cada fila requiere un técnico o marcar "lo hizo el taller".');
+      const validas = asignacionesValidas(asignaciones);
+      if (validas.length === 0) throw new Error('Indica quién hizo el trabajo o marca que lo hizo el taller.');
+      if (!descripcion.trim()) throw new Error('Escribe qué trabajo fue: de ese texto sale el porcentaje que aplica.');
+
+      const jobs = validas.flatMap(a => buildJobsDesdeAsignacion(a, {
+        items: [],
+        costoTotal: Number(monto) || 0,
+        tipoTrabajo: descripcion.trim(),
+        descripcionBase: descripcion.trim(),
+        referenciaTabla: 'manual',
+        referenciaId: null,
+        fecha: getLocalISODate(),
+      })).map(j => ({ ...j, moneda }));
+
       const r = await fetch('/api/nomina/jobs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jobs, sede: sedeId }),
@@ -692,7 +1213,9 @@ function RegistrarTrabajoModal({ sedeId, onClose, onDone }: { sedeId: string | n
       const d = await r.json();
       if (!r.ok) throw new Error(d.error);
       onDone();
-    } catch (e: any) { setErr(e.message); } finally { setSaving(false); }
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'Error al registrar');
+    } finally { setSaving(false); }
   };
 
   return (
@@ -706,12 +1229,28 @@ function RegistrarTrabajoModal({ sedeId, onClose, onDone }: { sedeId: string | n
             </select>
           </div>
           <div>
-            <label className="text-xs text-slate-500">Descripción general</label>
-            <input value={descripcion} onChange={e => setDescripcion(e.target.value)} placeholder="Ej: Cambio de silenciador"
+            <label className="text-xs text-slate-500">Monto del trabajo</label>
+            <input type="number" step="0.01" min="0" value={monto} onChange={e => setMonto(e.target.value)} placeholder="0.00"
               className="w-full h-9 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-sm mt-1" />
           </div>
         </div>
-        <AsignacionTecnicos value={specs} onChange={setSpecs} sedeId={sedeId} moneda={moneda} />
+        <div>
+          <label className="text-xs text-slate-500">¿Qué trabajo fue?</label>
+          <input value={descripcion} onChange={e => setDescripcion(e.target.value)} placeholder="Ej: Instalación de silenciador · Rotación de cauchos"
+            className="w-full h-9 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 text-sm mt-1" />
+          <p className="mt-1 text-[11px] leading-snug text-slate-400">
+            De este texto sale el porcentaje: no es lo mismo una reparación que una rotación.
+          </p>
+        </div>
+        <PersonalYComisiones
+          value={asignaciones}
+          onChange={setAsignaciones}
+          sedeId={sedeId}
+          defaultZona={categoriaToZona(inferirCategoria(descripcion))}
+          costoTotal={Number(monto) || 0}
+          tipoTrabajo={descripcion || null}
+          descripcionTrabajo={descripcion || null}
+        />
         {err && <div className="text-sm text-red-500 flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> {err}</div>}
         <div className="flex gap-2 pt-1">
           <Button variant="outline" className="flex-1" onClick={onClose}>Cancelar</Button>
@@ -736,6 +1275,7 @@ function TrabajosTab({ range, sedeId, canEdit, canLiquidar, esTecnico, userId }:
     const r = await fetch(`/api/nomina/jobs?${qs}`); const d = await r.json();
     setJobs(d.jobs || []); setLoading(false);
   }, [range, sedeId]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- carga inicial de datos
   useEffect(() => { load(); }, [load]);
 
   const anular = async (id: string) => {
@@ -802,170 +1342,6 @@ function TrabajosTab({ range, sedeId, canEdit, canLiquidar, esTecnico, userId }:
 function EstadoBadge({ estado }: { estado: string }) {
   const map: any = { pendiente: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30', liquidado: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30', anulado: 'bg-slate-100 text-slate-500 dark:bg-slate-800' };
   return <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${map[estado] || ''}`}>{estado}</span>;
-}
-
-// ════════════════════ REGLAS TAB ════════════════════
-function RuleDetailModal({ rule, onClose }: { rule: CommissionRule; onClose: () => void }) {
-  return (
-    <ModalShell onClose={onClose} title={`Detalle de Regla de Comisión · ${rule.tipo_regla}`} zIndex={9999}>
-      <div className="space-y-4 text-sm">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shadow-sm">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">👤 Empleado Vinculado</div>
-            <div className="font-semibold text-base text-slate-800 dark:text-slate-200"><EmpName id={rule.empleado_id} /></div>
-            <div className="text-xs text-slate-500 mt-0.5 font-mono">ID: {rule.empleado_id || 'Global / Todos'}</div>
-          </div>
-          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shadow-sm">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">🛠️ Zona y Tipo de Regla</div>
-            <div className="font-semibold text-base text-slate-800 dark:text-slate-200">{zonaLabel(rule.zona)}</div>
-            <div className="text-xs px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 inline-block mt-1.5 font-bold">
-              {rule.tipo_regla}
-            </div>
-          </div>
-        </div>
-        <div className="p-4 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/30 space-y-3 shadow-sm">
-          <div className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
-            <Coins className="w-4 h-4" /> Configuración y Porcentajes de Cálculo
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs pt-1">
-            <div className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-emerald-100 dark:border-emerald-900/50">
-              <span className="text-slate-400 font-medium block">Valor Principal:</span>
-              <span className="font-black text-base text-emerald-600 dark:text-emerald-400 mt-0.5 block">
-                {rule.tipo_regla === 'fijo_semanal' ? money(rule.valor) : `${rule.valor}%`}
-              </span>
-            </div>
-            <div className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-emerald-100 dark:border-emerald-900/50">
-              <span className="text-slate-400 font-medium block">Base de Cálculo:</span>
-              <span className="font-bold text-slate-800 dark:text-slate-200 uppercase mt-0.5 block">{rule.base}</span>
-            </div>
-            {rule.proveedor_pct != null && (
-              <div className="bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-orange-200 dark:border-orange-900/50">
-                <span className="text-slate-400 font-medium block">Puente Proveedor:</span>
-                <span className="font-black text-base text-orange-600 mt-0.5 block">{rule.proveedor_pct}%</span>
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">📝 Descripción / Notas de Aplicación</div>
-          <div className="text-slate-700 dark:text-slate-300 font-medium leading-relaxed">{rule.descripcion || 'Sin descripción adicional en esta regla.'}</div>
-        </div>
-      </div>
-    </ModalShell>
-  );
-}
-
-function FlatRateDetailModal({ flat, onClose }: { flat: FlatRate; onClose: () => void }) {
-  return (
-    <ModalShell onClose={onClose} title={`Detalle de Tarifa a Destajo (Flat) · ${flat.label}`} zIndex={9999}>
-      <div className="space-y-4 text-sm">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shadow-sm">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">👤 Empleado Asignado</div>
-            <div className="font-semibold text-base text-slate-800 dark:text-slate-200"><EmpName id={flat.empleado_id} /></div>
-          </div>
-          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 shadow-sm">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">🔧 Servicio Específico</div>
-            <div className="font-bold text-base text-emerald-600 dark:text-emerald-400">{flat.label}</div>
-            <div className="text-xs text-slate-500 mt-0.5 font-medium">Zona: {zonaLabel(flat.zona)}</div>
-          </div>
-        </div>
-        <div className="p-5 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/30 flex items-center justify-between shadow-sm">
-          <div>
-            <span className="font-bold text-slate-800 dark:text-slate-200 block text-base">Tarifa fija por servicio</span>
-            <span className="text-xs text-slate-500">Monto exacto abonado por cada unidad realizada</span>
-          </div>
-          <span className="text-3xl font-black text-emerald-600 dark:text-emerald-400 font-mono">{money(flat.monto)}</span>
-        </div>
-      </div>
-    </ModalShell>
-  );
-}
-
-function ReglasTab({ sedeId, isAdmin }: { sedeId: string | null; isAdmin: boolean }) {
-  const [rules, setRules] = useState<CommissionRule[]>([]);
-  const [flats, setFlats] = useState<FlatRate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [seedOpen, setSeedOpen] = useState(false);
-  const [selectedRule, setSelectedRule] = useState<CommissionRule | null>(null);
-  const [selectedFlat, setSelectedFlat] = useState<FlatRate | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const qs = sedeId ? `?sede=${sedeId}` : '';
-    const [r1, r2] = await Promise.all([fetch(`/api/nomina/rules${qs}`), fetch(`/api/nomina/flat-rates${qs}`)]);
-    setRules((await r1.json()).rules || []); setFlats((await r2.json()).flatRates || []);
-    setLoading(false);
-  }, [sedeId]);
-  useEffect(() => { load(); }, [load]);
-
-  if (loading) return <div className="flex justify-center py-12"><Loader2 className="w-7 h-7 animate-spin text-emerald-500" /></div>;
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-slate-500">Reglas dinámicas vinculadas a cada empleado. El cálculo nunca usa nombres fijos. <span className="font-semibold text-slate-700 dark:text-slate-300">Haz clic en cualquier fila para ver los detalles desglosados.</span></p>
-        {isAdmin && <Button onClick={() => setSeedOpen(true)} variant="outline"><Settings2 className="w-4 h-4 mr-1.5" /> Aplicar plantillas</Button>}
-      </div>
-      <Card className="border-slate-200 dark:border-slate-800 overflow-hidden">
-        <CardHeader className="py-3"><CardTitle className="text-base">Reglas de comisión ({rules.length})</CardTitle></CardHeader>
-        <CardContent className="p-0 overflow-x-auto">
-          {rules.length === 0 ? <div className="text-center py-8 text-slate-400 text-sm">Sin reglas. Aplica las plantillas para empezar.</div> : (
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 text-xs uppercase">
-                <tr><th className="text-left px-4 py-2">Empleado</th><th className="text-left px-3 py-2">Zona</th><th className="text-left px-3 py-2">Tipo</th><th className="text-right px-3 py-2">Valor</th><th className="text-left px-3 py-2">Base</th><th className="text-left px-3 py-2">Descripción</th></tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {rules.map(r => (
-                  <tr key={r.id} onClick={() => setSelectedRule(r)} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors">
-                    <td className="px-4 py-2"><EmpName id={r.empleado_id} /></td>
-                    <td className="px-3 py-2 font-medium text-slate-700 dark:text-slate-300">{zonaLabel(r.zona)}</td>
-                    <td className="px-3 py-2"><span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 font-semibold">{r.tipo_regla}</span></td>
-                    <td className="text-right px-3 py-2 font-bold text-emerald-600">{r.tipo_regla === 'fijo_semanal' ? money(r.valor) : `${r.valor}%`}{r.proveedor_pct ? <span className="text-[10px] text-orange-500 ml-1">+prov {r.proveedor_pct}%</span> : ''}</td>
-                    <td className="px-3 py-2 text-slate-500 uppercase text-xs font-mono">{r.base}</td>
-                    <td className="px-3 py-2 text-slate-500 text-xs truncate max-w-[200px]">{r.descripcion}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </CardContent>
-      </Card>
-      <Card className="border-slate-200 dark:border-slate-800 overflow-hidden">
-        <CardHeader className="py-3"><CardTitle className="text-base">Tarifas a destajo ({flats.length})</CardTitle></CardHeader>
-        <CardContent className="p-0 overflow-x-auto">
-          {flats.length === 0 ? <div className="text-center py-8 text-slate-400 text-sm">Sin tarifas flat.</div> : (
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 text-xs uppercase">
-                <tr><th className="text-left px-4 py-2">Empleado</th><th className="text-left px-3 py-2">Servicio</th><th className="text-left px-3 py-2">Zona</th><th className="text-right px-4 py-2">Monto</th></tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {flats.map(f => (
-                  <tr key={f.id} onClick={() => setSelectedFlat(f)} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors"><td className="px-4 py-2"><EmpName id={f.empleado_id} /></td><td className="px-3 py-2 font-semibold text-slate-800 dark:text-slate-200">{f.label}</td><td className="px-3 py-2 text-slate-500">{zonaLabel(f.zona)}</td><td className="text-right px-4 py-2 font-bold font-mono text-emerald-600">{money(f.monto)}</td></tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </CardContent>
-      </Card>
-      {seedOpen && <SeedModal sedeId={sedeId} onClose={() => setSeedOpen(false)} onDone={() => { setSeedOpen(false); load(); }} />}
-      {selectedRule && <RuleDetailModal rule={selectedRule} onClose={() => setSelectedRule(null)} />}
-      {selectedFlat && <FlatRateDetailModal flat={selectedFlat} onClose={() => setSelectedFlat(null)} />}
-    </div>
-  );
-}
-
-function EmpName({ id }: { id: string | null }) {
-  const [name, setName] = useState<string>('—');
-  useEffect(() => {
-    if (!id) { setName('— (global)'); return; }
-    let active = true;
-    fetch(`/api/nomina/technicians`).then(r => r.json()).then(d => {
-      const t = (d.technicians || []).find((x: any) => x.id === id);
-      if (active) setName(t?.nombre || id.slice(0, 8));
-    }).catch(() => {});
-    return () => { active = false; };
-  }, [id]);
-  return <span className="font-medium text-slate-700 dark:text-slate-200">{name}</span>;
 }
 
 // ════════════════════ SEED (plantillas) ════════════════════
@@ -1042,6 +1418,7 @@ function AdelantosTab({ sedeId, onChange }: { sedeId: string | null; onChange: (
     setAdvances((await r1.json()).advances || []); setTechs((await r2.json()).technicians || []);
     setLoading(false);
   }, [sedeId]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- carga inicial de datos
   useEffect(() => { load(); }, [load]);
 
   const add = async () => {
@@ -1099,6 +1476,7 @@ function HistorialTab({ sedeId, isAdmin }: { sedeId: string | null; isAdmin: boo
     const qs = sedeId ? `?sede=${sedeId}` : '';
     const r = await fetch(`/api/nomina/ledger${qs}`); setLedgers((await r.json()).ledgers || []); setLoading(false);
   }, [sedeId]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- carga inicial de datos
   useEffect(() => { load(); }, [load]);
 
   const reimprimir = async (l: PayrollLedger) => {
@@ -1147,34 +1525,34 @@ function HistorialTab({ sedeId, isAdmin }: { sedeId: string | null; isAdmin: boo
 // ════════════════════ SHELL DE MODAL ════════════════════
 function ModalShell({ children, onClose, title, zIndex = 9999 }: { children: React.ReactNode; onClose: () => void; title: string; zIndex?: number }) {
   const [mounted, setMounted] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- guarda de hidratación del portal
   useEffect(() => setMounted(true), []);
   if (!mounted || typeof document === 'undefined') return null;
 
   return createPortal(
     <div
-      className="fixed inset-0 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-2 sm:p-4 overflow-y-auto"
+      className="fixed inset-0 flex items-center justify-center overflow-y-auto bg-black/50 p-3 sm:p-4"
       style={{ zIndex }}
       onClick={onClose}
     >
-      <Card
-        className="w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-200 bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 opacity-100 !bg-opacity-100 my-auto rounded-2xl overflow-hidden"
-        onClick={(e: any) => e.stopPropagation()}
+      <div
+        className="my-auto flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
+        onClick={(e: React.MouseEvent) => e.stopPropagation()}
       >
-        <CardHeader className="py-4 px-5 bg-slate-50 dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800 flex flex-row items-center justify-between shrink-0">
-          <CardTitle className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-            <span>🔍</span> {title}
-          </CardTitle>
+        <header className="flex shrink-0 items-center gap-3 border-b border-[#e8eaed] px-5 py-3.5">
+          <h2 className="min-w-0 flex-1 truncate text-[15px] font-extrabold text-[#16181d]">{title}</h2>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg bg-slate-200/60 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-300/60 dark:hover:bg-slate-700 transition-colors"
+            aria-label="Cerrar"
+            className="rounded-lg p-1.5 text-[#5b616e] transition-colors hover:bg-[#f4f5f7]"
           >
-            <X className="w-5 h-5" />
+            <X className="h-[18px] w-[18px]" />
           </button>
-        </CardHeader>
-        <CardContent className="p-4 sm:p-6 overflow-y-auto custom-scrollbar space-y-4 bg-white dark:bg-slate-900">
+        </header>
+        <div className="custom-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
           {children}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>,
     document.body
   );
@@ -1311,22 +1689,28 @@ function AnalisisIATab({ range, sedeId, onDone }: { range: { inicio: string; fin
   return (
     <div className="space-y-4">
       {/* Header / launcher */}
-      <div className="rounded-2xl border border-purple-200 dark:border-purple-900/40 bg-gradient-to-br from-purple-50 to-indigo-50 dark:from-purple-950/20 dark:to-indigo-950/20 p-5">
-        <div className="flex items-start gap-3">
-          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center flex-shrink-0 shadow-lg">
-            <Sparkles className="w-6 h-6 text-white" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <h3 className="text-base font-bold text-slate-800 dark:text-slate-100">Motor de Comisiones con IA</h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              La IA (Gemini) analiza las ventas y servicios del período <b>{range.inicio} → {range.fin}</b>, detecta el técnico ejecutor, el tipo de servicio y la mano de obra, y prepara los trabajos para comisión. Revísalos y confirma.
+      <div className="rounded-xl border border-[#e8eaed] bg-white p-5">
+        <div className="flex flex-wrap items-start gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#fff1e7] text-[#f97316]">
+            <Bot className="h-[21px] w-[21px]" aria-hidden />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h3 className="text-[15px] font-bold text-[#16181d]">Rescatar trabajos sin registrar</h3>
+            <p className="num mt-0.5 text-[12.5px] leading-snug text-[#8a909c]">
+              Revisa las ventas y servicios del {range.inicio} al {range.fin} en busca de trabajos que se
+              cobraron pero a los que nunca se les asignó técnico, y propone quién los hizo, de qué tipo
+              fueron y cuánta mano de obra llevaron. <strong className="text-[#3d4350]">Nada se guarda hasta
+              que revises y confirmes.</strong>
             </p>
-            <div className="mt-3">
-              <Button onClick={analizar} disabled={analyzing || saving}
-                className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white">
-                {analyzing ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Analizando con IA...</> : <><Wand2 className="w-4 h-4 mr-1.5" /> Analizar período con IA</>}
-              </Button>
-            </div>
+            <button
+              onClick={analizar}
+              disabled={analyzing || saving}
+              className="mt-3 flex h-[38px] items-center gap-2 rounded-lg bg-[#f97316] px-4 text-[12.5px] font-semibold text-white transition-colors hover:bg-[#ea580c] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {analyzing
+                ? <><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Revisando el período…</>
+                : <>Revisar el período</>}
+            </button>
           </div>
         </div>
       </div>

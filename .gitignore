@@ -41,3 +41,16 @@ db_check.txt
 dolarapi.json
 public/Tutorial/tutorial_compressed.mp4
 public/Tutorial/tutorial_Lycos_Team.mp4
+
+# Artefactos de diagnóstico y depuración que no forman parte del sistema.
+# Se generan al auditar y no deben acabar en el repositorio.
+lint.json
+lint*.json
+/*.mjs
+!next.config.mjs
+!eslint.config.mjs
+/*_fix.py
+/*.bak
+
+# Permisos locales de Claude Code: son de esta máquina, no del proyecto.
+.claude/settings.local.json

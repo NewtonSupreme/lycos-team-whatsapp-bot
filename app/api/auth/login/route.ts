@@ -32,6 +32,35 @@ function parseUserAgent(ua: string) {
   return { browser, os, device_type };
 }
 
+/**
+ * Deja constancia del intento de acceso, correcto o fallido.
+ *
+ * El panel de Configuración muestra el último acceso de cada usuario y los
+ * intentos fallidos de las últimas 24 horas. Sin este registro esos dos datos
+ * no existen, y un panel de seguridad que enseña cifras inventadas es peor que
+ * uno que no las enseña.
+ *
+ * Nunca bloquea el inicio de sesión: si el registro falla, se entra igual.
+ */
+async function registrarIntento(
+  db: ReturnType<typeof getDb>,
+  request: NextRequest,
+  usuario: string,
+  exito: boolean,
+  motivo?: string,
+): Promise<void> {
+  if (!db) return;
+  try {
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+      || request.headers.get('x-real-ip')
+      || null;
+    await db.from('intentos_acceso').insert({
+      usuario, exito, motivo: motivo || null, ip,
+      agente: (request.headers.get('user-agent') || '').slice(0, 300) || null,
+    });
+  } catch { /* el rastro es deseable, no imprescindible */ }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { email, password } = await request.json();
@@ -57,6 +86,7 @@ export async function POST(request: NextRequest) {
       });
       // Get user ID from DB
       const { data: dbUser } = await db.from('usuarios').select('id, sede_id').eq('username', username).single();
+      await registrarIntento(db, request, username, true, 'cuenta de respaldo');
       return NextResponse.json({ success: true, id: dbUser?.id, nombre: username, username, rol: username === 'administrador' ? 'admin' : 'usuario', sede_id: dbUser?.sede_id });
     }
 
@@ -69,10 +99,12 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error || !user) {
+      await registrarIntento(db, request, username, false, 'usuario inexistente o inactivo');
       return NextResponse.json({ error: 'Credenciales inválidas o cuenta no autorizada' }, { status: 401 });
     }
 
     if (user.password_hash !== password) {
+      await registrarIntento(db, request, username, false, 'contraseña incorrecta');
       return NextResponse.json({ error: 'Contraseña incorrecta' }, { status: 401 });
     }
 
@@ -102,6 +134,8 @@ export async function POST(request: NextRequest) {
         expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       });
     } catch { /* non-blocking */ }
+
+    await registrarIntento(db, request, user.username, true);
 
     return NextResponse.json({
       success: true,

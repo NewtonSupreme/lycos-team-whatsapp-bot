@@ -88,7 +88,19 @@ function monedaMatch(r: CommissionRule, moneda: MonedaNomina): boolean {
   return r.aplica_monedas.includes(moneda);
 }
 
-function sedeMatch(r: CommissionRule, sedeId?: string | null): boolean {
+/**
+ * ¿Aplica esta regla al trabajo, mirando la sede?
+ *
+ * Si el trabajo no trae sede, no hay nada contra qué contrastar y la regla NO se
+ * descarta. La versión anterior devolvía `false` en ese caso, así que cualquier
+ * cálculo hecho sin sede —el resumen multi-sede, el detector, una previsualización
+ * sin `sede` en el cuerpo— tiraba abajo TODAS las reglas que tuvieran sede y
+ * dejaba la comisión en $0.00 sin avisar. Ese silencio es lo peor que puede
+ * hacer un motor de nómina: parece que la persona no cobra, cuando lo que pasa
+ * es que no se le preguntó bien.
+ */
+function sedeMatch(r: { sede_id?: string | null }, sedeId?: string | null): boolean {
+  if (!sedeId) return true;
   return !r.sede_id || r.sede_id === sedeId;
 }
 
@@ -199,7 +211,7 @@ export function resolveFlatCommission(
     const flat = flatRates.find(f =>
       f.activo && f.servicio_key === key &&
       (f.empleado_id === job.empleado_id || f.empleado_id === null) &&
-      (!f.sede_id || f.sede_id === job.sede_id)
+      sedeMatch(f, job.sede_id)
     );
     if (!flat) continue;
     const monto = round2(flat.monto * cantidad);

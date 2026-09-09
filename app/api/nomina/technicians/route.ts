@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
   const sedeParam = url.searchParams.get('sede');
   const soloTecnicos = url.searchParams.get('tecnicos') === '1';
 
-  let q = db.from('usuarios').select('id, nombre, username, rol, sede_id, activo, especialidad, cedula, alias, foto_url').order('nombre');
+  let q = db.from('usuarios').select('id, nombre, username, rol, sede_id, activo, especialidad, cedula, alias, foto_url, cargo, area, tipo_contrato').order('nombre');
 
   // No multi-sede: bloqueado a su sede. Multi-sede: filtra si se pidió una sede concreta.
   const sede = user.multiSede ? sedeParam : user.sede_id;
@@ -28,8 +28,15 @@ export async function GET(req: NextRequest) {
   const { data, error } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  let rows = (data || []).filter((u: any) => u.activo !== false);
-  if (soloTecnicos) rows = rows.filter((u: any) => getRoleMeta(u.rol)?.esTecnico);
+  interface FilaUsuario { id: string; nombre: string; rol: string; activo?: boolean | null }
+  const rows = ((data || []) as FilaUsuario[]).filter(u => u.activo !== false);
 
-  return NextResponse.json({ technicians: rows });
+  // Se marca quién es personal de taller en vez de esconder al resto: en un
+  // taller real también trabajan el de almacén o quien atiende, y si no salen
+  // en el selector la venta se queda sin encargado —que es justo lo que pasaba.
+  const conBandera = rows.map(u => ({ ...u, es_tecnico: !!getRoleMeta(u.rol)?.esTecnico }));
+
+  const finales = soloTecnicos ? conBandera.filter(u => u.es_tecnico) : conBandera;
+
+  return NextResponse.json({ technicians: finales });
 }

@@ -52,6 +52,7 @@ export const MODULES: readonly AppModule[] = [
 
   { id: 'clientes', href: '/dashboard/clientes', label: 'Clientes', description: 'Ficha, historial y contacto', icon: Users, group: 'Clientes', permKey: 'clientes', tint: '291 64% 52%', keywords: ['personas', 'crm'] },
   { id: 'vehiculos', href: '/dashboard/vehiculos', label: 'Vehículos', description: 'Placas, modelos e historial por carro', icon: Car, group: 'Clientes', permKey: 'vehiculos', tint: '330 81% 55%', keywords: ['carros', 'placas', 'autos'] },
+  { id: 'ficha-vehiculo', href: '/dashboard/ficha', label: 'Ficha del vehículo', description: 'Qué se cobra, qué cuesta y qué se gana por carro', icon: Car, group: 'Clientes', permKey: 'vehiculos', tint: '24 95% 48%', keywords: ['utilidad', 'ganancia', 'costos', 'proveedor', 'deuda', 'repuestos', 'placa'] },
   { id: 'whatsapp', href: '/dashboard/whatsapp', label: 'WhatsApp', description: 'Conversaciones y bot de atención', icon: MessageSquare, group: 'Clientes', permKey: 'whatsapp', tint: '142 71% 40%', keywords: ['chat', 'mensajes', 'bot'] },
   { id: 'leads', href: '/dashboard/leads', label: 'Leads', description: 'Prospectos y seguimiento comercial', icon: TrendingUp, group: 'Clientes', permKey: 'leads', tint: '168 76% 36%', keywords: ['prospectos'] },
 

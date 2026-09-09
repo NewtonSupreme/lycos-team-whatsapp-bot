@@ -11,6 +11,7 @@ import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { Loader2, ShieldAlert } from 'lucide-react';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
+import { RUTAS_ARMAZON_PROPIO } from '@/lib/ui/armazon';
 import { Permisos } from '@/types';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -22,7 +23,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   
   const pathname = usePathname();
   const { can } = useRolePermissions();
-  const [accessDenied, setAccessDenied] = React.useState(false);
 
   // En móvil (< 1024px), cerrar sidebar automáticamente al montar
   useEffect(() => {
@@ -169,7 +169,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [user?.id, user?.sede_id, user?.rol, user?.username, setAvailableSedes, setUserRole, setCurrentSede]);
 
   const [mounted, setMounted] = React.useState(false);
-  useEffect(() => { setMounted(true); }, []);
+  useEffect(() => {
+    // Guarda de hidratación: el servidor no sabe el ancho de la ventana ni el
+    // tema, así que este dato solo puede fijarse ya en el navegador.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMounted(true);
+  }, []);
 
   // Load role defaults from DB for permission UI
   useEffect(() => {
@@ -189,37 +194,51 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       .catch(() => {});
   }, [setRoleDefaults]);
 
-  // Route Guard Effect
-  useEffect(() => {
-    if (authLoading) return;
-    
-    let requiredModule: keyof Permisos | null = null;
-    if (pathname.includes('/dashboard/clientes')) requiredModule = 'clientes';
-    else if (pathname.includes('/dashboard/vehiculos')) requiredModule = 'vehiculos';
-    else if (pathname.includes('/dashboard/servicios')) requiredModule = 'servicios';
-    else if (pathname.includes('/dashboard/taller')) requiredModule = 'taller';
-    else if (pathname.includes('/dashboard/agenda')) requiredModule = 'agenda';
-    else if (pathname.includes('/dashboard/whatsapp')) requiredModule = 'whatsapp';
-    else if (pathname.includes('/dashboard/inventario/papelera')) requiredModule = 'papelera';
-    else if (pathname.includes('/dashboard/inventario')) requiredModule = 'inventario';
-    else if (pathname.includes('/dashboard/ventas') || pathname.includes('/dashboard/silenciadores') || pathname.includes('/dashboard/facturas')) requiredModule = 'ventas';
-    else if (pathname.includes('/dashboard/ajustes/permisos') || pathname.includes('/dashboard/ajustes/empleados')) requiredModule = 'empleados';
-    else if (pathname.includes('/dashboard/presupuestos')) requiredModule = 'presupuestos';
-    else if (pathname.includes('/dashboard/leads')) requiredModule = 'leads';
-    else if (pathname.includes('/dashboard/ia')) requiredModule = 'ia_asistente';
-    else if (pathname.includes('/dashboard/reportes')) requiredModule = 'reportes';
-    else if (pathname.includes('/dashboard/actividad')) requiredModule = 'actividad';
-    else if (pathname.includes('/dashboard/calculadora')) requiredModule = 'calculadora';
-    else if (pathname.includes('/dashboard/configuracion')) requiredModule = 'configuracion';
-    else if (pathname.includes('/dashboard/distribuidor')) requiredModule = 'distribuidor';
-    else if (pathname.includes('/dashboard/nomina')) requiredModule = 'nomina';
+  /**
+   * Qué permiso exige cada ruta.
+   *
+   * Va como tabla y no como cadena de `else if`: al añadir un módulo se ve de
+   * un vistazo si falta. Así se coló `/dashboard/ficha`, que quedó sin guardia
+   * y era visible para cualquiera con sesión.
+   *
+   * El orden importa donde una ruta es prefijo de otra: la papelera tiene que
+   * comprobarse antes que el inventario que la contiene.
+   */
+  const RUTA_PERMISO: readonly [string, keyof Permisos][] = React.useMemo(() => [
+    ['/dashboard/inventario/papelera', 'papelera'],
+    ['/dashboard/ajustes/permisos', 'empleados'],
+    ['/dashboard/ajustes/empleados', 'empleados'],
+    ['/dashboard/clientes', 'clientes'],
+    ['/dashboard/vehiculos', 'vehiculos'],
+    ['/dashboard/servicios', 'servicios'],
+    ['/dashboard/ficha', 'servicios'],
+    ['/dashboard/taller', 'taller'],
+    ['/dashboard/agenda', 'agenda'],
+    ['/dashboard/whatsapp', 'whatsapp'],
+    ['/dashboard/inventario', 'inventario'],
+    ['/dashboard/ventas', 'ventas'],
+    ['/dashboard/silenciadores', 'ventas'],
+    ['/dashboard/facturas', 'ventas'],
+    ['/dashboard/presupuestos', 'presupuestos'],
+    ['/dashboard/leads', 'leads'],
+    ['/dashboard/ia', 'ia_asistente'],
+    ['/dashboard/reportes', 'reportes'],
+    ['/dashboard/actividad', 'actividad'],
+    ['/dashboard/calculadora', 'calculadora'],
+    ['/dashboard/configuracion', 'configuracion'],
+    ['/dashboard/distribuidor', 'distribuidor'],
+    ['/dashboard/nomina', 'nomina'],
+  ], []);
 
-    if (requiredModule && !can(requiredModule, 'leer')) {
-      if (!accessDenied) setAccessDenied(true);
-    } else {
-      if (accessDenied) setAccessDenied(false);
-    }
-  }, [pathname, authLoading, can, accessDenied]);
+  // El acceso denegado se DERIVA de la ruta y los permisos: no es un estado que
+  // haya que sincronizar. Guardarlo obligaba a un efecto que se disparaba con
+  // su propio valor en las dependencias, que es justo la forma de encadenar
+  // renders sin querer.
+  const accessDenied = React.useMemo(() => {
+    if (authLoading) return false;
+    const entrada = RUTA_PERMISO.find(([ruta]) => pathname.includes(ruta));
+    return !!entrada && !can(entrada[1], 'leer');
+  }, [pathname, authLoading, can, RUTA_PERMISO]);
 
   if (authLoading) {
     return (
@@ -239,8 +258,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // no un modulo mas.
   // Pantallas con armazón propio: no llevan el sidebar ni la cabecera
   // generales, pero conservan la verificación de sesión de arriba.
-  const PANTALLA_COMPLETA = ['/dashboard/apps', '/dashboard/ventas/nueva'];
-  if (PANTALLA_COMPLETA.includes(pathname)) {
+  // Las rutas que traen armazón propio salen de un solo sitio, compartido con
+  // `ErpShell`. Tenerlo en dos listas era la causa de las dos barras: bastaba
+  // olvidar una ruta en una de ellas.
+  if (RUTAS_ARMAZON_PROPIO.includes(pathname)) {
     return <div className="min-h-dvh bg-background">{children}</div>;
   }
 

@@ -12,7 +12,7 @@
  * Si la regla del empleado está "Por definir" (latonería por presupuesto, casos
  * especiales), se pide la COMISIÓN MANUAL, que prevalece sobre el cálculo.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus, Trash2, Wrench, Building2, Loader2, Users, Search, TrendingUp, AlertTriangle, Check, PencilLine,
 } from 'lucide-react';
@@ -41,7 +41,54 @@ export interface AsignacionEmpleado {
   comision_manual?: number | null;
 }
 
-interface Tecnico { id: string; nombre: string; rol: string; sede_id: string | null; especialidad?: string | null; }
+interface Tecnico {
+  id: string; nombre: string; rol: string; sede_id: string | null;
+  especialidad?: string | null; cargo?: string | null; es_tecnico?: boolean;
+}
+
+/** Comisión que otra persona cobra por supervisar este trabajo. */
+export interface OverridePreview {
+  empleado_id: string | null;
+  empleado_nombre: string;
+  comision_usd: number;
+  descripcion?: string | null;
+  /** Porcentaje de supervisión aplicado. */
+  pct?: number | null;
+}
+
+/** Lo que devuelve el motor al simular un trabajo, sin guardar nada. */
+export interface FilaPreview {
+  ref?: string | null;
+  empleado_id: string | null;
+  zona: string;
+  descripcion?: string | null;
+  mano_obra: number;
+  ingreso_total: number;
+  comision_usd: number;
+  tipo_regla: string | null;
+  regla_descripcion: string | null;
+  pct: number | null;
+  proveedor_monto_usd: number;
+  proveedor_nombre: string | null;
+  sin_regla: boolean;
+  por_definir: boolean;
+  overrides: OverridePreview[];
+}
+
+/** Un trabajo tal como se manda a simular. */
+interface JobPreview {
+  ref: string;
+  empleado_id: string | null;
+  es_taller: boolean;
+  zona: string;
+  servicio_key: string | null;
+  cantidad: number;
+  moneda: string;
+  tipo_trabajo: string | null;
+  descripcion: string;
+  ingreso_total: number;
+  mano_obra: number;
+}
 
 interface Props {
   value: AsignacionEmpleado[];
@@ -50,6 +97,10 @@ interface Props {
   defaultZona?: string;
   items?: ItemDesglose[];
   costoTotal?: number;
+  /** Tipo de servicio de la orden. Sin esto las reglas por tipo no distinguen. */
+  tipoTrabajo?: string | null;
+  /** Descripción de la orden, como respaldo cuando el renglón no dice nada. */
+  descripcionTrabajo?: string | null;
 }
 
 const ESCAPE_SERVICIOS = [
@@ -64,22 +115,31 @@ const ESCAPE_SERVICIOS = [
 
 const money = (n: number) => `$${(n ?? 0).toFixed(2)}`;
 
-/** Zona por defecto del empleado según su área asignada en Gestión de Empleados. */
-function zonaDeTecnico(t: Tecnico, fallback: string): string {
-  const e = t.especialidad || '';
-  if (!e || e === 'jefatura' || e === 'almacen') return fallback;
+/**
+ * Zona con la que entra una asignación nueva.
+ *
+ * Manda la del TRABAJO, no la del técnico. Antes ganaba la especialidad de la
+ * persona, así que asignar a Freddy —silenciadores— una alineación mandaba el
+ * trabajo a la zona 'escape' y le aplicaba su 50 % a un servicio que no era
+ * suyo. La especialidad solo se usa si la orden no está clasificada.
+ */
+function zonaDeAsignacion(t: Tecnico | null, zonaDelTrabajo: string): string {
+  if (zonaDelTrabajo && zonaDelTrabajo !== 'general') return zonaDelTrabajo;
+  const e = t?.especialidad || '';
+  if (!e) return zonaDelTrabajo || 'general';
   if (e === 'lavado') return 'autolavado';
   return e;
 }
 
 export default function PersonalYComisiones({
   value, onChange, sedeId, defaultZona = 'mecanica', items = [], costoTotal = 0,
+  tipoTrabajo = null, descripcionTrabajo = null,
 }: Props) {
   const [tecnicos, setTecnicos] = useState<Tecnico[]>([]);
   const [cargando, setCargando] = useState(true);
   const [buscar, setBuscar] = useState('');
   const [abrirBuscador, setAbrirBuscador] = useState(false);
-  const [preview, setPreview] = useState<any[]>([]);
+  const [preview, setPreview] = useState<FilaPreview[]>([]);
   const [calculando, setCalculando] = useState(false);
 
   const itemsValidos = useMemo(
@@ -90,9 +150,18 @@ export default function PersonalYComisiones({
   useEffect(() => {
     let vivo = true;
     setCargando(true);
-    fetch(`/api/nomina/technicians?tecnicos=1${sedeId ? `&sede=${sedeId}` : ''}`)
+    // Todo el personal activo: el de almacén o atención al cliente también
+    // puede quedar a cargo de un trabajo, y antes no aparecían.
+    fetch(`/api/nomina/technicians${sedeId ? `?sede=${sedeId}` : ''}`)
       .then(r => r.json())
-      .then(d => { if (vivo) setTecnicos(d.technicians || []); })
+      .then(d => {
+        if (!vivo) return;
+        const lista: Tecnico[] = d.technicians || [];
+        // El personal de taller primero: es quien se asigna casi siempre.
+        lista.sort((a, b) =>
+          Number(!!b.es_tecnico) - Number(!!a.es_tecnico) || a.nombre.localeCompare(b.nombre));
+        setTecnicos(lista);
+      })
       .catch(() => {})
       .finally(() => vivo && setCargando(false));
     return () => { vivo = false; };
@@ -110,7 +179,7 @@ export default function PersonalYComisiones({
    * exactamente como las hojas de pago manuales). ref = `${asignación}:${ítem}`.
    */
   const buildPreviewJobs = useCallback(() => {
-    const jobs: any[] = [];
+    const jobs: JobPreview[] = [];
     value.forEach((a, i) => {
       if (!a.empleado_id && !a.es_taller) return;
       const base = {
@@ -120,6 +189,10 @@ export default function PersonalYComisiones({
         servicio_key: a.servicio_key || null,
         cantidad: a.cantidad || 1,
         moneda: 'USD',
+        // Sin esto las reglas por tipo de servicio nunca coinciden: el motor
+        // evalúa contra servicio_key + tipo_trabajo + descripción, y la
+        // simulación mostraba un porcentaje distinto al que se iba a guardar.
+        tipo_trabajo: tipoTrabajo,
       };
       if (a.item_idx.length > 0) {
         for (const idx of a.item_idx) {
@@ -138,18 +211,21 @@ export default function PersonalYComisiones({
         jobs.push({
           ...base,
           ref: `${i}:m`,
-          descripcion: '',
+          // Sin renglones asignados se usa la descripción de la orden: es lo
+          // único que puede decirle a la regla si fue una rotación o una
+          // reparación, y de eso depende el porcentaje.
+          descripcion: descripcionTrabajo || '',
           ingreso_total: mo || costoTotal,
           mano_obra: mo,
         });
       }
     });
     return jobs;
-  }, [value, items, costoTotal]);
+  }, [value, items, costoTotal, tipoTrabajo, descripcionTrabajo]);
 
   const asignacionesKey = JSON.stringify(
     value.map(a => [a.empleado_id, a.es_taller, a.zona, a.item_idx, a.mano_obra_manual, a.servicio_key, a.cantidad])
-  ) + JSON.stringify(itemsValidos.map(i => [i.descripcion, i.total]));
+  ) + JSON.stringify(itemsValidos.map(i => [i.descripcion, i.total])) + `|${tipoTrabajo}|${descripcionTrabajo}`;
 
   useEffect(() => {
     const jobs = buildPreviewJobs();
@@ -173,13 +249,30 @@ export default function PersonalYComisiones({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [asignacionesKey, sedeId, costoTotal]);
 
+  /**
+   * Al reclasificar la orden, las asignaciones siguen a la nueva zona.
+   *
+   * Solo se mueven las que quedaron con la zona anterior: si alguien la cambió
+   * a mano, se respeta. Sin esto la comisión se calculaba con la clasificación
+   * vieja y nadie se enteraba.
+   */
+  const zonaPrevia = useRef(defaultZona);
+  useEffect(() => {
+    const antes = zonaPrevia.current;
+    zonaPrevia.current = defaultZona;
+    if (antes === defaultZona || value.length === 0) return;
+    const siguen = value.some(a => a.zona === antes);
+    if (siguen) onChange(value.map(a => (a.zona === antes ? { ...a, zona: defaultZona } : a)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultZona]);
+
   /** Filas del preview que pertenecen a la asignación i. */
   const previewDe = (i: number) => preview.filter(p => String(p.ref || '').startsWith(`${i}:`));
 
   // ── Mutaciones ────────────────────────────────────────────────────────────
   const agregar = (t: Tecnico | null) => {
     const nueva: AsignacionEmpleado = t
-      ? { empleado_id: t.id, es_taller: false, nombre: t.nombre, rol: t.rol, zona: zonaDeTecnico(t, defaultZona), item_idx: [], mano_obra_manual: 0, comision_manual: null }
+      ? { empleado_id: t.id, es_taller: false, nombre: t.nombre, rol: t.rol, zona: zonaDeAsignacion(t, defaultZona), item_idx: [], mano_obra_manual: 0, comision_manual: null }
       : { empleado_id: null, es_taller: true, nombre: 'Taller (sin técnico)', rol: 'taller', zona: defaultZona, item_idx: [], mano_obra_manual: 0, comision_manual: null };
     onChange([...value, nueva]);
     setBuscar('');
@@ -215,7 +308,7 @@ export default function PersonalYComisiones({
   };
 
   const totalComisiones = value.reduce((s, _, i) => s + comisionDe(i), 0)
-    + preview.reduce((s, p) => s + (p.overrides || []).reduce((so: number, o: any) => so + (Number(o.comision_usd) || 0), 0), 0);
+    + preview.reduce((s, p) => s + (p.overrides || []).reduce((so, o) => so + (Number(o.comision_usd) || 0), 0), 0);
   const totalProveedor = preview.reduce((s, p) => s + (Number(p.proveedor_monto_usd) || 0), 0);
   const lycosNeto = costoTotal - totalComisiones - totalProveedor;
 
@@ -470,7 +563,7 @@ export default function PersonalYComisiones({
               {/* Overrides en cascada (jefe de taller) */}
               {overridesAsign.length > 0 && (
                 <div className="rounded-lg bg-violet-500/5 border border-violet-500/20 px-2.5 py-1.5 space-y-0.5">
-                  {overridesAsign.map((o: any, oi: number) => (
+                  {overridesAsign.map((o, oi) => (
                     <div key={oi} className="flex items-center justify-between text-[11px]">
                       <span className="text-violet-400 flex items-center gap-1">
                         <TrendingUp className="w-3 h-3" /> {o.empleado_nombre} · override {o.pct}%

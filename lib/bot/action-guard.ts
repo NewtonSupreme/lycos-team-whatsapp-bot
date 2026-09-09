@@ -35,8 +35,17 @@ export const WRITE_TAGS: WriteTagSpec[] = [
   { re: /\[ACTION:\s*registrar_venta_completa[^\]]*\]/i, modulo: 'ventas', accion: 'crear', sensible: true, label: 'registrar venta' },
 ];
 
-/** Frases con las que la IA afirma (en pasado / participio) haber concretado una acción. */
-const CLAIM_RE = /\b(regist(?:r[eé]|rad[oa]s?|ramos)|qued[oó]\s+(?:regist|guard|agend)|guard[eé]|guardad[oa]s?|actualic[eé]|actualizad[oa]s?|elimin[eé]|eliminad[oa]s?|borr[eé]|cre[eé]|cread[oa]s?|agregu[eé]|agregad[oa]s?|anot[eé]|modifiqu[eé]|list[oa]\s*✅|hecho\s*✅)(?![a-záéíóúñ])/i;
+/**
+ * Frases con las que la IA afirma (en pasado / participio) haber concretado una
+ * acción.
+ *
+ * Faltaban las de "añadir" y las perífrasis con "he/ha" ("he añadido el costo",
+ * "ha sido ajustado"), que es justo como redacta cuando se le pide agregar algo
+ * a un trabajo existente. Sin ellas el guard dejaba pasar un "✅ Servicio
+ * actualizado" aunque no se hubiera escrito nada: el operador se iba pensando
+ * que el trabajo quedó cobrado.
+ */
+const CLAIM_RE = /\b(regist(?:r[eé]|rad[oa]s?|ramos)|qued[oó]\s+(?:regist|guard|agend)|guard[eé]|guardad[oa]s?|actualic[eé]|actualizad[oa]s?|elimin[eé]|eliminad[oa]s?|borr[eé]|cre[eé]|cread[oa]s?|agregu[eé]|agregad[oa]s?|a[ñn]ad[ií]|a[ñn]adid[oa]s?|incorpor[eé]|incorporad[oa]s?|inclu[ií]|inclu(?:id[oa]s?|y[oó])|sum[eé]|sumad[oa]s?|ajust[eé]|ajustad[oa]s?|asign[eé]|asignad[oa]s?|anot[eé]|anotad[oa]s?|modifiqu[eé]|modificad[oa]s?|a[ñn]adiendo|ha\s+sido\s+(?:ajustad|actualizad|registrad|guardad|a[ñn]adid|modificad)|han\s+sido\s+(?:ajustad|actualizad|registrad)|list[oa]\s*✅|hecho\s*✅)(?![a-záéíóúñ])/i;
 /** La IA está preguntando / ofreciendo, no afirmando. */
 const ASKING_RE = /\b(deseas|quieres|prefieres|confirmas|te\s+gustar[ií]a|puedo|proced(?:emos|o)|\bser[íi]a\b)\b/i;
 

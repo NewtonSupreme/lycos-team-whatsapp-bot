@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { getPermisos, hasPermiso, resolveRol, getRoleMeta, type Permisos } from '@/types';
 import { sendGlobalPushNotification } from '@/lib/push-helper';
 import {
@@ -8,6 +8,15 @@ import {
 } from '@/lib/bot/action-guard';
 import { getPayrollService } from '@/lib/payroll/service';
 import { buildUtilidad } from '@/lib/utilidad';
+import {
+  enlazarPersonal, nombresDePersonal, renglonesDeTexto, totalRenglones,
+  limpiarDescripcionTrabajo, type RenglonServicio,
+} from '@/lib/bot/trabajos-servicio';
+import { inferirCategoria, categoriaToZona } from '@/lib/categorias';
+import {
+  cargarTelefonosDeLaCasa, telefonoParaCliente, esTelefonoDeLaCasa,
+  type CasaTelefonos,
+} from '@/lib/bot/telefonos-casa';
 
 async function checkIsBotAdmin(phone: string, db: any, adminPhones: string[]): Promise<boolean> {
   const phoneClean = phone.replace(/[^0-9]/g, '');
@@ -665,6 +674,21 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
 11. GESTIÓN DE SERVICIOS (ÓRDENES DE TALLER) [SERVICIO_UPSERT]:
     - Para REGISTRAR un nuevo servicio/orden de taller, usa el tag [SERVICIO_UPSERT: ...] con los campos correspondientes.
     - Para ACTUALIZAR un servicio existente (cambiar estado, actualizar costo, etc.), incluye el ID del servicio en el tag.
+    - ⛔ AGREGAR UN TRABAJO A UNA ORDEN EXISTENTE — OBLIGATORIO EMITIR EL TAG:
+      Cuando el admin diga "agregar a este trabajo X", "añádele Y", "súmale el costo de Z",
+      "incluye también W" o cualquier variante, ES UNA ESCRITURA. DEBES emitir
+      [SERVICIO_UPSERT: <id_del_servicio> | ... | <solo el trabajo nuevo> | ...] con el ID de
+      ese servicio. Decir "he añadido", "he registrado", "ha sido ajustado" o "el historial
+      fue actualizado" SIN el tag es un ERROR GRAVE: nada se guarda, el trabajo no se cobra y
+      el sistema te corregirá el mensaje delante del operador.
+      · En el campo 'descripcion' pon SOLO EL TRABAJO NUEVO ("Soldadura", "Revisión de tren
+        delantero"), NUNCA la frase con la que te lo pidieron ni el trabajo anterior: el
+        sistema los acumula solo y repetir el viejo lo duplicaría.
+      · Si dictan precio ("soldadura 15$"), incluýelo en la descripción tal cual: el sistema
+        lo separa, lo pone en su renglón del desglose y lo suma al total de la orden.
+      · En 'costo_estimado' pon SOLO el costo del trabajo nuevo, NO el total acumulado.
+      · Si no sabes el ID, búscalo por placa en el contexto de servicios activos antes de
+        responder. Sin ID, el sistema crearía un duplicado en vez de agregar.
     - El tag [SERVICIO_UPSERT] crea/actualiza en la tabla 'servicios' (NO en 'citas'). Usa [CITA_UPSERT] solo para agendar citas.
     - Mapeo de estados válidos para servicios: 'pendiente', 'confirmada', 'en_revision', 'en_proceso', 'completada', 'finalizado', 'cancelada', 'cancelado'.
     - ⚠️ REGLA ESTRICTA DE ESTADO "EN REVISIÓN": Si el administrador que registra el servicio es Rafael (teléfono 584262474374) o Jorge, y el trabajo a realizar incluye "balanceo", "tren delantero", "rótulas", "terminales", "amortiguadores", "estoperas", "suspensión" o "mecánica", el estado por defecto del [SERVICIO_UPSERT] DEBE SER obligatoriamente 'en_revision' (y NO 'en_proceso'). Aplica esto de forma automática.
@@ -1363,6 +1387,17 @@ interface Memoria {
     sedeId?: string | null;
     tipo?: string | null;
     tipoPersonalizado?: string | null;
+    /**
+     * El trabajo nuevo COMPLETO, no solo su frase.
+     *
+     * Antes aquí solo viajaba `nuevaDescripcion`, así que al combinar se
+     * perdían el precio y el técnico: el trabajo se pegaba como texto al final
+     * de la descripción y no sumaba al total ni generaba comisión.
+     */
+    renglones?: { descripcion: string; cantidad: number; precio_unitario: number; total: number }[];
+    costo?: number | null;
+    personal?: { empleado_id: string; nombre: string; texto_original: string }[];
+    personalTexto?: string | null;
   };
 }
 interface ConversationContext {
@@ -2815,15 +2850,44 @@ async function getOrCreateClientAndVehicle(
   let vehicleId: string | undefined;
   let isNew = false;
 
+  // ── Un vehículo NUNCA puede quedar a nombre de alguien del taller ──────
+  //
+  // Cuando un admin registra por WhatsApp sin dictar el teléfono del dueño,
+  // el único número a mano es el suyo. Si entra aquí, el cliente que se busca
+  // —o se crea— es él mismo, y el vehículo se le cuelga. Como la búsqueda es
+  // por teléfono, el siguiente vehículo se pega al mismo cliente y el admin
+  // acaba figurando como dueño de media flota.
+  //
+  // Se comprueba aquí y no antes porque este es el último punto por el que
+  // pasa el dato: da igual por qué camino haya llegado.
+  const casa = await cargarTelefonosDeLaCasa(db, ADMIN_PHONES);
+  const telefonoLimpio = telefonoParaCliente(phone, casa);
+  if (phone && !telefonoLimpio && esTelefonoDeLaCasa(phone, casa)) {
+    console.warn(`🛡️ Teléfono del taller descartado como cliente: ${phone}. `
+      + `El cliente "${name || 'sin nombre'}" se registra sin teléfono.`);
+  }
+  phone = telefonoLimpio || '';
+
   try {
     // 1. Client — search by phone first. Tolerante a duplicados: tomamos el
     //    más antiguo (el que probablemente tiene vehículos/servicios asociados)
     //    y NUNCA usamos .maybeSingle() porque lanza error si hay duplicados.
     let clientRows = null;
-    if (phone && phone !== '00000000' && phone !== '00000000000') {
+    if (phone) {
       const { data } = await db.from('clientes')
         .select('id, nombre, apellido, created_at')
         .eq('telefono', phone)
+        .order('created_at', { ascending: true })
+        .limit(1);
+      clientRows = data;
+    } else if (name && name.trim().length > 2) {
+      // Sin teléfono utilizable, se busca por nombre exacto para no crear un
+      // cliente repetido cada vez que el admin registra al mismo dueño.
+      const partes = name.trim().split(' ');
+      const { data } = await db.from('clientes')
+        .select('id, nombre, apellido, created_at')
+        .ilike('nombre', partes[0])
+        .ilike('apellido', partes.slice(1).join(' ') || '%')
         .order('created_at', { ascending: true })
         .limit(1);
       clientRows = data;
@@ -2860,7 +2924,7 @@ async function getOrCreateClientAndVehicle(
       const { data: newClient, error: clientErr } = await db.from('clientes').insert({
         nombre: parts[0],
         apellido: parts.slice(1).join(' ') || '(WhatsApp)',
-        telefono: phone,
+        telefono: phone || null,
         sede_id: sedeId || DEFAULT_SEDE_ID
       }).select('id').single();
       if (clientErr) { console.error('Error creando cliente:', clientErr.message); }
@@ -3333,7 +3397,16 @@ function combineRegistrantes(...names: (string | null | undefined)[]): string {
 //    persona → ofrece COMBINAR (co-registro) y deja el estado pendiente en memoria.
 //  • Si no → bloqueo normal para evitar doble registro.
 async function decidirRespuestaDuplicado(
-  db: any, from: string, memoria: Memoria, dup: any, newDesc: string, newBy: string
+  db: any, from: string, memoria: Memoria, dup: any, newDesc: string, newBy: string,
+  // Lo que se estaba registrando cuando saltó el duplicado. Sin esto, al
+  // combinar se perdían el precio y el técnico del trabajo nuevo: quedaba solo
+  // una línea de texto pegada a la descripción.
+  extra?: {
+    renglones?: { descripcion: string; cantidad: number; precio_unitario: number; total: number }[];
+    costo?: number | null;
+    personal?: { empleado_id: string; nombre: string; texto_original: string }[];
+    personalTexto?: string | null;
+  },
 ): Promise<string> {
   const vehTxt = [dup.vehiculo_info, dup.placa && dup.placa !== 'SIN-PLACA' ? `Placa ${dup.placa}` : ''].filter(Boolean).join(' — ');
   const existBy = String(dup.registrado_por || '');
@@ -3357,11 +3430,80 @@ async function decidirRespuestaDuplicado(
     sedeId: dup.sede_id ?? null,
     tipo: dup.tipo ?? null,
     tipoPersonalizado: dup.tipo_personalizado ?? null,
+    renglones: extra?.renglones ?? [],
+    costo: extra?.costo ?? null,
+    personal: extra?.personal ?? [],
+    personalTexto: extra?.personalTexto ?? null,
   };
   if (db) await db.from('conversaciones').update({ memoria }).eq('telefono', from);
 
-  const trabajoTxt = (newDesc || '').trim() ? `\n\nTu trabajo: _${(newDesc).trim()}_` : '';
+  // El precio y el técnico se enseñan ANTES de confirmar: es lo que se va a
+  // sumar al total de la orden y lo que decidirá a quién se le paga.
+  const costoNuevo = Number(extra?.costo) || 0;
+  const precioTxt = costoNuevo > 0 ? ` — *$${costoNuevo.toFixed(2)}*` : '';
+  const tecnicoTxt = extra?.personal?.length
+    ? `\n👷 A cargo: _${extra.personal.map(pp => pp.nombre).join(', ')}_`
+    : '';
+  const trabajoTxt = (newDesc || '').trim()
+    ? `\n\nTu trabajo: _${(newDesc).trim()}_${precioTxt}${tecnicoTxt}`
+    : '';
   return `🔧 Este vehículo ya tiene un servicio activo registrado por *${existBy || 'otro técnico'}*:\n🚗 ${vehTxt || 'Vehículo'}\n📌 ${dup.descripcion || '—'}${trabajoTxt}\n\n¿Deseas *ACTUALIZARLO* agregando tu trabajo a ese MISMO servicio? Quedará registrado por *ambos* y NO se duplica.\n\nResponde *SÍ* (actualizar) o *NO*.`;
+}
+
+/**
+ * Manda a nómina el trabajo que acaba de registrar el bot.
+ *
+ * Sin esto, un servicio dictado por WhatsApp nacía sin comisión: el técnico
+ * aparecía en la orden pero no cobraba por ella. Falla en silencio a propósito
+ * —el servicio ya quedó guardado— pero deja rastro en el log.
+ */
+async function registrarComisionesDelBot(
+  db: SupabaseClient,
+  opts: {
+    servicioId: string;
+    encargados: { empleado_id: string; nombre: string }[];
+    renglones: { descripcion: string; total: number }[];
+    costoTotal: number | null;
+    tipoTrabajo: string;
+    zona: string;
+    sedeId: string | null;
+    fecha: string;
+  },
+): Promise<void> {
+  if (!db || !opts.servicioId || opts.encargados.length === 0) return;
+  try {
+    const svc = getPayrollService(db);
+    const conPrecio = opts.renglones.filter(r => (Number(r.total) || 0) > 0);
+    // Cada renglón con precio se comisiona por su cuenta: es lo que permite
+    // que dos trabajos de la misma orden lleven porcentajes distintos.
+    const base = conPrecio.length > 0
+      ? conPrecio
+      : [{ descripcion: opts.tipoTrabajo, total: Number(opts.costoTotal) || 0 }];
+
+    for (const persona of opts.encargados) {
+      for (const r of base) {
+        const monto = Number(r.total) || 0;
+        if (monto <= 0) continue;
+        await svc.createJobAssignment({
+          empleado_id: persona.empleado_id,
+          es_taller: false,
+          zona: opts.zona,
+          tipo_trabajo: opts.tipoTrabajo,
+          descripcion: r.descripcion,
+          ingreso_total: monto,
+          mano_obra: monto,
+          cantidad: 1,
+          moneda: 'USD',
+          referencia_tabla: 'servicios',
+          referencia_id: opts.servicioId,
+          fecha: opts.fecha,
+          sede_id: opts.sedeId,
+        });
+      }
+    }
+  } catch (e) {
+    console.error('⚠️ No se pudo generar la comisión del trabajo registrado por el bot:', e);
+  }
 }
 
 async function findActiveServiceDuplicate(
@@ -3872,7 +4014,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         if (decision === 'yes') {
           try {
             const { data: existing } = await db.from('servicios')
-              .select('descripcion, registrado_por, seguimiento, estado, vehiculo_info, placa')
+              .select('descripcion, registrado_por, seguimiento, estado, vehiculo_info, placa, items, costo_estimado, encargados, sede_id, fecha, tipo, tipo_personalizado')
               .eq('id', pm.servicioId).single();
             if (existing) {
               const prevBy = existing.registrado_por || '';
@@ -3882,9 +4024,35 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               const prevFormatted = /:/.test(firstLine) ? prevDesc : (prevBy ? `${prevBy}: ${prevDesc}` : prevDesc);
               const mergedDesc = `${prevFormatted}\n${pm.nuevoRegistrante}: ${pm.nuevaDescripcion}`.trim();
               const mergedBy = combineRegistrantes(prevBy, pm.nuevoRegistrante);
+              // ── El trabajo entra entero, no solo como línea de texto ─────
+              //
+              // Se añade al desglose con su precio, ese precio se suma al total
+              // de la orden y el técnico queda enlazado a su ficha. Antes nada
+              // de esto pasaba: el trabajo se combinaba, pero ni sumaba al
+              // presupuesto ni figuraba desglosado ni generaba comisión.
+              const itemsPrevios = Array.isArray(existing.items) ? existing.items : [];
+              const nuevosRenglones = (pm.renglones || []).filter(r => (r?.descripcion || '').trim());
+              const itemsCombinados = nuevosRenglones.length > 0
+                ? [...itemsPrevios, ...nuevosRenglones]
+                : itemsPrevios;
+
+              const sumaNueva = nuevosRenglones.reduce((acc, r) => acc + (Number(r.total) || 0), 0);
+              const costoPrevio = Number(existing.costo_estimado) || 0;
+              const costoCombinado = Math.round((costoPrevio + sumaNueva) * 100) / 100;
+
+              const encPrevios = Array.isArray(existing.encargados) ? existing.encargados : [];
+              const encCombinados = [...encPrevios];
+              for (const persona of (pm.personal || [])) {
+                if (!encCombinados.some((e: { empleado_id?: string }) => e?.empleado_id === persona.empleado_id)) {
+                  encCombinados.push(persona);
+                }
+              }
+
               const seg = [...(existing.seguimiento || []), {
                 fecha: new Date().toISOString(),
-                accion: `Trabajo agregado por ${pm.nuevoRegistrante} (servicio combinado)`,
+                accion: sumaNueva > 0
+                  ? `Trabajo agregado por ${pm.nuevoRegistrante}: ${pm.nuevaDescripcion} ($${sumaNueva.toFixed(2)})`
+                  : `Trabajo agregado por ${pm.nuevoRegistrante}: ${pm.nuevaDescripcion}`,
                 usuario: pm.nuevoRegistrante, tipo: 'sistema',
               }];
               // Si el servicio ya estaba completado/finalizado y se le agrega trabajo nuevo,
@@ -3894,11 +4062,37 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 descripcion: mergedDesc,
                 registrado_por: mergedBy,
                 seguimiento: seg,
+                items: itemsCombinados,
+                ...(sumaNueva > 0 ? { costo_estimado: costoCombinado } : {}),
+                ...(encCombinados.length > 0 ? { encargados: encCombinados } : {}),
                 ...(eraCerrado ? { estado: 'en_proceso' } : {}),
                 updated_at: new Date().toISOString(),
               }).eq('id', pm.servicioId);
+
+              // La comisión del trabajo nuevo, para quien lo hizo.
+              if ((pm.personal || []).length > 0 && sumaNueva > 0) {
+                await registrarComisionesDelBot(db, {
+                  servicioId: pm.servicioId,
+                  encargados: pm.personal || [],
+                  renglones: nuevosRenglones,
+                  costoTotal: sumaNueva,
+                  tipoTrabajo: pm.tipoPersonalizado || pm.tipo || 'otro',
+                  zona: categoriaToZona(inferirCategoria(`${pm.tipoPersonalizado || ''} ${pm.nuevaDescripcion}`)),
+                  sedeId: pm.sedeId || existing.sede_id || null,
+                  fecha: existing.fecha || getVzlaDateString(),
+                });
+              }
               await logActivityAdmin(db, pm.nuevoRegistrante, 'Combinó trabajo en servicio', `Servicio ${pm.servicioId} ahora registrado por ${mergedBy}`, pm.sedeId || ctx.sede_id || DEFAULT_SEDE_ID);
-              await sendMsg(from, `✅ Combinado. El servicio de *${pm.vehiculoInfo || 'el vehículo'}${pm.placa && pm.placa !== 'SIN-PLACA' ? ' — ' + pm.placa : ''}* ahora queda registrado por *${mergedBy}* con ambos trabajos. 🔧`);
+              // El mensaje dice qué quedó: el trabajo, su precio y el total.
+              const detalle = nuevosRenglones.length > 0
+                ? '\n\n' + nuevosRenglones
+                  .map(r => `• ${r.descripcion}${(Number(r.total) || 0) > 0 ? ` — *$${Number(r.total).toFixed(2)}*` : ''}`)
+                  .join('\n')
+                : '';
+              const totalTxt = sumaNueva > 0
+                ? `\n\n💰 Total de la orden: *$${costoCombinado.toFixed(2)}*`
+                : '';
+              await sendMsg(from, `✅ Combinado. El servicio de *${pm.vehiculoInfo || 'el vehículo'}${pm.placa && pm.placa !== 'SIN-PLACA' ? ' — ' + pm.placa : ''}* ahora queda registrado por *${mergedBy}* con ambos trabajos. 🔧${detalle}${totalTxt}`);
             } else {
               await sendMsg(from, '⚠️ No encontré el servicio para combinar. Reintenta el registro por favor.');
             }
@@ -4096,6 +4290,14 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       let servicioFallo = false;
       let servicioDuplicado: any | null = null; // servicio activo ya existente (evita doble registro)
       let dupNuevaDesc = '';                     // descripción del trabajo NUEVO (para co-registro)
+      // Precio, renglones y técnico del trabajo nuevo, para que al combinar no
+      // se pierdan: son los datos que hacen que el trabajo cuente y se cobre.
+      let dupContexto: {
+        renglones?: { descripcion: string; cantidad: number; precio_unitario: number; total: number }[];
+        costo?: number | null;
+        personal?: { empleado_id: string; nombre: string; texto_original: string }[];
+        personalTexto?: string | null;
+      } | undefined;
       let dupNuevoRegistrante = '';              // quién intenta registrar el trabajo nuevo
 
       // Gating por ROL: cada comando de escritura requiere el permiso correspondiente.
@@ -4622,6 +4824,28 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               timeZone: 'America/Caracas', hour: '2-digit', minute: '2-digit', hour12: false,
             }).format(new Date());
 
+            // ── Trabajo, precio y personal, ya en limpio ──────────────────
+            //
+            // La frase con la que se pide registrar no es el trabajo: "agregar
+            // a este trabajo costo de soldadura 15$" describe un cobro de
+            // soldadura, no un trabajo llamado "agregar a este trabajo". De ahí
+            // salen los renglones con su precio y el total real de la orden.
+            const descripcionLimpia = limpiarDescripcionTrabajo(descripcion || '');
+            const renglones: RenglonServicio[] = renglonesDeTexto(descripcion || '', costoEstimado);
+            const sumaRenglones = totalRenglones(renglones);
+            const costoFinalServicio = sumaRenglones > 0 ? sumaRenglones : costoEstimado;
+            const categoriaTrabajo = inferirCategoria(
+              `${tipoPersonalizado || ''} ${tipo || ''} ${descripcionLimpia}`,
+            );
+
+            // El encargado dictado, enlazado a su ficha real.
+            const { enlazados: personalEnlazado, sinFicha: personalSinFicha } =
+              personalCargo ? await enlazarPersonal(db, nombresDePersonal(personalCargo))
+                : { enlazados: [], sinFicha: [] };
+            if (personalSinFicha.length > 0) {
+              console.warn(`⚠️ Personal sin ficha, no entra a nómina: ${personalSinFicha.join(', ')}`);
+            }
+
             const servObj: any = {
               cliente_id: finalClientId,
               vehiculo_id: finalVehId,
@@ -4631,10 +4855,19 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               placa: placa || 'SIN-PLACA',
               tipo: tipo || 'otro',
               tipo_personalizado: tipoPersonalizado,
-              descripcion: descripcion || 'Servicio de taller',
+              descripcion: descripcionLimpia || 'Servicio de taller',
               estado: estado || 'pendiente',
+              // El texto se conserva por compatibilidad con las órdenes viejas,
+              // pero lo que vale es `encargados`: ahí va la persona enlazada a
+              // su ficha. Antes solo quedaba el nombre suelto y por eso el
+              // trabajo no llegaba nunca a nómina ni al campo de asignado.
               notas: personalCargo ? `Encargados: ${personalCargo}` : null,
-              costo_estimado: costoEstimado,
+              encargados: personalEnlazado,
+              // El desglose con su precio por renglón: sin esto el costo se
+              // quedaba en la frase y no aparecía en ninguna línea de la orden.
+              items: renglones,
+              categoria: categoriaTrabajo,
+              costo_estimado: costoFinalServicio,
               registrado_por: adminName,
               fecha: vzlaDateStr,
               hora: vzlaTime,
@@ -4650,12 +4883,70 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
             if (id && id.length > 5 && db) {
               // Update existing servicio
-              const { data: existing } = await db.from('servicios').select('seguimiento').eq('id', id).single();
+              const { data: existing } = await db.from('servicios')
+                .select('seguimiento, descripcion, items, costo_estimado, encargados')
+                .eq('id', id).single();
               if (existing) {
+                // ── Agregar NO es reemplazar ──────────────────────────────
+                //
+                // Cuando el admin dice "agregar a este trabajo revisión de
+                // tren delantero", el trabajo anterior tiene que seguir ahí.
+                // Antes el update pisaba `descripcion`, `items` y
+                // `costo_estimado` con lo último dictado: cada añadido
+                // borraba el desglose entero y dejaba la orden con un solo
+                // renglón y el precio del último trabajo.
+                //
+                // El estado y la clasificación sí se pisan: son atributos de
+                // la orden, no cosas que se acumulen.
+                const quiereAgregar = /\b(agreg|a[ñn]ad|sum|incluir|incluye|adicion|tambi[eé]n|adem[aá]s)\w*/i
+                  .test(messageBody || '');
+
+                if (quiereAgregar) {
+                  const itemsPrev = Array.isArray(existing.items) ? existing.items : [];
+                  const nuevos = renglones.filter(r => (r?.descripcion || '').trim());
+                  // Un renglón que ya está no se repite: el admin puede dictar
+                  // dos veces lo mismo sin querer duplicar el cobro.
+                  const yaEsta = (d: string) => itemsPrev.some(
+                    (x: { descripcion?: string }) =>
+                      String(x?.descripcion || '').trim().toLowerCase() === d.trim().toLowerCase(),
+                  );
+                  const aAgregar = nuevos.filter(r => !yaEsta(r.descripcion));
+                  servObj.items = [...itemsPrev, ...aAgregar];
+
+                  const sumaNueva = aAgregar.reduce((acc, r) => acc + (Number(r.total) || 0), 0);
+                  servObj.costo_estimado = Math.round(
+                    ((Number(existing.costo_estimado) || 0) + sumaNueva) * 100,
+                  ) / 100;
+
+                  const descPrev = String(existing.descripcion || '').trim();
+                  const descNueva = aAgregar.map(r => r.descripcion).join(' + ');
+                  servObj.descripcion = [descPrev, descNueva].filter(Boolean).join(' + ');
+
+                  const encPrev = Array.isArray(existing.encargados) ? existing.encargados : [];
+                  const encMerge = [...encPrev];
+                  for (const persona of personalEnlazado) {
+                    if (!encMerge.some((e: { empleado_id?: string }) => e?.empleado_id === persona.empleado_id)) {
+                      encMerge.push(persona);
+                    }
+                  }
+                  servObj.encargados = encMerge;
+
+                  // Lo que se acaba de añadir es lo que genera comisión nueva.
+                  if (encMerge.length > 0 && sumaNueva > 0) {
+                    await registrarComisionesDelBot(db, {
+                      servicioId: id, encargados: encMerge, renglones: aAgregar,
+                      costoTotal: sumaNueva, tipoTrabajo: tipoPersonalizado || tipo,
+                      zona: categoriaToZona(categoriaTrabajo), sedeId, fecha: vzlaDateStr,
+                    });
+                  }
+                }
+
                 const existingSeg = existing.seguimiento || [];
                 servObj.seguimiento = [...existingSeg, {
                   fecha: now.toISOString(),
-                  accion: `Actualizado vía WhatsApp Admin — Estado: ${estado}`,
+                  accion: quiereAgregar
+                    ? `Trabajo agregado vía WhatsApp: ${descripcionLimpia || 'sin detalle'}`
+                    : `Actualizado vía WhatsApp Admin — Estado: ${estado}`,
                   usuario: adminName,
                   tipo: 'sistema',
                 }];
@@ -4677,8 +4968,9 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 });
                 if (dup) {
                   servicioDuplicado = dup;
-                  dupNuevaDesc = descripcion || servObj.descripcion || '';
+                  dupNuevaDesc = descripcionLimpia || servObj.descripcion || '';
                   dupNuevoRegistrante = adminName || '';
+                  dupContexto = { renglones, costo: costoFinalServicio, personal: personalEnlazado, personalTexto: personalCargo };
                   console.log(`⛔ SERVICIO duplicado evitado (id inexistente): ${dup.id}`);
                   await logActivityAdmin(db, adminName, 'Registro de servicio bloqueado (duplicado)', `Ya existe servicio ${dup.id} para placa ${dup.placa || 'N/D'} (${dup.estado})`, sedeId);
                 } else {
@@ -4688,6 +4980,13 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                   servicioOK = true;
                   console.log(`🔧 ADMIN: Nuevo servicio creado (fallback): ${newServ?.id}`);
                   await logActivityAdmin(db, adminName, 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot (fallback)`, sedeId);
+                  if (newServ?.id) {
+                    await registrarComisionesDelBot(db, {
+                      servicioId: newServ.id, encargados: personalEnlazado, renglones,
+                      costoTotal: costoFinalServicio, tipoTrabajo: tipoPersonalizado || tipo,
+                      zona: categoriaToZona(categoriaTrabajo), sedeId, fecha: vzlaDateStr,
+                    });
+                  }
                   if (newServ?.id) await handleCompletedServiceSale(db, newServ.id, servObj, 'servicio', rates);
                 }
               }
@@ -4700,6 +4999,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 servicioDuplicado = dup;
                 dupNuevaDesc = descripcion || servObj.descripcion || '';
                 dupNuevoRegistrante = adminName || '';
+                dupContexto = { renglones, costo: costoFinalServicio, personal: personalEnlazado, personalTexto: personalCargo };
                 console.log(`⛔ SERVICIO duplicado evitado: ${dup.id} (placa=${dup.placa}, estado=${dup.estado})`);
                 await logActivityAdmin(db, adminName, 'Registro de servicio bloqueado (duplicado)', `Ya existe servicio activo ${dup.id} para placa ${dup.placa || 'N/D'} (${dup.estado})`, sedeId);
               } else {
@@ -4708,6 +5008,13 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
                 servicioOK = true;
                 console.log(`🔧 ADMIN: Nuevo servicio creado: ${newServ?.id}`);
                 await logActivityAdmin(db, adminName, 'Creó servicio', `Servicio para ${nameToUse} creado vía ChatBot`, sedeId);
+                if (newServ?.id) {
+                  await registrarComisionesDelBot(db, {
+                    servicioId: newServ.id, encargados: personalEnlazado, renglones,
+                    costoTotal: costoFinalServicio, tipoTrabajo: tipoPersonalizado || tipo,
+                    zona: categoriaToZona(categoriaTrabajo), sedeId, fecha: vzlaDateStr,
+                  });
+                }
                 // Auto-register sale if completada/finalizado
                 if (newServ?.id) await handleCompletedServiceSale(db, newServ.id, servObj, 'servicio', rates);
               }
@@ -5151,7 +5458,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
         if (servicioDuplicado) {
           // El vehículo YA está en servicio: bloquear, o si Rafael está involucrado, ofrecer COMBINAR.
           cleanedAi = (await decidirRespuestaDuplicado(
-            db, from, ctx.memoria, servicioDuplicado, dupNuevaDesc, dupNuevoRegistrante
+            db, from, ctx.memoria, servicioDuplicado, dupNuevaDesc, dupNuevoRegistrante,
+            dupContexto
           )).trim();
         } else if (!isJuanPabloRestricted(from) && canBotWrite('servicios') && !servicioOK && (servicioFallo || aiClaimsRegistro)) {
           try {

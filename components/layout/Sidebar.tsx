@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Users, Car, Wrench, Calendar, MessageSquare,
   Bot, FileText, Settings, ChevronLeft, ChevronRight,
   Activity, LogOut, TrendingUp, UserCircle, Package, Calculator, ShoppingCart, Trash2, Truck, Shield,
-  FileSpreadsheet, Receipt, Info, Banknote
+  FileSpreadsheet, Receipt, Info, Banknote, ClipboardList
 } from 'lucide-react';
 import { cn, getInitials } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -45,6 +45,7 @@ const navItemsConfig: NavItem[] = [
   { href: '/dashboard/agenda', icon: Calendar, label: 'Agenda', badge: null, permKey: 'agenda', group: 'Operacion' },
   { href: '/dashboard/taller', icon: Wrench, label: 'Taller', badge: null, permKey: 'taller', group: 'Operacion' },
   { href: '/dashboard/servicios', icon: Wrench, label: 'Servicios', badge: null, permKey: 'servicios', group: 'Operacion' },
+  { href: '/dashboard/ficha', icon: ClipboardList, label: 'Ficha del vehículo', badge: null, permKey: 'servicios', group: 'Operacion' },
 
   { href: '/dashboard/clientes', icon: Users, label: 'Clientes', badge: null, permKey: 'clientes', group: 'Clientes' },
   { href: '/dashboard/vehiculos', icon: Car, label: 'Vehículos', badge: null, permKey: 'vehiculos', group: 'Clientes' },
@@ -70,7 +71,7 @@ const navItemsConfig: NavItem[] = [
 /** Ajustes y cuenta. Van al pie, fuera de los grupos de trabajo. */
 const bottomItems: Omit<NavItem, 'group'>[] = [
   { href: '/dashboard/configuracion', icon: Settings, label: 'Configuración', badge: null, permKey: 'configuracion' },
-  { href: '/dashboard/ajustes/empleados', icon: Users, label: 'Gestión Empleados', badge: null, permKey: 'empleados' },
+  { href: '/dashboard/ajustes/empleados', icon: Users, label: 'Recursos Humanos', badge: null, permKey: 'empleados' },
   { href: '/dashboard/ajustes/permisos', icon: Shield, label: 'Permisos por Rol', badge: null, permKey: 'empleados' },
   { href: '/dashboard/informacion', icon: Info, label: 'Información', badge: null },
   { href: '/dashboard/perfil', icon: UserCircle, label: 'Mi Perfil', badge: null },

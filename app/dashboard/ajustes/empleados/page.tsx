@@ -1,851 +1,567 @@
-"use client";
+'use client';
 
-import { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabase";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useSedeStore } from "@/lib/store/useSedeStore";
-import { useAppStore } from "@/lib/store";
-import {
-  Loader2, Plus, Users, Shield, MapPin, Trash2, User, Wrench, Eye, EyeOff,
-  Crown, DollarSign, Headphones, HardHat, KeyRound, ClipboardList
-} from "lucide-react";
-import {
-  ROLE_CATALOG, getRoleMeta, normalizePermiso, PERMISOS_DEFAULT, MASTER_ADMIN_USERNAME, resolveRol,
-  type RoleMeta, type Permisos, type PermisoValue,
-} from "@/types";
-import PersonalTecnico, { AREAS } from "@/components/empleados/PersonalTecnico";
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { ChevronDown, Download, FileBarChart, Loader2, Plus, RefreshCw, UsersRound } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { supabase } from '@/lib/supabase';
+import { useAppStore } from '@/lib/store';
+import { useSedeStore } from '@/lib/store/useSedeStore';
+import { MASTER_ADMIN_USERNAME, ROLE_CATALOG, resolveRol, type RoleMeta } from '@/types';
+import ErpShell from '@/components/erp/ErpShell';
+import RrhhKpis from '@/components/rrhh/RrhhKpis';
+import ListadoEmpleados from '@/components/rrhh/ListadoEmpleados';
+import ColumnaDia from '@/components/rrhh/ColumnaDia';
+import PerfilEmpleado, { type AccionRRHH } from '@/components/rrhh/PerfilEmpleado';
+import TablaRecurso from '@/components/rrhh/TablaRecurso';
+import DialogoEmpleado from '@/components/rrhh/DialogoEmpleado';
+import DialogoRecurso from '@/components/rrhh/DialogoRecurso';
+import { Anillo, Barras, porcionesDeAreas } from '@/components/rrhh/graficos';
+import { hoyISO, mensajeError, type EmpleadoRRHH, type ResumenRRHH } from '@/components/rrhh/tipos';
+import type { RecursoKey } from '@/lib/rrhh/recursos';
+import { generarReporteRRHH } from '@/lib/rrhh/reportes-pdf';
 
-// Icono lucide por rol del catálogo
-function RoleIconCmp({ rol, className }: { rol: string; className?: string }) {
-  const icon = getRoleMeta(rol)?.icon;
-  switch (icon) {
-    case 'crown': return <Crown className={className} />;
-    case 'eye': return <Eye className={className} />;
-    case 'shield': return <Shield className={className} />;
-    case 'dollar': return <DollarSign className={className} />;
-    case 'headset': return <Headphones className={className} />;
-    case 'hardhat': return <HardHat className={className} />;
-    case 'wrench': return <Wrench className={className} />;
-    case 'clipboard': return <ClipboardList className={className} />;
-    default: return <Shield className={className} />;
-  }
-}
+type Tab =
+  | 'personal' | 'asistencia' | 'nomina' | 'vacaciones' | 'permisos'
+  | 'evaluaciones' | 'capacitaciones' | 'reclutamiento' | 'documentos';
 
-const DEFAULT_PASSWORD = "lycos2026";
+const TABS: readonly { id: Tab; label: string }[] = [
+  { id: 'personal', label: 'Personal' },
+  { id: 'asistencia', label: 'Asistencia' },
+  { id: 'nomina', label: 'Nómina' },
+  { id: 'vacaciones', label: 'Vacaciones' },
+  { id: 'permisos', label: 'Permisos' },
+  { id: 'evaluaciones', label: 'Evaluaciones' },
+  { id: 'capacitaciones', label: 'Capacitación' },
+  { id: 'reclutamiento', label: 'Reclutamiento' },
+  { id: 'documentos', label: 'Documentos' },
+];
 
-export default function EmpleadosPage() {
-  const [empleados, setEmpleados] = useState<any[]>([]);
-  const [sedes, setSedes] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [mounted, setMounted] = useState(false);
-  const [sedeFilter, setSedeFilter] = useState<string>("todas");
-  const [showPassword, setShowPassword] = useState(false);
+/** La acción rápida de la ficha abre el alta del recurso que corresponde. */
+const ACCION_A_RECURSO: Record<AccionRRHH, RecursoKey> = {
+  asistencia: 'asistencia',
+  vacaciones: 'vacaciones',
+  contrato: 'documentos',
+  evaluacion: 'evaluaciones',
+};
 
-  const { canViewAll, currentSede } = useSedeStore();
-  const { user, setUser } = useAppStore();
-  const userRole = resolveRol(user?.rol);
-  const isAdmin = userRole === 'admin';
-  const canEdit = isAdmin || userRole === 'supervisor';
+const RESUMEN_VACIO: ResumenRRHH = {
+  fecha: hoyISO(), empleados: [],
+  kpis: { total: 0, presentes: 0, tardanzas: 0, ausentes: 0, pctPresentes: 0, enVacaciones: 0, permisos: 0, cumpleanosMes: 0, rotacion: 0, bajas: 0 },
+  asistenciaHoy: { presentes: 0, tardanzas: 0, ausentes: 0 },
+  cumpleanos: [], vacacionesProximas: [], evaluaciones: [], capacitaciones: [],
+  distribucion: [], antiguedad: [], sinFechaIngreso: 0,
+};
+
+/**
+ * Recursos Humanos.
+ *
+ * Es la antigua Gestión de Empleados, ampliada: la plantilla sigue siendo la
+ * misma tabla `usuarios` con su alta, edición y baja, y encima se le suman
+ * asistencia, vacaciones, permisos, evaluaciones, capacitación, documentos y
+ * reclutamiento. Todos los indicadores se calculan de esos datos —no hay
+ * ningún número escrito a mano en la pantalla.
+ */
+export default function RecursosHumanosPage() {
+  const router = useRouter();
+  const { user } = useAppStore();
+  const { currentSede } = useSedeStore();
+  const sedeId = currentSede?.id || null;
+
+  const rol = resolveRol(user?.rol);
+  const isAdmin = rol === 'admin';
+  const canEdit = isAdmin || rol === 'supervisor';
   const canDelete = isAdmin;
-  const isMasterAdmin = user?.username === MASTER_ADMIN_USERNAME;
+  const esMaestro = user?.username === MASTER_ADMIN_USERNAME;
 
-  // Roles que el usuario actual puede asignar:
-  //  - admin: solo el usuario maestro 'administrador'.
-  //  - dueño y demás privilegiados: cualquier admin.
-  //  - supervisor: solo roles operativos (asignablePorSupervisor).
-  const assignableRoles: RoleMeta[] = ROLE_CATALOG.filter(r => {
-    if (r.nombre === 'admin') return isMasterAdmin;
+  // Quién puede asignar qué rol: la regla existente se mantiene intacta.
+  const rolesAsignables: RoleMeta[] = useMemo(() => ROLE_CATALOG.filter(r => {
+    if (r.nombre === 'admin') return esMaestro;
     if (!isAdmin) return r.asignablePorSupervisor;
     return true;
-  });
+  }), [isAdmin, esMaestro]);
 
-  const [formData, setFormData] = useState({
-    nombre: "",
-    apellido: "",
-    email: "",
-    username: "",
-    rol: "atencion_cliente",
-    sede_id: "",
-    telefono: "",
-    cedula: "",
-    especialidad: "",
-    password: DEFAULT_PASSWORD,
-  });
+  const [mounted, setMounted] = useState(false);
+  const [tab, setTab] = useState<Tab>('personal');
+  const [resumen, setResumen] = useState<ResumenRRHH>(RESUMEN_VACIO);
+  const [sedes, setSedes] = useState<{ id: string; nombre: string }[]>([]);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState('');
+  const [seleccionado, setSeleccionado] = useState<EmpleadoRRHH | null>(null);
 
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [showEditDialog, setShowEditDialog] = useState(false);
-  const [editFormData, setEditFormData] = useState<any>(null);
-  const [subiendoFoto, setSubiendoFoto] = useState(false);
+  const [dialogoEmpleado, setDialogoEmpleado] = useState<{ abierto: boolean; empleado: EmpleadoRRHH | null } | null>(null);
+  const [dialogoRecurso, setDialogoRecurso] = useState<RecursoKey | null>(null);
+  const [menuReportes, setMenuReportes] = useState(false);
 
-  /** Sube la foto de la cédula/carnet al bucket público 'avatars' (carpeta personal/). */
-  async function handleSubirFoto(file?: File | null) {
-    if (!file || !supabase) return;
-    setSubiendoFoto(true);
+  useEffect(() => { setMounted(true); }, []);
+
+  const cargar = useCallback(async () => {
+    setCargando(true);
+    setError('');
     try {
-      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
-      const path = `personal/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-      const { error } = await supabase.storage.from('avatars').upload(path, file, {
-        upsert: true, contentType: file.type || 'image/jpeg',
+      const qs = sedeId ? `?sede=${sedeId}` : '';
+      const r = await fetch(`/api/rrhh/resumen${qs}`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'No se pudo cargar');
+      setResumen(d);
+      // Se mantiene la selección si la persona sigue en la lista.
+      setSeleccionado(prev => {
+        const vigente = prev && d.empleados.find((e: EmpleadoRRHH) => e.id === prev.id);
+        return vigente || d.empleados[0] || null;
       });
-      if (error) throw error;
-      const { data } = supabase.storage.from('avatars').getPublicUrl(path);
-      if (data?.publicUrl) setEditFormData((f: any) => ({ ...f, foto_url: data.publicUrl }));
-    } catch (e: any) {
-      alert('No se pudo subir la imagen: ' + (e.message || e));
+    } catch (e: unknown) {
+      setError(mensajeError(e, 'Error al cargar'));
+      setResumen(RESUMEN_VACIO);
+    } finally {
+      setCargando(false);
     }
-    setSubiendoFoto(false);
-  }
+  }, [sedeId]);
+
+  useEffect(() => { if (mounted) cargar(); }, [mounted, cargar]);
 
   useEffect(() => {
-    setMounted(true);
-    fetchSedes();
-    fetchEmpleados();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSede?.id, sedeFilter]);
+    if (!supabase || !mounted) return;
+    supabase.from('sedes').select('id, nombre').order('nombre')
+      .then(({ data }) => setSedes(data || []));
+  }, [mounted]);
 
-  async function fetchSedes() {
-    if (!supabase) return;
-    const { data } = await supabase.from("sedes").select("*").order('nombre');
-    if (data) {
-      setSedes(data);
-      if (data.length > 0 && !formData.sede_id) {
-        setFormData(f => ({ ...f, sede_id: isAdmin ? "todas" : (currentSede?.id || data[0].id) }));
-      }
-    }
-  }
+  const empleados = resumen.empleados;
 
-  async function fetchEmpleados() {
-    if (!supabase) return;
-    setLoading(true);
-    let query = supabase.from("usuarios").select(`
-      id, rol, username, email, nombre, telefono, activo, especialidad, cedula, alias, foto_url,
-      sede:sedes(id, nombre)
-    `).order('nombre', { ascending: true });
+  /** Altas del mes en curso, para la variación del primer indicador. */
+  const altasMes = useMemo(() => {
+    const mes = resumen.fecha.slice(0, 7);
+    return empleados.filter(e => String(e.fecha_ingreso || '').slice(0, 7) === mes).length;
+  }, [empleados, resumen.fecha]);
 
-    // Admin: filtra por el selector; el resto siempre ve solo su sede
-    if (isAdmin) {
-      if (sedeFilter && sedeFilter !== "todas") query = query.eq("sede_id", sedeFilter);
-    } else if (currentSede) {
-      query = query.eq("sede_id", currentSede.id);
-    }
+  const irA = (destino: string) => {
+    if (destino === 'nomina') { router.push('/dashboard/nomina'); return; }
+    setTab(destino as Tab);
+  };
 
-    const { data, error } = await query;
-    if (error) console.error('Error fetching empleados:', error);
-    if (data) setEmpleados(data);
-    setLoading(false);
-  }
-
-  function roleLabel(rol: string): string {
-    return getRoleMeta(rol)?.label || rol.replace(/_/g, ' ');
-  }
-  function roleBadge(rol: string): string {
-    return getRoleMeta(rol)?.color || 'bg-slate-500/10 text-slate-500 border-slate-500/20';
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!canEdit) return;
-    setSaving(true);
-    try {
-      const payload: any = { ...formData };
-      // Supervisor siempre crea en su propia sede
-      if (!isAdmin) payload.sede_id = currentSede?.id || "";
-      if (payload.sede_id === "todas" || !payload.sede_id) {
-        payload.sede_id = currentSede?.id || sedes[0]?.id || "";
-      }
-      payload.activo = true;
-      payload.password_hash = (formData.password || DEFAULT_PASSWORD).trim();
-
-      const res = await fetch('/api/admin/create-user', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-
-      alert("Personal registrado exitosamente.");
-      setFormData({
-        nombre: "", apellido: "", email: "", username: "",
-        rol: assignableRoles[0]?.nombre || "atencion_cliente",
-        sede_id: isAdmin ? "todas" : (currentSede?.id || sedes[0]?.id || ""),
-        telefono: "", cedula: "", especialidad: "", password: DEFAULT_PASSWORD,
-      });
-      fetchEmpleados();
-    } catch (error: any) {
-      alert("Error: " + error.message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleDelete(id: string, nombre: string) {
-    if (!canDelete) return;
-    if (id === user?.id) { alert("No puedes eliminar tu propia cuenta."); return; }
-    if (!confirm(`¿Eliminar permanentemente a ${nombre}? Esta acción es irreversible.`)) return;
-    try {
-      const res = await fetch('/api/admin/delete-user', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setEmpleados(prev => prev.filter(e => e.id !== id));
-      alert("Usuario eliminado correctamente.");
-    } catch (error: any) {
-      alert("Error eliminando empleado: " + error.message);
-    }
-  }
-
-  const handleEditClick = async (emp: any) => {
-    if (!canEdit) return;
-    const defaults = PERMISOS_DEFAULT[emp.rol] || PERMISOS_DEFAULT.atencion_cliente;
-    setEditingId(emp.id);
-
-    let permisos: Permisos = JSON.parse(JSON.stringify(defaults));
-    if (isAdmin && supabase) {
-      const { data: pData } = await supabase
-        .from('usuarios').select('permisos').eq('id', emp.id).single();
-      if (pData?.permisos) {
-        const raw = typeof pData.permisos === 'string' ? JSON.parse(pData.permisos) : pData.permisos;
-        const merged: any = JSON.parse(JSON.stringify(defaults));
-        for (const [key, val] of Object.entries(raw)) {
-          if (key in merged) merged[key] = normalizePermiso(val as PermisoValue);
-        }
-        permisos = merged;
-      }
-    }
-
-    setEditFormData({
-      id: emp.id,
-      nombre: emp.nombre,
-      username: emp.username,
-      email: emp.email || '',
-      rol: emp.rol,
-      sede_id: emp.sede?.id || currentSede?.id || "",
-      telefono: emp.telefono || "",
-      especialidad: emp.especialidad || "",
-      cedula: emp.cedula || "",
-      alias: emp.alias || "",
-      foto_url: emp.foto_url || "",
-      activo: emp.activo !== false,
-      password: "",
-      permisos,
+  const cambiarActivo = async (e: EmpleadoRRHH, activo: boolean) => {
+    if (!confirm(`¿${activo ? 'Reactivar' : 'Dar de baja'} a ${e.nombre}?`)) return;
+    const r = await fetch('/api/admin/update-user', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: e.id, activo }),
     });
-    setShowEditDialog(true);
+    if (!r.ok) { alert((await r.json()).error || 'No se pudo actualizar'); return; }
+    cargar();
   };
 
-  const handleUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      const payload: any = { ...editFormData };
-      if (isAdmin) payload.permisos = editFormData.permisos;
-      else delete payload.permisos;
-      if (!payload.password) delete payload.password; // no cambiar si está vacío
+  /**
+   * Activa o desactiva a varios de golpe.
+   *
+   * Se va uno por uno a propósito: si falla el tercero, los dos primeros ya
+   * quedaron aplicados y se dice cuántos fueron, en vez de dejar el lote a
+   * medias sin que nadie sepa por dónde se cortó.
+   */
+  const cambiarActivoVarios = async (ids: readonly string[], activo: boolean) => {
+    const nombres = empleados.filter(e => ids.includes(e.id)).map(e => e.nombre);
+    if (nombres.length === 0) return;
+    if (!confirm(
+      `¿${activo ? 'Reactivar' : 'Dar de baja'} a ${nombres.length} persona(s)?\n\n`
+      + nombres.slice(0, 8).join(', ') + (nombres.length > 8 ? ` y ${nombres.length - 8} más` : ''),
+    )) return;
 
-      const res = await fetch('/api/admin/update-user', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-
-      alert("Usuario actualizado correctamente.");
-      setShowEditDialog(false);
-      fetchEmpleados();
-
-      // Si el admin editó sus propios permisos, refrescar su sesión
-      if (isAdmin && editingId === user?.id) {
-        fetch('/api/auth/me').then(r => r.json()).then(({ user: freshUser }) => {
-          if (freshUser) {
-            setUser({
-              id: freshUser.id || freshUser.username,
-              username: freshUser.username,
-              email: freshUser.email || `${freshUser.username}@lycosteam.com`,
-              nombre: freshUser.nombre,
-              rol: freshUser.rol,
-              avatar_url: freshUser.avatar_url,
-              sede_id: freshUser.sede_id,
-              permisos: freshUser.permisos,
-              created_at: ''
-            });
-          }
-        }).catch(() => {});
+    let ok = 0;
+    const fallos: string[] = [];
+    for (const id of ids) {
+      // Nadie se da de baja a sí mismo por descuido en un lote.
+      if (!activo && id === user?.id) { fallos.push('tu propia cuenta'); continue; }
+      try {
+        const r = await fetch('/api/admin/update-user', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, activo }),
+        });
+        if (r.ok) ok += 1;
+        else fallos.push(empleados.find(e => e.id === id)?.nombre || id);
+      } catch {
+        fallos.push(empleados.find(e => e.id === id)?.nombre || id);
       }
-    } catch (error: any) {
-      alert("Error actualizando: " + error.message);
-    } finally {
-      setSaving(false);
     }
+
+    setError(fallos.length > 0
+      ? `${ok} aplicado(s). No se pudo con: ${fallos.join(', ')}.`
+      : '');
+    cargar();
   };
 
-  function toggleVista(key: string) {
-    const p = normalizePermiso(editFormData.permisos[key]);
-    // Activar = solo lectura por defecto; Desactivar = sin ningún acceso.
-    const next = p.leer
-      ? { crear: false, leer: false, editar: false, eliminar: false }
-      : { crear: false, leer: true, editar: false, eliminar: false };
-    setEditFormData({ ...editFormData, permisos: { ...editFormData.permisos, [key]: next } });
-  }
+  const eliminar = async (e: EmpleadoRRHH) => {
+    if (e.id === user?.id) { alert('No puedes eliminar tu propia cuenta.'); return; }
+    if (!confirm(`¿Eliminar permanentemente a ${e.nombre}? Se borrará también su asistencia, vacaciones y demás registros. Esta acción es irreversible.`)) return;
+    const r = await fetch('/api/admin/delete-user', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: e.id }),
+    });
+    if (!r.ok) { alert((await r.json()).error || 'No se pudo eliminar'); return; }
+    cargar();
+  };
 
-  const renderTable = (list: any[], showCredentials: boolean) => {
-    if (loading) return <div className="flex justify-center p-8"><Loader2 className="w-8 h-8 animate-spin text-slate-400" /></div>;
-    if (list.length === 0) return (
-      <div className="text-center py-12 text-slate-500">
-        <Users className="w-12 h-12 mx-auto text-slate-200 mb-3" />
-        <p>No hay personal registrado en esta sección.</p>
-      </div>
-    );
-    return (
-      <div className="w-full overflow-x-auto">
-        <table className="w-full text-sm text-left">
-          <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 font-medium border-b border-slate-200 dark:border-slate-800">
-            <tr>
-              <th className="px-4 py-3 whitespace-nowrap">Rol</th>
-              <th className="px-4 py-3 whitespace-nowrap">Nombre</th>
-              {showCredentials && <th className="px-4 py-3 whitespace-nowrap">Usuario / Email</th>}
-              <th className="px-4 py-3 whitespace-nowrap">Sede</th>
-              <th className="px-4 py-3 whitespace-nowrap">Teléfono IA</th>
-              <th className="px-4 py-3 text-right">Acciones</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-            {list.map((emp) => (
-              <tr key={emp.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/50 transition-colors">
-                <td className="px-4 py-3">
-                  <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wider ${roleBadge(emp.rol)}`}>
-                    <RoleIconCmp rol={emp.rol} className="w-3 h-3" />
-                    {roleLabel(emp.rol)}
-                  </div>
-                </td>
-                <td className="px-4 py-3 font-semibold whitespace-nowrap text-slate-700 dark:text-slate-200">
-                  {emp.nombre}
-                  {emp.activo === false && <span className="ml-2 text-[10px] text-red-500 font-medium">(inactivo)</span>}
-                </td>
-                {showCredentials && (
-                  <td className="px-4 py-3">
-                    <div className="flex flex-col min-w-[150px]">
-                      <span className="text-xs text-slate-600 dark:text-slate-400 font-mono">@{emp.username}</span>
-                      {emp.email && <span className="text-[10px] text-slate-400 truncate max-w-[200px]">{emp.email}</span>}
-                    </div>
-                  </td>
-                )}
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-1.5 font-medium whitespace-nowrap text-xs text-slate-500">
-                    <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                    {emp.sede?.nombre || 'Sin sede'}
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-xs text-slate-500 font-mono">
-                  {emp.telefono ? (
-                    <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 px-2 py-0.5 rounded">
-                      <Shield className="w-3 h-3" /> {emp.telefono}
-                    </span>
-                  ) : '-'}
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <div className="flex items-center justify-end gap-2">
-                    {canEdit && (
-                      <Button variant="ghost" size="icon"
-                        className="text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30"
-                        onClick={() => handleEditClick(emp)}>
-                        <User className="h-4 w-4" />
-                      </Button>
-                    )}
-                    {canDelete && (
-                      <Button variant="ghost" size="icon"
-                        className="text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
-                        onClick={() => handleDelete(emp.id, emp.nombre)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    )}
-                    {!canEdit && <span className="text-[10px] text-slate-400 italic">Solo vista</span>}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    );
+  const exportarCSV = () => {
+    const cab = ['Nombre', 'Cedula', 'Cargo', 'Area', 'Rol', 'Contrato', 'Ingreso', 'Nacimiento', 'Telefono', 'Correo', 'Estado'];
+    const filas = empleados.map(e => [
+      e.nombre, e.cedula || '', e.cargo || '', e.area || '', e.rol, e.tipo_contrato || '',
+      e.fecha_ingreso || '', e.fecha_nacimiento || '', e.telefono || '', e.email || '', e.estado,
+    ]);
+    const esc = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
+    // BOM para que Excel abra los acentos bien.
+    const csv = '﻿' + [cab, ...filas].map(r => r.map(esc).join(';')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `rrhh_personal_${resumen.fecha}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  /**
+   * Los reportes en PDF.
+   *
+   * Antes el menú solo cambiaba de pestaña: enseñaba la tabla y ahí se
+   * acababa. Un reporte de RRHH existe para imprimirse o firmarse.
+   *
+   * Los datos se piden al generar y no se guardan en la página: la tabla de
+   * cada recurso ya trae los suyos, y duplicarlos aquí sería tener dos
+   * versiones de lo mismo que se pueden desincronizar.
+   */
+  const [generando, setGenerando] = useState<string | null>(null);
+
+  const descargarReporte = async (id: string) => {
+    setMenuReportes(false);
+    setGenerando(id);
+    setError('');
+    try {
+      const nombreDe = (empId: unknown) =>
+        empleados.find(e => e.id === empId)?.nombre || '—';
+      const txt = (v: unknown) => (v == null || v === '' ? '—' : String(v));
+
+      if (id === 'personal') {
+        generarReporteRRHH({
+          titulo: 'Directorio de personal',
+          subtitulo: `${empleados.length} persona(s)`,
+          sede: currentSede?.nombre,
+          columnas: ['Nombre', 'C.I.', 'Cargo', 'Área', 'Rol', 'Contrato', 'Ingreso', 'Teléfono', 'Estado'],
+          filas: empleados.map(e => [
+            e.nombre, txt(e.cedula), txt(e.cargo), txt(e.area), e.rol,
+            txt(e.tipo_contrato), txt(e.fecha_ingreso), txt(e.telefono), e.estado,
+          ]),
+          resumen: [
+            { etiqueta: 'Total', valor: String(empleados.length) },
+            { etiqueta: 'Activos', valor: String(empleados.filter(e => e.estado === 'activo').length) },
+            { etiqueta: 'Altas del mes', valor: String(altasMes) },
+          ],
+          apaisado: true,
+        });
+        return;
+      }
+
+      const q = new URLSearchParams();
+      if (sedeId) q.set('sede', sedeId);
+      const r = await fetch(`/api/rrhh/${id}?${q}`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'No se pudo obtener el reporte');
+      const filas = (d[id] || []) as Record<string, unknown>[];
+
+      if (id === 'asistencia') {
+        generarReporteRRHH({
+          titulo: 'Reporte de asistencia',
+          sede: currentSede?.nombre,
+          columnas: ['Empleado', 'Fecha', 'Entrada', 'Salida', 'Estado', 'Nota'],
+          filas: filas.map(a => [
+            nombreDe(a.empleado_id), txt(a.fecha), txt(a.hora_entrada),
+            txt(a.hora_salida), txt(a.estado), txt(a.nota),
+          ]),
+          resumen: [
+            { etiqueta: 'Presentes hoy', valor: String(resumen.asistenciaHoy.presentes) },
+            { etiqueta: 'Tardanzas hoy', valor: String(resumen.asistenciaHoy.tardanzas) },
+            { etiqueta: 'Ausentes hoy', valor: String(resumen.asistenciaHoy.ausentes) },
+          ],
+          nota: 'La asistencia se registra por persona y día. Un día sin registro no cuenta como ausencia.',
+        });
+        return;
+      }
+
+      if (id === 'vacaciones') {
+        generarReporteRRHH({
+          titulo: 'Reporte de vacaciones',
+          sede: currentSede?.nombre,
+          columnas: ['Empleado', 'Desde', 'Hasta', 'Días', 'Estado', 'Motivo'],
+          filas: filas.map(v => [
+            nombreDe(v.empleado_id), txt(v.fecha_inicio), txt(v.fecha_fin),
+            txt(v.dias), txt(v.estado), txt(v.motivo),
+          ]),
+          resumen: [
+            { etiqueta: 'Solicitudes', valor: String(filas.length) },
+            { etiqueta: 'Aprobadas', valor: String(filas.filter(v => v.estado === 'aprobada').length) },
+            { etiqueta: 'Pendientes', valor: String(filas.filter(v => v.estado === 'pendiente').length) },
+          ],
+        });
+        return;
+      }
+
+      if (id === 'evaluaciones') {
+        const puntajes = filas.map(e => Number(e.puntaje) || 0).filter(n => n > 0);
+        const media = puntajes.length
+          ? (puntajes.reduce((a, b) => a + b, 0) / puntajes.length).toFixed(1)
+          : '—';
+        generarReporteRRHH({
+          titulo: 'Reporte de desempeño',
+          sede: currentSede?.nombre,
+          columnas: ['Empleado', 'Período', 'Puntaje', 'Evalúa', 'Observaciones'],
+          filas: filas.map(e => [
+            nombreDe(e.empleado_id), txt(e.periodo), txt(e.puntaje),
+            txt(e.evaluador), txt(e.observaciones),
+          ]),
+          resumen: [
+            { etiqueta: 'Evaluaciones', valor: String(filas.length) },
+            { etiqueta: 'Puntaje medio', valor: String(media) },
+          ],
+        });
+      }
+    } catch (e: unknown) {
+      setError(mensajeError(e));
+    } finally {
+      setGenerando(null);
+    }
   };
 
   if (!mounted) return null;
 
-  const administrativos = empleados.filter(e => !getRoleMeta(e.rol)?.esTecnico);
-  const tecnicos = empleados.filter(e => getRoleMeta(e.rol)?.esTecnico);
-  const botAdmins = empleados.filter(e => resolveRol(e.rol) === 'admin' && e.telefono);
+  const subnav = TABS.filter(t => t.id !== 'nomina').map(t => ({ id: t.id, label: t.label }));
 
   return (
-    <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
-            <Users className="h-7 w-7 md:h-8 md:w-8 text-blue-600" />
-            Gestión de Empleados
+    <ErpShell
+      buscador="Buscar empleados, cargos, documentos..."
+      lema={['Nuestro equipo', 'también mueve', 'grandes historias']}
+      lemaPie={['Personas', 'que hacen', 'la diferencia']}
+      subnav={subnav}
+      subnavActivo={tab}
+      onSubnav={id => setTab(id as Tab)}
+    >
+      {/* ── Encabezado ─────────────────────────────────────────────────── */}
+      <header className="mb-3.5 flex flex-wrap items-center gap-3">
+        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#fff1e7] text-[#f97316]">
+          <UsersRound className="h-[24px] w-[24px]" aria-hidden />
+        </span>
+
+        <div className="min-w-0 flex-1">
+          <h1 className="text-[24px] font-extrabold leading-tight tracking-tight text-[#16181d]">
+            Recursos Humanos
           </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            {isAdmin ? 'Control total del personal en todas las sedes.' :
-             canEdit ? `Administra el personal de ${currentSede?.nombre || 'tu sede'}.` :
-             'Visualización del personal del sistema.'}
+          <p className="text-[13px] text-[#8a909c]">
+            Gestiona tu equipo de trabajo, asistencia, nómina, desempeño y todo el talento de tu taller.
           </p>
         </div>
-      </div>
 
-      {isAdmin && (
-        <div className="flex flex-wrap items-center gap-3 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/50 rounded-xl px-4 py-3">
-          <MapPin className="w-4 h-4 text-blue-500" />
-          <span className="text-xs font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider">Filtrar por Sede</span>
-          <Select value={sedeFilter} onValueChange={setSedeFilter}>
-            <SelectTrigger className="w-48 h-9 text-sm"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todas">
-                <div className="flex items-center gap-2"><Shield className="w-4 h-4 text-red-400" /><span className="font-medium">Todas las Sedes</span></div>
-              </SelectItem>
-              {sedes.map(s => (
-                <SelectItem key={s.id} value={s.id}>
-                  <div className="flex items-center gap-2"><MapPin className="w-3.5 h-3.5 text-slate-400" /><span>{s.nombre}</span></div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={cargar}
+            disabled={cargando}
+            aria-label="Actualizar"
+            className="flex h-[42px] w-[42px] items-center justify-center rounded-lg border border-[#e2e5ea] bg-white text-[#5b616e] hover:bg-[#f6f7f9] disabled:opacity-50"
+          >
+            <RefreshCw className={cn('h-4 w-4', cargando && 'animate-spin')} aria-hidden />
+          </button>
+
+          <button
+            onClick={exportarCSV}
+            className="flex h-[42px] items-center gap-2 rounded-lg border border-[#e2e5ea] bg-white px-3.5 text-[13px] font-medium text-[#3d4350] hover:bg-[#f6f7f9]"
+          >
+            <Download className="h-4 w-4" aria-hidden />
+            Exportar
+          </button>
+
+          <div className="relative">
+            <button
+              onClick={() => setMenuReportes(v => !v)}
+              aria-expanded={menuReportes}
+              className="flex h-[42px] items-center gap-2 rounded-lg border border-[#e2e5ea] bg-white px-3.5 text-[13px] font-medium text-[#3d4350] hover:bg-[#f6f7f9]"
+            >
+              <FileBarChart className="h-4 w-4" aria-hidden />
+              {generando ? 'Generando…' : 'Reportes'}
+              <ChevronDown className="h-3.5 w-3.5 text-[#9ba1ab]" aria-hidden />
+            </button>
+
+            {menuReportes && (
+              <div className="absolute right-0 top-[48px] z-30 w-[220px] overflow-hidden rounded-lg border border-[#e8eaed] bg-white py-1 shadow-lg">
+                {([
+                  ['personal', 'Directorio de personal'],
+                  ['asistencia', 'Reporte de asistencia'],
+                  ['vacaciones', 'Reporte de vacaciones'],
+                  ['evaluaciones', 'Reporte de desempeño'],
+                ] as const).map(([id, label]) => (
+                  <button
+                    key={id}
+                    onClick={() => descargarReporte(id)}
+                    disabled={generando !== null}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-[#3d4350] hover:bg-[#f6f7f9]"
+                  >
+                    <FileBarChart className="h-3.5 w-3.5 shrink-0 text-[#9ba1ab]" aria-hidden />
+                    {label}
+                  </button>
+                ))}
+                <button
+                  onClick={() => { setMenuReportes(false); router.push('/dashboard/nomina'); }}
+                  className="block w-full border-t border-[#f2f3f5] px-3 py-2 text-left text-[12.5px] text-[#3d4350] hover:bg-[#f6f7f9]"
+                >
+                  Ir a Nómina
+                </button>
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={() => setDialogoEmpleado({ abierto: true, empleado: null })}
+            disabled={!canEdit}
+            title={!canEdit ? 'No tienes permiso para registrar personal' : undefined}
+            className="flex h-[42px] items-center gap-2 rounded-lg bg-[#f97316] px-4 text-[13.5px] font-semibold text-white transition-colors hover:bg-[#ea580c] disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            <Plus className="h-[17px] w-[17px]" aria-hidden />
+            Nuevo empleado
+          </button>
         </div>
+      </header>
+
+      {error && (
+        <p role="alert" className="mb-3.5 rounded-lg border border-[#f5c2c2] bg-[#fdeaea] px-3.5 py-2.5 text-[13px] text-[#b91c1c]">
+          {error}
+        </p>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {canEdit && (
-          <Card className="lg:col-span-1 border-slate-200 dark:border-slate-800 shadow-sm h-fit lg:sticky lg:top-6">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-lg">Nuevo Registro</CardTitle>
-              <CardDescription>Añade personal y asígnale un rol.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Nombre <span className="text-red-400">*</span></Label>
-                    <Input required value={formData.nombre} onChange={e => setFormData({ ...formData, nombre: e.target.value })} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Apellido <span className="text-red-400">*</span></Label>
-                    <Input required value={formData.apellido} onChange={e => setFormData({ ...formData, apellido: e.target.value })} />
-                  </div>
-                </div>
+      <RrhhKpis resumen={resumen} altasMes={altasMes} onIrA={irA} />
 
-                <div className="space-y-2">
-                  <Label>Nombre de Usuario</Label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-mono text-sm">@</span>
-                    <Input placeholder="usuario123" className="pl-7 font-mono" value={formData.username}
-                      onChange={e => setFormData({ ...formData, username: e.target.value.toLowerCase().replace(/\s+/g, '') })} />
-                  </div>
-                  <p className="text-[10px] text-slate-400">Si se deja vacío, se generará automáticamente.</p>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Correo Electrónico</Label>
-                    <Input type="email" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} placeholder="opcional@correo.com" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Teléfono WhatsApp</Label>
-                    <Input placeholder="Ej: 584123343519" value={formData.telefono} onChange={e => setFormData({ ...formData, telefono: e.target.value })} />
-                    <p className="text-[10px] text-slate-400">Requerido solo para modo dios IA</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Cédula de Identidad</Label>
-                    <Input placeholder="Ej: V-16.278.639" className="font-mono" value={formData.cedula}
-                      onChange={e => setFormData({ ...formData, cedula: e.target.value })} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Área de trabajo</Label>
-                    <select
-                      value={formData.especialidad}
-                      onChange={e => setFormData({ ...formData, especialidad: e.target.value })}
-                      className="w-full h-10 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
-                    >
-                      <option value="">— Sin área —</option>
-                      {AREAS.map(a => <option key={a.key} value={a.key}>{a.label}</option>)}
-                    </select>
-                    <p className="text-[10px] text-slate-400">Zona del taller donde comisiona (técnicos).</p>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Rol de Acceso</Label>
-                  <Select value={formData.rol} onValueChange={v => setFormData({ ...formData, rol: v })}>
-                    <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {assignableRoles.map(r => (
-                        <SelectItem key={r.nombre} value={r.nombre}>
-                          <div className="flex items-center gap-2">
-                            <RoleIconCmp rol={r.nombre} className="w-4 h-4" />
-                            <span>{r.label}</span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-[10px] text-slate-400">{getRoleMeta(formData.rol)?.descripcion}</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Sede Asignada</Label>
-                  <Select value={isAdmin ? formData.sede_id : (currentSede?.id || "")}
-                    onValueChange={v => setFormData({ ...formData, sede_id: v })}
-                    disabled={!isAdmin}>
-                    <SelectTrigger className="h-11"><SelectValue placeholder="Selecciona una sede" /></SelectTrigger>
-                    <SelectContent>
-                      {isAdmin && <SelectItem value="todas"><span className="font-medium">Sede actual / principal</span></SelectItem>}
-                      {sedes.map(s => <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  {!isAdmin && <p className="text-[10px] text-slate-400">Se asigna a tu sede: {currentSede?.nombre}.</p>}
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Contraseña inicial</Label>
-                  <div className="relative">
-                    <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                    <Input type={showPassword ? "text" : "password"} className="pl-9 pr-9 font-mono"
-                      value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} />
-                    <button type="button" onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-                      {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-slate-400">Por defecto: {DEFAULT_PASSWORD} · El empleado puede cambiarla luego.</p>
-                </div>
-
-                <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white" disabled={saving}>
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
-                  Registrar Personal
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
-        )}
-
-        <div className={`${canEdit ? 'lg:col-span-2' : 'lg:col-span-3'} space-y-6`}>
-          <Card className="border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-            <CardHeader className="bg-slate-50/50 dark:bg-slate-900/50 border-b border-border/50">
-              <div className="flex items-center gap-2">
-                <Shield className="w-5 h-5 text-blue-500" />
-                <div>
-                  <CardTitle className="text-lg">Personal Administrativo</CardTitle>
-                  <CardDescription>Administración, supervisores, cobranza y atención al cliente</CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">{renderTable(administrativos, true)}</CardContent>
-          </Card>
-
-          <Card className="border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-            <CardHeader className="bg-slate-50/50 dark:bg-slate-900/50 border-b border-border/50">
-              <div className="flex items-center gap-2">
-                <Wrench className="w-5 h-5 text-amber-500" />
-                <div>
-                  <CardTitle className="text-lg">Personal Técnico (Taller)</CardTitle>
-                  <CardDescription>
-                    Organizado por área de trabajo — la misma zona que usa el motor de comisiones
-                  </CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="p-3 sm:p-4">
-              {loading ? (
-                <div className="flex justify-center p-8">
-                  <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
-                </div>
-              ) : (
-                <PersonalTecnico
-                  empleados={tecnicos as any}
-                  canEdit={canEdit}
-                  canDelete={canDelete}
-                  onEdit={(e: any) => handleEditClick(e)}
-                  onDelete={handleDelete}
-                  onChanged={fetchEmpleados}
-                />
+      {/* ── Pestañas ───────────────────────────────────────────────────── */}
+      <div className="mb-3.5 overflow-x-auto" role="tablist">
+        <div className="flex min-w-max items-center gap-1.5 border-b border-[#e8eaed] pb-2">
+          {TABS.map(t => (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={tab === t.id}
+              onClick={() => irA(t.id)}
+              className={cn(
+                'h-[36px] rounded-lg px-3.5 text-[13px] font-medium transition-colors',
+                tab === t.id ? 'bg-[#f97316] font-semibold text-white' : 'text-[#5b616e] hover:bg-[#f4f5f7]',
               )}
-            </CardContent>
-          </Card>
-
-          <Card className="border-emerald-200 dark:border-emerald-900/50 shadow-sm overflow-hidden bg-emerald-50/10">
-            <CardHeader className="bg-emerald-50/50 dark:bg-emerald-900/20 border-b border-emerald-100 dark:border-emerald-900/50">
-              <div className="flex items-center gap-2">
-                <Shield className="w-5 h-5 text-emerald-500" />
-                <div>
-                  <CardTitle className="text-lg text-emerald-800 dark:text-emerald-400">Administradores del Bot (Modo Dios IA)</CardTitle>
-                  <CardDescription className="text-emerald-600/80 dark:text-emerald-400/70">
-                    Números de WhatsApp con acceso total al chatbot.
-                  </CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">{renderTable(botAdmins, true)}</CardContent>
-          </Card>
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* MODAL DE EDICIÓN */}
-      {showEditDialog && editFormData && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 md:p-6">
-          <Card className="w-full max-w-2xl border-slate-200 dark:border-slate-800 shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
-            <CardHeader className="bg-slate-50/50 dark:bg-slate-900/50 border-b shrink-0 py-4">
-              <CardTitle className="text-xl flex items-center gap-2">
-                <User className="w-5 h-5 text-blue-500" /> Editar Usuario
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-4 sm:p-6 overflow-y-auto custom-scrollbar flex-1">
-              <form onSubmit={handleUpdate} className="space-y-5">
-                <div className="space-y-2">
-                  <Label>Nombre Completo <span className="text-red-400">*</span></Label>
-                  <Input required value={editFormData.nombre} onChange={e => setEditFormData({ ...editFormData, nombre: e.target.value })} />
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Usuario <span className="text-red-400">*</span></Label>
-                    <Input required value={editFormData.username} onChange={e => setEditFormData({ ...editFormData, username: e.target.value })} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Email</Label>
-                    <Input type="email" value={editFormData.email} onChange={e => setEditFormData({ ...editFormData, email: e.target.value })} placeholder="opcional@correo.com" />
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Teléfono WhatsApp (Modo Dios IA)</Label>
-                    <Input value={editFormData.telefono} onChange={e => setEditFormData({ ...editFormData, telefono: e.target.value })} placeholder="Opcional" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Nueva contraseña</Label>
-                    <Input type="text" className="font-mono" value={editFormData.password}
-                      onChange={e => setEditFormData({ ...editFormData, password: e.target.value })}
-                      placeholder="Dejar vacío para no cambiar" />
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Rol</Label>
-                    <Select value={editFormData.rol} onValueChange={v => {
-                      const updated = { ...editFormData, rol: v };
-                      if (isAdmin) updated.permisos = JSON.parse(JSON.stringify(PERMISOS_DEFAULT[v] || PERMISOS_DEFAULT.atencion_cliente));
-                      setEditFormData(updated);
-                    }}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {(assignableRoles.some(r => r.nombre === editFormData.rol)
-                          ? assignableRoles
-                          : [...assignableRoles, getRoleMeta(editFormData.rol)].filter(Boolean) as RoleMeta[]
-                        ).map(r => (
-                          <SelectItem key={r.nombre} value={r.nombre}>
-                            <div className="flex items-center gap-2"><RoleIconCmp rol={r.nombre} className="w-4 h-4" />{r.label}</div>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Sede</Label>
-                    <Select value={editFormData.sede_id} onValueChange={v => setEditFormData({ ...editFormData, sede_id: v })} disabled={!isAdmin}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {sedes.map(s => <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
+      {tab === 'personal' ? (
+        <div className="flex flex-col gap-3.5 xl:flex-row">
+          <div className="flex min-w-0 flex-1 flex-col gap-3.5">
+            <div className="flex flex-col gap-3.5 xl:flex-row">
+              <ListadoEmpleados
+                empleados={empleados}
+                seleccionado={seleccionado}
+                cargando={cargando}
+                canEdit={canEdit}
+                canDelete={canDelete}
+                onSeleccionar={setSeleccionado}
+                onEditar={e => setDialogoEmpleado({ abierto: true, empleado: e })}
+                onActivar={cambiarActivo}
+                onActivarVarios={cambiarActivoVarios}
+                onEliminar={eliminar}
+              />
+              <ColumnaDia resumen={resumen} onIrA={irA} />
+            </div>
 
-                {/* Área de trabajo + estado (personal técnico) */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Área de trabajo</Label>
-                    <select
-                      value={editFormData.especialidad || ''}
-                      onChange={e => setEditFormData({ ...editFormData, especialidad: e.target.value })}
-                      className="w-full h-10 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
-                    >
-                      <option value="">— Sin área asignada —</option>
-                      {AREAS.map(a => <option key={a.key} value={a.key}>{a.label}</option>)}
-                    </select>
-                    <p className="text-[10px] text-slate-400">Determina en qué zona del taller se agrupa y comisiona.</p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Estado</Label>
-                    <label className="flex items-center gap-2 h-10 px-3 rounded-md border border-slate-200 dark:border-slate-700 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={editFormData.activo !== false}
-                        onChange={e => setEditFormData({ ...editFormData, activo: e.target.checked })}
-                        className="w-4 h-4 accent-emerald-500"
-                      />
-                      <span className="text-sm font-medium">
-                        {editFormData.activo !== false ? 'Activo' : 'Inactivo'}
-                      </span>
-                    </label>
-                    <p className="text-[10px] text-slate-400">Los inactivos no aparecen en los selectores de la orden.</p>
-                  </div>
-                </div>
-
-                {/* Identificación: cédula + alias + foto (cédula/carnet) */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Cédula de identidad</Label>
-                    <Input
-                      placeholder="Ej: V-16.278.639"
-                      className="font-mono"
-                      value={editFormData.cedula || ''}
-                      onChange={e => setEditFormData({ ...editFormData, cedula: e.target.value })}
+            {/* Gráficos de la plantilla */}
+            <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
+              <section className="rounded-xl border border-[#e8eaed] bg-white px-4 py-3.5">
+                <h2 className="text-[14.5px] font-bold text-[#16181d]">Distribución por áreas</h2>
+                {resumen.distribucion.length === 0 ? (
+                  <p className="py-8 text-center text-[12.5px] text-[#8a909c]">Sin personal para distribuir.</p>
+                ) : (
+                  <div className="mt-3 flex flex-wrap items-center gap-5">
+                    <Anillo
+                      porciones={porcionesDeAreas(resumen.distribucion)}
+                      total={resumen.kpis.total}
+                      titulo={String(resumen.kpis.total)}
+                      subtitulo="Empleados"
+                      size={148}
+                      grosor={22}
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Alias (hojas de pago)</Label>
-                    <Input
-                      placeholder='Ej: "NELSON"'
-                      value={editFormData.alias || ''}
-                      onChange={e => setEditFormData({ ...editFormData, alias: e.target.value })}
-                    />
-                    <p className="text-[10px] text-slate-400">Nombre con el que aparece en las relaciones de pago.</p>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Foto / Cédula escaneada</Label>
-                  <div className="flex items-center gap-3">
-                    {editFormData.foto_url ? (
-                      <a href={editFormData.foto_url} target="_blank" rel="noopener noreferrer" title="Ver imagen completa" className="shrink-0">
-                        {/* La imagen se recorta/adapta automáticamente al recuadro (object-cover) */}
-                        <img
-                          src={editFormData.foto_url}
-                          alt="Documento del empleado"
-                          className="w-16 h-16 rounded-xl object-cover border-2 border-blue-200 dark:border-blue-800 shadow-sm"
-                        />
-                      </a>
-                    ) : (
-                      <div className="w-16 h-16 rounded-xl bg-slate-100 dark:bg-slate-800 border border-dashed border-slate-300 dark:border-slate-600 flex items-center justify-center shrink-0">
-                        <User className="w-6 h-6 text-slate-300 dark:text-slate-600" />
-                      </div>
-                    )}
-                    <div className="flex-1 space-y-1">
-                      <input
-                        type="file"
-                        accept="image/*"
-                        disabled={subiendoFoto}
-                        onChange={e => handleSubirFoto(e.target.files?.[0])}
-                        className="block w-full text-xs text-slate-500 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-600 dark:file:bg-blue-950/40 dark:file:text-blue-400 file:text-xs file:font-bold hover:file:bg-blue-100 file:cursor-pointer"
-                      />
-                      <p className="text-[10px] text-slate-400">
-                        {subiendoFoto ? 'Subiendo imagen…' : 'Sube la foto de la cédula o carnet; se adapta sola al recuadro.'}
-                      </p>
-                    </div>
-                    {editFormData.foto_url && (
-                      <button type="button" onClick={() => setEditFormData({ ...editFormData, foto_url: '' })}
-                        className="text-[10px] text-red-400 hover:text-red-500 font-bold shrink-0">
-                        Quitar
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {isAdmin && editFormData.rol !== 'admin' && (
-                  <div className="space-y-5 pt-4 border-t border-border/30">
-                    <div className="space-y-3">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-                        <Label className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                          <Shield className="w-3.5 h-3.5 text-blue-500" /> Vistas del Sistema
-                        </Label>
-                        <span className="text-[10px] text-slate-400">Activar / Desactivar acceso a cada módulo</span>
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                        {Object.entries(editFormData.permisos || {}).map(([key, crud]) => {
-                          const p = normalizePermiso(crud as PermisoValue);
-                          const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-                          return (
-                            <label key={key}
-                              className={`flex items-center justify-between px-2.5 py-2 rounded-lg border text-xs cursor-pointer transition-all select-none ${
-                                p.leer ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800 shadow-sm'
-                                       : 'bg-slate-50 dark:bg-slate-900/50 border-slate-200 dark:border-slate-700 hover:border-slate-300'}`}>
-                              <span className={`font-medium truncate mr-2 ${p.leer ? 'text-blue-700 dark:text-blue-300' : 'text-slate-500'}`}>{label}</span>
-                              <span role="checkbox" tabIndex={0} aria-checked={p.leer}
-                                onClick={(e) => { e.preventDefault(); toggleVista(key); }}
-                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleVista(key); } }}
-                                className={`w-8 h-4 rounded-full transition-colors duration-200 relative inline-block flex-shrink-0 ${p.leer ? 'bg-blue-500' : 'bg-slate-300 dark:bg-slate-600'}`}>
-                                <span className={`absolute w-3 h-3 bg-white rounded-full top-0.5 shadow-sm transition-transform duration-200 ${p.leer ? 'left-[18px]' : 'left-[2px]'}`} />
-                              </span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <div className="space-y-3 border-t border-border/20 pt-4">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <Label className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                          <Shield className="w-3.5 h-3.5 text-amber-500" /> Permisos CRUD del Sistema
-                        </Label>
-                        <button type="button"
-                          onClick={() => setEditFormData({ ...editFormData, permisos: JSON.parse(JSON.stringify(PERMISOS_DEFAULT[editFormData.rol] || PERMISOS_DEFAULT.atencion_cliente)) })}
-                          className="text-[10px] text-blue-500 hover:text-blue-600 font-medium">Restaurar por defecto</button>
-                      </div>
-                      <div className="overflow-x-auto max-h-64 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 custom-scrollbar">
-                        <table className="w-full text-xs min-w-[400px]">
-                          <thead className="bg-slate-50 dark:bg-slate-900/50 sticky top-0 z-10 shadow-sm">
-                            <tr className="border-b border-slate-200 dark:border-slate-700">
-                              <th className="text-left py-2 px-3 font-semibold text-slate-500 uppercase tracking-wider">Módulo</th>
-                              <th className="text-center py-2 px-1 font-bold text-green-600 text-[10px] w-10" title="Crear">C</th>
-                              <th className="text-center py-2 px-1 font-bold text-blue-600 text-[10px] w-10" title="Leer">R</th>
-                              <th className="text-center py-2 px-1 font-bold text-amber-600 text-[10px] w-10" title="Editar">U</th>
-                              <th className="text-center py-2 px-1 font-bold text-red-600 text-[10px] w-10" title="Eliminar">D</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {Object.entries(editFormData.permisos || {}).map(([key, crud]) => {
-                              const p = normalizePermiso(crud as PermisoValue);
-                              return (
-                                <tr key={key} className="border-b border-slate-100 dark:border-slate-800/30 hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
-                                  <td className="py-2 px-3 font-medium text-slate-700 dark:text-slate-300 whitespace-nowrap text-[11px]">
-                                    {key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
-                                  </td>
-                                  {(['crear', 'leer', 'editar', 'eliminar'] as const).map(action => (
-                                    <td key={action} className="text-center py-2 px-1">
-                                      <input type="checkbox" checked={p[action]}
-                                        onChange={() => setEditFormData({ ...editFormData, permisos: { ...editFormData.permisos, [key]: { ...p, [action]: !p[action] } } })}
-                                        className="w-4 h-4 accent-blue-600 rounded cursor-pointer" />
-                                    </td>
-                                  ))}
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                      <p className="text-[10px] text-slate-400 text-center">C = Crear · R = Leer · U = Editar · D = Eliminar</p>
-                    </div>
+                    <ul className="min-w-[160px] flex-1 space-y-2">
+                      {porcionesDeAreas(resumen.distribucion).map(p => (
+                        <li key={p.label} className="flex items-center gap-2">
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: p.color }} aria-hidden />
+                          <span className="min-w-0 flex-1 truncate text-[12px] text-[#3d4350]">{p.label}</span>
+                          <span className="num text-[12px] text-[#8a909c]">
+                            {p.valor} ({Math.round((p.valor / Math.max(1, resumen.kpis.total)) * 100)}%)
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 )}
+              </section>
 
-                <div className="flex gap-3 pt-6 mt-4 border-t border-border/10">
-                  <Button type="button" variant="outline" className="flex-1" onClick={() => setShowEditDialog(false)}>Cancelar</Button>
-                  <Button type="submit" className="flex-1 bg-blue-600 text-white" disabled={saving}>
-                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Guardar Cambios"}
-                  </Button>
+              <section className="rounded-xl border border-[#e8eaed] bg-white px-4 py-3.5">
+                <h2 className="text-[14.5px] font-bold text-[#16181d]">Antigüedad del personal</h2>
+                <div className="mt-3">
+                  <Barras datos={resumen.antiguedad} />
                 </div>
-              </form>
-            </CardContent>
-          </Card>
+                {resumen.sinFechaIngreso > 0 && (
+                  <p className="mt-2 text-[11px] leading-snug text-[#9ba1ab]">
+                    {resumen.sinFechaIngreso} empleado{resumen.sinFechaIngreso === 1 ? '' : 's'} sin fecha de ingreso
+                    {resumen.sinFechaIngreso === 1 ? ' no aparece' : ' no aparecen'} en el gráfico. Se completa en su ficha.
+                  </p>
+                )}
+              </section>
+            </div>
+          </div>
+
+          <PerfilEmpleado
+            empleado={seleccionado}
+            resumen={resumen}
+            sedeNombre={currentSede?.nombre}
+            canEdit={canEdit}
+            onIrA={irA}
+            onFicha={() => seleccionado && setDialogoEmpleado({ abierto: true, empleado: seleccionado })}
+            onAccion={a => setDialogoRecurso(ACCION_A_RECURSO[a])}
+          />
         </div>
+      ) : tab === 'nomina' ? (
+        <section className="flex min-h-[240px] flex-col items-center justify-center rounded-xl border border-[#e8eaed] bg-white px-6 text-center">
+          <Loader2 className="h-6 w-6 animate-spin text-[#f97316]" aria-hidden />
+          <p className="mt-2 text-[13px] text-[#8a909c]">Abriendo Nómina…</p>
+        </section>
+      ) : (
+        <TablaRecurso
+          recurso={tab as RecursoKey}
+          empleados={empleados}
+          sedeId={sedeId}
+          canEdit={canEdit}
+          canDelete={canDelete}
+          empleadoFoco={seleccionado?.id || null}
+          onCambio={cargar}
+        />
       )}
-    </div>
+
+      {dialogoEmpleado?.abierto && (
+        <DialogoEmpleado
+          empleado={dialogoEmpleado.empleado}
+          sedes={sedes}
+          sedeActual={sedeId}
+          rolesAsignables={rolesAsignables}
+          onCerrar={() => setDialogoEmpleado(null)}
+          onGuardado={cargar}
+        />
+      )}
+
+      {dialogoRecurso && (
+        <DialogoRecurso
+          recurso={dialogoRecurso}
+          empleados={empleados}
+          empleadoId={seleccionado?.id || null}
+          onCerrar={() => setDialogoRecurso(null)}
+          onGuardado={cargar}
+        />
+      )}
+    </ErpShell>
   );
 }

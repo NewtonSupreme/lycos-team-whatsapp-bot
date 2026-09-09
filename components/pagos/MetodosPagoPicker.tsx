@@ -60,7 +60,11 @@ export default function MetodosPagoPicker({
     setCargandoTasas(false);
   };
 
-  useEffect(() => { cargarTasas(); /* eslint-disable-next-line */ }, [fecha]);
+  // `cargarTasas` se redefine en cada render, así que no puede ir en las
+  // dependencias sin provocar una consulta por render. La fecha es lo único
+  // que debe volver a disparar la carga.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { cargarTasas(); }, [fecha]);
 
   /** Tasa efectiva (unidades de moneda local por 1 USD) para un método. */
   const tasaDe = (key: string): { tasa: number; simbolo: string; etiqueta: string } => {

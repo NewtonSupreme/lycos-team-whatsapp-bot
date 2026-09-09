@@ -9,6 +9,10 @@ import { useSedeStore } from '@/lib/store/useSedeStore';
 import { logActivity } from '@/lib/activity';
 import { cn } from '@/lib/utils';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
+import PersonalYComisiones, { type AsignacionEmpleado } from '@/components/nomina/PersonalYComisiones';
+import { asignacionesValidas, buildJobsDesdeAsignacion } from '@/lib/nomina/asignaciones';
+import { categoriaToZona, inferirCategoria } from '@/lib/categorias';
+import { getLocalISODate } from '@/lib/utils';
 
 interface ServicioRow {
   id: string;
@@ -107,11 +111,12 @@ export default function TallerPage() {
   const [customTypes, setCustomTypes] = useState<string[]>([]);
   const [costoEstimado, setCostoEstimado] = useState('');
 
-  // Encargados
-  const [encargados, setEncargados] = useState<{nombre: string, rol: string}[]>([]);
-  const [staffSearch, setStaffSearch] = useState('');
-  const [staffSuggestions, setStaffSuggestions] = useState<{nombre: string, rol: string}[]>([]);
-  const [showStaffResults, setShowStaffResults] = useState(false);
+  // Personal a cargo. Antes esto era un buscador de texto libre: el nombre se
+  // guardaba dentro de `notas` y no quedaba enlazado a ninguna ficha, así que
+  // el trabajo nunca generaba comisión. Peor: si el nombre no existía, creaba
+  // en silencio un usuario nuevo e inactivo, y así se llenó la base de fichas
+  // duplicadas —incluida una de Freddy a la que apuntaban 95 órdenes—.
+  const [asignaciones, setAsignaciones] = useState<AsignacionEmpleado[]>([]);
 
   // Client search
   const [clientSearch, setClientSearch] = useState('');
@@ -270,16 +275,6 @@ export default function TallerPage() {
 
   useEffect(() => { fetchCustomTypes(); }, [fetchCustomTypes]);
 
-  const fetchStaff = useCallback(async () => {
-    if (!supabase) return;
-    const { data } = await withSedeFilter(supabase.from('usuarios'))
-      .select('nombre, rol')
-      .in('rol', ['mecanico', 'mecanico_acceso', 'jefe_taller', 'jefe_taller_acceso', 'admin', 'empleado']);
-    if (data) setStaffSuggestions(data);
-  }, []);
-
-  useEffect(() => { fetchStaff(); }, [fetchStaff]);
-
   const updateEstado = async (id: string, nuevoEstado: string) => {
     if (!can('taller', 'editar')) return alert('No tienes permisos para cambiar el estado de los tickets.');
     const servicio = servicios.find(s => s.id === id);
@@ -356,29 +351,16 @@ export default function TallerPage() {
       const finalTipo = isCustomType ? 'otro' : tipo;
       const finalTipoPersonalizado = isCustomType ? (tipo === 'personalizado' ? tipoPersonalizado.trim() : tipo) : null;
 
-      // 1. Manage staff
-      const newEncargadosPromises = encargados.map(async (e) => {
-        const exists = staffSuggestions.some(s => s.nombre.toLowerCase() === e.nombre.toLowerCase());
-        if (!exists) {
-          const { currentSede } = useSedeStore.getState();
-          const timestamp = Date.now();
-          const username = `${e.nombre.replace(/\s+/g, '_').toLowerCase()}_${timestamp}`;
-          
-          await fetch('/api/admin/create-user', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              nombre: e.nombre,
-              email: `${username}@lycosteam.internal`,
-              password_hash: 'NO_ACCESS_STAFF',
-              rol: e.rol,
-              activo: false,
-              sede_id: currentSede?.id || ''
-            })
-          });
-        }
-      });
-      await Promise.all(newEncargadosPromises);
+      // Quién hizo el trabajo es obligatorio: es el dato del que sale la
+      // comisión, y sin él la orden nace ya fuera de nómina.
+      const validas = asignacionesValidas(asignaciones);
+      if (validas.length === 0) {
+        throw new Error('Indica el personal a cargo o marca que lo hizo el taller.');
+      }
+
+      // Aquí antes se creaba un usuario nuevo por cada nombre que no existiera:
+      // 24 de las 31 fichas de la base salieron de eso, sin acceso y a medias.
+      // Ahora solo se elige personal ya registrado, así que no hay nada que crear.
 
       // 2. Create client if needed
       if (!finalClienteId) {
@@ -436,9 +418,7 @@ export default function TallerPage() {
         registrado_por: user?.nombre || 'Admin',
         fecha: now.toISOString().split('T')[0],
         hora: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
-        notas: encargados.length > 0 
-          ? `Encargados: ${encargados.map(e => `${e.nombre} (${e.rol === 'jefe_taller' ? 'Jefe' : 'Mecánico'})`).join(', ')}`
-          : '',
+        notas: '',
         seguimiento: [
           {
             fecha: now.toISOString(),
@@ -447,17 +427,42 @@ export default function TallerPage() {
             tipo: 'sistema',
             progreso: 0,
           },
-          ...encargados.map(e => ({
+          ...validas.map(a => ({
             fecha: now.toISOString(),
-            accion: `Encargado asignado: ${e.nombre} (${e.rol === 'jefe_taller' ? 'Jefe de Taller' : 'Mecánico'})`,
+            accion: `Encargado asignado: ${a.es_taller ? 'El taller' : a.nombre}`,
             usuario: user?.nombre || 'Admin',
             tipo: 'sistema'
           }))
         ],
       };
 
-      const { error } = await withSedeFilter(supabase.from('servicios')).insert(withSedeInsert(payload));
+      const { data: nuevoServicio, error } = await withSedeFilter(supabase.from('servicios'))
+        .insert(withSedeInsert(payload)).select().single();
       if (error) throw error;
+
+      // El trabajo entra a nómina por el mismo camino que la orden de servicio y
+      // el punto de venta. Sin esto el trabajo quedaba cobrado y sin comisión,
+      // que es exactamente lo que pasó con cientos de órdenes de esta pantalla.
+      try {
+        await fetch('/api/nomina/jobs', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sede: useSedeStore.getState().currentSede?.id || null,
+            referencia_id: nuevoServicio?.id || null,
+            jobs: validas.flatMap(a => buildJobsDesdeAsignacion(a, {
+              items: [],
+              costoTotal: parseFloat(costoEstimado) || 0,
+              tipoTrabajo: finalTipoPersonalizado || finalTipo,
+              descripcionBase: descripcion.trim() || finalTipoPersonalizado || finalTipo,
+              referenciaTabla: 'servicios',
+              referenciaId: nuevoServicio?.id || null,
+              fecha: getLocalISODate(),
+            })),
+          }),
+        });
+      } catch (nominaErr) {
+        console.error('No se pudo registrar la comisión de nómina:', nominaErr);
+      }
 
       logActivity({
         usuario: user?.nombre || 'Admin',
@@ -472,7 +477,7 @@ export default function TallerPage() {
       // Reset form
       setNombreCliente(''); setTelefono(''); setVehiculoInfo(''); setPlaca('');
       setDescripcion(''); setTipo('mecanica'); setTipoPersonalizado(''); setCostoEstimado('');
-      setEncargados([]); setStaffSearch('');
+      setAsignaciones([]);
       setSelectedClienteId(null); setClientSearch(''); setClientResults([]);
     } catch (err: any) {
       console.error(err);
@@ -687,87 +692,19 @@ export default function TallerPage() {
                 />
               </div>
 
-              {/* Encargados */}
-              <div className="space-y-1.5 pt-2 border-t border-border/30">
-                <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1 mb-1.5 flex items-center gap-1">
-                  <Wrench className="w-3 h-3" /> Personal a Cargo
-                </label>
-                
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {encargados.map((e, idx) => (
-                    <div key={idx} className="flex items-center gap-2 bg-muted/30 border border-border pl-3 pr-1 py-1 rounded-xl group animate-in zoom-in-95 duration-200">
-                      <span className="text-[11px] font-bold text-foreground">{e.nombre}</span>
-                      <button 
-                        type="button"
-                        onClick={() => {
-                          const next = [...encargados];
-                          next[idx].rol = e.rol === 'jefe_taller' ? 'mecanico' : 'jefe_taller';
-                          setEncargados(next);
-                        }}
-                        className={cn(
-                          "px-2 py-0.5 rounded-lg text-[9px] font-black uppercase tracking-tighter transition-all",
-                          e.rol === 'jefe_taller' ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary"
-                        )}
-                      >
-                        {e.rol === 'jefe_taller' ? 'Jefe' : 'Mecánico'}
-                      </button>
-                      <button 
-                        type="button"
-                        onClick={() => setEncargados(encargados.filter((_, i) => i !== idx))}
-                        className="w-6 h-6 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive flex items-center justify-center"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                  <input 
-                    className="w-full bg-muted/50 border border-border rounded-xl pl-9 pr-3 py-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
-                    placeholder="Buscar o agregar encargado..."
-                    value={staffSearch}
-                    onChange={e => {
-                      setStaffSearch(e.target.value);
-                      setShowStaffResults(true);
-                    }}
-                    onFocus={() => setShowStaffResults(true)}
-                    onBlur={() => setTimeout(() => setShowStaffResults(false), 200)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' && staffSearch.trim()) {
-                        e.preventDefault();
-                        if (!encargados.some(enc => enc.nombre === staffSearch.trim())) {
-                          setEncargados([...encargados, { nombre: staffSearch.trim(), rol: 'mecanico' }]);
-                        }
-                        setStaffSearch('');
-                      }
-                    }}
-                  />
-                  {showStaffResults && staffSuggestions.length > 0 && (
-                    <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-card border border-border rounded-xl shadow-2xl overflow-hidden max-h-40 overflow-y-auto">
-                      {staffSuggestions
-                        .filter(s => s.nombre.toLowerCase().includes(staffSearch.toLowerCase()) && !encargados.some(e => e.nombre === s.nombre))
-                        .map((s, i) => (
-                          <button
-                            key={i}
-                            type="button"
-                            className="w-full text-left px-3 py-2 text-xs hover:bg-primary/5 transition-colors flex items-center gap-2"
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              setEncargados([...encargados, { nombre: s.nombre, rol: 'mecanico' }]);
-                              setStaffSearch('');
-                              setShowStaffResults(false);
-                            }}
-                          >
-                            <User className="w-3 h-3 text-muted-foreground" />
-                            <span className="font-medium">{s.nombre}</span>
-                            <span className="text-[9px] text-muted-foreground/60 uppercase ml-auto">{s.rol.replace('_', ' ')}</span>
-                          </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+              {/* Personal a cargo — el mismo selector de la orden de servicio y
+                  el punto de venta, para que el trabajo salga de aquí ya con su
+                  comisión calculada en vez de un nombre suelto en las notas. */}
+              <div className="pt-2 border-t border-border/30">
+                <PersonalYComisiones
+                  value={asignaciones}
+                  onChange={setAsignaciones}
+                  sedeId={useSedeStore.getState().currentSede?.id || null}
+                  defaultZona={categoriaToZona(inferirCategoria(`${tipo} ${tipoPersonalizado} ${descripcion}`))}
+                  costoTotal={parseFloat(costoEstimado) || 0}
+                  tipoTrabajo={tipoPersonalizado || tipo}
+                  descripcionTrabajo={descripcion || null}
+                />
               </div>
 
               {can('taller', 'crear') && (

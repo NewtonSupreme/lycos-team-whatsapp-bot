@@ -39,6 +39,36 @@ export const MODULES: (keyof Permisos)[] = [
   'configuracion', 'empleados', 'distribuidor', 'presupuestos', 'nomina'
 ];
 
+/**
+ * El nombre de cada módulo tal como se le llama en la interfaz.
+ *
+ * Va junto a `MODULES` para que no se puedan desincronizar: añadir un módulo
+ * a la lista sin ponerle nombre aquí es un error de tipos, no una etiqueta
+ * fea que aparece en la pantalla de permisos.
+ */
+export const MODULOS_LABEL: Record<keyof Permisos, string> = {
+  dashboard: 'Panel',
+  clientes: 'Clientes',
+  vehiculos: 'Vehículos',
+  servicios: 'Servicios',
+  taller: 'Taller',
+  agenda: 'Agenda',
+  whatsapp: 'WhatsApp',
+  leads: 'Leads',
+  inventario: 'Inventario',
+  papelera: 'Papelera',
+  ventas: 'Ventas',
+  ia_asistente: 'Asistente IA',
+  reportes: 'Reportes',
+  actividad: 'Actividad',
+  calculadora: 'Calculadora',
+  configuracion: 'Configuración',
+  empleados: 'Empleados',
+  distribuidor: 'Distribución',
+  presupuestos: 'Presupuestos',
+  nomina: 'Nómina',
+};
+
 export function accesoToCrud(acceso: boolean): CrudPermiso {
   return { crear: acceso, leer: acceso, editar: acceso, eliminar: acceso };
 }

@@ -514,7 +514,7 @@ export default function LeadsPage() {
           )}
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2">
             {loadingHistorial && (
               <div className="text-center py-8">
                 <RefreshCw className="w-4 h-4 animate-spin text-muted-foreground mx-auto" />

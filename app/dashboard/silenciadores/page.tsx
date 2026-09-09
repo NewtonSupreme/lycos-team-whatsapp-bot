@@ -24,10 +24,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
-import DesglosePagoBancos from '@/components/pos/DesglosePagoBancos';
+import MetodoPagoPanel from '@/components/pos/MetodoPagoPanel';
 import { buildVentaDiaFields, emptyBins, binsTotalUSD, deptFromInventario, type Bins } from '@/lib/reporte/ventas-mapping';
 import { ComprobanteInput, emptyComprobante, type ComprobanteValue } from '@/components/ventas/ComprobanteInput';
 import { uploadComprobante, comprobanteFields } from '@/lib/comprobante';
+import ErpShell from '@/components/erp/ErpShell';
 import {
   Dialog,
   DialogContent,
@@ -40,7 +41,8 @@ import { Calendar as CalendarUI } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import AsignacionTecnicos, { type JobSpec } from '@/components/nomina/AsignacionTecnicos';
+import PersonalYComisiones, { type AsignacionEmpleado, type ItemDesglose } from '@/components/nomina/PersonalYComisiones';
+import { asignacionesValidas, buildJobsDesdeAsignacion } from '@/lib/nomina/asignaciones';
 
 interface CartItem {
   id: string;
@@ -66,12 +68,13 @@ export default function VentasPage() {
   const [vehiculoInfo, setVehiculoInfo] = useState('');
   const [notas, setNotas] = useState('');
   // Nómina: técnico(s) encargado(s) de la instalación (escapes) para la comisión.
-  const [jobSpecs, setJobSpecs] = useState<JobSpec[]>([]);
+  const [asignaciones, setAsignaciones] = useState<AsignacionEmpleado[]>([]);
   const [conIva, setConIva] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   // Cashea: porcentaje de inicial (40, 50 o 60%)
-  const [casheaPct, setCasheaPct] = useState<40 | 50 | 60>(50);
+  type CasheaPct = 10 | 20 | 30 | 40 | 50 | 60;
+  const [casheaPct, setCasheaPct] = useState<CasheaPct>(50);
   // Cashea: moneda visual ('usd' o 'ves')
   const [casheaCurrency, setCasheaCurrency] = useState<'usd' | 'ves'>('usd');
   // Custom item prices (for tubería and variable-price items)
@@ -459,6 +462,23 @@ export default function VentasPage() {
   }, 0);
 
   const total = subtotal * (conIva ? 1.16 : 1);
+
+  /**
+   * El carrito visto por nómina.
+   *
+   * Cada producto es un renglón asignable, así el técnico cobra el porcentaje
+   * que le toca POR CADA cosa que hizo —un silenciador y una revisión en la
+   * misma venta no llevan el mismo porcentaje— en vez de un único monto global.
+   */
+  const itemsNomina: ItemDesglose[] = cart.map(item => {
+    const precio = (conIva && isCasheaActive) ? (item.precio_bs || item.precio_unitario) : item.precio_unitario;
+    return {
+      descripcion: item.nombre,
+      cantidad: item.cantidad,
+      precio_unitario: precio,
+      total: Number((precio * item.cantidad).toFixed(2)),
+    };
+  });
   // Cashea initial payment = total * casheaPct%
   const casheaInicial = total * (casheaPct / 100);
   const casheaResto = total - casheaInicial;
@@ -477,8 +497,8 @@ export default function VentasPage() {
     if (cart.length === 0) return alert("El carrito está vacío");
     if (!supabase) return;
     // Nómina: exige técnico encargado o "lo hizo el taller".
-    const specsValidos = jobSpecs.filter(s => s.empleado_id || s.es_taller);
-    if (specsValidos.length === 0) return alert('Indica el técnico encargado o marca "Lo hizo el taller" en la sección Comisión / Nómina.');
+    const asignValidas = asignacionesValidas(asignaciones);
+    if (asignValidas.length === 0) return alert('Indica el técnico encargado o marca "Lo hizo el taller" en la sección Comisión / Nómina.');
 
     let abonoAmount = showAbonoSection ? abono : 0;
     let saldoRestante = 0;
@@ -585,14 +605,19 @@ export default function VentasPage() {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             sede: currentSede?.id || null,
-            jobs: specsValidos.map(s => ({
-              ...s,
-              tipo_trabajo: s.zona,
-              descripcion: `${clienteNombre || 'Consumidor Final'}${vehiculoInfo ? ' · ' + vehiculoInfo : ''}`,
-              referencia_tabla: 'ventas_dia',
-              referencia_id: ventaDia.id,
+            // Un trabajo por renglón asignado, con el NOMBRE DEL PRODUCTO como
+            // descripción. Antes iba el nombre del cliente, y como las reglas se
+            // evalúan contra ese texto, ninguna regla por tipo de servicio podía
+            // coincidir desde el punto de venta.
+            jobs: asignValidas.flatMap(a => buildJobsDesdeAsignacion(a, {
+              items: itemsNomina,
+              costoTotal: total,
+              tipoTrabajo: a.zona,
+              descripcionBase: cart.map(i => i.nombre).join(' + ')
+                || `${clienteNombre || 'Consumidor Final'}${vehiculoInfo ? ' · ' + vehiculoInfo : ''}`,
+              referenciaTabla: 'ventas_dia',
+              referenciaId: ventaDia.id,
               fecha: ventaFechaStr,
-              moneda: 'USD',
             })),
           }),
         });
@@ -711,7 +736,7 @@ export default function VentasPage() {
       setNotas('');
       setBins(emptyBins());
       setModoCashea(false);
-      setJobSpecs([]);
+      setAsignaciones([]);
       setAbono(0);
       setShowAbonoSection(false);
       setComprobante(emptyComprobante());
@@ -729,7 +754,7 @@ export default function VentasPage() {
     }
   };
 
-  const categories = Array.from(new Set(productos.map(p => p.categoria)));
+  const categories = Array.from(new Set(productos.map(p => p.categoria).filter(Boolean)));
 
   const filteredProductos = productos
     .filter(p => {
@@ -914,1193 +939,967 @@ export default function VentasPage() {
 
   if (!mounted) return null;
 
+  // ── Panel inferior: lo del día, calculado de las ventas ya cargadas ──────
+  const hoyISO = new Date().toISOString().split('T')[0];
+  const ventasHoy = ventasRecientes.filter(v => (v.displayDate || v.fecha || v.created_at || '').slice(0, 10) === hoyISO);
+  const totalHoy = ventasHoy.reduce((s, v) => s + Number(v.total_ingresos || 0), 0);
+
+  const metodosMes = (() => {
+    const acc: Record<string, number> = {};
+    ventasRecientes.forEach(v => {
+      Object.entries(v.metodos_pago || {}).forEach(([k, val]) => {
+        const n = Number(val) || 0;
+        if (n > 0) acc[k] = (acc[k] || 0) + n;
+      });
+    });
+    const total = Object.values(acc).reduce((s, n) => s + n, 0);
+    const TONOS = ['bg-[#22c55e]', 'bg-[#3b82f6]', 'bg-[#8b5cf6]', 'bg-[#f97316]', 'bg-[#eab308]', 'bg-[#94a3b8]'];
+    return Object.entries(acc)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([k, monto], i) => ({
+        nombre: k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+        monto,
+        pct: total > 0 ? Math.round((monto / total) * 100) : 0,
+        barra: TONOS[i % TONOS.length],
+      }));
+  })();
+
+  const bs = (n: number) => `${(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Bs.`;
+
   return (
-    <div className="space-y-6 max-w-[1600px] mx-auto pb-40 animate-in fade-in duration-500">
-      {/* Header Premium */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 bg-card/30 backdrop-blur-xl p-6 rounded-3xl border border-border/50 shadow-xl">
-        <div className="flex items-center gap-5">
-          <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center shadow-lg shadow-primary/20 rotate-3 transition-transform">
-            <ShoppingCart className="w-8 h-8 text-white" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-black tracking-tighter italic text-foreground uppercase" style={{ fontFamily: 'Syne, sans-serif' }}>
-              Módulo de <span className="text-primary">Ventas</span>
-            </h1>
-            <div className="flex items-center gap-2 mt-1">
-              <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20 font-bold px-2">
-                <MapPin className="w-3 h-3 mr-1" /> {currentSede?.nombre || 'General'}
-              </Badge>
-              <Badge variant="outline" className="bg-green-500/5 text-green-500 border-green-500/20 font-bold px-2">
-                <Sparkles className="w-3 h-3 mr-1" /> Tasa: {rates.bcv} Bs.
-              </Badge>
-            </div>
-          </div>
+    <ErpShell
+      variant="oscuro"
+      buscador="Buscar productos, clientes o facturas..."
+      lema={['Cada venta', 'queda registrada', 'al instante']}
+    >
+      {/* ── Encabezado ─────────────────────────────────────────────────── */}
+      <header className="mb-3.5 flex flex-wrap items-center gap-3">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#fff1e7] text-[#f97316]">
+          <ShoppingCart className="h-[22px] w-[22px]" aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-[21px] font-extrabold leading-tight tracking-tight text-[#16181d]">
+            Punto de venta
+          </h1>
+          <p className="text-[12.5px] text-[#8a909c]">
+            {currentSede?.nombre || 'General'} · tasa {rates.bcv} Bs. · {cart.length} en carrito
+          </p>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="flex flex-wrap items-center gap-2">
           <Popover>
             <PopoverTrigger asChild>
-              <button className="glass-card px-5 py-2.5 rounded-2xl border-2 border-primary/30 bg-primary/5 shadow-lg hover:bg-primary/10 transition-all text-left group relative overflow-hidden animate-pulse-glow">
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-[10px] font-black text-primary uppercase tracking-widest flex items-center gap-1.5">
-                    <Calendar className="w-3.5 h-3.5 animate-bounce" /> Fecha de Venta
-                  </p>
-                  <Badge className="bg-primary text-white text-[7px] font-black h-4 px-1.5 border-none">
-                    MODIFICAR
-                  </Badge>
-                </div>
-                <p className="text-base font-black text-foreground truncate tracking-tight">{format(selectedDate, "PPP", { locale: es })}</p>
+              <button className="flex h-[38px] items-center gap-1.5 rounded-lg border border-[#e2e5ea] bg-white px-3 text-[12.5px] font-medium text-[#3d4350] hover:bg-[#f6f7f9]">
+                <Calendar className="h-4 w-4 text-[#f97316]" aria-hidden />
+                {format(selectedDate, 'dd/MM/yyyy')}
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-auto p-0 rounded-2xl border-border/50 shadow-2xl" align="start">
-              <CalendarUI
-                mode="single"
-                selected={selectedDate}
-                onSelect={(date) => date && setSelectedDate(date)}
-                initialFocus
-                locale={es}
-                className="rounded-2xl"
-              />
+            <PopoverContent className="w-auto rounded-2xl border-border/50 p-0 shadow-2xl" align="end">
+              <CalendarUI mode="single" selected={selectedDate} onSelect={d => d && setSelectedDate(d)} initialFocus locale={es} className="rounded-2xl" />
             </PopoverContent>
           </Popover>
-          <div className="glass-card px-4 py-2 rounded-2xl border border-border/50 bg-background/40 shadow-sm">
-            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">En Carrito</p>
-            <p className="text-xl font-black text-primary">{cart.length}</p>
-          </div>
-          <div className="glass-card px-4 py-2 rounded-2xl border border-border/50 bg-background/40 shadow-sm">
-            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Restante</p>
-            <p className={cn("text-xl font-black transition-colors", balance > 0.01 ? "text-destructive" : "text-green-500")}>
-              ${(balance || 0).toFixed(2)}
-            </p>
-          </div>
-          <div className="hidden sm:block glass-card px-4 py-2 rounded-2xl border border-border/50 bg-background/40 shadow-sm">
-            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Total</p>
-            <p className="text-xl font-black text-foreground">${(total || 0).toFixed(2)}</p>
-          </div>
-        </div>
-      </div>
 
-      {/* Botón flotante de carrito para móviles rediseñado */}
-      <AnimatePresence mode="wait">
-        {cart.length > 0 && (
-          <motion.div 
-            initial={{ x: 100, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: 100, opacity: 0 }}
-            className="xl:hidden fixed bottom-24 right-4 z-50 pointer-events-auto"
+          <button
+            onClick={() => { setCart([]); setAsignaciones([]); setBins(emptyBins()); setAbono(0); }}
+            className="flex h-[38px] items-center gap-1.5 rounded-lg border border-[#e2e5ea] bg-white px-3 text-[12.5px] font-medium text-[#3d4350] hover:bg-[#f6f7f9]"
           >
-            <button 
-              onClick={() => document.getElementById('checkout-section')?.scrollIntoView({ behavior: 'smooth' })}
-              className="flex items-center gap-3 bg-primary text-white pl-4 pr-2 py-2.5 rounded-full shadow-2xl border border-white/20 active:scale-95 transition-transform group"
-            >
-              <div className="flex flex-col items-start">
-                <span className="text-[10px] font-black uppercase tracking-widest opacity-80 leading-none">Mi Carrito</span>
-                <span className="text-sm font-black italic tracking-tight">${(total || 0).toFixed(2)}</span>
-              </div>
-              <div className="bg-white/20 p-2 rounded-full relative">
-                <ShoppingCart className="w-5 h-5" />
-                <span className="absolute -top-1.5 -right-1.5 bg-destructive text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center border border-white">
-                  {cart.length}
-                </span>
-              </div>
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            <Trash2 className="h-4 w-4" aria-hidden />
+            Limpiar
+          </button>
 
-      {/* ── Tabs: Nueva Venta / Pendientes ──────────────── */}
-      <div className="flex items-center gap-1 bg-card/40 backdrop-blur-xl p-1 rounded-2xl border border-border/50 w-fit">
-        <button
-          onClick={() => setTabVenta('nueva')}
-          className={cn(
-            "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all",
-            tabVenta === 'nueva'
-              ? "bg-primary text-white shadow-lg shadow-primary/30"
-              : "text-muted-foreground hover:text-foreground hover:bg-white/5"
-          )}
-        >
-          <ShoppingCart className="w-3.5 h-3.5" />
-          Nueva Venta
-        </button>
-        <button
-          onClick={() => setTabVenta('pendientes')}
-          className={cn(
-            "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all relative",
-            tabVenta === 'pendientes'
-              ? "bg-amber-500 text-white shadow-lg shadow-amber-500/30"
-              : "text-muted-foreground hover:text-foreground hover:bg-white/5"
-          )}
-        >
-          <Clock className="w-3.5 h-3.5" />
-          Pendientes por Pagar
-          {!loading && ventasPendientes.length > 0 && (
-            <span className="bg-destructive text-white text-[8px] font-black px-1.5 py-0.5 rounded-full">
-              {ventasPendientes.length}
-            </span>
-          )}
-        </button>
+          <button
+            onClick={() => { if (cart.length > 0) setShowPreview(true); }}
+            disabled={cart.length === 0}
+            className="flex h-[38px] items-center gap-1.5 rounded-lg border border-[#e2e5ea] bg-white px-3 text-[12.5px] font-medium text-[#3d4350] hover:bg-[#f6f7f9] disabled:opacity-45"
+          >
+            <FileText className="h-4 w-4" aria-hidden />
+            Revisar nota
+          </button>
+
+          <button
+            onClick={handleFinalize}
+            disabled={processing || cart.length === 0 || balance > 0.05}
+            title={balance > 0.05 ? `Faltan $${balance.toFixed(2)} por cubrir` : undefined}
+            className="flex h-[38px] items-center gap-1.5 rounded-lg bg-[#f97316] px-4 text-[12.5px] font-semibold text-white transition-colors hover:bg-[#ea580c] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-[#f97316]"
+          >
+            {processing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <CheckCircle className="h-4 w-4" aria-hidden />}
+            {processing ? 'Procesando…' : 'Finalizar venta'}
+          </button>
+        </div>
+      </header>
+
+      {/* ── Pestañas ───────────────────────────────────────────────────── */}
+      <div className="mb-3.5 flex items-center gap-1 rounded-xl border border-[#e8eaed] bg-white p-1" role="tablist">
+        {([['nueva', 'Nueva venta', ShoppingCart], ['pendientes', 'Pendientes por pagar', Clock]] as const).map(([id, label, Icono]) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={tabVenta === id}
+            onClick={() => setTabVenta(id)}
+            className={cn(
+              'flex h-[36px] items-center gap-2 rounded-lg px-3.5 text-[12.5px] font-semibold transition-colors',
+              tabVenta === id ? 'bg-[#f97316] text-white' : 'text-[#5b616e] hover:bg-[#f6f7f9]',
+            )}
+          >
+            <Icono className="h-4 w-4" aria-hidden />
+            {label}
+            {id === 'pendientes' && ventasPendientes.length > 0 && (
+              <span className={cn(
+                'flex h-[17px] min-w-[17px] items-center justify-center rounded-full px-1 text-[10px] font-bold',
+                tabVenta === id ? 'bg-white text-[#f97316]' : 'bg-[#ef4444] text-white',
+              )}>
+                {ventasPendientes.length}
+              </span>
+            )}
+          </button>
+        ))}
       </div>
 
       {tabVenta === 'pendientes' ? (
-        /* ── Sección de Ventas Pendientes ────────────────── */
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-bold flex items-center gap-2">
-                <Clock className="w-5 h-5 text-amber-400" />
-                Ventas Pendientes por Cobrar
-              </h2>
-              <p className="text-xs text-muted-foreground mt-0.5">
+        /* ── Ventas pendientes ───────────────────────────────────────── */
+        <section className="overflow-hidden rounded-xl border border-[#e8eaed] bg-white">
+          <header className="flex flex-wrap items-center gap-3 px-5 py-4">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-[15px] font-extrabold text-[#16181d]">Ventas pendientes por cobrar</h2>
+              <p className="num text-[12.5px] text-[#8a909c]">
                 {ventasPendientes.length > 0
                   ? `Total pendiente: $${ventasPendientes.reduce((s, v) => s + Number(v.saldo_pendiente || 0), 0).toFixed(2)}`
                   : 'No hay ventas pendientes'}
               </p>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
+            <button
               onClick={() => { fetchData(); setLoadingPendientes(true); setTimeout(() => setLoadingPendientes(false), 500); }}
-              className="text-xs gap-1"
+              className="flex h-[38px] items-center gap-1.5 rounded-lg border border-[#e2e5ea] px-3 text-[12.5px] font-medium text-[#3d4350] hover:bg-[#f6f7f9]"
             >
-              <Loader2 className={cn("w-3 h-3", loadingPendientes && "animate-spin")} />
+              <RefreshCw className={cn('h-4 w-4', loadingPendientes && 'animate-spin')} aria-hidden />
               Actualizar
-            </Button>
-          </div>
+            </button>
+          </header>
 
-          <Card className="glass-panel border-border/50 bg-card/40">
-            <CardContent className="p-0">
-                  {ventasPendientes.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16 opacity-40">
-                  <CheckCircle className="w-12 h-12 mb-3 text-green-400" />
-                  <p className="text-sm font-bold uppercase tracking-widest">Todo al día</p>
-                  <p className="text-xs text-muted-foreground mt-1">No hay ventas pendientes de pago</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-border/20">
+          {ventasPendientes.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16">
+              <CheckCircle className="mb-3 h-10 w-10 text-[#16a34a]" aria-hidden />
+              <p className="text-[13px] font-bold text-[#16181d]">Todo al día</p>
+              <p className="text-[12px] text-[#8a909c]">No hay ventas pendientes de pago</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] border-collapse">
+                <thead>
+                  <tr className="border-y border-[#eef0f3] bg-[#fafbfc]">
+                    {['Cliente', 'Fecha', 'Total', 'Abonado', 'Saldo', 'Acciones'].map(h => (
+                      <th key={h} scope="col" className="px-4 py-2.5 text-left text-[11.5px] font-semibold text-[#5b616e]">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
                   {ventasPendientes.map((v: any) => {
                     const vFecha = v.fecha || v.created_at?.split('T')[0] || '';
-                    const isAtrasado = v.registro_atrasado === true || (vFecha && vFecha !== new Date().toISOString().split('T')[0]);
+                    const atrasado = v.registro_atrasado === true || (vFecha && vFecha !== hoyISO);
                     return (
-                    <div key={v.id} className="p-4 flex flex-col sm:flex-row sm:items-center gap-3 hover:bg-white/5 transition-colors">
-                      <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center flex-shrink-0">
-                        <CreditCard className="w-5 h-5 text-amber-400" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className="text-sm font-black truncate">{v.cliente || 'Consumidor Final'}</p>
-                          <Badge variant="outline" className="text-amber-400 border-amber-400/30 bg-amber-500/5 text-[8px] font-black px-1.5">
-                            PENDIENTE
-                          </Badge>
-                          {isAtrasado && (
-                            <Badge className="bg-orange-500 text-white border-none text-[7px] font-black h-3.5 px-1 animate-pulse">
-                              ⚠️ ATRASADO
-                            </Badge>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
-                          <span className="flex items-center gap-1">
-                            <Calendar className="w-3 h-3" />
-                            {vFecha ? new Date(vFecha.includes('T') ? vFecha : vFecha + 'T12:00:00').toLocaleDateString('es-VE') : new Date(v.created_at).toLocaleDateString('es-VE')}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <DollarSign className="w-3 h-3" />
-                            Total: ${Number(v.total_ingresos || 0).toFixed(2)}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="text-right flex-shrink-0 flex flex-col items-end gap-1">
-                        <p className="text-sm font-black text-amber-400">${Number(v.saldo_pendiente || 0).toFixed(2)}</p>
-                        <p className="text-[9px] font-bold text-muted-foreground leading-none">SALDO</p>
-                        {v.abono > 0 && (
-                          <p className="text-[9px] font-bold text-green-400 leading-none">Abonó: ${Number(v.abono).toFixed(2)}</p>
-                        )}
-                        <div className="flex items-center gap-1 mt-1.5">
-                          <button
-                            onClick={() => handleMarcarPagado(v)}
-                            className="px-2 py-1 rounded-lg bg-green-500/10 border border-green-500/20 text-green-400 text-[8px] font-black hover:bg-green-500/20 transition-all"
-                            title="Marcar como Pagado"
-                          >
-                            PAGADO
-                          </button>
-                          <button
-                            onClick={() => { setSelectedPendiente(v); setAbonoExtra(0); setShowAbonoDialog(true); }}
-                            className="px-2 py-1 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[8px] font-black hover:bg-blue-500/20 transition-all"
-                            title="Registrar Abono"
-                          >
-                            ABONAR
-                          </button>
-                          <button
-                            onClick={() => handleReimprimirFactura(v)}
-                            className="px-2 py-1 rounded-lg bg-muted/30 border border-border/30 text-muted-foreground text-[8px] font-black hover:bg-muted/50 transition-all"
-                            title="Reimprimir Factura"
-                          >
-                            🖨️
-                          </button>
-                        </div>
-                      </div>
-                    </div>
+                      <tr key={v.id} className="border-b border-[#f2f3f5] last:border-0 hover:bg-[#fafbfc]">
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[12.5px] font-semibold text-[#16181d]">{v.cliente || 'Consumidor Final'}</span>
+                            {atrasado && (
+                              <span className="rounded-md bg-[#fff4ec] px-1.5 py-[2px] text-[10px] font-semibold text-[#c2410c]">Atrasado</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="num px-4 py-2.5 text-[12px] text-[#5b616e]">
+                          {vFecha ? new Date(vFecha.includes('T') ? vFecha : vFecha + 'T12:00:00').toLocaleDateString('es-VE') : new Date(v.created_at).toLocaleDateString('es-VE')}
+                        </td>
+                        <td className="num px-4 py-2.5 text-[12px] text-[#16181d]">${Number(v.total_ingresos || 0).toFixed(2)}</td>
+                        <td className="num px-4 py-2.5 text-[12px] text-[#16a34a]">{Number(v.abono) > 0 ? `$${Number(v.abono).toFixed(2)}` : '—'}</td>
+                        <td className="num px-4 py-2.5 text-[12px] font-bold text-[#c2410c]">${Number(v.saldo_pendiente || 0).toFixed(2)}</td>
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleMarcarPagado(v)}
+                              className="h-[28px] rounded-lg border border-[#bbf7d0] bg-[#e8f7ee] px-2.5 text-[11px] font-semibold text-[#15803d] hover:bg-[#d6f0e0]"
+                            >
+                              Pagado
+                            </button>
+                            <button
+                              onClick={() => { setSelectedPendiente(v); setAbonoExtra(0); setShowAbonoDialog(true); }}
+                              className="h-[28px] rounded-lg border border-[#cfe0fb] bg-[#eef4fe] px-2.5 text-[11px] font-semibold text-[#1d4ed8] hover:bg-[#e2edfd]"
+                            >
+                              Abonar
+                            </button>
+                            <button
+                              onClick={() => handleReimprimirFactura(v)}
+                              aria-label="Reimprimir factura"
+                              className="flex h-[28px] w-[28px] items-center justify-center rounded-lg border border-[#e2e5ea] text-[#5b616e] hover:bg-[#f6f7f9]"
+                            >
+                              <Printer className="h-3.5 w-3.5" aria-hidden />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
                     );
                   })}
-                </div>
-              )}
-              {/* Modal de Abono */}
-              <Dialog open={showAbonoDialog} onOpenChange={setShowAbonoDialog}>
-                <DialogContent className="max-w-md bg-card border-border/50 rounded-[2rem] p-6">
-                  <DialogHeader>
-                    <DialogTitle className="text-lg font-black flex items-center gap-2">
-                      <DollarSign className="w-5 h-5 text-amber-400" />
-                      Registrar Abono
-                    </DialogTitle>
-                    <DialogDescription className="text-xs">
-                      Cliente: <strong>{selectedPendiente?.cliente || 'N/A'}</strong>
-                      {selectedPendiente && (
-                        <span className="block mt-1">
-                          Saldo pendiente: <strong className="text-amber-400">${Number(selectedPendiente.saldo_pendiente || 0).toFixed(2)}</strong>
-                          {Number(selectedPendiente.abono) > 0 && (
-                            <> | Abonado: <strong className="text-green-400">${Number(selectedPendiente.abono).toFixed(2)}</strong></>
-                          )}
-                        </span>
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Modal de abono */}
+          <Dialog open={showAbonoDialog} onOpenChange={setShowAbonoDialog}>
+            <DialogContent className="max-w-md rounded-2xl border-border/50 bg-card p-6">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-lg font-black">
+                  <DollarSign className="h-5 w-5 text-amber-400" />
+                  Registrar abono
+                </DialogTitle>
+                <DialogDescription className="text-xs">
+                  Cliente: <strong>{selectedPendiente?.cliente || 'N/A'}</strong>
+                  {selectedPendiente && (
+                    <span className="mt-1 block">
+                      Saldo pendiente: <strong className="text-amber-500">${Number(selectedPendiente.saldo_pendiente || 0).toFixed(2)}</strong>
+                      {Number(selectedPendiente.abono) > 0 && (
+                        <> | Abonado: <strong className="text-green-500">${Number(selectedPendiente.abono).toFixed(2)}</strong></>
                       )}
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label className="text-[10px] font-black uppercase text-muted-foreground">Monto del Abono ($)</Label>
-                      <Input
-                        type="number" step="0.01" min="0"
-                        max={selectedPendiente?.saldo_pendiente || 0}
-                        placeholder="0.00"
-                        className="h-12 text-lg font-black"
-                        value={abonoExtra || ''}
-                        onChange={e => setAbonoExtra(Math.max(0, parseFloat(e.target.value) || 0))}
-                      />
+                    </span>
+                  )}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Monto del abono ($)</Label>
+                  <Input
+                    type="number" step="0.01" min="0"
+                    max={selectedPendiente?.saldo_pendiente || 0}
+                    placeholder="0.00"
+                    className="h-12 text-lg font-black"
+                    value={abonoExtra || ''}
+                    onChange={e => setAbonoExtra(Math.max(0, parseFloat(e.target.value) || 0))}
+                  />
+                </div>
+                {selectedPendiente && abonoExtra > 0 && (
+                  <div className="space-y-1 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3">
+                    <div className="flex justify-between text-xs">
+                      <span className="font-bold text-muted-foreground">Abono ahora:</span>
+                      <span className="font-black text-green-500">- ${abonoExtra.toFixed(2)}</span>
                     </div>
-                    {selectedPendiente && abonoExtra > 0 && (
-                      <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 space-y-1">
-                        <div className="flex justify-between text-xs">
-                          <span className="font-bold text-muted-foreground">Abono ahora:</span>
-                          <span className="font-black text-green-400">- ${abonoExtra.toFixed(2)}</span>
-                        </div>
-                        <div className="flex justify-between text-xs">
-                          <span className="font-bold text-muted-foreground">Nuevo saldo:</span>
-                          <span className="font-black text-amber-400">${Math.max(0, (Number(selectedPendiente.saldo_pendiente) || 0) - abonoExtra).toFixed(2)}</span>
-                        </div>
-                        {abonoExtra >= (Number(selectedPendiente.saldo_pendiente) || 0) && (
-                          <div className="flex items-center gap-2 pt-1 text-green-400">
-                            <CheckCircle className="w-3.5 h-3.5" />
-                            <span className="text-[10px] font-bold">¡La venta quedará liquidada!</span>
-                          </div>
-                        )}
+                    <div className="flex justify-between text-xs">
+                      <span className="font-bold text-muted-foreground">Nuevo saldo:</span>
+                      <span className="font-black text-amber-500">${Math.max(0, (Number(selectedPendiente.saldo_pendiente) || 0) - abonoExtra).toFixed(2)}</span>
+                    </div>
+                    {abonoExtra >= (Number(selectedPendiente.saldo_pendiente) || 0) && (
+                      <div className="flex items-center gap-2 pt-1 text-green-500">
+                        <CheckCircle className="h-3.5 w-3.5" />
+                        <span className="text-[10px] font-bold">¡La venta quedará liquidada!</span>
                       </div>
                     )}
                   </div>
-                  <DialogFooter className="flex gap-2">
-                    <Button variant="outline" className="flex-1 rounded-xl" onClick={() => { setShowAbonoDialog(false); setSelectedPendiente(null); setAbonoExtra(0); }}>
-                      CANCELAR
-                    </Button>
-                    <Button className="flex-1 rounded-xl bg-primary text-white font-black" onClick={handleRegistrarAbono} disabled={abonoExtra <= 0}>
-                      REGISTRAR ABONO
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </CardContent>
-          </Card>
-        </div>
+                )}
+              </div>
+              <DialogFooter className="flex gap-2">
+                <Button variant="outline" className="flex-1 rounded-xl" onClick={() => { setShowAbonoDialog(false); setSelectedPendiente(null); setAbonoExtra(0); }}>
+                  Cancelar
+                </Button>
+                <Button className="flex-1 rounded-xl bg-primary font-black text-white" onClick={handleRegistrarAbono} disabled={abonoExtra <= 0}>
+                  Registrar abono
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </section>
       ) : (
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 mt-6">
-        {/* LADO IZQUIERDO: PRODUCTOS */}
-        <div className="xl:col-span-7 flex flex-col gap-6">
-          <Card className="flex flex-col glass-panel border-border/50 bg-card/40 overflow-hidden shadow-xl rounded-[40px]">
-            <CardHeader className="pb-4 pt-8 px-8 border-b border-border/10 bg-white/5">
-              <div className="flex flex-col sm:flex-row gap-3">
-                <div className="relative flex-1">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input 
-                    placeholder="Busca por nombre o categoría..." 
-                    className="pl-11 h-12 bg-card/40 border-border/50 rounded-2xl text-sm font-medium"
+        <>
+          {/* ── Tres columnas de trabajo ────────────────────────────────── */}
+          <div className="mb-3.5 flex flex-col gap-3.5 lg:h-[calc(100dvh-15.5rem)] lg:flex-row">
+
+            {/* Catálogo */}
+            <section className="flex w-full flex-col overflow-hidden rounded-xl border border-[#e8eaed] bg-white lg:w-[400px] lg:shrink-0">
+              <header className="border-b border-[#e8eaed] px-4 py-3">
+                <h2 className="mb-2.5 text-[14.5px] font-bold text-[#16181d]">Productos y servicios</h2>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9ba1ab]" aria-hidden />
+                  <input
                     value={searchTerm}
                     onChange={e => setSearchTerm(e.target.value)}
+                    placeholder="Busca por nombre o categoría..."
+                    aria-label="Buscar producto"
+                    className="h-[38px] w-full rounded-lg border border-[#e2e5ea] pl-9 pr-3 text-[12.5px] outline-none placeholder:text-[#9ba1ab] focus:border-[#f97316] focus:ring-2 focus:ring-[#f97316]/20"
                   />
                 </div>
-            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-              <SelectTrigger className="w-full sm:w-[180px] h-12 bg-card/40 border-border/50 rounded-2xl text-[10px] font-black uppercase">
-                <SelectValue placeholder="Categoría" />
-              </SelectTrigger>
-              <SelectContent className="rounded-xl">
-                <SelectItem value="all">Todas</SelectItem>
-                {categories.map(cat => (
-                  <SelectItem key={cat} value={cat} className="capitalize font-bold">{cat}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </CardHeader>
-        <CardContent className="flex-1 overflow-y-auto p-8 custom-scrollbar">
-
-          {/* Grid de Productos - PRECIOS REALES DEL INVENTARIO */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar p-1">
-            {loading ? (
-              Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="h-44 rounded-3xl bg-card/20 animate-pulse border border-border/30" />
-              ))
-            ) : filteredProductos.map(prod => (
-                <button
-                  key={prod.id}
-                  disabled={prod.stock <= 0}
-                  onClick={() => addToCart(prod)}
-                  className={cn(
-                    "group relative p-5 rounded-3xl border border-border/50 transition-all text-left flex flex-col justify-between h-44 overflow-hidden shadow-sm",
-                    prod.stock <= 0 
-                      ? "bg-muted/50 opacity-40 cursor-not-allowed" 
-                      : "bg-card/40 hover:bg-white hover:border-primary/40 hover:shadow-2xl active:scale-95"
-                  )}
-                >
-                  <div className="flex justify-between items-start">
-                    <div className={cn(
-                      "w-11 h-11 rounded-2xl flex items-center justify-center transition-all",
-                      prod.stock <= 0 ? "bg-muted" : "bg-primary/10 text-primary group-hover:bg-primary group-hover:text-white"
-                    )}>
-                      <Package className="w-6 h-6" />
-                    </div>
-                    <Badge variant={prod.stock <= 5 ? "destructive" : "secondary"} className="text-[10px] font-black border-none h-5">
-                      {prod.stock} DISP
-                    </Badge>
-                  </div>
-
-                  <div className="mt-3">
-                    <p className="text-[10px] font-black text-muted-foreground uppercase truncate opacity-60">{prod.categoria}</p>
-                    <p className="text-sm font-black text-foreground mt-1 truncate group-hover:text-primary transition-colors">{prod.nombre}</p>
-                    
-                    <div className="flex items-center gap-3 mt-2">
-                        <div className="flex flex-col">
-                           <span className="text-[9px] font-black text-primary uppercase tracking-tight">Dólar Divisa ($)</span>
-                           <span className="text-base font-black text-primary italic tracking-tighter">${prod.precio_usd || '0'}</span>
-                        </div>
-                        <div className="w-[1px] h-6 bg-border/40" />
-                        <div className="flex flex-col">
-                           <span className="text-[9px] font-black text-muted-foreground uppercase tracking-tight">Dólar BCV</span>
-                           <span className="text-base font-black text-foreground/70 italic tracking-tighter">
-                             ${((prod.precio_bs || prod.precio_usd) || 0).toFixed(2)}
-                           </span>
-                           <span className="text-[8px] font-bold text-muted-foreground/50 leading-none">
-                             {((prod.precio_bs || prod.precio_usd) * rates.bcv).toLocaleString('es-VE', {
-                                  minimumFractionDigits: 2,
-                                  maximumFractionDigits: 2
-                             })} Bs.
-                           </span>
-                        </div>
-                    </div>
-                  </div>
-                </button>
-            ))}
-          </div>
-        </CardContent>
-          </Card>
-          
-          {/* Historial Dinámico Interactivo por Sede */}
-          <Card className="glass-panel border-border/50 bg-card/20 rounded-3xl overflow-hidden shadow-sm border-t-4 border-t-primary/20">
-            <CardHeader className="p-5 bg-primary/5 flex flex-row items-center justify-between border-b border-border/10">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white shadow-lg shadow-primary/20">
-                  <History className="w-5 h-5 animate-pulse" />
-                </div>
-                <div>
-                  <CardTitle className="text-sm font-black uppercase tracking-[0.2em]">Ventas Recientes</CardTitle>
-                  <p className="text-[10px] font-bold text-primary uppercase flex items-center gap-1.5">
-                    <MapPin className="w-3 h-3" /> {currentSede?.nombre || 'General'}
-                  </p>
-                </div>
-              </div>
-              <button 
-                onClick={fetchData}
-                className="w-10 h-10 rounded-xl bg-background/50 flex items-center justify-center hover:bg-primary/10 hover:text-primary transition-all border border-border/30 shadow-sm"
-              >
-                <RefreshCw className={cn("w-4 h-4 text-muted-foreground", loading && "animate-spin text-primary")} />
-              </button>
-            </CardHeader>
-            <div className="divide-y divide-border/5 max-h-[450px] overflow-y-auto custom-scrollbar">
-              {ventasRecientes.length > 0 ? ventasRecientes.map((v, i) => (
-                <button 
-                  key={i} 
-                  onClick={() => { setSelectedSale(v); setShowSaleDetail(true); }}
-                  className="w-full px-6 py-4 flex items-center justify-between hover:bg-primary/[0.02] transition-all group text-left border-l-4 border-transparent hover:border-primary"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-11 h-11 rounded-2xl bg-muted/30 flex items-center justify-center text-muted-foreground group-hover:text-primary group-hover:bg-primary/10 group-hover:rotate-3 transition-all border border-border/10">
-                       <Receipt className="w-6 h-6" />
-                    </div>
-                      <div className="flex flex-col">
-                      <span className="text-sm font-black text-foreground uppercase group-hover:text-primary transition-colors tracking-tight">{v.cliente || 'Consumidor Final'}</span>
-                      <div className="flex items-center gap-2 mt-0.5 opacity-60">
-                        <span className="text-[10px] font-bold flex items-center gap-1">
-                          <Calendar className="w-3 h-3" /> {v.displayDate ? new Date(v.displayDate.includes('T') ? v.displayDate : v.displayDate + 'T12:00:00').toLocaleDateString('es-VE') : new Date(v.created_at).toLocaleDateString('es-VE')}
-                        </span>
-                        {v.isAtrasado && (
-                          <Badge className="bg-orange-500 text-white border-none text-[7px] font-black h-3.5 px-1 animate-pulse">
-                            ⚠️ ATRASADO
-                          </Badge>
-                        )}
-                        <span className="text-[10px] font-bold">•</span>
-                        <span className="text-[10px] font-bold uppercase">{v.desglose?.length || 0} ITEMS</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-6">
-                    <div className="flex flex-col items-end">
-                      <span className="text-base font-black text-primary italic tracking-tighter drop-shadow-sm">
-                        ${v.total_ingresos?.toFixed(2)}
-                        {v.context && <span className="text-[9px] ml-1 opacity-50 not-italic font-bold">({v.context})</span>}
-                      </span>
-                      <span className="text-[10px] font-bold text-muted-foreground leading-none">
-                        {((v.total_ingresos || 0) * (v.tasa_cambio || rates.bcv)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.
-                      </span>
-                      <div className="flex items-center gap-1 mt-0.5">
-                        <Badge variant="outline" className={cn(
-                          "text-[8px] font-black h-4 px-1.5 border-primary/20 uppercase transition-colors",
-                          v.source === 'ia' ? "bg-violet-500/10 text-violet-500 border-violet-500/30" : "bg-primary/5 text-primary/70 group-hover:bg-primary group-hover:text-white"
-                        )}>
-                          {v.source === 'ia' ? '🤖 IA ASSISTANT' : 'Ver Factura'}
-                        </Badge>
-                        {v.isCashea && (
-                          <Badge className="bg-[#3366FF] text-white border-none text-[8px] font-black h-4 px-1.5 animate-pulse">
-                            CASHEA
-                          </Badge>
-                        )}
-                        {v.isBinance && (
-                          <Badge className="bg-yellow-500 text-black border-none text-[8px] font-black h-4 px-1.5">
-                            BINANCE
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-muted-foreground opacity-20 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
-                  </div>
-                </button>
-              )) : (
-                <div className="py-24 text-center opacity-30 flex flex-col items-center gap-4">
-                   <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
-                     <History className="w-8 h-8" />
-                   </div>
-                   <div className="space-y-1">
-                     <p className="text-xs font-black uppercase tracking-[0.2em]">Sin actividad hoy</p>
-                     <p className="text-[10px] font-bold">No hay ventas registradas en {currentSede?.nombre}</p>
-                   </div>
-                </div>
-              )}
-            </div>
-          </Card>
-        </div>
-
-        {/* LADO DERECHO: CARRITO / INVOICE */}
-        <div id="checkout-section" className="xl:col-span-5">
-          <div className="sticky top-24 space-y-6">
-            <Card className="glass-panel border-primary/20 bg-card/60 shadow-2xl rounded-[2.5rem] relative overflow-hidden flex flex-col">
-              <CardHeader className="border-b border-border/30 bg-primary/5 p-7">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-xl font-black tracking-tighter flex items-center gap-3">
-                    REGISTRO DE VENTA
-                    <Badge className="bg-primary text-white border-none text-[10px] h-5 px-2">{cart.length}</Badge>
-                  </CardTitle>
-                  <button onClick={() => setCart([])} className="w-12 h-12 rounded-2xl bg-destructive/10 text-destructive flex items-center justify-center hover:bg-destructive hover:text-white transition-all">
-                    <Trash2 className="w-5 h-5" />
-                  </button>
-                </div>
-                
-                {/* Datos del Cliente */}
-                <div className="px-7 py-4 space-y-4 border-b border-border/10 bg-primary/5">
-                   <div className="flex items-center gap-2 text-xs font-black text-primary uppercase tracking-widest mb-2">
-                     <User className="w-4 h-4" /> Datos del Cliente
-                   </div>
-                   <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <Label className="text-[9px] font-black uppercase text-muted-foreground">Nombre / Razón Social</Label>
-                        <Input 
-                          placeholder="Nombre del cliente"
-                          className="h-9 bg-background/50 text-xs font-black border-border/50 rounded-xl"
-                          value={clienteNombre}
-                          onChange={e => setClienteNombre(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-[9px] font-black uppercase text-muted-foreground">Vehículo (Placa/Modelo)</Label>
-                        <Input 
-                          placeholder="Ej: ABC-123 / Corolla"
-                          className="h-9 bg-background/50 text-xs font-black border-border/50 rounded-xl"
-                          value={vehiculoInfo}
-                          onChange={e => setVehiculoInfo(e.target.value)}
-                        />
-                      </div>
-                   </div>
-                </div>
-
-                {/* Selector de Fecha y Toggle IVA */}
-                <div className="px-7 py-4 flex items-center justify-between border-b border-border/10">
-                  <div className="flex items-center gap-6">
-                    <div className="flex items-center gap-3">
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button variant="ghost" className="h-10 p-0 hover:bg-transparent flex items-center gap-2">
-                            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-white transition-all">
-                              <Calendar className="w-5 h-5" />
-                            </div>
-                            <div className="text-left">
-                              <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest leading-none">Fecha</p>
-                              <p className="text-xs font-black text-foreground mt-1">{format(selectedDate, "dd/MM/yyyy")}</p>
-                            </div>
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0 rounded-2xl border-border/50 shadow-2xl">
-                          <CalendarUI
-                            mode="single"
-                            selected={selectedDate}
-                            onSelect={(date) => date && setSelectedDate(date)}
-                            initialFocus
-                            locale={es}
-                            className="rounded-2xl"
-                          />
-                        </PopoverContent>
-                      </Popover>
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                      <div className={cn(
-                        "w-10 h-10 rounded-xl flex items-center justify-center transition-all border cursor-pointer",
-                        conIva ? "bg-primary text-white border-primary shadow-lg shadow-primary/20" : "bg-muted/30 text-muted-foreground border-border/50"
-                      )} onClick={() => setConIva(!conIva)}>
-                        <Receipt className="w-5 h-5" />
-                      </div>
-                      <div className="text-left cursor-pointer" onClick={() => setConIva(!conIva)}>
-                        <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest leading-none">Impuestos</p>
-                        <p className={cn("text-xs font-black mt-1", conIva ? "text-primary" : "text-foreground")}>{conIva ? '+16% IVA' : 'Sin IVA'}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={() => {
-                        const newModo = !modoCashea;
-                        setModoCashea(newModo);
-                        if (newModo) {
-                          setConIva(true);
-                        }
-                      }}
+                <div className="mt-2.5 flex flex-wrap gap-1.5">
+                  {['all', ...categories].map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => setCategoryFilter(cat)}
+                      aria-pressed={categoryFilter === cat}
                       className={cn(
-                        "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border",
-                        modoCashea ? "bg-[#3366FF] text-white border-[#3366FF] shadow-lg shadow-blue-500/20" : "bg-blue-500/5 text-blue-500 border-blue-500/20 hover:bg-blue-500/10"
+                        'h-[26px] rounded-md px-2.5 text-[11px] font-medium capitalize transition-colors',
+                        categoryFilter === cat ? 'bg-[#fff1e7] text-[#f97316]' : 'bg-[#f2f3f5] text-[#5b616e] hover:bg-[#e8eaed]',
                       )}
                     >
-                      {modoCashea ? 'Modo Cashea Activo' : 'Activar Cashea'}
+                      {cat === 'all' ? 'Todas' : cat}
                     </button>
-                  </div>
+                  ))}
                 </div>
-              </CardHeader>
+              </header>
 
-              <CardContent className="flex-1 overflow-y-auto p-0 custom-scrollbar">
-                {cart.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-20 opacity-10">
-                    <ShoppingCart className="w-20 h-20 mb-4" />
-                    <p className="text-sm font-black uppercase tracking-[0.3em]">Carrito Vacío</p>
+              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                {loading ? (
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {Array.from({ length: 6 }).map((_, i) => (
+                      <div key={i} className="h-[150px] animate-pulse rounded-lg border border-[#eef0f3] bg-[#f6f7f9]" />
+                    ))}
                   </div>
+                ) : filteredProductos.length === 0 ? (
+                  <p className="py-10 text-center text-[12.5px] text-[#8a909c]">
+                    Ningún producto coincide con esa búsqueda.
+                  </p>
                 ) : (
-                  <div className="divide-y divide-border/20">
-                    {cart.map(item => (
-                      <div key={item.id} className="p-4 flex flex-col gap-2 group border-l-4 border-transparent hover:border-primary transition-all">
-                        <div className="flex items-center gap-4">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-black uppercase truncate">{item.nombre}</p>
-                            <p className="text-[9px] font-black text-muted-foreground italic mt-0.5">
-                              Divisa: ${item.precio_unitario} | BCV: ${item.precio_bs || item.precio_unitario}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <div className="flex items-center bg-background/60 rounded-xl border border-border/50 p-1">
-                              <button onClick={() => updateQuantity(item.id, -1)} className="w-6 h-6 flex items-center justify-center text-muted-foreground hover:text-primary font-black">-</button>
-                              <span className="w-8 text-center text-xs font-black">{item.cantidad}</span>
-                              <button onClick={() => updateQuantity(item.id, 1)} className="w-6 h-6 flex items-center justify-center text-muted-foreground hover:text-primary font-black">+</button>
-                            </div>
-                            
-                            {/* Precio Divisa Editable */}
-                            <div className="flex flex-col items-end gap-0.5">
-                               <input
-                                 type="number" step="0.01" min="0"
-                                 title="Precio Divisa USD"
-                                 className="w-16 text-right text-xs font-black italic tracking-tighter bg-transparent border-b border-dashed border-primary/40 focus:border-primary focus:outline-none text-primary pb-0.5"
-                                 value={item.precio_unitario}
-                                 onChange={e => updateCartItemPrice(item.id, parseFloat(e.target.value) || 0)}
-                               />
-                               <span className="text-[7px] text-primary/75 font-black uppercase opacity-60">USD C/U</span>
-                            </div>
-
-                            {/* Precio BCV Editable */}
-                            <div className="flex flex-col items-end gap-0.5">
-                               <input
-                                 type="number" step="0.01" min="0"
-                                 title="Precio Dólar BCV (en USD)"
-                                 className="w-16 text-right text-xs font-black italic tracking-tighter bg-transparent border-b border-dashed border-blue-500/40 focus:border-blue-500 focus:outline-none text-blue-600 pb-0.5"
-                                 value={item.precio_bs || item.precio_unitario}
-                                 onChange={e => updateCartItemPrecioBs(item.id, parseFloat(e.target.value) || 0)}
-                               />
-                               <span className="text-[7px] text-blue-600/75 font-black uppercase opacity-60">USD BCV</span>
-                            </div>
-
-                            <button onClick={() => removeFromCart(item.id)} className="text-destructive/40 hover:text-destructive transition-colors">
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Controles de tubería específicos */}
-                        {item.isTuberia && (
-                          <div className="ml-1 mt-1.5 p-3.5 rounded-2xl bg-primary/5 border border-primary/10 space-y-3.5 text-xs">
-                            <div className="flex flex-col gap-1.5">
-                              <span className="font-black text-muted-foreground uppercase text-[10px] tracking-wider">Modo de venta:</span>
-                              <div className="flex items-center gap-4">
-                                <label className="flex items-center gap-2 cursor-pointer font-bold text-xs select-none">
-                                  <input 
-                                    type="radio" 
-                                    name={`medida-${item.id}`} 
-                                    checked={item.medida_tuberia === 'completo'} 
-                                    onChange={() => handleTuberiaChange(item.id, 'completo', 6)}
-                                    className="accent-primary w-4 h-4"
-                                  />
-                                  Tubo Completo (6m)
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer font-bold text-xs select-none">
-                                  <input 
-                                    type="radio" 
-                                    name={`medida-${item.id}`} 
-                                    checked={item.medida_tuberia === 'metros'} 
-                                    onChange={() => handleTuberiaChange(item.id, 'metros', 1)}
-                                    className="accent-primary w-4 h-4"
-                                  />
-                                  Por Metros
-                                </label>
-                              </div>
-                            </div>
-
-                            {item.medida_tuberia === 'metros' && (
-                              <div className="flex items-center gap-2.5 select-none">
-                                <span className="font-extrabold text-muted-foreground text-xs">Metros a vender:</span>
-                                <div className="flex items-center bg-background/60 rounded-xl border border-border p-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const current = item.metros_tuberia || 1;
-                                      const next = Math.max(0.1, Number((current - 0.5).toFixed(1)));
-                                      handleTuberiaChange(item.id, 'metros', next);
-                                    }}
-                                    className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-primary/5 active:bg-primary/10 rounded-lg transition-all font-black text-base"
-                                  >
-                                    -
-                                  </button>
-                                  <input
-                                    type="number"
-                                    step="0.1"
-                                    min="0.1"
-                                    value={item.metros_tuberia || 1}
-                                    onChange={(e) => handleTuberiaChange(item.id, 'metros', parseFloat(e.target.value) || 0)}
-                                    className="w-14 h-8 bg-transparent border-none text-center font-black text-sm focus:outline-none focus:ring-0"
-                                    placeholder="m"
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const current = item.metros_tuberia || 1;
-                                      const next = Number((current + 0.5).toFixed(1));
-                                      handleTuberiaChange(item.id, 'metros', next);
-                                    }}
-                                    className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-primary/5 active:bg-primary/10 rounded-lg transition-all font-black text-base"
-                                  >
-                                    +
-                                  </button>
-                                </div>
-                                <span className="text-muted-foreground font-black text-xs">metros</span>
-                              </div>
-                            )}
-
-                            <div className="p-2.5 rounded-lg bg-background/40 border border-border/40 text-[11px] font-medium text-muted-foreground leading-normal space-y-1">
-                              {item.medida_tuberia === 'completo' ? (
-                                <p>✓ <strong>Venta completa</strong>. Se descontará <strong>{item.cantidad} tubo(s)</strong> de 6 metros del stock de inventario.</p>
-                              ) : (
-                                <>
-                                  <p>✓ Fraccionado a <strong>{item.metros_tuberia}m</strong> por pieza (Total: <strong>{((item.metros_tuberia || 1) * item.cantidad).toFixed(1)}m</strong>).</p>
-                                  <p>✓ Redondeo de stock: Se descontará <strong>{Math.ceil(((item.metros_tuberia || 1) * item.cantidad) / 6)} tubo(s)</strong> del stock de inventario.</p>
-                                </>
-                              )}
-                            </div>
-                          </div>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {filteredProductos.map(prod => (
+                      <button
+                        key={prod.id}
+                        disabled={prod.stock <= 0}
+                        onClick={() => addToCart(prod)}
+                        className={cn(
+                          'flex flex-col rounded-lg border p-2.5 text-left transition-colors',
+                          prod.stock <= 0
+                            ? 'cursor-not-allowed border-[#eef0f3] opacity-45'
+                            : 'border-[#e8eaed] hover:border-[#f97316] hover:bg-[#fffaf6]',
                         )}
-                      </div>
+                      >
+                        {/* Hueco de la foto del producto, reservado con su fondo. */}
+                        <span className="relative mb-2 flex h-[72px] w-full items-center justify-center rounded-md bg-[#f4f5f7]" aria-hidden>
+                          <Package className="h-6 w-6 text-[#c2c7d0]" />
+                          <span className={cn(
+                            'absolute right-1 top-1 rounded px-1.5 py-[1px] text-[9.5px] font-bold',
+                            prod.stock <= 5 ? 'bg-[#fdeaea] text-[#dc2626]' : 'bg-white text-[#5b616e]',
+                          )}>
+                            {prod.stock}
+                          </span>
+                        </span>
+
+                        <span className="block truncate text-[10px] font-medium uppercase tracking-wide text-[#9ba1ab]">
+                          {prod.categoria}
+                        </span>
+                        <span className="mt-0.5 block min-h-[30px] text-[12px] font-semibold leading-tight text-[#16181d] line-clamp-2">
+                          {prod.nombre}
+                        </span>
+
+                        <span className="mt-1.5 flex items-end justify-between gap-1">
+                          <span className="num text-[13px] font-extrabold text-[#f97316]">
+                            ${Number(prod.precio_usd || 0).toFixed(2)}
+                          </span>
+                          <span className="num text-right text-[9.5px] leading-tight text-[#9ba1ab]">
+                            BCV ${Number(prod.precio_bs || prod.precio_usd || 0).toFixed(2)}
+                            <span className="block">{bs((prod.precio_bs || prod.precio_usd || 0) * rates.bcv)}</span>
+                          </span>
+                        </span>
+                      </button>
                     ))}
                   </div>
                 )}
-              </CardContent>
+              </div>
+            </section>
 
-              {/* PAGOS: MEJORADO CON DOBLE INPUT BS/USD */}
-              <div className="px-8 py-6 space-y-6 border-t border-border/30 bg-background/50 backdrop-blur-md">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                   <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                     <h3 className="text-xs font-black uppercase tracking-[0.2em] text-primary flex items-center gap-2">
-                       <Calculator className="w-4 h-4" /> MÉTODOS DE PAGO
-                     </h3>
-                     <div className="flex items-center gap-2 bg-primary/5 p-1.5 rounded-xl border border-primary/10">
-                       <Label className="text-[9px] font-bold uppercase text-primary/70">Tasa Manual (Bs):</Label>
-                       <input
-                         type="number" step="0.01" min="0"
-                         title="Tasa BCV del día. Escribe para usar una tasa personalizada para esta venta."
-                         placeholder={`Auto: ${rates.bcv}`}
-                         className="h-6 w-24 bg-background text-xs font-black border border-primary/20 rounded-lg text-center focus:ring-1 focus:ring-primary focus:outline-none"
-                         value={customRate !== null ? customRate : ''}
-                         onChange={e => setCustomRate(e.target.value ? parseFloat(e.target.value) : null)}
-                       />
-                     </div>
-                   </div>
-                   <div className="text-right">
-                      <p className="text-[9px] font-black text-muted-foreground uppercase">Por Cobrar</p>
-                      <p className={cn("text-lg font-black italic", balance > 0.05 ? "text-destructive" : "text-green-500")}>
-                        ${(balance || 0).toFixed(2)}
-                      </p>
-                   </div>
+            {/* Detalle de la venta */}
+            <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-[#e8eaed] bg-white">
+              <header className="flex items-center gap-2 border-b border-[#e8eaed] px-4 py-3">
+                <h2 className="flex-1 text-[14.5px] font-bold text-[#16181d]">Detalle de la venta</h2>
+                <span className="rounded-md bg-[#f2f3f5] px-2 py-0.5 text-[11px] font-semibold text-[#5b616e]">
+                  {cart.length} ítem{cart.length === 1 ? '' : 's'}
+                </span>
+                <button
+                  onClick={() => { if (!isCasheaActive) setConIva(!conIva); }}
+                  disabled={isCasheaActive}
+                  aria-pressed={conIva}
+                  title={isCasheaActive
+                    ? 'Con Cashea el IVA del 16% es obligatorio: es sobre ese total que se calculan la inicial y las cuotas.'
+                    : undefined}
+                  className={cn(
+                    'flex h-[30px] items-center gap-1.5 rounded-lg border px-2.5 text-[12px] font-medium transition-colors',
+                    conIva ? 'border-[#f97316] bg-[#fff4ec] text-[#f97316]' : 'border-[#e2e5ea] text-[#5b616e] hover:bg-[#f6f7f9]',
+                  )}
+                >
+                  <Receipt className="h-3.5 w-3.5" aria-hidden />
+                  {conIva ? 'Con IVA 16%' : 'Sin IVA'}
+                </button>
+                <button
+                  onClick={() => { const n = !modoCashea; setModoCashea(n); if (n) setConIva(true); }}
+                  aria-pressed={modoCashea}
+                  className={cn(
+                    'flex h-[30px] items-center gap-1.5 rounded-lg border px-2.5 text-[12px] font-medium transition-colors',
+                    modoCashea ? 'border-[#2563eb] bg-[#eef4fe] text-[#2563eb]' : 'border-[#e2e5ea] text-[#5b616e] hover:bg-[#f6f7f9]',
+                  )}
+                >
+                  <Smartphone className="h-3.5 w-3.5" aria-hidden />
+                  Cashea
+                </button>
+              </header>
+
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                {/* Cliente y vehículo */}
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-1.5 block text-[11.5px] font-medium text-[#5b616e]">Cliente</span>
+                    <span className="flex items-center gap-2.5 rounded-lg border border-[#e2e5ea] px-3 py-2">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#eef1f5] text-[#9ba1ab]" aria-hidden>
+                        <User className="h-4 w-4" />
+                      </span>
+                      <input
+                        value={clienteNombre}
+                        onChange={e => setClienteNombre(e.target.value)}
+                        placeholder="Consumidor Final"
+                        aria-label="Nombre del cliente"
+                        className="min-w-0 flex-1 border-0 bg-transparent text-[13px] font-semibold text-[#16181d] outline-none placeholder:font-normal placeholder:text-[#9ba1ab]"
+                      />
+                    </span>
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-1.5 block text-[11.5px] font-medium text-[#5b616e]">Vehículo (opcional)</span>
+                    <span className="flex items-center gap-2.5 rounded-lg border border-[#e2e5ea] px-3 py-2">
+                      <span className="flex h-9 w-[52px] shrink-0 items-center justify-center rounded-md bg-[#f4f5f7] text-[#c2c7d0]" aria-hidden>
+                        <Car className="h-4 w-4" />
+                      </span>
+                      <input
+                        value={vehiculoInfo}
+                        onChange={e => setVehiculoInfo(e.target.value)}
+                        placeholder="Ej: AB123CD / Corolla"
+                        aria-label="Vehículo"
+                        className="min-w-0 flex-1 border-0 bg-transparent text-[13px] font-semibold text-[#16181d] outline-none placeholder:font-normal placeholder:text-[#9ba1ab]"
+                      />
+                    </span>
+                  </label>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                   {/* ── Cashea Panel ── */}
-                    <div className={`space-y-3 p-4 rounded-2xl border col-span-full transition-all ${isCasheaActive ? 'bg-blue-600/10 dark:bg-blue-950/30 border-blue-600/40 dark:border-blue-500/30 shadow-lg shadow-blue-600/10' : 'bg-blue-600/5 dark:bg-blue-950/10 border-blue-600/10 dark:border-blue-950/20'}`}>
-                       <div className="flex items-center justify-between">
-                          <Label className="text-[10px] font-black uppercase text-blue-600 dark:text-blue-400 flex items-center gap-2">
-                            <Smartphone className="w-4 h-4" /> Cashea
-                          </Label>
-                          <button
-                            onClick={() => { setConIva(true); setModoCashea(true); autoFillCashea(); }}
-                            className="text-[8px] font-black text-blue-600 dark:text-blue-400 bg-white/50 dark:bg-slate-900/60 px-2 py-0.5 rounded-lg border border-blue-600/20 dark:border-blue-500/30"
-                          >USAR CASHEA (+16% IVA)</button>
-                       </div>
-
-                       {/* Porcentaje de inicial: 40%, 50%, 60% */}
-                       <div className="flex items-center gap-2">
-                         <span className="text-[9px] font-black text-blue-600/70 dark:text-blue-400/70 uppercase tracking-widest">Inicial:</span>
-                         {([40, 50, 60] as const).map(pct => (
-                           <button
-                             key={pct}
-                             onClick={() => { setCasheaPct(pct); setConIva(true); setModoCashea(true); if (bins.cashea === 0) autoFillCashea(); }}
-                             className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all border ${casheaPct === pct && isCasheaActive ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white/40 dark:bg-slate-900/40 text-blue-600 dark:text-blue-400 border-blue-600/20 dark:border-blue-500/20 hover:bg-blue-600/10 dark:hover:bg-blue-400/10'}`}
-                           >{pct}%</button>
-                         ))}
-                       </div>
-
-                        {isCasheaActive && (
-                          <div className="flex items-center justify-between bg-white/50 dark:bg-slate-900/50 p-1 rounded-xl border border-blue-600/10 dark:border-blue-500/20 mb-1.5">
-                            <span className="text-[9px] font-black text-blue-600/70 dark:text-blue-400/70 uppercase pl-1.5">Visualizar en:</span>
-                            <div className="flex gap-1">
-                              <button
-                                type="button"
-                                onClick={() => setCasheaCurrency('usd')}
-                                className={`px-2.5 py-1 rounded-lg text-[9px] font-black transition-all ${casheaCurrency === 'usd' ? 'bg-blue-600 text-white shadow-sm' : 'text-blue-600 dark:text-blue-400 hover:bg-blue-600/5 dark:hover:bg-blue-400/5'}`}
-                              >
-                                DÓLARES ($)
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setCasheaCurrency('ves')}
-                                className={`px-2.5 py-1 rounded-lg text-[9px] font-black transition-all ${casheaCurrency === 'ves' ? 'bg-blue-600 text-white shadow-sm' : 'text-blue-600 dark:text-blue-400 hover:bg-blue-600/5 dark:hover:bg-blue-400/5'}`}
-                              >
-                                BOLÍVARES (Bs.)
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        {isCasheaActive && total > 0 && (() => {
-                          const formatVal = (val: number) => {
-                            if (casheaCurrency === 'ves') {
-                              return `${((val || 0) * rates.bcv).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Bs.`;
-                            }
-                            return `$${(val || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                          };
-
+                {/* Líneas */}
+                <p className="mb-1.5 mt-3 text-[11.5px] font-medium text-[#5b616e]">Ítems de la venta</p>
+                {cart.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[#d5d9e0] py-12">
+                    <ShoppingCart className="mb-2 h-8 w-8 text-[#d5d9e0]" aria-hidden />
+                    <p className="text-[12.5px] font-medium text-[#8a909c]">Carrito vacío</p>
+                    <p className="text-[11.5px] text-[#9ba1ab]">Toca un producto del catálogo para agregarlo.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border border-[#e8eaed]">
+                    <table className="w-full min-w-[560px] border-collapse">
+                      <thead>
+                        <tr className="border-b border-[#e8eaed] bg-[#fafbfc]">
+                          {['#', 'Descripción', 'Precio USD', 'Precio BCV', 'Cant.', 'Total', ''].map((h, i) => (
+                            <th key={i} scope="col" className={cn('px-2.5 py-2 text-[11px] font-semibold text-[#5b616e]', i === 0 || i > 1 ? 'text-center' : 'text-left')}>
+                              {h}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cart.map((item, idx) => {
+                          const precioEfectivo = (conIva && isCasheaActive)
+                            ? (item.precio_bs || item.precio_unitario)
+                            : item.precio_unitario;
                           return (
-                            <div className="grid grid-cols-4 gap-2 p-3 rounded-xl bg-white/60 dark:bg-slate-900/80 border border-blue-600/10 dark:border-blue-500/25">
-                              <div className="col-span-4 flex justify-between text-[9px] font-black text-blue-700 dark:text-blue-300 border-b border-blue-600/10 dark:border-blue-500/20 pb-1.5 mb-1">
-                                <span>BASE BCV (sin IVA)</span><span>{formatVal(subtotal)}</span>
-                              </div>
-                              <div className="col-span-4 flex justify-between text-[9px] font-black text-orange-500 dark:text-orange-400">
-                                <span>IVA 16%</span><span>+{formatVal(total - subtotal)}</span>
-                              </div>
-                              <div className="col-span-4 flex justify-between text-[10px] font-black text-blue-800 dark:text-blue-200 border-t border-blue-600/10 dark:border-blue-500/20 pt-1.5 mt-0.5">
-                                <span>TOTAL CASHEA</span><span>{formatVal(total)}</span>
-                              </div>
-                              <div className="col-span-4 grid grid-cols-4 gap-1.5 mt-1">
-                                <div className="col-span-2 bg-blue-600 text-white p-2 rounded-xl text-center flex flex-col justify-center items-center">
-                                  <p className="text-[8px] font-bold opacity-80 uppercase leading-none mb-1">INICIAL ({casheaPct}%)</p>
-                                  <p className="text-xs font-black leading-none">{formatVal(casheaInicial)}</p>
-                                </div>
-                                <div className="col-span-2 bg-blue-600/10 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 p-2 rounded-xl border border-blue-600/5 dark:border-blue-500/10">
-                                  <p className="text-[8px] font-bold uppercase leading-none mb-1">RESTO (3 cuotas)</p>
-                                  <p className="text-[10px] font-black leading-none mb-0.5">{formatVal(casheaResto)}</p>
-                                  <p className="text-[8px] opacity-75 dark:opacity-85 leading-none">{formatVal(casheaCuota)}/cuota</p>
-                                </div>
-                              </div>
-                            </div>
+                            <React.Fragment key={item.id}>
+                              <tr className="border-b border-[#f0f1f4] last:border-0">
+                                <td className="num px-2.5 py-2 text-center text-[12px] text-[#9ba1ab]">{idx + 1}</td>
+                                <td className="px-2.5 py-2 text-[12.5px] leading-tight text-[#16181d]">
+                                  {item.nombre}
+                                  {item.isTuberia && (
+                                    <span className="block text-[10.5px] text-[#9ba1ab]">
+                                      {item.medida_tuberia === 'completo' ? 'Tubo completo (6 m)' : `${item.metros_tuberia || 1} m por pieza`}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-2.5 py-2 text-center">
+                                  <input
+                                    type="number" step="0.01" min="0"
+                                    title="Precio en divisa (USD)"
+                                    value={item.precio_unitario}
+                                    onChange={e => updateCartItemPrice(item.id, parseFloat(e.target.value) || 0)}
+                                    className="num h-[26px] w-[68px] rounded-md border border-[#e2e5ea] px-1.5 text-right text-[12px] font-semibold text-[#f97316] outline-none focus:border-[#f97316]"
+                                  />
+                                </td>
+                                <td className="px-2.5 py-2 text-center">
+                                  <input
+                                    type="number" step="0.01" min="0"
+                                    title="Precio dólar BCV (en USD)"
+                                    value={item.precio_bs || item.precio_unitario}
+                                    onChange={e => updateCartItemPrecioBs(item.id, parseFloat(e.target.value) || 0)}
+                                    className="num h-[26px] w-[68px] rounded-md border border-[#e2e5ea] px-1.5 text-right text-[12px] font-semibold text-[#2563eb] outline-none focus:border-[#2563eb]"
+                                  />
+                                </td>
+                                <td className="px-2.5 py-2">
+                                  <span className="mx-auto flex w-[86px] items-center justify-between rounded-md border border-[#e2e5ea]">
+                                    <button onClick={() => updateQuantity(item.id, -1)} aria-label="Quitar uno" className="h-[26px] w-[24px] text-[#5b616e] hover:text-[#f97316]">−</button>
+                                    <span className="num text-[12px] font-semibold">{item.cantidad}</span>
+                                    <button onClick={() => updateQuantity(item.id, 1)} aria-label="Agregar uno" className="h-[26px] w-[24px] text-[#5b616e] hover:text-[#f97316]">+</button>
+                                  </span>
+                                </td>
+                                <td className="num px-2.5 py-2 text-right text-[12.5px] font-semibold text-[#16181d]">
+                                  ${(precioEfectivo * item.cantidad).toFixed(2)}
+                                </td>
+                                <td className="px-2 py-2 text-center">
+                                  <button onClick={() => removeFromCart(item.id)} aria-label={`Quitar ${item.nombre}`} className="text-[#e05252] hover:text-[#c02f2f]">
+                                    <Trash2 className="h-[15px] w-[15px]" aria-hidden />
+                                  </button>
+                                </td>
+                              </tr>
+
+                              {/* Tubería: se vende por tubo o por metros y el stock se redondea. */}
+                              {item.isTuberia && (
+                                <tr className="border-b border-[#f0f1f4] bg-[#fffaf6] last:border-0">
+                                  <td colSpan={7} className="px-3 py-2.5">
+                                    <div className="flex flex-wrap items-center gap-4">
+                                      <label className="flex cursor-pointer select-none items-center gap-1.5 text-[12px] font-medium text-[#3d4350]">
+                                        <input
+                                          type="radio"
+                                          name={`medida-${item.id}`}
+                                          checked={item.medida_tuberia === 'completo'}
+                                          onChange={() => handleTuberiaChange(item.id, 'completo', 6)}
+                                          className="h-[15px] w-[15px] accent-[#f97316]"
+                                        />
+                                        Tubo completo (6 m)
+                                      </label>
+                                      <label className="flex cursor-pointer select-none items-center gap-1.5 text-[12px] font-medium text-[#3d4350]">
+                                        <input
+                                          type="radio"
+                                          name={`medida-${item.id}`}
+                                          checked={item.medida_tuberia === 'metros'}
+                                          onChange={() => handleTuberiaChange(item.id, 'metros', 1)}
+                                          className="h-[15px] w-[15px] accent-[#f97316]"
+                                        />
+                                        Por metros
+                                      </label>
+
+                                      {item.medida_tuberia === 'metros' && (
+                                        <span className="flex items-center gap-2">
+                                          <span className="text-[12px] text-[#5b616e]">Metros:</span>
+                                          <span className="flex items-center rounded-md border border-[#e2e5ea]">
+                                            <button
+                                              type="button"
+                                              onClick={() => handleTuberiaChange(item.id, 'metros', Math.max(0.1, Number(((item.metros_tuberia || 1) - 0.5).toFixed(1))))}
+                                              className="h-[28px] w-[26px] text-[#5b616e] hover:text-[#f97316]"
+                                              aria-label="Menos medio metro"
+                                            >−</button>
+                                            <input
+                                              type="number" step="0.1" min="0.1"
+                                              value={item.metros_tuberia || 1}
+                                              onChange={e => handleTuberiaChange(item.id, 'metros', parseFloat(e.target.value) || 0)}
+                                              className="num h-[28px] w-[54px] border-0 text-center text-[12px] font-semibold outline-none"
+                                              aria-label="Metros a vender"
+                                            />
+                                            <button
+                                              type="button"
+                                              onClick={() => handleTuberiaChange(item.id, 'metros', Number(((item.metros_tuberia || 1) + 0.5).toFixed(1)))}
+                                              className="h-[28px] w-[26px] text-[#5b616e] hover:text-[#f97316]"
+                                              aria-label="Más medio metro"
+                                            >+</button>
+                                          </span>
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <p className="num mt-2 text-[11px] leading-snug text-[#8a909c]">
+                                      {item.medida_tuberia === 'completo'
+                                        ? `Se descontarán ${item.cantidad} tubo(s) de 6 m del inventario.`
+                                        : `Total ${(((item.metros_tuberia || 1) * item.cantidad)).toFixed(1)} m · se descontarán ${Math.ceil(((item.metros_tuberia || 1) * item.cantidad) / 6)} tubo(s) del inventario.`}
+                                    </p>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
                           );
-                        })()}
-
-                       <Input
-                         placeholder="Monto $ total Cashea"
-                         className="h-10 bg-white/60 dark:bg-slate-950/60 text-sm font-black border-blue-600/20 dark:border-blue-500/20 text-blue-700 dark:text-blue-300 placeholder:text-blue-700/50 dark:placeholder:text-blue-300/40"
-                         value={bins.cashea || ''}
-                         onChange={e => setCasheaMonto(e.target.value)}
-                       />
-                    </div>
-
-                   {/* Desglose de pago por banco (clasificación exacta) — Cashea arriba */}
-                   <div className="col-span-full">
-                     <DesglosePagoBancos
-                       bins={bins}
-                       onBinsChange={setBins}
-                       totalUSD={total}
-                       tasa={activeRate}
-                       hideBins={['cashea']}
-                     />
-                   </div>
-                </div>
-               </div>
-
-              {/* ── Abono Accordion ─────────────────────────── */}
-              <div className="mx-8 bg-background/40 rounded-2xl border border-border/40 overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => setShowAbonoSection(!showAbonoSection)}
-                  className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
-                      <DollarSign className="w-3.5 h-3.5 text-amber-400" />
-                    </div>
-                    <span className="text-xs font-black uppercase tracking-wider">
-                      Abono / Apartado
-                    </span>
-                    {showAbonoSection && abono > 0 && (
-                      <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">
-                        ${abono.toFixed(2)}
-                      </span>
-                    )}
-                  </div>
-                  <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform duration-200", showAbonoSection && "rotate-180")} />
-                </button>
-                <div className={cn("overflow-hidden transition-all duration-200", showAbonoSection ? "max-h-96" : "max-h-0")}>
-                  <div className="px-4 pb-4 pt-1 space-y-3">
-                    <p className="text-[10px] text-muted-foreground font-bold leading-tight">
-                      Registra un abono parcial. La venta quedará como <span className="text-amber-400">PENDIENTE POR PAGAR</span> hasta que se liquide el saldo.
-                    </p>
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-3">
-                        <div className="flex-1 relative">
-                          <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                          <Input
-                            type="number"
-                            min={0}
-                            max={total}
-                            step={0.01}
-                            placeholder="0.00"
-                            value={abono || ''}
-                            onChange={e => setAbono(Math.max(0, parseFloat(e.target.value) || 0))}
-                            className="pl-9 h-10 text-sm font-bold bg-background/50"
-                          />
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between text-xs p-3 bg-amber-500/5 rounded-xl border border-amber-500/10">
-                        <span className="font-bold text-muted-foreground">Total venta:</span>
-                        <span className="font-black text-foreground">${Number(total).toFixed(2)}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-xs p-3 bg-amber-500/5 rounded-xl border border-amber-500/10">
-                        <span className="font-bold text-muted-foreground">Abono ahora:</span>
-                        <span className="font-black text-green-400">- $${abono.toFixed(2)}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-xs p-3 bg-amber-500/10 rounded-xl border border-amber-400/20">
-                        <span className="font-bold text-amber-400">Saldo pendiente:</span>
-                        <span className="font-black text-amber-400">${Math.max(0, total - abono).toFixed(2)}</span>
-                      </div>
-                      {abono > 0 && total - abono <= 0 && (
-                        <div className="flex items-center gap-2 p-3 bg-green-500/10 rounded-xl border border-green-500/20">
-                          <CheckCircle className="w-4 h-4 text-green-400" />
-                          <span className="text-xs font-bold text-green-400">El abono cubre el total — la venta quedará como PAGADA.</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Notas Accordion ─────────────────────────── */}
-              <div className="mx-8 bg-background/40 rounded-2xl border border-border/40 overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => setShowNotasSection(!showNotasSection)}
-                  className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-7 h-7 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center">
-                      <FileText className="w-3.5 h-3.5 text-sky-400" />
-                    </div>
-                    <span className="text-xs font-black uppercase tracking-wider">
-                      Nota / Descripción
-                    </span>
-                    {showNotasSection && notas && (
-                      <span className="text-[10px] font-bold text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-full truncate max-w-[100px]">
-                        {notas}
-                      </span>
-                    )}
-                  </div>
-                  <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform duration-200", showNotasSection && "rotate-180")} />
-                </button>
-                <div className={cn("overflow-hidden transition-all duration-200", showNotasSection ? "max-h-96" : "max-h-0")}>
-                  <div className="px-4 pb-4 pt-1">
-                    <textarea
-                      placeholder="Notas adicionales para la factura..."
-                      value={notas}
-                      onChange={e => setNotas(e.target.value)}
-                      rows={3}
-                      className="w-full rounded-xl border border-border/50 bg-background/50 px-3 py-2.5 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none transition-all"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Comisión / Nómina — técnico de la instalación */}
-              {cart.length > 0 && (
-                <div className="px-4 pb-2">
-                  <div className="rounded-2xl border border-amber-300/40 dark:border-amber-700/30 bg-amber-50/30 dark:bg-amber-950/10 p-3">
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                      <Banknote className="w-3.5 h-3.5 text-amber-500" />
-                      <span className="text-[10px] text-amber-700 dark:text-amber-400 uppercase font-black tracking-widest">Comisión / Nómina</span>
-                    </div>
-                    <AsignacionTecnicos
-                      value={jobSpecs}
-                      onChange={setJobSpecs}
-                      sedeId={currentSede?.id || null}
-                      defaultZona="escape"
-                      ingresoTotal={total}
-                      moneda="USD"
-                      compact
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Totales y Finalización */}
-              <div className="p-8 space-y-6 bg-gradient-to-t from-primary/10 to-transparent border-t border-border/30">
-                <div className="flex items-end justify-between">
-                  <div className="pl-4 border-l-4 border-primary">
-                    <p className="text-[11px] text-primary font-black uppercase tracking-[0.3em] mb-2">TOTAL A PAGAR USD</p>
-                    <span className="text-5xl font-black text-primary tracking-tighter italic">${(total || 0).toFixed(2)}</span>
-                  </div>
-                  <div className="flex flex-col items-end pt-2 border-t border-border/10">
-                    <p className="text-[10px] text-muted-foreground font-black uppercase tracking-[0.15em] opacity-60">Total en Bolívares</p>
-                    <p className="text-2xl font-black text-foreground tracking-tighter italic">{(total * rates.bcv).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</p>
-                  </div>
-                </div>
-
-                {isCasheaActive && (
-                  <div className="mt-4 p-4 rounded-2xl bg-blue-50 border border-blue-100 space-y-3 animate-in slide-in-from-top-2 duration-300">
-                    <div className="flex justify-between items-center">
-                      <div className="flex items-center gap-2">
-                        <Badge className="bg-blue-600 text-white font-black text-[9px] px-1.5 h-4">INICIAL {casheaPct}%</Badge>
-                        <span className="text-[10px] font-black text-blue-700 uppercase tracking-widest">A Pagar Hoy</span>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-xl font-black text-blue-700 leading-none">${Number(casheaInicial).toFixed(2)}</p>
-                        <p className="text-[11px] font-bold text-blue-600/70">{(casheaInicial * rates.bcv).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.</p>
-                      </div>
-                    </div>
-                    <div className="pt-2 border-t border-blue-200/50 flex justify-between items-center opacity-60">
-                      <span className="text-[9px] font-black text-blue-700 uppercase tracking-widest">3 Cuotas de</span>
-                      <p className="text-sm font-black text-blue-700">${Number(casheaCuota).toFixed(2)}</p>
-                    </div>
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-5 pt-4">
-                   <Button 
-                    variant="outline" 
-                    className="h-16 rounded-3xl border-primary/30 text-primary font-black uppercase text-[11px]"
-                    onClick={() => { if (cart.length > 0) setShowPreview(true); }}
-                  >
-                    REVISAR NOTA
-                  </Button>
-                  <Button 
-                    disabled={processing || cart.length === 0 || balance > 0.05}
-                    className="h-16 rounded-3xl bg-primary text-white font-black uppercase tracking-[0.2em] text-[12px] shadow-2xl relative overflow-hidden group"
-                    onClick={handleFinalize}
-                  >
-                    <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500" />
-                    {processing ? <><Loader2 className="w-6 h-6 animate-spin" /> PROCESANDO</> : <><CheckCircle className="w-6 h-6" /> REGISTRAR VENTA</>}
-                  </Button>
+                {/* Comisión / nómina: sin esto no se puede cerrar la venta. */}
+                {cart.length > 0 && (
+                  <>
+                    <p className="mb-1.5 mt-3 flex items-center gap-1.5 text-[11.5px] font-medium text-[#5b616e]">
+                      <Banknote className="h-3.5 w-3.5 text-[#f97316]" aria-hidden />
+                      Comisión / nómina
+                    </p>
+                    <div className="rounded-lg border border-[#ffd9bd] bg-[#fffaf6] p-3">
+                      <PersonalYComisiones
+                        value={asignaciones}
+                        onChange={setAsignaciones}
+                        sedeId={currentSede?.id || null}
+                        defaultZona="escape"
+                        items={itemsNomina}
+                        costoTotal={total}
+                        tipoTrabajo="escape"
+                        descripcionTrabajo={cart.map(i => i.nombre).join(' + ') || null}
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* Notas */}
+                <p className="mb-1.5 mt-3 text-[11.5px] font-medium text-[#5b616e]">Notas de la venta</p>
+                <textarea
+                  rows={2}
+                  value={notas}
+                  onChange={e => setNotas(e.target.value)}
+                  placeholder="Observaciones, recomendaciones, etc."
+                  aria-label="Notas de la venta"
+                  className="w-full resize-none rounded-lg border border-[#e2e5ea] px-3 py-2 text-[12.5px] outline-none placeholder:text-[#9ba1ab] focus:border-[#f97316] focus:ring-2 focus:ring-[#f97316]/20"
+                />
+
+                {/* Totales */}
+                <dl className="mt-3 space-y-2">
+                  <div className="flex items-center justify-between text-[12.5px]">
+                    <dt className="text-[#5b616e]">Subtotal</dt>
+                    <dd className="num font-semibold text-[#16181d]">${subtotal.toFixed(2)}</dd>
+                  </div>
+                  <div className="flex items-center justify-between text-[12.5px]">
+                    <dt className="text-[#5b616e]">IVA (16%)</dt>
+                    <dd className="num font-semibold text-[#16181d]">${(conIva ? total - subtotal : 0).toFixed(2)}</dd>
+                  </div>
+                </dl>
+
+                <div className="mt-2.5 rounded-lg bg-[#fff4ec] px-3.5 py-3">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-[14px] font-bold text-[#16181d]">Total a pagar</span>
+                    <span className="num text-[19px] font-extrabold text-[#16181d]">${total.toFixed(2)}</span>
+                  </div>
+                  <p className="num mt-0.5 text-right text-[11px] text-[#9ba1ab]">{bs(total * rates.bcv)}</p>
                 </div>
               </div>
-            </Card>
+            </section>
+
+            {/* Pago */}
+            <div className="flex min-h-0 w-full flex-col gap-3.5 lg:w-[372px] lg:shrink-0">
+              <MetodoPagoPanel
+                bins={bins}
+                onBinsChange={setBins}
+                totalUSD={total}
+                subtotalUSD={subtotal}
+                tasa={activeRate}
+                tasaAuto={rates.bcv}
+                customRate={customRate}
+                onCustomRate={setCustomRate}
+                cashea={{
+                  pct: casheaPct,
+                  onPct: pct => { setCasheaPct(pct); setConIva(true); setModoCashea(true); if (bins.cashea === 0) autoFillCashea(); },
+                  activo: isCasheaActive,
+                  onUsar: () => { setConIva(true); setModoCashea(true); autoFillCashea(); },
+                  inicial: casheaInicial,
+                  resto: casheaResto,
+                  cuota: casheaCuota,
+                  cuotas: 3,
+                }}
+              />
+
+              {/* Abono / apartado */}
+              <div className="shrink-0 overflow-hidden rounded-xl border border-[#e8eaed] bg-white">
+                <button
+                  type="button"
+                  onClick={() => setShowAbonoSection(!showAbonoSection)}
+                  aria-expanded={showAbonoSection}
+                  className="flex w-full items-center gap-2 px-4 py-2.5 text-left hover:bg-[#fafbfc]"
+                >
+                  <span className="flex h-[22px] w-[22px] items-center justify-center rounded-md bg-[#fdf5e2] text-[#eab308]">
+                    <DollarSign className="h-[13px] w-[13px]" aria-hidden />
+                  </span>
+                  <span className="flex-1 text-[12.5px] font-semibold text-[#16181d]">Abono / apartado</span>
+                  {abono > 0 && <span className="num rounded-md bg-[#fdf5e2] px-2 py-0.5 text-[11px] font-bold text-[#a16207]">${abono.toFixed(2)}</span>}
+                  <ChevronDown className={cn('h-4 w-4 text-[#9ba1ab] transition-transform', showAbonoSection && 'rotate-180')} aria-hidden />
+                </button>
+
+                {showAbonoSection && (
+                  <div className="space-y-2 border-t border-[#eef0f3] px-4 py-2.5">
+                    <p className="text-[11px] leading-snug text-[#8a909c]">
+                      Registra un abono parcial. La venta queda <strong className="text-[#c2410c]">pendiente por pagar</strong> hasta liquidar el saldo.
+                    </p>
+                    <input
+                      type="number" min={0} max={total} step={0.01}
+                      placeholder="0.00"
+                      aria-label="Monto del abono"
+                      value={abono || ''}
+                      onChange={e => setAbono(Math.max(0, parseFloat(e.target.value) || 0))}
+                      className="num h-[36px] w-full rounded-md border border-[#e2e5ea] px-2.5 text-[12.5px] font-semibold outline-none focus:border-[#f97316]"
+                    />
+                    <dl className="space-y-1 text-[11.5px]">
+                      <div className="flex justify-between"><dt className="text-[#5b616e]">Total venta</dt><dd className="num font-semibold">${total.toFixed(2)}</dd></div>
+                      <div className="flex justify-between"><dt className="text-[#5b616e]">Abono ahora</dt><dd className="num font-semibold text-[#16a34a]">- ${abono.toFixed(2)}</dd></div>
+                      <div className="flex justify-between border-t border-[#eef0f3] pt-1"><dt className="font-semibold text-[#c2410c]">Saldo pendiente</dt><dd className="num font-bold text-[#c2410c]">${Math.max(0, total - abono).toFixed(2)}</dd></div>
+                    </dl>
+                    {abono > 0 && total - abono <= 0 && (
+                      <p className="flex items-center gap-1.5 rounded-md bg-[#e8f7ee] px-2.5 py-2 text-[11px] font-medium text-[#15803d]">
+                        <CheckCircle className="h-3.5 w-3.5" aria-hidden />
+                        El abono cubre el total: la venta quedará pagada.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Cierre */}
+              <div className="shrink-0 rounded-xl border border-[#e8eaed] bg-white px-4 py-3">
+                <div className="mb-2.5 flex items-baseline justify-between gap-2">
+                  <span className="text-[12px] text-[#5b616e]">Por cobrar</span>
+                  <span className={cn('num text-[17px] font-extrabold', balance > 0.05 ? 'text-[#dc2626]' : 'text-[#16a34a]')}>
+                    ${balance.toFixed(2)}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => { if (cart.length > 0) setShowPreview(true); }}
+                    disabled={cart.length === 0}
+                    className="flex h-[42px] items-center justify-center gap-1.5 rounded-lg border border-[#e2e5ea] text-[12.5px] font-semibold text-[#3d4350] hover:bg-[#f6f7f9] disabled:opacity-45"
+                  >
+                    <FileText className="h-4 w-4" aria-hidden />
+                    Revisar nota
+                  </button>
+                  <button
+                    onClick={handleFinalize}
+                    disabled={processing || cart.length === 0 || balance > 0.05}
+                    className="flex h-[42px] items-center justify-center gap-1.5 rounded-lg bg-[#f97316] text-[12.5px] font-semibold text-white transition-colors hover:bg-[#ea580c] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-[#f97316]"
+                  >
+                    {processing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <CheckCircle className="h-4 w-4" aria-hidden />}
+                    {processing ? 'Procesando' : 'Registrar'}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
+
+          {/* ── Paneles del pie ─────────────────────────────────────────── */}
+          <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-12">
+            <section className="overflow-hidden rounded-xl border border-[#e8eaed] bg-white lg:col-span-5">
+              <header className="flex items-center gap-2 px-4 py-3">
+                <Receipt className="h-4 w-4 text-[#f97316]" aria-hidden />
+                <h2 className="flex-1 text-[13.5px] font-bold text-[#16181d]">Ventas recientes</h2>
+                <button onClick={fetchData} aria-label="Actualizar" className="rounded-md p-1 text-[#5b616e] hover:bg-[#f4f5f7]">
+                  <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin text-[#f97316]')} aria-hidden />
+                </button>
+              </header>
+
+              {ventasRecientes.length === 0 ? (
+                <p className="px-4 pb-6 pt-2 text-center text-[12.5px] text-[#8a909c]">
+                  Sin ventas registradas en {currentSede?.nombre || 'esta sede'}.
+                </p>
+              ) : (
+                <div className="max-h-[320px] overflow-auto">
+                  <table className="w-full min-w-[520px] border-collapse">
+                    <thead className="sticky top-0">
+                      <tr className="border-y border-[#f0f1f4] bg-[#fafbfc]">
+                        {['Cliente', 'Fecha', 'Ítems', 'Total', 'Origen'].map(h => (
+                          <th key={h} scope="col" className="px-3 py-2 text-left text-[10.5px] font-semibold text-[#8a909c]">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ventasRecientes.map((v, i) => (
+                        <tr
+                          key={v.id || i}
+                          onClick={() => { setSelectedSale(v); setShowSaleDetail(true); }}
+                          className="cursor-pointer border-b border-[#f5f6f8] last:border-0 hover:bg-[#fafbfc]"
+                        >
+                          <td className="px-3 py-2.5 text-[11.5px] font-medium text-[#16181d]">
+                            {v.cliente || 'Consumidor Final'}
+                            {v.isAtrasado && <span className="ml-1.5 rounded bg-[#fff4ec] px-1 py-[1px] text-[9.5px] font-semibold text-[#c2410c]">Atrasado</span>}
+                          </td>
+                          <td className="num px-3 py-2.5 text-[11.5px] text-[#5b616e]">
+                            {v.displayDate
+                              ? new Date(v.displayDate.includes('T') ? v.displayDate : v.displayDate + 'T12:00:00').toLocaleDateString('es-VE')
+                              : new Date(v.created_at).toLocaleDateString('es-VE')}
+                          </td>
+                          <td className="num px-3 py-2.5 text-[11.5px] text-[#5b616e]">{v.desglose?.length || 0}</td>
+                          <td className="num px-3 py-2.5 text-[11.5px] font-semibold text-[#16181d]">
+                            ${Number(v.total_ingresos || 0).toFixed(2)}
+                            <span className="block text-[10px] font-normal text-[#9ba1ab]">
+                              {bs((v.total_ingresos || 0) * (v.tasa_cambio || rates.bcv))}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <span className="flex flex-wrap items-center gap-1">
+                              {v.source === 'ia' && <span className="rounded bg-[#f0eafc] px-1.5 py-[1px] text-[10px] font-semibold text-[#7c3aed]">IA</span>}
+                              {v.isCashea && <span className="rounded bg-[#e7f0fe] px-1.5 py-[1px] text-[10px] font-semibold text-[#2563eb]">Cashea</span>}
+                              {v.isBinance && <span className="rounded bg-[#fdf5e2] px-1.5 py-[1px] text-[10px] font-semibold text-[#a16207]">Binance</span>}
+                              {!v.source && !v.isCashea && !v.isBinance && <span className="text-[10.5px] text-[#9ba1ab]">Mostrador</span>}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            <section className="overflow-hidden rounded-xl border border-[#e8eaed] bg-white lg:col-span-4">
+              <header className="flex items-center gap-2 px-4 py-3">
+                <Coins className="h-4 w-4 text-[#f97316]" aria-hidden />
+                <h2 className="flex-1 text-[13.5px] font-bold text-[#16181d]">Métodos de pago</h2>
+                <span className="text-[10.5px] text-[#9ba1ab]">{ventasRecientes.length} ventas</span>
+              </header>
+
+              {metodosMes.length === 0 ? (
+                <p className="px-4 pb-6 text-center text-[12.5px] text-[#8a909c]">Sin cobros registrados todavía.</p>
+              ) : (
+                <ul className="px-4 pb-3.5">
+                  {metodosMes.map(m => (
+                    <li key={m.nombre} className="flex items-center gap-2.5 py-[7px]">
+                      <span className="w-[92px] shrink-0 truncate text-[11.5px] text-[#3d4350]">{m.nombre}</span>
+                      <span className="num w-[76px] shrink-0 text-[11.5px] font-medium text-[#16181d]">${m.monto.toFixed(2)}</span>
+                      <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[#f0f1f4]">
+                        <span className={`block h-full rounded-full ${m.barra}`} style={{ width: `${m.pct}%` }} />
+                      </span>
+                      <span className="num w-[26px] shrink-0 text-right text-[11px] text-[#8a909c]">{m.pct}%</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:col-span-3 lg:grid-cols-1">
+              {[
+                { label: 'Ventas de hoy', valor: String(ventasHoy.length), tinte: 'bg-[#e7f0fe] text-[#2563eb]' },
+                { label: 'Total de hoy', valor: `$${totalHoy.toFixed(2)}`, sub: bs(totalHoy * rates.bcv), tinte: 'bg-[#e8f7ee] text-[#16a34a]' },
+              ].map(k => (
+                <article key={k.label} className="flex items-center gap-3 rounded-xl border border-[#e8eaed] bg-white px-4 py-3.5">
+                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${k.tinte}`}>
+                    <TrendingUp className="h-[17px] w-[17px]" aria-hidden />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[11.5px] text-[#8a909c]">{k.label}</p>
+                    <p className="num text-[18px] font-extrabold leading-tight text-[#16181d]">{k.valor}</p>
+                    {k.sub && <p className="num text-[10.5px] text-[#9ba1ab]">{k.sub}</p>}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        </>
       )}
 
-      {/* MODAL DE VISTA PREVIA */}
+      {/* ── Vista previa / comprobante / impresión ──────────────────────── */}
       <Dialog open={showPreview} onOpenChange={setShowPreview}>
-        <DialogContent className="max-w-[95vw] md:max-w-2xl bg-card border-border/50 rounded-[2rem] p-0 overflow-hidden shadow-2xl max-h-[90vh] flex flex-col">
-          <div className="bg-primary/5 p-4 md:p-8 border-b border-border/30 flex-shrink-0">
-             <DialogTitle className="text-xl md:text-2xl font-black tracking-tighter flex items-center gap-3 uppercase italic">
-               <FileText className="w-6 h-6 md:w-8 md:h-8 text-primary" /> RESUMEN DE FACTURACIÓN
-             </DialogTitle>
+        <DialogContent className="flex max-h-[90vh] max-w-[95vw] flex-col overflow-hidden rounded-2xl border-border/50 bg-card p-0 shadow-2xl md:max-w-2xl">
+          <div className="flex-shrink-0 border-b border-border/30 bg-primary/5 p-4 md:p-6">
+            <DialogTitle className="flex items-center gap-3 text-xl font-black tracking-tight">
+              <FileText className="h-6 w-6 text-primary" /> Resumen de facturación
+            </DialogTitle>
           </div>
-          <div className="p-4 md:p-8 space-y-6 overflow-y-auto custom-scrollbar flex-1">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8">
+          <div className="custom-scrollbar flex-1 space-y-6 overflow-y-auto p-4 md:p-6">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-8">
               <div className="space-y-1">
-                <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">CLIENTE / VEHÍCULO</p>
-                <p className="text-sm font-black text-foreground uppercase truncate">{clienteNombre || 'Consumidor Final'}</p>
-                <p className="text-xs font-bold text-muted-foreground uppercase truncate">{vehiculoInfo || 'S/D'}</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Cliente / vehículo</p>
+                <p className="truncate text-sm font-black uppercase text-foreground">{clienteNombre || 'Consumidor Final'}</p>
+                <p className="truncate text-xs font-bold uppercase text-muted-foreground">{vehiculoInfo || 'S/D'}</p>
               </div>
-              <div className="md:text-right space-y-1">
-                <Badge className="bg-primary/20 text-primary border-none font-black text-[9px] mb-2">{currentSede?.nombre}</Badge>
-                <p className="text-sm font-black text-foreground uppercase">{format(selectedDate, 'dd/MM/yyyy')}</p>
+              <div className="space-y-1 md:text-right">
+                <Badge className="mb-2 border-none bg-primary/20 text-[9px] font-black text-primary">{currentSede?.nombre}</Badge>
+                <p className="text-sm font-black uppercase text-foreground">{format(selectedDate, 'dd/MM/yyyy')}</p>
               </div>
             </div>
 
-            <div className="rounded-2xl border border-border/50 overflow-hidden">
-               <div className="overflow-x-auto">
-                 <table className="w-full text-left text-xs min-w-[400px]">
-                   <thead className="bg-muted/50 border-b border-border/30 font-black uppercase text-muted-foreground">
-                     <tr><th className="px-4 py-3">ITEM</th><th className="px-4 py-3 text-center">CANT</th><th className="px-4 py-3 text-right">TOTAL USD</th></tr>
-                   </thead>
-                   <tbody className="divide-y divide-border/20">
-                     {cart.map((item, idx) => {
-                        const effectivePrice = (conIva && isCasheaActive)
-                          ? (item.precio_bs || item.precio_unitario)
-                          : item.precio_unitario;
-                        const itemTotal = effectivePrice * item.cantidad;
-                        return (
-                          <tr key={idx} className="font-bold">
-                            <td className="px-4 py-3 uppercase truncate max-w-[150px]">{item.nombre}</td>
-                            <td className="px-4 py-3 text-center font-black">{item.cantidad}</td>
-                            <td className="px-4 py-3 text-right font-black">${Number(itemTotal).toFixed(2)}</td>
-                          </tr>
-                        );
-                      })}
-                   </tbody>
-                 </table>
-               </div>
+            <div className="overflow-hidden rounded-2xl border border-border/50">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[400px] text-left text-xs">
+                  <thead className="border-b border-border/30 bg-muted/50 font-black uppercase text-muted-foreground">
+                    <tr><th className="px-4 py-3">Ítem</th><th className="px-4 py-3 text-center">Cant</th><th className="px-4 py-3 text-right">Total USD</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/20">
+                    {cart.map((item, idx) => {
+                      const effectivePrice = (conIva && isCasheaActive) ? (item.precio_bs || item.precio_unitario) : item.precio_unitario;
+                      return (
+                        <tr key={idx} className="font-bold">
+                          <td className="max-w-[150px] truncate px-4 py-3 uppercase">{item.nombre}</td>
+                          <td className="px-4 py-3 text-center font-black">{item.cantidad}</td>
+                          <td className="px-4 py-3 text-right font-black">${Number(effectivePrice * item.cantidad).toFixed(2)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
-            <div className="flex justify-between items-center py-4 border-t border-border/30">
-               <span className="text-xs font-black uppercase tracking-widest text-muted-foreground">TOTAL A COBRAR:</span>
-               <span className="text-2xl md:text-3xl font-black text-primary italic tracking-tighter">${Number(total).toFixed(2)}</span>
+            <div className="flex items-center justify-between border-t border-border/30 py-4">
+              <span className="text-xs font-black uppercase tracking-widest text-muted-foreground">Total a cobrar:</span>
+              <span className="text-2xl font-black tracking-tight text-primary md:text-3xl">${Number(total).toFixed(2)}</span>
             </div>
 
-            {/* Comprobante de pago (referencia + imagen del pago) */}
+            {/* Comprobante de pago (referencia + imagen) */}
             <ComprobanteInput value={comprobante} onChange={setComprobante} />
           </div>
-          <DialogFooter className="p-4 md:p-8 bg-muted/20 flex flex-col gap-4 flex-shrink-0">
-             <div className="flex flex-col md:flex-row items-center justify-between w-full gap-4">
-                <div className="flex flex-col md:flex-row items-center gap-2 w-full md:w-auto">
-                    <div className="flex items-center bg-slate-100 rounded-xl p-1 gap-1 border border-slate-200 w-full md:w-auto justify-center">
-                      <button 
-                        onClick={() => setPrintMode('single')}
-                        className={cn("px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex-1 md:flex-none", printMode === 'single' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
-                      >
-                        Única
-                      </button>
-                      <button 
-                        onClick={() => setPrintMode('dual')}
-                        className={cn("px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex-1 md:flex-none", printMode === 'dual' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
-                        title="Dos copias de la misma factura"
-                      >
-                        Dual
-                      </button>
-                      <button 
-                        onClick={() => {
-                          setPrintMode('diferente');
-                          if (!secondVenta) setShowSelector(true);
-                        }}
-                        className={cn("px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex-1 md:flex-none", printMode === 'diferente' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
-                        title="Dos facturas diferentes"
-                      >
-                        Dif.
-                      </button>
-                    </div>
 
-                    <div className="flex items-center bg-slate-100 rounded-xl p-1 gap-1 border border-slate-200 w-full md:w-auto justify-center">
-                      <button 
-                        onClick={() => setPrintCurrencyMode('auto')}
-                        className={cn("px-2 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex-1 md:flex-none", printCurrencyMode === 'auto' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
-                        title="Auto detecta si pagó en Bs para imprimir en Dual, sino Solo USD"
-                      >
-                        Auto
-                      </button>
-                      <button 
-                        onClick={() => setPrintCurrencyMode('usd')}
-                        className={cn("px-2 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex-1 md:flex-none", printCurrencyMode === 'usd' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
-                        title="Imprimir solo columnas en USD"
-                      >
-                        Solo USD
-                      </button>
-                      <button 
-                        onClick={() => setPrintCurrencyMode('dual')}
-                        className={cn("px-2 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex-1 md:flex-none", printCurrencyMode === 'dual' ? "bg-white text-slate-900 shadow-sm" : "text-slate-500")}
-                        title="Imprimir columnas en Bs y USD"
-                      >
-                        Bs + USD
-                      </button>
-                    </div>
+          <DialogFooter className="flex flex-shrink-0 flex-col gap-4 bg-muted/20 p-4 md:p-6">
+            <div className="flex w-full flex-col items-center justify-between gap-4 md:flex-row">
+              <div className="flex w-full flex-col items-center gap-2 md:w-auto md:flex-row">
+                <div className="flex w-full items-center justify-center gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1 md:w-auto">
+                  {([['single', 'Única'], ['dual', 'Dual'], ['diferente', 'Dif.']] as const).map(([m, label]) => (
+                    <button
+                      key={m}
+                      onClick={() => { setPrintMode(m); if (m === 'diferente' && !secondVenta) setShowSelector(true); }}
+                      className={cn('flex-1 rounded-lg px-3 py-1.5 text-[9px] font-black uppercase tracking-widest transition-all md:flex-none', printMode === m ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500')}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
 
-                  {printMode === 'single' && (
-                    <div className="flex items-center bg-background rounded-lg p-0.5 border border-border w-full md:w-auto justify-center">
-                      <button 
-                        onClick={() => setPrintSide('left')}
-                        className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printSide === 'left' ? "bg-primary text-white" : "text-slate-500")}
-                      >
-                        Izq
-                      </button>
-                      <button 
-                        onClick={() => setPrintSide('right')}
-                        className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printSide === 'right' ? "bg-primary text-white" : "text-slate-500")}
-                      >
-                        Der
-                      </button>
-                    </div>
-                  )}
+                <div className="flex w-full items-center justify-center gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1 md:w-auto">
+                  {([['auto', 'Auto'], ['usd', 'Solo USD'], ['dual', 'Bs + USD']] as const).map(([m, label]) => (
+                    <button
+                      key={m}
+                      onClick={() => setPrintCurrencyMode(m)}
+                      className={cn('flex-1 rounded-lg px-2 py-1.5 text-[9px] font-black uppercase tracking-widest transition-all md:flex-none', printCurrencyMode === m ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500')}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
-                <div className="flex gap-2 w-full md:w-auto">
-                  <Button variant="outline" className="h-10 rounded-xl font-bold flex-1 md:px-6" onClick={() => setShowPreview(false)}>VOLVER</Button>
-                  <Button className="h-10 rounded-xl bg-primary text-white font-black uppercase tracking-widest gap-2 flex-[2] md:px-6" onClick={handleFinalize}>
-                    <Printer className="w-4 h-4" /> CONFIRMAR
-                  </Button>
-                </div>
-             </div>
+
+                {printMode === 'single' && (
+                  <div className="flex w-full items-center justify-center rounded-lg border border-border bg-background p-0.5 md:w-auto">
+                    {([['left', 'Izq'], ['right', 'Der']] as const).map(([s, label]) => (
+                      <button
+                        key={s}
+                        onClick={() => setPrintSide(s)}
+                        className={cn('flex-1 rounded-md px-2 py-1 text-[9px] font-black uppercase transition-all md:flex-none', printSide === s ? 'bg-primary text-white' : 'text-slate-500')}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex w-full gap-2 md:w-auto">
+                <Button variant="outline" className="h-10 flex-1 rounded-xl font-bold md:px-6" onClick={() => setShowPreview(false)}>Volver</Button>
+                <Button className="h-10 flex-[2] gap-2 rounded-xl bg-primary font-black uppercase tracking-widest text-white md:px-6" onClick={handleFinalize}>
+                  <Printer className="h-4 w-4" /> Confirmar
+                </Button>
+              </div>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* MODAL DE DETALLE DE VENTA RECIENTE */}
+      {/* ── Detalle de una venta reciente ───────────────────────────────── */}
       <Dialog open={showSaleDetail} onOpenChange={setShowSaleDetail}>
-        <DialogContent className="max-w-2xl bg-card border-border/50 rounded-[2rem] p-0 overflow-hidden shadow-2xl">
+        <DialogContent className="max-w-2xl overflow-hidden rounded-2xl border-border/50 bg-card p-0 shadow-2xl">
           {selectedSale && (
             <>
-              <div className="bg-primary/5 p-8 border-b border-border/30">
-                 <DialogTitle className="text-2xl font-black tracking-tighter flex items-center gap-3 uppercase italic">
-                   {selectedSale.source === 'ia' ? <Bot className="w-8 h-8 text-violet-500" /> : <Receipt className="w-8 h-8 text-primary" />}
-                   {saleCorrelativo || (selectedSale.source === 'ia' ? 'REGISTRO DE IA' : `FACTURA #${selectedSale.id?.slice(0, 8).toUpperCase()}`)}
-                 </DialogTitle>
+              <div className="border-b border-border/30 bg-primary/5 p-6">
+                <DialogTitle className="flex items-center gap-3 text-xl font-black tracking-tight">
+                  {selectedSale.source === 'ia' ? <Bot className="h-7 w-7 text-violet-500" /> : <Receipt className="h-7 w-7 text-primary" />}
+                  {saleCorrelativo || (selectedSale.source === 'ia' ? 'Registro de IA' : `Factura #${selectedSale.id?.slice(0, 8).toUpperCase()}`)}
+                </DialogTitle>
               </div>
-              <div className="p-8 space-y-6">
-                <div className="flex justify-between items-start">
+              <div className="space-y-6 p-6">
+                <div className="flex items-start justify-between">
                   <div className="space-y-1">
-                    <p className="text-[10px] font-black text-muted-foreground uppercase">CLIENTE</p>
+                    <p className="text-[10px] font-black uppercase text-muted-foreground">Cliente</p>
                     <p className="text-sm font-black uppercase">{selectedSale.cliente}</p>
-                    <div className="flex items-center gap-2 mt-1">
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
                       {selectedSale.isAtrasado && (
-                        <Badge className="bg-orange-500 text-white border-none text-[8px] font-black px-1.5 animate-pulse">
-                          ⚠️ REGISTRO ATRASADO
-                        </Badge>
+                        <Badge className="border-none bg-orange-500 px-1.5 text-[8px] font-black text-white">Registro atrasado</Badge>
                       )}
                       {selectedSale.fecha && (
                         <p className="text-[9px] font-bold text-muted-foreground">
@@ -2114,190 +1913,157 @@ export default function VentasPage() {
                       )}
                     </div>
                   </div>
-                  <div className="text-right space-y-1">
-                    <p className="text-[10px] font-black text-muted-foreground uppercase">MONTO TOTAL</p>
-                    <p className="text-2xl font-black text-primary italic">{symbol}{selectedSale.total_ingresos?.toFixed(2)}</p>
+                  <div className="space-y-1 text-right">
+                    <p className="text-[10px] font-black uppercase text-muted-foreground">Monto total</p>
+                    <p className="text-2xl font-black text-primary">{symbol}{selectedSale.total_ingresos?.toFixed(2)}</p>
                     <p className="text-xs font-bold text-muted-foreground">
-                      {((selectedSale.total_ingresos || 0) * (selectedSale.tasa_cambio || rates.bcv)).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.
+                      {bs((selectedSale.total_ingresos || 0) * (selectedSale.tasa_cambio || rates.bcv))}
                     </p>
                   </div>
                 </div>
-                <div className="rounded-2xl border border-border/50 overflow-hidden">
-                   <div className="w-full overflow-x-auto">
-                     <table className="w-full text-left text-xs">
-                       <thead className="bg-muted/50 border-b border-border/30 font-black">
-                         <tr><th className="px-4 py-3 uppercase">ARTÍCULO</th><th className="px-4 py-3 text-center uppercase">CANT</th><th className="px-4 py-3 text-right uppercase">TOTAL</th></tr>
-                       </thead>
-                       <tbody className="divide-y divide-border/20">
-                         {(selectedSale.desglose || []).flatMap((item: any, idx: number) =>
-                           parseDescripcionItems(item.descripcion || '', item.total ?? item.precio_unitario ?? 0).map((parsed, pidx) => (
-                             <tr key={`${idx}-${pidx}`}>
-                               <td className="px-4 py-3 uppercase font-bold">{parsed.descripcion}</td>
-                               <td className="px-4 py-3 text-center font-black">{parsed.cantidad}</td>
-                               <td className="px-4 py-3 text-right font-black">{symbol}{parsed.total?.toFixed(2)}</td>
-                             </tr>
-                           ))
-                         )}
-                       </tbody>
-                     </table>
-                   </div>
+
+                <div className="overflow-hidden rounded-2xl border border-border/50">
+                  <div className="w-full overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="border-b border-border/30 bg-muted/50 font-black">
+                        <tr><th className="px-4 py-3 uppercase">Artículo</th><th className="px-4 py-3 text-center uppercase">Cant</th><th className="px-4 py-3 text-right uppercase">Total</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/20">
+                        {(selectedSale.desglose || []).flatMap((item: any, idx: number) =>
+                          parseDescripcionItems(item.descripcion || '', item.total ?? item.precio_unitario ?? 0).map((parsed, pidx) => (
+                            <tr key={`${idx}-${pidx}`}>
+                              <td className="px-4 py-3 font-bold uppercase">{parsed.descripcion}</td>
+                              <td className="px-4 py-3 text-center font-black">{parsed.cantidad}</td>
+                              <td className="px-4 py-3 text-right font-black">{symbol}{parsed.total?.toFixed(2)}</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
-              <DialogFooter className="p-8 bg-muted/20 flex flex-col gap-4">
-                 <div className="flex flex-col md:flex-row items-center justify-between w-full gap-4">
-                   <div className="flex flex-col md:flex-row items-center gap-2 w-full md:w-auto">
-                     <div className="flex items-center bg-background rounded-lg p-0.5 border border-border w-full md:w-auto justify-center">
-                       <button 
-                         onClick={() => setPrintMode('single')}
-                         className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printMode === 'single' ? "bg-primary text-white" : "text-slate-500")}
-                       >
-                         Única
-                       </button>
-                       <button 
-                         onClick={() => setPrintMode('dual')}
-                         className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printMode === 'dual' ? "bg-primary text-white" : "text-slate-500")}
-                       >
-                         Dual
-                       </button>
-                     </div>
 
-                     <div className="flex items-center bg-background rounded-lg p-0.5 border border-border w-full md:w-auto justify-center">
-                       <button 
-                         onClick={() => setPrintCurrencyMode('auto')}
-                         className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printCurrencyMode === 'auto' ? "bg-primary text-white" : "text-slate-500")}
-                         title="Auto detecta si pagó en Bs para imprimir en Dual, sino Solo USD"
-                       >
-                         Auto
-                       </button>
-                       <button 
-                         onClick={() => setPrintCurrencyMode('usd')}
-                         className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printCurrencyMode === 'usd' ? "bg-primary text-white" : "text-slate-500")}
-                         title="Imprimir solo columnas en USD"
-                       >
-                         Solo USD
-                       </button>
-                       <button 
-                         onClick={() => setPrintCurrencyMode('dual')}
-                         className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printCurrencyMode === 'dual' ? "bg-primary text-white" : "text-slate-500")}
-                         title="Imprimir columnas en Bs y USD"
-                       >
-                         Bs + USD
-                       </button>
-                     </div>
+              <DialogFooter className="flex flex-col gap-4 bg-muted/20 p-6">
+                <div className="flex w-full flex-col items-center justify-between gap-4 md:flex-row">
+                  <div className="flex w-full flex-col items-center gap-2 md:w-auto md:flex-row">
+                    <div className="flex w-full items-center justify-center rounded-lg border border-border bg-background p-0.5 md:w-auto">
+                      {([['single', 'Única'], ['dual', 'Dual']] as const).map(([m, label]) => (
+                        <button
+                          key={m}
+                          onClick={() => setPrintMode(m)}
+                          className={cn('flex-1 rounded-md px-2 py-1 text-[9px] font-black uppercase transition-all md:flex-none', printMode === m ? 'bg-primary text-white' : 'text-slate-500')}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
 
-                     {printMode === 'single' && (
-                       <div className="flex items-center bg-background rounded-lg p-0.5 border border-border w-full md:w-auto justify-center">
-                         <button 
-                           onClick={() => setPrintSide('left')}
-                           className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printSide === 'left' ? "bg-primary text-white" : "text-slate-500")}
-                         >
-                           Izq
-                         </button>
-                         <button 
-                           onClick={() => setPrintSide('right')}
-                           className={cn("px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all flex-1 md:flex-none", printSide === 'right' ? "bg-primary text-white" : "text-slate-500")}
-                         >
-                           Der
-                         </button>
-                       </div>
-                     )}
-                   </div>
-                   <div className="flex gap-2 w-full md:w-auto">
-                     <Button variant="outline" className="h-10 rounded-xl font-bold px-6 flex-1 md:flex-none" onClick={() => setShowSaleDetail(false)}>CERRAR</Button>
-                     <Button className="h-10 rounded-xl bg-primary text-white font-black uppercase tracking-widest gap-2 px-6 flex-[2] md:flex-none" 
-                       onClick={() => {
-                          const bcvRate = selectedSale.tasa_cambio || rates.bcv;
-                          const mp = selectedSale.metodos_pago || {};
-                          const resolvedCurrencyMode = printCurrencyMode === 'auto'
-                            ? ((mp.pago_movil > 0 || mp.efectivo_ves > 0 || selectedSale.isCashea) ? 'dual' : 'usd')
-                            : printCurrencyMode;
+                    <div className="flex w-full items-center justify-center rounded-lg border border-border bg-background p-0.5 md:w-auto">
+                      {([['auto', 'Auto'], ['usd', 'Solo USD'], ['dual', 'Bs + USD']] as const).map(([m, label]) => (
+                        <button
+                          key={m}
+                          onClick={() => setPrintCurrencyMode(m)}
+                          className={cn('flex-1 rounded-md px-2 py-1 text-[9px] font-black uppercase transition-all md:flex-none', printCurrencyMode === m ? 'bg-primary text-white' : 'text-slate-500')}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
 
-                          generateInvoicePDF([{
-                            id: selectedSale.id,
-                            fecha: new Date(selectedSale.created_at).toLocaleDateString(),
-                            cliente: selectedSale.cliente,
-                            items: selectedSale.desglose || [],
-                            total: selectedSale.total_ingresos,
-                            notas: selectedSale.notas,
-                            tasa_bcv: bcvRate,
-                            total_ves: selectedSale.total_ingresos * bcvRate,
-                            iva_aplicado: selectedSale.con_iva,
-                            metodos_pago: mp
-                          }], { mode: printMode, side: printSide, currencyMode: resolvedCurrencyMode as any });
-                       }}>
-                       <Download className="w-4 h-4" /> DESCARGAR
-                     </Button>
-                   </div>
-                 </div>
+                    {printMode === 'single' && (
+                      <div className="flex w-full items-center justify-center rounded-lg border border-border bg-background p-0.5 md:w-auto">
+                        {([['left', 'Izq'], ['right', 'Der']] as const).map(([s, label]) => (
+                          <button
+                            key={s}
+                            onClick={() => setPrintSide(s)}
+                            className={cn('flex-1 rounded-md px-2 py-1 text-[9px] font-black uppercase transition-all md:flex-none', printSide === s ? 'bg-primary text-white' : 'text-slate-500')}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex w-full gap-2 md:w-auto">
+                    <Button variant="outline" className="h-10 flex-1 rounded-xl px-6 font-bold md:flex-none" onClick={() => setShowSaleDetail(false)}>Cerrar</Button>
+                    <Button
+                      className="h-10 flex-[2] gap-2 rounded-xl bg-primary px-6 font-black uppercase tracking-widest text-white md:flex-none"
+                      onClick={() => {
+                        const bcvRate = selectedSale.tasa_cambio || rates.bcv;
+                        const mp = selectedSale.metodos_pago || {};
+                        const modo = printCurrencyMode === 'auto'
+                          ? ((mp.pago_movil > 0 || mp.efectivo_ves > 0 || selectedSale.isCashea) ? 'dual' : 'usd')
+                          : printCurrencyMode;
+                        generateInvoicePDF([{
+                          id: selectedSale.id,
+                          fecha: new Date(selectedSale.created_at).toLocaleDateString(),
+                          cliente: selectedSale.cliente,
+                          items: selectedSale.desglose || [],
+                          total: selectedSale.total_ingresos,
+                          notas: selectedSale.notas,
+                          tasa_bcv: bcvRate,
+                          total_ves: selectedSale.total_ingresos * bcvRate,
+                          iva_aplicado: selectedSale.con_iva,
+                          metodos_pago: mp,
+                        }], { mode: printMode, side: printSide, currencyMode: modo as any });
+                      }}
+                    >
+                      <Download className="h-4 w-4" /> Descargar
+                    </Button>
+                  </div>
+                </div>
               </DialogFooter>
             </>
           )}
         </DialogContent>
       </Dialog>
-        {/* Selector de Segunda Factura */}
-        {showSelector && (
-          <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl flex flex-col max-h-[80%] overflow-hidden border border-slate-200">
-              <div className="flex items-center justify-between p-6 border-b border-slate-100 bg-slate-50/50">
-                <h3 className="text-sm font-black flex items-center gap-2 italic uppercase tracking-widest text-slate-900">
-                  <Receipt className="w-4 h-4 text-orange-500" /> Seleccionar Otra Factura
-                </h3>
-                <button onClick={() => setShowSelector(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
-                  <X className="w-4 h-4 text-slate-400" />
-                </button>
+
+      {/* ── Selector de la segunda factura (impresión "Dif.") ───────────── */}
+      {showSelector && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4">
+          <div className="flex max-h-[80dvh] w-full max-w-md flex-col overflow-hidden rounded-xl border border-[#e8eaed] bg-white shadow-2xl">
+            <header className="flex items-center gap-2 border-b border-[#e8eaed] px-5 py-3.5">
+              <Receipt className="h-4 w-4 text-[#f97316]" aria-hidden />
+              <h3 className="flex-1 text-[14px] font-bold text-[#16181d]">Seleccionar otra factura</h3>
+              <button onClick={() => setShowSelector(false)} aria-label="Cerrar" className="rounded-lg p-1.5 text-[#5b616e] hover:bg-[#f4f5f7]">
+                <X className="h-4 w-4" aria-hidden />
+              </button>
+            </header>
+            <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9ba1ab]" aria-hidden />
+                <input
+                  autoFocus
+                  value={searchTermVenta}
+                  onChange={e => setSearchTermVenta(e.target.value)}
+                  placeholder="Buscar cliente..."
+                  aria-label="Buscar factura por cliente"
+                  className="h-[38px] w-full rounded-lg border border-[#e2e5ea] pl-9 pr-3 text-[12.5px] outline-none focus:border-[#f97316]"
+                />
               </div>
-              <div className="p-6 flex flex-col gap-4 overflow-hidden">
-                <div className="relative">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input 
-                    autoFocus
-                    className="w-full bg-slate-100 border-none rounded-2xl pl-10 pr-4 py-3 text-xs font-bold focus:ring-2 focus:ring-orange-500/20 outline-none"
-                    placeholder="Buscar cliente..."
-                    value={searchTermVenta}
-                    onChange={e => setSearchTermVenta(e.target.value)}
-                  />
-                </div>
-                <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-                  {ventasRecientes.filter(v => searchTermVenta === '' || (v.cliente || '').toLowerCase().includes(searchTermVenta.toLowerCase())).map(v => (
-                    <button 
-                      key={v.id} 
+              <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
+                {ventasRecientes
+                  .filter(v => searchTermVenta === '' || (v.cliente || '').toLowerCase().includes(searchTermVenta.toLowerCase()))
+                  .map(v => (
+                    <button
+                      key={v.id}
                       onClick={() => { setSecondVenta(v); setShowSelector(false); }}
-                      className="w-full text-left p-4 rounded-2xl border border-transparent hover:border-slate-100 hover:bg-slate-50 transition-all flex justify-between items-center"
+                      className="flex w-full items-center justify-between gap-3 rounded-lg border border-[#eef0f3] px-3 py-2.5 text-left hover:border-[#e2e5ea] hover:bg-[#fafbfc]"
                     >
-                      <div>
-                        <p className="text-xs font-black text-slate-900 uppercase italic">{v.cliente || 'Consumidor Final'}</p>
-                        <p className="text-[10px] text-slate-400 font-bold">{v.fecha}</p>
-                      </div>
-                      <p className="text-xs font-black text-orange-500 italic">${Number(v.total_ingresos).toFixed(2)}</p>
+                      <span className="min-w-0 leading-tight">
+                        <span className="block truncate text-[12.5px] font-semibold text-[#16181d]">{v.cliente || 'Consumidor Final'}</span>
+                        <span className="num block text-[11px] text-[#9ba1ab]">{v.fecha}</span>
+                      </span>
+                      <span className="num shrink-0 text-[12.5px] font-bold text-[#f97316]">${Number(v.total_ingresos || 0).toFixed(2)}</span>
                     </button>
                   ))}
-                </div>
               </div>
             </div>
           </div>
-        )}
-        {/* Footer Premium */}
-        <footer className="mt-16 pb-12 border-t border-border/20 pt-12 text-center space-y-4">
-          <div className="flex flex-col items-center gap-2">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary border border-primary/20">
-                <ShoppingCart className="w-4 h-4" />
-              </div>
-              <span className="text-sm font-black uppercase tracking-[0.3em] text-foreground/40">Lycos Team POS</span>
-            </div>
-            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-              Plataforma de Gestión de Ventas e Inventario
-            </p>
-          </div>
-          <div className="pt-4 border-t border-border/5 max-w-xs mx-auto">
-            <p className="text-[9px] font-black uppercase text-primary italic tracking-[0.1em]">
-              Elaborado por Leandro Marquez
-            </p>
-            <p className="text-[8px] font-medium text-muted-foreground mt-1">
-              &copy; {new Date().getFullYear()} Lycos Garage. Todos los derechos reservados.
-            </p>
-          </div>
-        </footer>
-      </div>
-    );
+        </div>
+      )}
+    </ErpShell>
+  );
 }

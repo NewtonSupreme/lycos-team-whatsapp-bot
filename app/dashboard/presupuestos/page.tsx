@@ -1040,7 +1040,7 @@ export default function PresupuestosPage() {
                     <div className="mt-3">{renderMonedaSelector()}</div>
                   </CardHeader>
 
-                  <CardContent className="flex-1 overflow-y-auto p-0 custom-scrollbar">
+                  <CardContent className="min-h-0 flex-1 overflow-y-auto p-0 custom-scrollbar">
                     {items.length === 0 ? (
                       <div className="flex flex-col items-center justify-center py-16 opacity-30">
                         <Receipt className="w-12 h-12 mb-3" />

@@ -60,17 +60,22 @@ export function buildCategoriaColumns(categoria: string | null | undefined, mont
  * Útil para clasificar registros del bot o históricos sin categoría.
  */
 export function inferirCategoria(texto?: string | null): string {
-  const t = (texto || '').toLowerCase();
+  // Sin acentos: media base está escrita "reparacion" y la otra media "reparación".
+  const t = (texto || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   if (!t) return 'otro';
-  if (/silenciador|escape|resonador|flexible|tubo|cola/.test(t)) return 'silenciador';
-  if (/alinea|balanceo|tren delantero/.test(t)) return 'alineacion';
-  if (/caucho|goma|neumat|cauchera|rotaci/.test(t)) return 'cauchera';
-  if (/freno|pastilla|disco|liga de freno/.test(t)) return 'frenos';
-  if (/lavado|autolavado|pulitura|limpieza/.test(t)) return 'lavado';
-  if (/electr|scanner|escaner|bater|alternador|arranque/.test(t)) return 'electronica';
-  if (/laton|pintura|latoner/.test(t)) return 'latoneria';
-  if (/repuesto|filtro|aceite|refrigerante|bujia|correa/.test(t)) return 'repuestos';
-  if (/mecan|motor|caja|embrague|clutch|suspension|amortiguador|revisi/.test(t)) return 'mecanica';
+
+  // El orden importa: lo más específico primero. "liga de frenos" es frenos
+  // aunque diga "liga", y "tren delantero" es alineación aunque diga "tren".
+  if (/alinea|balanceo|tren delantero|caster|camber|convergencia/.test(t)) return 'alineacion';
+  if (/freno|pastilla|disco de freno|liga de freno|zapata|bomba de freno/.test(t)) return 'frenos';
+  if (/caucho|goma|neumat|cauchera|rotacion|ponchad|vulcaniz|rin|tripa/.test(t)) return 'cauchera';
+  // Vocabulario real del taller: bajante, intermedio, punta, mofle, catalítico.
+  if (/silenciador|escape|resonador|flexible|bajante|intermedio|mofle|catalit|punta de escape|soldadura|tubo|cola/.test(t)) return 'silenciador';
+  if (/lavado|autolavado|pulitura|encerad|limpieza|aspirad/.test(t)) return 'lavado';
+  if (/electr|scanner|escaner|bater|alternador|arranque|cableado|fusible|luces/.test(t)) return 'electronica';
+  if (/laton|pintura|latoner|masilla|fondo|abolladura|golpe/.test(t)) return 'latoneria';
+  if (/mecan|motor|caja|embrague|clutch|suspension|amortiguador|revision|tren trasero|rotula|bujes|correa de tiempo/.test(t)) return 'mecanica';
+  if (/repuesto|filtro|aceite|refrigerante|bujia|correa|liga|valvulina/.test(t)) return 'repuestos';
   return 'otro';
 }
 
@@ -95,6 +100,10 @@ export const METODOS_PAGO: MetodoPago[] = [
   { key: 'bnc',                 label: 'BNC',                  columna: 'bnc',                 moneda: 'VES' },
   { key: 'efectivo_bs',         label: 'Efectivo Bs',          columna: 'efectivo_bs',         moneda: 'VES' },
   { key: 'transferencia',       label: 'Transferencia',        columna: null,                  moneda: 'USD' },
+  // Cobro por punto de venta en divisa. No hay columna para esto en el reporte,
+  // así que se registra como método conocido y `metodosSinMapear()` lo lista
+  // aparte: preferible verlo pendiente de clasificar a que desaparezca.
+  { key: 'punto_usd',           label: 'Punto de venta ($)',   columna: null,                  moneda: 'USD' },
   { key: 'euros',               label: 'Euros (€)',            columna: null,                  moneda: 'EUR' },
   { key: 'otro',                label: 'Otro',                 columna: null,                  moneda: 'USD' },
 ];
@@ -103,7 +112,15 @@ export function metodoPagoLabel(key: string): string {
   return METODOS_PAGO.find(m => m.key === key)?.label || key.replace(/_/g, ' ');
 }
 
-/** Alias históricos usados por el POS/bot → clave canónica. */
+/**
+ * Alias históricos usados por el POS/bot → clave canónica.
+ *
+ * Cada clave que falte aquí es dinero que desaparece del reporte: al no
+ * encontrar columna, `buildPagoColumns` la descartaba en silencio. Se
+ * detectaron 7 cobros por $4.103,99 con claves sin mapear, así que ahora
+ * también existe `metodosSinMapear()` para que salgan a la vista en vez de
+ * perderse.
+ */
 const ALIAS_METODO: Record<string, string> = {
   divisas: 'efectivo_usd',
   dolares: 'efectivo_usd',
@@ -114,6 +131,15 @@ const ALIAS_METODO: Record<string, string> = {
   punto: 'punto_banesco',
   efectivo_ves: 'efectivo_bs',
   bolivares: 'efectivo_bs',
+  // Un punto de venta en bolívares es el punto Banesco, que es la columna en Bs.
+  punto_de_venta_ves: 'punto_banesco',
+  punto_ves: 'punto_banesco',
+  // Cashea siempre se liquida en dólares; el sufijo era ruido.
+  cashea_usd: 'cashea',
+  punto_de_venta_usd: 'punto_usd',
+  // Ojo: `punto_de_venta_usd` NO se mapea a propósito. No hay columna de punto
+  // en divisa y meterlo en la de bolívares falsearía el reporte. Sale listado
+  // por `metodosSinMapear()` para que administración decida dónde va.
 };
 
 export function normalizeMetodo(key: string): string {
@@ -137,6 +163,28 @@ export function buildPagoColumns(metodos: Record<string, number> | null | undefi
     if (def?.columna) out[def.columna] = (out[def.columna] || 0) + monto;
   }
   return out;
+}
+
+/**
+ * Los cobros que NO caen en ninguna columna del reporte.
+ *
+ * Devuelve lo que `buildPagoColumns` deja fuera, para poder avisar en vez de
+ * perderlo. Un método sin columna propia —transferencia, euros, otro— no es un
+ * error; una clave desconocida sí, y es plata que no aparece en ningún lado.
+ */
+export function metodosSinMapear(
+  metodos: Record<string, number> | null | undefined,
+): { clave: string; monto: number; conocido: boolean }[] {
+  if (!metodos) return [];
+  const fuera: { clave: string; monto: number; conocido: boolean }[] = [];
+  for (const [rawKey, valor] of Object.entries(metodos)) {
+    const monto = Number(valor) || 0;
+    if (monto <= 0) continue;
+    const key = normalizeMetodo(rawKey);
+    const def = METODOS_PAGO.find(m => m.key === key);
+    if (!def?.columna) fuera.push({ clave: rawKey, monto, conocido: !!def });
+  }
+  return fuera;
 }
 
 /** Suma total de los métodos de pago. */

@@ -488,7 +488,7 @@ export default function VehiculosPage() {
               <button onClick={() => setShowModal(false)} className="w-10 h-10 rounded-2xl hover:bg-muted/50 flex items-center justify-center transition-all shrink-0"><XCircle className="w-5 h-5 text-muted-foreground" /></button>
             </div>
 
-            <div className="p-4 sm:p-8 flex-1 overflow-y-auto custom-scrollbar">
+            <div className="min-h-0 p-4 sm:p-8 flex-1 overflow-y-auto custom-scrollbar">
               <div className="grid grid-cols-2 gap-4 sm:gap-6">
                 
                 {/* Cliente */}
@@ -687,7 +687,7 @@ export default function VehiculosPage() {
               <DialogHeader className="p-6 pb-2 shrink-0">
                 <DialogTitle>Detalle del Vehículo</DialogTitle>
               </DialogHeader>
-              <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 pt-2 space-y-4 custom-scrollbar">
+              <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-6 pt-2 space-y-4 custom-scrollbar">
                 <div className="flex items-center gap-3 p-3 rounded-xl bg-muted/30 border border-border/30">
                   <div className="w-12 h-12 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
                     <Car className="w-6 h-6 text-primary" />

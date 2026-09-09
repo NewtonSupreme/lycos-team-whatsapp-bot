@@ -345,41 +345,56 @@ export class PayrollCalculationService {
     };
   }
 
-  /** Resumen consolidado del período para TODOS los empleados con actividad o regla. */
+  /**
+   * Resumen consolidado del período para TODA la plantilla activa de la sede.
+   *
+   * Antes solo entraban quienes tuvieran trabajos, una regla de comisión o el
+   * rol `mecanico`/`jefe_taller`. Con la plantilla real eso dejaba la nómina en
+   * una sola persona: el resto del personal —administración, atención al
+   * cliente, cobranza, supervisión— simplemente no existía en la pantalla, y no
+   * había forma de ver ni de liquidar a nadie más. Ahora aparecen todos; quien
+   * no tuvo movimientos sale en cero, que también es información.
+   */
   async getPayrollSummary(periodo: PeriodoInput): Promise<EmployeeEarnings[]> {
     const rules = await this.getRules(periodo.sedeId);
 
-    // Empleados con trabajos en el período
+    // Empleados con trabajos en el período (pueden ser de otra sede si el
+    // trabajo se registró allí, por eso se suman aparte de la plantilla).
     let jq = this.db.from('job_assignments').select('empleado_id')
       .gte('fecha', periodo.inicio).lte('fecha', periodo.fin)
       .neq('estado', 'anulado').not('empleado_id', 'is', null);
     if (periodo.sedeId) jq = jq.eq('sede_id', periodo.sedeId);
     const { data: jobEmps } = await jq;
 
-    // Traer todos los usuarios activos que sean técnicos en esta sede
-    let uq = this.db.from('usuarios').select('id, rol, activo').neq('activo', false);
+    let uq = this.db.from('usuarios').select('id, nombre, rol, activo').neq('activo', false);
     if (periodo.sedeId) uq = uq.eq('sede_id', periodo.sedeId);
     const { data: activeUsers } = await uq;
 
     const ids = new Set<string>();
+    (activeUsers || []).forEach((u: any) => { if (u.id) ids.add(u.id); });
     (jobEmps || []).forEach((r: any) => r.empleado_id && ids.add(r.empleado_id));
-    // Empleados con sueldo fijo / reglas aunque no tengan trabajos
+    // Reglas con sueldo fijo aunque su titular ya no esté en la plantilla activa.
     rules.forEach(r => { if (r.empleado_id) ids.add(r.empleado_id); });
-    // Empleados con rol operativo (mecánicos, jefes de taller)
-    (activeUsers || []).forEach((u: any) => {
-      if (u.id && (u.rol === 'mecanico' || u.rol === 'jefe_taller')) {
-        ids.add(u.id);
-      }
-    });
 
+    // En tandas: una consulta por empleado en serie hacía esperar de más con la
+    // plantilla completa, y todas a la vez saturan el pool de conexiones.
+    const lista = Array.from(ids);
     const results: EmployeeEarnings[] = [];
-    for (const id of ids) {
-      const e = await this.calculateEmployeeWeeklyEarnings(id, periodo);
-      const esTec = (activeUsers || []).some((u: any) => u.id === id && (u.rol === 'mecanico' || u.rol === 'jefe_taller'));
-      // Incluye si tiene algo que pagar, algún movimiento o si es técnico registrado
-      if (e.bruto !== 0 || e.jobs.length > 0 || e.sueldo_base > 0 || esTec) results.push(e);
+    const TANDA = 6;
+    for (let i = 0; i < lista.length; i += TANDA) {
+      const tanda = await Promise.all(
+        lista.slice(i, i + TANDA).map(id => this.calculateEmployeeWeeklyEarnings(id, periodo)),
+      );
+      results.push(...tanda);
     }
-    results.sort((a, b) => b.total_pagar - a.total_pagar);
+
+    // Primero quien tiene algo que cobrar; el resto, por nombre, para que la
+    // lista no baile de posición entre recargas.
+    results.sort((a, b) =>
+      b.total_pagar - a.total_pagar ||
+      b.jobs.length - a.jobs.length ||
+      (a.empleado_nombre || '').localeCompare(b.empleado_nombre || ''),
+    );
     return results;
   }
 

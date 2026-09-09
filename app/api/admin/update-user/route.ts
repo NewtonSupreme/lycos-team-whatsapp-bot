@@ -28,7 +28,8 @@ export async function POST(req: Request) {
       }
     });
 
-    const { id, email, nombre, sede_id, rol, activo, telefono, username, permisos, password, especialidad, cedula, foto_url, alias } = await req.json();
+    const { id, email, nombre, sede_id, rol, activo, telefono, username, permisos, password, especialidad, cedula, foto_url, alias,
+            cargo, area, tipo_contrato, fecha_ingreso, fecha_nacimiento } = await req.json();
 
     if (!id) {
       return NextResponse.json({ error: 'ID de usuario requerido' }, { status: 400 });
@@ -57,13 +58,25 @@ export async function POST(req: Request) {
     if (nombre !== undefined) updates.nombre = nombre;
     if (email !== undefined) updates.email = email;
     if (rol !== undefined) updates.rol = rol;
-    if (activo !== undefined) updates.activo = activo;
+    if (activo !== undefined) {
+      updates.activo = activo;
+      // Dar de baja sella la fecha de salida y reactivar la borra: sin este
+      // dato la rotación anual tendría que adivinarse desde `updated_at`.
+      updates.fecha_egreso = activo ? null : new Date().toISOString().slice(0, 10);
+    }
     if (sede_id !== undefined) updates.sede_id = sede_id;
     if (telefono !== undefined) updates.telefono = telefono || null;
     if (especialidad !== undefined) updates.especialidad = especialidad || null;
     if (cedula !== undefined) updates.cedula = cedula || null;
     if (foto_url !== undefined) updates.foto_url = foto_url || null;
     if (alias !== undefined) updates.alias = alias || null;
+    // Ficha laboral de RRHH. Las fechas vacías se guardan como NULL: una
+    // cadena vacía en una columna `date` revienta el update entero.
+    if (cargo !== undefined) updates.cargo = cargo || null;
+    if (area !== undefined) updates.area = area || null;
+    if (tipo_contrato !== undefined) updates.tipo_contrato = tipo_contrato || null;
+    if (fecha_ingreso !== undefined) updates.fecha_ingreso = fecha_ingreso || null;
+    if (fecha_nacimiento !== undefined) updates.fecha_nacimiento = fecha_nacimiento || null;
     if (permisos !== undefined) updates.permisos = permisos;
 
     // Reseteo opcional de contraseña (solo si el admin escribió una nueva)

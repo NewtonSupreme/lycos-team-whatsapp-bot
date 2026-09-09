@@ -14,6 +14,7 @@ import { supabase } from '@/lib/supabase';
 import {
   X, Plus, Loader2, TrendingUp, TrendingDown, Wallet, Trash2, Car, User, Clock, Wrench, AlertTriangle,
 } from 'lucide-react';
+import ModalPortal from '@/components/ui/modal-portal';
 import { METODOS_PAGO } from '@/lib/categorias';
 
 export interface GastosTarget {
@@ -147,7 +148,8 @@ export default function GastosVehiculoModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={onClose}>
+    <ModalPortal>
+      <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div className="w-full max-w-2xl max-h-[90vh] flex flex-col bg-card border border-border rounded-2xl shadow-2xl animate-in zoom-in-95 duration-200"
         onClick={e => e.stopPropagation()}>
 
@@ -177,7 +179,7 @@ export default function GastosVehiculoModal({
         </div>
 
         {/* Contenido */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
               {egresos.length} gasto(s) registrado(s)
@@ -285,9 +287,10 @@ export default function GastosVehiculoModal({
               ))}
             </div>
           )}
+          </div>
         </div>
       </div>
-    </div>
+    </ModalPortal>
   );
 }
 

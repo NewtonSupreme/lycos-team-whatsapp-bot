@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import {
   Wrench, Search, Calendar, Clock, CheckCircle, AlertCircle,
   Loader2, RefreshCw, User, Car, Phone, ChevronDown, X,
@@ -25,7 +25,7 @@ import { cn, getLocalISODate, parseDescripcionItems } from '@/lib/utils';
 import DesglosePagoBancos from '@/components/pos/DesglosePagoBancos';
 import { buildVentaDiaFields, emptyBins, binsTotalUSD, deptFromServicioTipo, type Bins } from '@/lib/reporte/ventas-mapping';
 import PersonalYComisiones, { type AsignacionEmpleado } from '@/components/nomina/PersonalYComisiones';
-import MetodosPagoPicker from '@/components/pagos/MetodosPagoPicker';
+import { asignacionesValidas, buildJobsDesdeAsignacion } from '@/lib/nomina/asignaciones';
 import { CATEGORIAS_VENTA, inferirCategoria, categoriaToZona, buildCategoriaColumns, buildPagoColumns, sumaMetodos } from '@/lib/categorias';
 
 // ── Types ─────────────────────────────────────────────────────
@@ -183,6 +183,9 @@ export default function ServiciosPage() {
   // Modal de cobro al finalizar un servicio (captura banco exacto + IVA)
   const [cobroModal, setCobroModal] = useState<{ cita: CitaServicio; nuevoEstado: string } | null>(null);
   const [cobroBins, setCobroBins] = useState<Bins>(emptyBins());
+  // Tasa elegida para este cobro. 0 = la del día. Se guarda con la venta, así
+  // que un cobro al paralelo deja de convertirse al oficial por descuido.
+  const [cobroTasa, setCobroTasa] = useState<number | null>(null);
   const [cobroConIva, setCobroConIva] = useState(false);
   const [cobroProcesando, setCobroProcesando] = useState(false);
   const [inventory, setInventory] = useState<any[]>([]);
@@ -271,7 +274,11 @@ export default function ServiciosPage() {
   const applyEstadoChange = async (
     cita: CitaServicio,
     nuevoEstado: string,
-    cobro?: { bins: Bins; conIva: boolean; saldo: number }
+    // `tasa` es con la que se convirtió lo cobrado en bolívares. Viaja con el
+    // cobro porque no siempre es la del día: en el taller se cobra tanto al
+    // BCV como al de Binance P2P, y convertir con la que no era descuadra el
+    // reporte sin dejar rastro de por qué.
+    cobro?: { bins: Bins; conIva: boolean; saldo: number; tasa?: number }
   ) => {
     const COMPLETED_STATES = ['completada', 'finalizado', 'finalizada', 'completado'];
     const id = cita.id;
@@ -350,7 +357,7 @@ export default function ServiciosPage() {
               subtotal: precio,
               conIva: cobro.conIva,
               saldo: cobro.saldo,
-              tasa: globalBcvRate || 0,
+              tasa: cobro.tasa || globalBcvRate || 0,
               deptItems: [{ dept: deptFromServicioTipo(cita.tipo), monto: precio }],
             });
             const totalConIva = precio * (cobro.conIva ? 1.16 : 1);
@@ -386,7 +393,7 @@ export default function ServiciosPage() {
             desglose,
             metodos_pago: metodos,
             ...buildPagoColumns(metodos),
-            tasa_cambio: svcAny.tasa_cambio || globalBcvRate || 0,
+            tasa_cambio: cobro?.tasa || svcAny.tasa_cambio || globalBcvRate || 0,
             con_iva: !!svcAny.con_iva,
             notas: notesFinal,
             creado_por: user?.nombre || 'Admin',
@@ -440,6 +447,7 @@ export default function ServiciosPage() {
     if (entrandoCompletado && precioServicio > 0 && (cita.sede_id || currentSede?.id)) {
       setCobroBins(emptyBins());
       setCobroConIva(false);
+      setCobroTasa(null);
       setCobroModal({ cita, nuevoEstado });
       return;
     }
@@ -452,12 +460,15 @@ export default function ServiciosPage() {
     if (!cobroModal) return;
     const { cita, nuevoEstado } = cobroModal;
     const precio = Number(cita.costo_final ?? cita.costo_estimado ?? 0);
-    const totalConIva = precio * (cobroConIva ? 1.16 : 1);
-    const pagado = binsTotalUSD(cobroBins, globalBcvRate || 0);
+    // Igual que en la vista: con Cashea el IVA va siempre.
+    const conIvaEfectivo = cobroConIva || (cobroBins.cashea || 0) > 0;
+    const totalConIva = precio * (conIvaEfectivo ? 1.16 : 1);
+    const pagado = binsTotalUSD(cobroBins, cobroTasa || globalBcvRate || 0);
     const saldo = Math.max(0, Math.round((totalConIva - pagado) * 100) / 100);
+    const tasaDelCobro = cobroTasa || globalBcvRate || 0;
     setCobroProcesando(true);
     try {
-      await applyEstadoChange(cita, nuevoEstado, { bins: cobroBins, conIva: cobroConIva, saldo });
+      await applyEstadoChange(cita, nuevoEstado, { bins: cobroBins, conIva: conIvaEfectivo, saldo, tasa: tasaDelCobro });
       setCobroModal(null);
       setCobroBins(emptyBins());
       setCobroConIva(false);
@@ -880,8 +891,13 @@ export default function ServiciosPage() {
       {/* 💵 Modal de cobro al finalizar servicio — clasifica el pago por banco exacto */}
       {cobroModal && (() => {
         const precio = Number(cobroModal.cita.costo_final ?? cobroModal.cita.costo_estimado ?? 0);
-        const totalConIva = Math.round(precio * (cobroConIva ? 1.16 : 1) * 100) / 100;
-        const pagado = binsTotalUSD(cobroBins, globalBcvRate || 0);
+        // Cashea financia SOBRE el precio con IVA: la inicial y las cuotas se
+        // calculan de ese total. Si se cobrara sin IVA, lo que financia Cashea
+        // y lo que cobra el taller dejarían de ser la misma cifra.
+        const casheaEnJuego = (cobroBins.cashea || 0) > 0;
+        const ivaEfectivo = cobroConIva || casheaEnJuego;
+        const totalConIva = Math.round(precio * (ivaEfectivo ? 1.16 : 1) * 100) / 100;
+        const pagado = binsTotalUSD(cobroBins, cobroTasa || globalBcvRate || 0);
         const saldo = Math.max(0, Math.round((totalConIva - pagado) * 100) / 100);
         const esCredito = saldo > 0.01;
         return (
@@ -905,8 +921,10 @@ export default function ServiciosPage() {
               <div className="p-4 sm:p-5 space-y-4">
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <label className="flex items-center gap-2 cursor-pointer group">
-                    <input type="checkbox" checked={cobroConIva} onChange={e => setCobroConIva(e.target.checked)}
-                      className="w-4 h-4 rounded border-border text-primary" />
+                    <input type="checkbox" checked={ivaEfectivo} disabled={casheaEnJuego}
+                      onChange={e => setCobroConIva(e.target.checked)}
+                      title={casheaEnJuego ? 'Con Cashea el IVA del 16% es obligatorio.' : undefined}
+                      className="w-4 h-4 rounded border-border text-primary disabled:opacity-60" />
                     <span className="text-xs font-black text-muted-foreground group-hover:text-primary transition-colors uppercase">Aplicar IVA (16%)</span>
                   </label>
                   <div className="text-right">
@@ -919,7 +937,9 @@ export default function ServiciosPage() {
                   bins={cobroBins}
                   onBinsChange={setCobroBins}
                   totalUSD={totalConIva}
-                  tasa={globalBcvRate || 0}
+                  tasa={cobroTasa || globalBcvRate || 0}
+                  tasaAuto={globalBcvRate}
+                  onTasaChange={setCobroTasa}
                 />
 
                 {esCredito && (
@@ -1264,72 +1284,6 @@ function ListView({ items, onEdit, onDelete, onTracking, onInvoice, onBudget }: 
   );
 }
 
-/**
- * Convierte una asignación de personal en los trabajos que consume el motor de nómina.
- * Genera UN TRABAJO POR ÍTEM del desglose asignado, para que cada servicio se
- * comisione con su propio porcentaje (igual que las relaciones de pago manuales:
- * cauchera 30% reparación / 40% rotación / 100% adicional; Rafael 25% alineación /
- * 40% revisión…). Si hay comisión manual, se registra un solo trabajo con ese monto.
- */
-function buildJobsDesdeAsignacion(
-  a: AsignacionEmpleado,
-  ctx: {
-    items: ServicioItem[];
-    costoTotal: number;
-    tipoTrabajo: string;
-    descripcionBase: string;
-    referenciaId: string | null;
-    fecha: string;
-  }
-): any[] {
-  const base = {
-    empleado_id: a.empleado_id,
-    es_taller: a.es_taller,
-    zona: a.zona,
-    tipo_trabajo: ctx.tipoTrabajo,
-    servicio_key: a.servicio_key || null,
-    cantidad: a.cantidad || 1,
-    moneda: 'USD',
-    referencia_tabla: 'servicios',
-    referencia_id: ctx.referenciaId,
-    fecha: ctx.fecha,
-  };
-
-  const asignados = a.item_idx.map(i => ctx.items[i]).filter(Boolean);
-  const manoObraTotal = asignados.length > 0
-    ? asignados.reduce((s, it) => s + (Number(it.total) || 0), 0)
-    : (Number(a.mano_obra_manual) || 0);
-
-  // Comisión manual → un solo trabajo con el monto fijado por administración.
-  if (a.comision_manual != null && a.comision_manual > 0) {
-    return [{
-      ...base,
-      descripcion: asignados.length > 0 ? asignados.map(it => it.descripcion).join(' + ') : ctx.descripcionBase,
-      ingreso_total: manoObraTotal || ctx.costoTotal,
-      mano_obra: manoObraTotal,
-      comision_manual: Number(a.comision_manual),
-    }];
-  }
-
-  // Un trabajo por ítem → cada servicio con su propio % según las reglas.
-  if (asignados.length > 0) {
-    return asignados.map(it => ({
-      ...base,
-      descripcion: it.descripcion,
-      ingreso_total: Number(it.total) || 0,
-      mano_obra: Number(it.total) || 0,
-    }));
-  }
-
-  // Sin desglose: un trabajo con la mano de obra manual.
-  return [{
-    ...base,
-    descripcion: ctx.descripcionBase,
-    ingreso_total: manoObraTotal || ctx.costoTotal,
-    mano_obra: manoObraTotal,
-  }];
-}
-
 // ── Service Form Modal (Create/Edit) ──────────────────────────
 function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaServicio; onClose: () => void; globalBcvRate?: number }) {
   const [formData, setFormData] = useState({
@@ -1342,10 +1296,13 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
     descripcion: cita?.descripcion || '',
     costo_estimado: cita?.costo_estimado?.toString() || '',
   });
-  // Clasificación del servicio → determina en qué columna del Reporte de Ventas cae.
+  // Clasificación del servicio → determina en qué columna del Reporte de Ventas
+  // cae y, a través de la zona, qué regla de comisión se aplica.
   const [categoria, setCategoria] = useState<string>(
     (cita as any)?.categoria || inferirCategoria(cita?.descripcion || cita?.tipo_personalizado || cita?.tipo)
   );
+  // Si el usuario la eligió a mano, deja de recalcularse sola.
+  const [categoriaManual, setCategoriaManual] = useState<boolean>(!!(cita as any)?.categoria);
   // Métodos de pago de la orden → se vuelcan a las columnas de ventas_dia al completar.
   const [metodosPago, setMetodosPago] = useState<Record<string, number>>(
     ((cita as any)?.metodos_pago && typeof (cita as any).metodos_pago === 'object')
@@ -1355,6 +1312,11 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
   const [conIva, setConIva] = useState<boolean>(!!(cita as any)?.con_iva);
   // Tasa personalizada (Bs por $) para los métodos de pago que la usen.
   const [tasaCustom, setTasaCustom] = useState<number>(0);
+  // Cashea financia SOBRE el precio con IVA: de ese total salen la inicial y
+  // las cuotas. Por eso el 16% deja de ser opcional en cuanto se usa, y lo
+  // que no se cobre hoy queda como saldo pendiente, no como venta cerrada.
+  const hayCashea = Number((metodosPago as Record<string, number>)?.cashea || 0) > 0;
+  const ivaObligatorio = conIva || hayCashea;
   // Tasa REAL del día del servicio (se guarda con la orden).
   const [tasaDiaBcv, setTasaDiaBcv] = useState<number>(0);
   useEffect(() => {
@@ -1388,30 +1350,58 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
   const [asignaciones, setAsignaciones] = useState<AsignacionEmpleado[]>([]);
   const [cargandoAsign, setCargandoAsign] = useState(!!cita);
 
-  // Al EDITAR, se recuperan las asignaciones ya registradas para esta orden.
+  // Al EDITAR, se recupera quién hizo el trabajo.
+  //
+  // Primero las comisiones ya registradas. Si no hay ninguna —el caso de todas
+  // las órdenes anteriores, que guardaban al encargado como texto dentro de las
+  // notas— se pide su resolución al servidor. Antes esto solo miraba
+  // `job_assignments` y por eso «Personal a cargo» salía vacío en cientos de
+  // órdenes que sí decían quién las había hecho.
   useEffect(() => {
     if (!cita?.id) { setCargandoAsign(false); return; }
     let vivo = true;
-    fetch(`/api/nomina/jobs?ref=${cita.id}`)
-      .then(r => r.json())
-      .then(d => {
-        if (!vivo) return;
+
+    (async () => {
+      try {
+        const d = await fetch(`/api/nomina/jobs?ref=${cita.id}`).then(r => r.json());
         const jobs = (d.jobs || []).filter((j: any) => !j.es_override && j.estado !== 'anulado');
-        setAsignaciones(jobs.map((j: any) => ({
-          empleado_id: j.empleado_id,
-          es_taller: !!j.es_taller,
-          nombre: j.empleado_nombre || 'Taller (sin técnico)',
-          rol: j.es_taller ? 'taller' : 'mecanico',
-          zona: j.zona || 'mecanica',
+        if (!vivo) return;
+
+        if (jobs.length > 0) {
+          setAsignaciones(jobs.map((j: any) => ({
+            empleado_id: j.empleado_id,
+            es_taller: !!j.es_taller,
+            nombre: j.empleado_nombre || 'Taller (sin técnico)',
+            rol: j.es_taller ? 'taller' : 'mecanico',
+            zona: j.zona || 'mecanica',
+            item_idx: [],
+            mano_obra_manual: Number(j.mano_obra) || 0,
+            servicio_key: j.servicio_key || null,
+          })));
+          return;
+        }
+
+        const e = await fetch(`/api/nomina/encargados?servicio=${cita.id}`).then(r => r.json());
+        if (!vivo) return;
+        const previos = (e.encargados || []) as { empleado_id: string; nombre: string }[];
+        if (previos.length === 0) return;
+        setAsignaciones(previos.map(p => ({
+          empleado_id: p.empleado_id,
+          es_taller: false,
+          nombre: p.nombre,
+          rol: 'mecanico',
+          // Sin comisión previa no hay zona guardada: se toma la del trabajo.
+          zona: categoriaToZona(cita.categoria || inferirCategoria(cita.descripcion || cita.tipo || '')),
           item_idx: [],
-          mano_obra_manual: Number(j.mano_obra) || 0,
-          servicio_key: j.servicio_key || null,
+          mano_obra_manual: 0,
+          servicio_key: null,
         })));
-      })
-      .catch(() => {})
-      .finally(() => { if (vivo) setCargandoAsign(false); });
+      } catch { /* el formulario sigue usable sin esto */ }
+      finally { if (vivo) setCargandoAsign(false); }
+    })();
+
     return () => { vivo = false; };
-  }, [cita?.id]);
+  }, [cita?.id, cita?.categoria, cita?.descripcion, cita?.tipo]);
 
   // El texto "Encargados:" de las notas se deriva del personal seleccionado.
   const encargados = asignaciones
@@ -1543,6 +1533,27 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
 
   // ── Ítems desglosados ──
   const itemsTotal = items.reduce((s, i) => s + (Number(i.total) || 0), 0);
+
+  /**
+   * La clasificación se detecta sola mientras nadie la toque.
+   *
+   * Se mira el tipo de servicio, lo escrito a mano y el desglose: así una orden
+   * que dice "rotación de cauchos" cae en Cauchera sin que nadie la clasifique,
+   * y de ahí sale la zona con la que se calcula la comisión. Antes se calculaba
+   * una sola vez al abrir el formulario y quedaba mal en cuanto se escribía la
+   * descripción.
+   */
+  const categoriaDetectada = useMemo(() => inferirCategoria([
+    isCustomServicio ? customServicio : formData.tipo,
+    formData.descripcion,
+    items.map(i => i.descripcion).join(' '),
+  ].filter(Boolean).join(' ')), [isCustomServicio, customServicio, formData.tipo, formData.descripcion, items]);
+
+  useEffect(() => {
+    if (categoriaManual) return;
+    if (categoriaDetectada && categoriaDetectada !== categoria) setCategoria(categoriaDetectada);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoriaDetectada, categoriaManual]);
   const addItem = () => setItems([...items, { descripcion: '', cantidad: 1, precio_unitario: 0, total: 0 }]);
   const removeItem = (idx: number) => {
     const newItems = items.filter((_, i) => i !== idx);
@@ -1793,7 +1804,7 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
           // Clasificación + cobro de la orden (alimentan el Reporte de Ventas)
           categoria,
           metodos_pago: metodosPago,
-          con_iva: conIva,
+          con_iva: ivaObligatorio,
           tasa_cambio: tasaDiaBcv || globalBcvRate || null,
           total_pagado: sumaMetodos(metodosPago),
           notas: encargados.length > 0
@@ -1829,6 +1840,7 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
                   costoTotal: costoFinalCalc,
                   tipoTrabajo: finalTipo,
                   descripcionBase: formData.descripcion || (isCustomServicio ? customServicio.trim() : formData.tipo),
+                  referenciaTabla: 'servicios',
                   referenciaId: cita.id,
                   fecha: cita.fecha || getLocalISODate(),
                 })),
@@ -1927,7 +1939,7 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
           // Clasificación + cobro de la orden (alimentan el Reporte de Ventas)
           categoria,
           metodos_pago: metodosPago,
-          con_iva: conIva,
+          con_iva: ivaObligatorio,
           tasa_cambio: tasaDiaBcv || globalBcvRate || null,
           total_pagado: sumaMetodos(metodosPago),
           notas: encargados.length > 0
@@ -1974,6 +1986,7 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
                 costoTotal: costoFinalCalc,
                 tipoTrabajo: finalTipoServicio,
                 descripcionBase: formData.descripcion || (isCustomServicio ? customServicio.trim() : formData.tipo),
+                referenciaTabla: 'servicios',
                 referenciaId: nuevoServicio?.id || null,
                 fecha: getLocalISODate(),
               })),
@@ -2013,7 +2026,7 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
           <button onClick={onClose} className="w-10 h-10 rounded-2xl hover:bg-muted/50 flex items-center justify-center transition-all shrink-0"><X className="w-5 h-5 text-muted-foreground" /></button>
         </div>
 
-        <div className="p-4 sm:p-8 flex-1 overflow-y-auto">
+        <div className="min-h-0 p-4 sm:p-8 flex-1 overflow-y-auto">
           <div className="grid grid-cols-2 gap-4 sm:gap-6">
             <div className="col-span-2 sm:col-span-1 space-y-2 relative">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Cliente Principal</label>
@@ -2255,6 +2268,8 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
                 </div>
               ) : (
                 <PersonalYComisiones
+                  tipoTrabajo={isCustomServicio ? 'otro' : formData.tipo}
+                  descripcionTrabajo={formData.descripcion || (isCustomServicio ? customServicio.trim() : formData.tipo) || null}
                   value={asignaciones}
                   onChange={setAsignaciones}
                   sedeId={sedeNomina?.id || null}
@@ -2270,7 +2285,7 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Clasificaci&oacute;n del Servicio</label>
               <select
                 value={categoria}
-                onChange={e => setCategoria(e.target.value)}
+                onChange={e => { setCategoria(e.target.value); setCategoriaManual(true); }}
                 className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
               >
                 {CATEGORIAS_VENTA.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
@@ -2279,26 +2294,55 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
             </div>
 
             {/* Métodos de pago de la orden */}
-            <div className="col-span-2 space-y-2 rounded-2xl border border-emerald-300/40 dark:border-emerald-700/30 bg-emerald-50/30 dark:bg-emerald-950/10 p-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <Banknote className="w-3.5 h-3.5 text-emerald-500" />
-                  <label className="text-[10px] text-emerald-700 dark:text-emerald-400 uppercase font-black tracking-widest">M&eacute;todos de Pago</label>
+            <div className="col-span-2 space-y-2 rounded-xl border border-[#e8eaed] bg-white p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[#fff1e7] text-[#f97316]">
+                    <Banknote className="h-[15px] w-[15px]" aria-hidden />
+                  </span>
+                  <span className="text-[13.5px] font-bold text-[#16181d]">M&eacute;todos de pago</span>
                 </div>
-                <label className="flex items-center gap-1.5 text-[10px] font-bold text-muted-foreground cursor-pointer">
-                  <input type="checkbox" checked={conIva} onChange={e => setConIva(e.target.checked)} className="w-3.5 h-3.5 accent-emerald-500" />
-                  IVA 16%
-                </label>
+                <div className="flex items-center gap-3">
+                  <span className="num text-[12.5px] text-[#8a909c]">
+                    A cobrar{' '}
+                    <strong className="font-bold text-[#16181d]">
+                      ${(((parseFloat(formData.costo_estimado) || 0) * (ivaObligatorio ? 1.16 : 1))).toFixed(2)}
+                    </strong>
+                  </span>
+                  <label className="flex cursor-pointer items-center gap-1.5 text-[12px] font-medium text-[#3d4350]">
+                    <input
+                      type="checkbox"
+                      checked={ivaObligatorio}
+                      disabled={hayCashea}
+                      onChange={e => setConIva(e.target.checked)}
+                      title={hayCashea ? 'Con Cashea el IVA del 16% es obligatorio.' : undefined}
+                      className="h-[15px] w-[15px] rounded border-[#cfd4dc] accent-[#f97316] disabled:opacity-60"
+                    />
+                    IVA 16%
+                  </label>
+                </div>
               </div>
-              <MetodosPagoPicker
-                value={metodosPago}
-                onChange={setMetodosPago}
-                total={(parseFloat(formData.costo_estimado) || 0) * (conIva ? 1.16 : 1)}
-                fecha={cita?.fecha || getLocalISODate()}
-                tasaCustom={tasaCustom}
-                onTasaCustomChange={setTasaCustom}
+              {/* El MISMO desglose por banco que usa el punto de venta y el modal
+                  de cobro. Antes aquí había un selector propio: dos formas de
+                  registrar lo mismo, y la de esta pantalla no la usó ninguna
+                  orden. Una sola manera evita que un cobro caiga en una clave
+                  que el reporte no conoce. */}
+              <DesglosePagoBancos
+                bins={{ ...emptyBins(), ...(metodosPago as Bins) }}
+                onBinsChange={b => setMetodosPago(b as unknown as Record<string, number>)}
+                totalUSD={(parseFloat(formData.costo_estimado) || 0) * (ivaObligatorio ? 1.16 : 1)}
+                tasa={tasaCustom || globalBcvRate || 0}
+                tasaAuto={globalBcvRate}
+                onTasaChange={v => setTasaCustom(v ?? 0)}
               />
-              <p className="text-[9px] text-muted-foreground">Se guardan en la orden y se reflejan autom&aacute;ticamente en el Reporte de Ventas al completar el servicio.</p>
+              <p className="text-[11px] leading-snug text-[#8a909c]">Cada cobro cae en su banco y de ah&iacute; a su columna del Reporte de Ventas al completar el servicio.</p>
+              {hayCashea && (
+                <p className="rounded-lg bg-[#fff7ed] px-2.5 py-2 text-[11.5px] leading-snug text-[#9a3412]">
+                  <strong className="font-semibold">Cashea:</strong> el IVA del 16% va incluido y el resto
+                  queda como <strong className="font-semibold">pendiente por cobrar</strong> hasta que el
+                  cliente termine sus cuotas.
+                </p>
+              )}
             </div>
 
             <div className="col-span-2 space-y-2">
@@ -3115,7 +3159,7 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
                       onChange={e => setSearchTerm(e.target.value)}
                     />
                   </div>
-                  <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
+                  <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
                     {citas.filter(c => c.id !== cita.id && (searchTerm === '' || `${c.nombre_cliente} ${c.vehiculo_info}`.toLowerCase().includes(searchTerm.toLowerCase()))).map((c, idx) => (
                       <button key={c.id || idx} onClick={() => { setSecondCita(c); setShowSelector(false); }} className="w-full flex items-center justify-between p-4 rounded-2xl bg-slate-50/50 border-2 border-transparent hover:border-slate-100 transition-all">
                         <div className="text-left">
@@ -3474,7 +3518,7 @@ function BudgetModal({ cita, inventory, onClose }: { cita: CitaServicio; invento
           </button>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+        <div className="min-h-0 flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-1">Nombre del Cliente</label>

@@ -401,7 +401,7 @@ function CierreWizard({ ventas, onClose, onSaved }: {
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
 
           {/* Step 1: Período */}
           {step === 1 && (
@@ -2230,7 +2230,7 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
                   value={searchTerm}
                   onChange={e => setSearchTerm(e.target.value)}
                 />
-                <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                <div className="min-h-0 flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
                   {ventas.filter(v => v.id !== venta.id && (searchTerm === '' || (v.cliente || '').toLowerCase().includes(searchTerm.toLowerCase()))).map(v => (
                     <button 
                       key={v.id} 
