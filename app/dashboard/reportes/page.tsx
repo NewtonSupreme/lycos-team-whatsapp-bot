@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import {
   Download, TrendingUp, DollarSign, Wrench, Users, Plus, Pencil,
   Trash2, CheckCircle, AlertCircle, Loader2, X, Camera, Eye,
-  Calendar, FileText, BarChart2, RefreshCw, Package, ChevronDown, Clock,
+  Calendar, FileText, BarChart2, Activity, RefreshCw, Package, ChevronDown, Clock,
   ArrowDownCircle, TrendingDown, Receipt, ShoppingCart, Bot, ChevronRight,
   Truck, MapPin, Boxes, CheckCircle2
 } from 'lucide-react';
@@ -27,6 +27,7 @@ import {
 import { supabase, registrarFactura } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
 import { cn, getLocalISODate, parseDescripcionItems } from '@/lib/utils';
+import PanelGeneral from '@/components/reportes/PanelGeneral';
 import { generateInvoicePDF, generateEgresoPDF, type InvoicePDFItem } from '@/lib/invoice-pdf';
 import { generateCierrePDF, type CierreData } from '@/lib/cierre-pdf';
 import { generateNotaEntregaPDF } from '@/lib/distribucion-pdf';
@@ -2492,7 +2493,10 @@ export default function ReportesPage() {
   const [serviciosHistory, setServiciosHistory] = useState<any[]>([]);
   const [inventarioHistory, setInventarioHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'graficos' | 'ventas' | 'cierres' | 'egresos' | 'historial' | 'papelera' | 'distribuciones'>('graficos');
+  // «general» es el panel de rendimiento del rediseño y es la pestaña de
+  // entrada. Las demás son las de siempre, intactas: el asistente de cierre,
+  // el escaneo de tickets y los egresos siguen exactamente donde estaban.
+  const [tab, setTab] = useState<'general' | 'graficos' | 'ventas' | 'cierres' | 'egresos' | 'historial' | 'papelera' | 'distribuciones'>('general');
   const [papeleraVentas, setPapeleraVentas] = useState<any[]>([]);
   const [loadingPapelera, setLoadingPapelera] = useState(false);
   const [distribuciones, setDistribuciones] = useState<Distribucion[]>([]);
@@ -3250,6 +3254,14 @@ export default function ReportesPage() {
       {/* Tabs */}
       <div className="flex items-center gap-1 bg-muted/30 p-1 rounded-xl w-full sm:w-fit overflow-x-auto custom-scrollbar whitespace-nowrap">
         <button
+          onClick={() => setTab('general')}
+          className={cn('flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex-shrink-0',
+            tab === 'general' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'
+          )}
+        >
+          <Activity className="w-4 h-4" /> General
+        </button>
+        <button
           onClick={() => setTab('graficos')}
           className={cn('flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex-shrink-0',
             tab === 'graficos' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'
@@ -3324,7 +3336,14 @@ export default function ReportesPage() {
         )}
       </div>
 
-      {/* KPI Cards */}
+      {/* KPI Cards — se ocultan en la pestaña General.
+          Esa pestaña trae sus propios indicadores, con su tendencia y su
+          comparación contra el período anterior. Con las dos tiras a la vez la
+          pantalla enseñaba DOS «ticket promedio» distintos (uno en dólares
+          calculado sobre ventas, otro en bolívares sobre servicios), y dos
+          cifras que dicen lo mismo y no coinciden hacen que no se crea
+          ninguna de las dos. */}
+      {tab !== 'general' && (
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
         {[
           { label: 'Ingresos', value: `${(totalIngresos || 0).toFixed(2)}`, sub: 'Recibido', icon: DollarSign, color: 'text-green-400 bg-green-500/10' },
@@ -3348,8 +3367,21 @@ export default function ReportesPage() {
           </div>
         ))}
       </div>
+      )}
 
-      {/* ── Tab: Gráficos ─────────────────────────────────────── */}
+      {/* ── Tab: General (panel de rendimiento) ───────────────── */}
+      {tab === 'general' && (
+        <PanelGeneral
+          onGenerarPdf={() => descargarReporteDiario()}
+          onExportarExcel={() => {
+            const f = selectedDate || getLocalISODate();
+            const sedeQ = currentSede?.id ? `&sede=${currentSede.id}` : '';
+            window.location.href = `/api/reportes/export?tipo=ventas&from=${f}&to=${f}${sedeQ}`;
+          }}
+          generando={generandoReporte}
+        />
+      )}
+
       {tab === 'graficos' && (
         <div className="space-y-4">
           {chartData.length === 0 && !loading ? (
