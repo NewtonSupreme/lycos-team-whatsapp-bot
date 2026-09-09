@@ -1,6 +1,6 @@
 import {
   Activity, Banknote, Bot, Calculator, Calendar, Car, FileSpreadsheet, FileText,
-  Info, LayoutDashboard, MessageSquare, Package, Receipt, Settings, Shield,
+  Info, Landmark, LayoutDashboard, MessageSquare, Package, Receipt, Settings, Shield,
   ShoppingCart, Trash2, TrendingUp, Truck, UserCircle, Users, Wrench,
   type LucideIcon,
 } from 'lucide-react';
@@ -65,6 +65,7 @@ export const MODULES: readonly AppModule[] = [
   { id: 'papelera', href: '/dashboard/inventario/papelera', label: 'Papelera', description: 'Artículos eliminados recuperables', icon: Trash2, group: 'Inventario', permKey: 'papelera', tint: '215 16% 47%', keywords: ['borrados', 'eliminados'] },
 
   { id: 'nomina', href: '/dashboard/nomina', label: 'Nómina', description: 'Sueldos, comisiones y adelantos', icon: Banknote, group: 'Finanzas', permKey: 'nomina', tint: '142 60% 32%', keywords: ['sueldos', 'pagos', 'comisiones'] },
+  { id: 'finanzas', href: '/dashboard/finanzas', label: 'Finanzas', description: 'Flujo de caja, cuentas y rentabilidad', icon: Landmark, group: 'Finanzas', permKey: 'reportes', tint: '24 95% 53%', keywords: ['caja', 'bancos', 'gastos', 'ingresos', 'utilidad', 'cobrar', 'pagar'] },
   { id: 'reportes', href: '/dashboard/reportes', label: 'Reportes', description: 'Cierre diario, utilidad y exportables', icon: FileText, group: 'Finanzas', permKey: 'reportes', tint: '271 81% 56%', keywords: ['informes', 'cierre', 'pdf'] },
   { id: 'calculadora', href: '/dashboard/calculadora', label: 'Calculadora', description: 'Conversión de moneda y tasas', icon: Calculator, group: 'Finanzas', permKey: 'calculadora', tint: '199 89% 40%', keywords: ['tasa', 'dolar', 'bcv', 'cambio'] },
 
