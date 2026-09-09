@@ -69,6 +69,28 @@
     --glass-border: hsl(30 10% 89%);
     --chart-grid: hsl(30 10% 91%);
     --logo-filter: none;
+
+    /* ── Superficies de la pantalla de WhatsApp ──────────────────────────────
+       La pantalla estaba pintada con los grises de WhatsApp Web incrustados en
+       el JSX (#0b141a, #202c33, #2a3942…), así que solo existía en oscuro. El
+       diseño de referencia es claro. Poniéndolas aquí, la piel entera se cambia
+       en un sitio y funciona en los dos temas.
+
+       Los verdes de las burbujas SÍ son semánticos —el saliente es verde en
+       WhatsApp y la gente lo lee así— por eso tienen valor propio en cada tema
+       en vez de derivarse del tema. */
+    --wa-fondo: 0 0% 100%;            /* lienzo del chat */
+    --wa-panel: 0 0% 100%;            /* columnas laterales */
+    --wa-panel-alt: 210 20% 98%;      /* cabeceras y barras dentro del panel */
+    --wa-borde: 214 20% 91%;
+    --wa-hover: 210 20% 97%;
+    --wa-activo: 24 95% 96%;          /* conversación seleccionada */
+    --wa-texto: 220 13% 13%;
+    --wa-texto-suave: 215 14% 45%;
+    --wa-burbuja-entra: 0 0% 100%;
+    --wa-burbuja-sale: 96 44% 89%;    /* el verde claro del saliente */
+    --wa-burbuja-borde: 214 20% 91%;
+    --wa-marca: 158 64% 40%;          /* el verde de WhatsApp */
   }
 
   .dark {
@@ -120,6 +142,18 @@
     --glass-border: hsl(24 8% 19%);
     --chart-grid: hsl(24 8% 18%);
     --logo-filter: none;
+    --wa-fondo: 200 30% 7%;
+    --wa-panel: 200 22% 12%;
+    --wa-panel-alt: 200 22% 15%;
+    --wa-borde: 200 15% 22%;
+    --wa-hover: 200 20% 16%;
+    --wa-activo: 200 22% 20%;
+    --wa-texto: 200 15% 92%;
+    --wa-texto-suave: 200 10% 62%;
+    --wa-burbuja-entra: 200 22% 15%;
+    --wa-burbuja-sale: 168 60% 18%;
+    --wa-burbuja-borde: 200 15% 22%;
+    --wa-marca: 158 64% 45%;
   }
 
   * { @apply border-border; }

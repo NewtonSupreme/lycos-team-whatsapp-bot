@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Users, Car, Wrench, Calendar, MessageSquare,
   Bot, FileText, Settings, ChevronLeft, ChevronRight,
   Activity, LogOut, TrendingUp, UserCircle, Package, Calculator, ShoppingCart, Trash2, Truck, Shield,
-  FileSpreadsheet, Receipt, Info, Banknote, ClipboardList
+  FileSpreadsheet, Receipt, Info, Banknote, ClipboardList, Landmark
 } from 'lucide-react';
 import { cn, getInitials } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -61,6 +61,7 @@ const navItemsConfig: NavItem[] = [
   { href: '/dashboard/inventario/papelera', icon: Trash2, label: 'Papelera', badge: null, permKey: 'papelera', group: 'Inventario' },
 
   { href: '/dashboard/nomina', icon: Banknote, label: 'Nómina', badge: null, permKey: 'nomina', group: 'Finanzas' },
+  { href: '/dashboard/finanzas', icon: Landmark, label: 'Finanzas', badge: null, permKey: 'reportes', group: 'Finanzas' },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', badge: null, permKey: 'reportes', group: 'Finanzas' },
   { href: '/dashboard/calculadora', icon: Calculator, label: 'Calculadora', badge: null, permKey: 'calculadora', group: 'Finanzas' },
 

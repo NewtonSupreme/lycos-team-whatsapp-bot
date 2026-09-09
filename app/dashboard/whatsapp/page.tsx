@@ -3,8 +3,9 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   MessageSquare, Send, Bot, User,
   Smile, CheckCheck, Check, X, RefreshCw, UserCheck, Wifi, WifiOff, Search, Clock,
-  Image as ImageIcon, Video, Volume2, FileText, ChevronDown, ChevronLeft, Car, Calendar, Hash, Info,
-  Copy, Trash, Zap, Paperclip, Mic, UserPlus, Trash2, RotateCcw, MapPin, Navigation, Globe, Building2
+  Image as ImageIcon, Video, Volume2, FileText, ChevronDown, ChevronLeft, Info,
+  Copy, Trash, Zap, Paperclip, Mic, Trash2, RotateCcw, MapPin, Globe, Building2,
+  Settings, Plus
 } from 'lucide-react';
 import { supabase, syncClientData } from '@/lib/supabase';
 import { Vehiculo } from '@/types';
@@ -13,14 +14,26 @@ import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useAppStore } from '@/lib/store';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 import TiraMetricas from '@/components/whatsapp/TiraMetricas';
+import PanelCliente from '@/components/whatsapp/PanelCliente';
+import { ETIQUETAS, etiquetaDe, indiceVacio, type IndiceEtiquetas } from '@/lib/whatsapp/etiquetas';
 
-const QUICK_REPLIES = [
-  '¡Hola! ¿En qué le puedo ayudar? 😊',
-  'Su vehículo está listo para retirar. 🔧',
-  'Le informamos que su servicio está en proceso.',
-  '¿Podría indicarnos su marca/modelo y año?',
-  'Tenemos disponibilidad mañana. 📅',
-  'Le envío los precios en un momento. 💰',
+/**
+ * Las respuestas rápidas, con etiqueta corta y su texto.
+ *
+ * Antes eran las frases completas recortadas a 38 caracteres, así que en el
+ * chip se leía «Le informamos que su servicio está en pr…» y había que
+ * adivinar cuál era cuál. La etiqueta dice para qué sirve; el texto es lo que
+ * se manda.
+ */
+const QUICK_REPLIES: { label: string; texto: string }[] = [
+  { label: 'Saludo', texto: '¡Hola! ¿En qué le puedo ayudar? 😊' },
+  { label: 'Agendar cita', texto: 'Tenemos disponibilidad mañana. ¿A qué hora le queda mejor? 📅' },
+  { label: 'Enviar presupuesto', texto: 'Le preparo el presupuesto y se lo envío en un momento. 💰' },
+  { label: 'Horarios', texto: 'Atendemos de lunes a viernes de 8:00 a. m. a 5:00 p. m., y sábados de 8:00 a. m. a 1:00 p. m.' },
+  { label: 'Datos del vehículo', texto: '¿Podría indicarnos la marca, el modelo y el año del vehículo?' },
+  { label: 'En proceso', texto: 'Le informamos que su servicio está en proceso. Le avisamos en cuanto esté listo.' },
+  { label: 'Listo para retirar', texto: 'Su vehículo está listo para retirar. 🔧' },
+  { label: 'Gracias', texto: '¡Gracias por confiar en Lycos Team! 🙌' },
 ];
 
 const SEDE_LOCATIONS = [
@@ -63,11 +76,19 @@ interface RawConv {
     nombre: string;
     apellido?: string;
     telefono?: string;
+    // La ficha del cliente que va junto al chat enseña estos datos; el tipo
+    // solo declaraba nombre y teléfono y por eso no se podían usar.
+    email?: string | null;
+    direccion?: string | null;
+    cedula?: string | null;
+    created_at?: string | null;
   } | null;
   memoria?: {
     vehiculos?: Array<{ marca?: string; modelo?: string; anio?: string; placa?: string }>;
     nombre?: string;
     placa?: string;
+    /** Lo que el bot recuerda del cliente, en texto libre. */
+    notas?: string | null;
   } | null;
 }
 
@@ -90,7 +111,7 @@ function avatarLetters(conv: RawConv): string {
 
 function getAvatarColor(id: string) {
   const colors = [
-    'linear-gradient(135deg, #00a884 0%, #008069 100%)',
+    'linear-gradient(135deg, hsl(var(--wa-marca)) 0%, #008069 100%)',
     'linear-gradient(135deg, #53bdeb 0%, #2094c4 100%)',
     'linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%)',
     'linear-gradient(135deg, #fb923c 0%, #ea580c 100%)',
@@ -106,7 +127,7 @@ const UserAvatar = ({ conv, className }: { conv: RawConv, className?: string }) 
   if (!conv) return null;
   return (
     <div 
-      className={cn("rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 shadow-lg border border-white/10", className)}
+      className={cn("rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 shadow-lg border border-[hsl(var(--wa-borde))]", className)}
       style={{ background: getAvatarColor(conv.id), color: '#fff' }}
     >
       {avatarLetters(conv)}
@@ -152,7 +173,7 @@ function LocationBubble({ body, isOut }: { body: string; isOut: boolean }) {
       target="_blank"
       rel="noopener noreferrer"
       className="flex flex-col rounded-lg overflow-hidden max-w-[240px] no-underline"
-      style={{ border: '1px solid rgba(255,255,255,0.12)', background: isOut ? 'rgba(0,88,67,0.5)' : 'rgba(42,57,66,0.7)' }}
+      style={{ border: '1px solid hsl(var(--wa-borde))', background: isOut ? 'rgba(0,88,67,0.5)' : 'rgba(42,57,66,0.7)' }}
     >
       {/* Map thumbnail via static maps API (no key needed for thumbnail) */}
       <div className="relative w-full h-24 bg-[#1a2632] flex items-center justify-center overflow-hidden">
@@ -165,13 +186,13 @@ function LocationBubble({ body, isOut }: { body: string; isOut: boolean }) {
           <span className="text-[9px] font-bold uppercase tracking-widest" style={{ color: '#25d366' }}>Ver en Maps</span>
         </div>
         {/* Fake map grid lines */}
-        <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)', backgroundSize: '24px 24px' }} />
+        <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: 'linear-gradient(hsl(var(--wa-borde)) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--wa-borde)) 1px, transparent 1px)', backgroundSize: '24px 24px' }} />
       </div>
       <div className="flex items-center gap-2 px-2.5 py-2">
         <MapPin className="w-4 h-4 flex-shrink-0" style={{ color: '#25d366' }} />
         <div className="flex flex-col min-w-0">
-          <span className="text-[12px] font-semibold truncate" style={{ color: '#e9edef' }}>Lycos Team</span>
-          <span className="text-[10px] truncate" style={{ color: '#8696a0' }}>{sedeName}</span>
+          <span className="text-[12px] font-semibold truncate" style={{ color: 'hsl(var(--wa-texto))' }}>Lycos Team</span>
+          <span className="text-[10px] truncate" style={{ color: 'hsl(var(--wa-texto-suave))' }}>{sedeName}</span>
         </div>
       </div>
     </a>
@@ -236,18 +257,18 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
     return (
       <div className="flex flex-col gap-1.5 max-w-[280px]">
         {quotedMsg && (
-          <div className="mb-1 p-2 rounded-md bg-black/20 border-l-4 border-[#00a884] overflow-hidden opacity-80 cursor-pointer hover:bg-black/30 transition-colors"
+          <div className="mb-1 p-2 rounded-md bg-black/20 border-l-4 border-[hsl(var(--wa-marca))] overflow-hidden opacity-80 cursor-pointer hover:bg-black/30 transition-colors"
                onClick={() => document.getElementById(`msg-${quotedMsg.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
-            <div className="text-[10px] font-bold text-[#00a884] mb-0.5">
+            <div className="text-[10px] font-bold text-[hsl(var(--wa-marca))] mb-0.5">
               {quotedMsg.tipo === 'saliente' ? 'Tú' : 'Cliente'}
             </div>
-            <div className="text-[11px] text-[#8696a0] line-clamp-2 italic">
+            <div className="text-[11px] text-[hsl(var(--wa-texto-suave))] line-clamp-2 italic">
               {quotedMsg.body || (quotedMsg.media_type ? `[${quotedMsg.media_type}]` : 'Mensaje')}
             </div>
           </div>
         )}
         <div 
-          className="relative group rounded-lg overflow-hidden border border-white/10 bg-black/30 cursor-pointer shadow-md"
+          className="relative group rounded-lg overflow-hidden border border-[hsl(var(--wa-borde))] bg-black/30 cursor-pointer shadow-md"
           onClick={() => onImageClick(botImg.url)}
         >
           <img 
@@ -268,7 +289,7 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
           </div>
         </div>
         {botImg.caption && (
-          <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words mt-1" style={{ color: '#e9edef', wordBreak: 'break-word' }}>
+          <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words mt-1" style={{ color: 'hsl(var(--wa-texto))', wordBreak: 'break-word' }}>
             {botImg.caption}
           </p>
         )}
@@ -283,7 +304,7 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
   const isTranscribedAudio = type === 'audio' && body?.includes('(Audio transcrito)');
 
   if (!type && !proxyUrl) {
-    return <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: '#e9edef', wordBreak: 'break-word' }}>{body}</p>;
+    return <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: 'hsl(var(--wa-texto))', wordBreak: 'break-word' }}>{body}</p>;
   }
 
   const icons = {
@@ -295,17 +316,17 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
   };
   const labels = { image: 'Imagen', video: 'Video', audio: 'Audio', document: 'Documento', sticker: 'Sticker' };
 
-  const color = isOut ? '#00a884' : '#2a3942';
+  const color = isOut ? 'hsl(var(--wa-marca))' : 'hsl(var(--wa-hover))';
 
   return (
     <div className="flex flex-col gap-1">
       {quotedMsg && (
-        <div className="mb-1.5 p-2 rounded-md bg-black/20 border-l-4 border-[#00a884] overflow-hidden opacity-80 cursor-pointer hover:bg-black/30 transition-colors"
+        <div className="mb-1.5 p-2 rounded-md bg-black/20 border-l-4 border-[hsl(var(--wa-marca))] overflow-hidden opacity-80 cursor-pointer hover:bg-black/30 transition-colors"
              onClick={() => document.getElementById(`msg-${quotedMsg.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
-          <div className="text-[10px] font-bold text-[#00a884] mb-0.5">
+          <div className="text-[10px] font-bold text-[hsl(var(--wa-marca))] mb-0.5">
             {quotedMsg.tipo === 'saliente' ? 'Tú' : 'Cliente'}
           </div>
-          <div className="text-[11px] text-[#8696a0] line-clamp-2 italic">
+          <div className="text-[11px] text-[hsl(var(--wa-texto-suave))] line-clamp-2 italic">
             {quotedMsg.body || (quotedMsg.media_type ? `[${quotedMsg.media_type}]` : 'Mensaje')}
           </div>
         </div>
@@ -326,7 +347,7 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
             </div>
           )}
           {isTranscribedAudio && body && (
-            <p className="text-[12px] italic px-1" style={{ color: '#8696a0' }}>
+            <p className="text-[12px] italic px-1" style={{ color: 'hsl(var(--wa-texto-suave))' }}>
               🎙️ {body.replace(' (Audio transcrito)', '')}
             </p>
           )}
@@ -336,16 +357,16 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
           <img src={proxyUrl} alt="Sticker" className="w-32 h-32 object-contain" />
         </div>
       ) : (
-        <div className="flex flex-col gap-2 p-3 rounded-xl border border-white/10 bg-black/30 max-w-[260px] shadow-sm">
+        <div className="flex flex-col gap-2 p-3 rounded-xl border border-[hsl(var(--wa-borde))] bg-black/30 max-w-[260px] shadow-sm">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-lg bg-emerald-500/15 text-emerald-400">
               {icons[type as keyof typeof icons] || <FileText className="w-6 h-6" />}
             </div>
             <div className="flex flex-col min-w-0 flex-1">
-              <span className="text-sm font-bold truncate" style={{ color: '#e9edef' }}>
+              <span className="text-sm font-bold truncate" style={{ color: 'hsl(var(--wa-texto))' }}>
                 {labels[type as keyof typeof labels] || 'Documento adjunto'}
               </span>
-              <span className="text-[11px] text-[#8696a0]">
+              <span className="text-[11px] text-[hsl(var(--wa-texto-suave))]">
                 Archivo PDF / Documento
               </span>
             </div>
@@ -362,20 +383,20 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
               <FileText className="w-3.5 h-3.5" /> Abrir / Descargar ↗
             </a>
           ) : (
-            <span className="text-[10px] text-[#8696a0] italic">
+            <span className="text-[10px] text-[hsl(var(--wa-texto-suave))] italic">
               Documento enviado
             </span>
           )}
 
           {extractMediaCaption(body) && (
-            <p className="text-xs opacity-80 border-t border-white/10 pt-1.5 mt-0.5 whitespace-pre-wrap break-words" style={{ color: '#e9edef' }}>
+            <p className="text-xs opacity-80 border-t border-[hsl(var(--wa-borde))] pt-1.5 mt-0.5 whitespace-pre-wrap break-words" style={{ color: 'hsl(var(--wa-texto))' }}>
               {extractMediaCaption(body)}
             </p>
           )}
         </div>
       )}
       {(type === 'image' || type === 'video' || type === 'sticker') && extractMediaCaption(body) && (
-        <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words mt-1" style={{ color: '#e9edef', wordBreak: 'break-word' }}>
+        <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words mt-1" style={{ color: 'hsl(var(--wa-texto))', wordBreak: 'break-word' }}>
           {extractMediaCaption(body)}
         </p>
       )}
@@ -425,7 +446,12 @@ export default function WhatsAppPage() {
   // Con qué se filtra la lista. «bot» y «humano» son el estado real de la
   // conversación, que es lo que de verdad hay que poder separar: saber qué
   // chats está atendiendo el bot y cuáles esperan a una persona.
-  const [filtroLista, setFiltroLista] = useState<'todas' | 'sin_leer' | 'bot' | 'humano'>('todas');
+  const [filtroLista, setFiltroLista] = useState<
+    'todas' | 'sin_leer' | 'clientes' | 'ventas' | 'bot' | 'humano'
+  >('todas');
+  // Qué tiene pendiente cada cliente, para etiquetar su chat sin abrirlo.
+  // Es UNA petición para toda la lista, no una por conversación.
+  const [indiceEtiquetas, setIndiceEtiquetas] = useState<IndiceEtiquetas>(indiceVacio);
   const [retryStatus, setRetryStatus] = useState<string | null>(null);
   const [retranscribing, setRetranscribing] = useState(false);
   const [sendingContact, setSendingContact] = useState(false);
@@ -486,14 +512,14 @@ export default function WhatsAppPage() {
     if (allSedes) {
       // Cargar conversaciones de TODAS las sedes sin filtro
       const { data: allData } = await supabase.from('conversaciones')
-        .select('*, clientes(id, nombre, apellido, telefono)')
+        .select('*, clientes(id, nombre, apellido, telefono, email, direccion, cedula, created_at)')
         .order('ultimo_mensaje_at', { ascending: false })
         .limit(1000);
       data = allData;
     } else {
       // 1. Try with sede filter (architecture standard)
       const { data: sedeData } = await withSedeFilter(supabase.from('conversaciones'))
-        .select('*, clientes(id, nombre, apellido, telefono)')
+        .select('*, clientes(id, nombre, apellido, telefono, email, direccion, cedula, created_at)')
         .order('ultimo_mensaje_at', { ascending: false })
         .limit(1000);
       data = sedeData;
@@ -501,7 +527,7 @@ export default function WhatsAppPage() {
       // 2. Fallback: if no conversations for current branch, try San Antonio (primary branch)
       if (!data || data.length === 0) {
         const { data: fallback } = await supabase.from('conversaciones')
-          .select('*, clientes(id, nombre, apellido, telefono)')
+          .select('*, clientes(id, nombre, apellido, telefono, email, direccion, cedula, created_at)')
           .eq('sede_id', '310595c5-5258-47fa-9b69-5ad9932685a7')
           .order('ultimo_mensaje_at', { ascending: false })
           .limit(1000);
@@ -1437,6 +1463,11 @@ export default function WhatsAppPage() {
     const coincide = (displayName(c) + c.telefono + (c.ultimo_mensaje || '')).toLowerCase().includes(q);
     if (!coincide) return false;
     if (filtroLista === 'sin_leer') return (c.mensajes_sin_leer ?? 0) > 0;
+    // «Clientes» son los que ya tienen ficha; «Ventas», los que compraron hace
+    // poco. Salen de la misma etiqueta que se pinta en la fila, así que el
+    // filtro y el chip nunca pueden decir cosas distintas.
+    if (filtroLista === 'clientes') return !!c.cliente_id;
+    if (filtroLista === 'ventas') return etiquetaDe(c.cliente_id, indiceEtiquetas) === 'venta';
     if (filtroLista === 'bot') return c.estado === 'bot';
     if (filtroLista === 'humano') return c.estado === 'humano';
     return true;
@@ -1448,6 +1479,8 @@ export default function WhatsAppPage() {
   const cuentaFiltros = {
     todas: convs.length,
     sin_leer: convs.filter(c => (c.mensajes_sin_leer ?? 0) > 0).length,
+    clientes: convs.filter(c => !!c.cliente_id).length,
+    ventas: convs.filter(c => etiquetaDe(c.cliente_id, indiceEtiquetas) === 'venta').length,
     bot: convs.filter(c => c.estado === 'bot').length,
     humano: convs.filter(c => c.estado === 'humano').length,
   };
@@ -1457,6 +1490,31 @@ export default function WhatsAppPage() {
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  // Las etiquetas de la lista. Si fallan, la lista sigue sirviendo: se pierde
+  // el chip, no la conversación.
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      try {
+        const r = await fetch('/api/whatsapp/etiquetas');
+        if (!r.ok || !vivo) return;
+        const d = await r.json() as {
+          enTaller: string[]; conCita: string[]; conPresupuesto: string[]; conVenta: string[];
+        };
+        if (!vivo) return;
+        setIndiceEtiquetas({
+          enTaller: new Set(d.enTaller || []),
+          conCita: new Set(d.conCita || []),
+          conPresupuesto: new Set(d.conPresupuesto || []),
+          conVenta: new Set(d.conVenta || []),
+        });
+      } catch {
+        // Sin etiquetas la lista se ve igual, solo sin los chips.
+      }
+    })();
+    return () => { vivo = false; };
+  }, []);
 
   // No bloqueamos por sede — el toggle "Todas las sedes" maneja el acceso
   if (!mounted) return null;
@@ -1468,9 +1526,13 @@ export default function WhatsAppPage() {
       {/* Cabecera */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-0 justify-between shrink-0">
         <div className="flex items-center gap-3 min-w-0">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[#25d366] to-[#128c7e] text-white">
-            <MessageSquare className="h-[22px] w-[22px]" aria-hidden />
-          </span>
+          {/* El logo oficial. Ya trae su cuadrado verde con esquinas
+              redondeadas, así que va sin recuadro detrás: ponerle uno le
+              dibujaba un marco alrededor del marco. */}
+          <img
+            src="/marcas/whatsapp.png" alt="WhatsApp" width={44} height={44}
+            className="h-11 w-11 shrink-0 rounded-[13px]"
+          />
           <div className="min-w-0">
             <h1 className="text-2xl font-bold leading-none" style={{ fontFamily: 'Syne, sans-serif' }}>
               WhatsApp
@@ -1497,6 +1559,27 @@ export default function WhatsAppPage() {
           </span>
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Configuración lleva a los ajustes del bot, que es lo que se
+              configura de WhatsApp. «Nueva campaña» todavía no existe: se deja
+              a la vista, deshabilitada y dicha, en vez de un botón que no hace
+              nada y no lo avisa. */}
+          <a
+            href="/dashboard/configuracion"
+            className="flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-[12.5px] font-semibold text-foreground/80 transition-colors hover:bg-muted/50"
+          >
+            <Settings className="h-4 w-4" aria-hidden />
+            <span className="hidden sm:inline">Configuración</span>
+          </a>
+          <button
+            type="button"
+            disabled
+            title="Todavía no construido: hace falta el envío masivo con plantillas aprobadas por Meta."
+            className="flex cursor-not-allowed items-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-2 text-[12.5px] font-semibold text-muted-foreground/70"
+          >
+            <Plus className="h-4 w-4" aria-hidden />
+            <span className="hidden sm:inline">Nueva campaña</span>
+          </button>
+          <span className="mx-0.5 hidden h-6 w-px bg-border sm:block" aria-hidden />
           <button 
             onClick={() => {
               const newMode = viewMode === 'chat' ? 'audit' : 'chat';
@@ -1507,13 +1590,13 @@ export default function WhatsAppPage() {
               "flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg transition-all font-bold",
               viewMode === 'audit' 
                 ? "bg-red-500/20 text-red-400 border border-red-500/30" 
-                : "bg-white/5 text-muted-foreground hover:text-foreground border border-transparent hover:border-white/10"
+                : "bg-[hsl(var(--wa-panel-alt))] text-muted-foreground hover:text-foreground border border-transparent hover:border-[hsl(var(--wa-borde))]"
             )}
           >
             {viewMode === 'audit' ? <MessageSquare className="w-3.5 h-3.5" /> : <Trash2 className="w-3.5 h-3.5" />}
             <span className="hidden sm:inline">{viewMode === 'audit' ? 'Volver al Chat' : 'Papelera'}</span>
           </button>
-          <button onClick={() => loadConvs(showAllSedes)} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2.5 py-1.5 rounded-lg hover:bg-white/5 border border-transparent hover:border-white/10">
+          <button onClick={() => loadConvs(showAllSedes)} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2.5 py-1.5 rounded-lg hover:bg-[hsl(var(--wa-hover))] border border-transparent hover:border-[hsl(var(--wa-borde))]">
             <RefreshCw className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Actualizar</span>
           </button>
@@ -1524,7 +1607,7 @@ export default function WhatsAppPage() {
               'flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg transition-all font-semibold border',
               showAllSedes
                 ? 'bg-blue-500/20 text-blue-400 border-blue-500/30 shadow-sm shadow-blue-500/10'
-                : 'bg-white/5 text-muted-foreground border-transparent hover:border-white/10 hover:text-foreground'
+                : 'bg-[hsl(var(--wa-panel-alt))] text-muted-foreground border-transparent hover:border-[hsl(var(--wa-borde))] hover:text-foreground'
             )}
             title={showAllSedes ? 'Mostrando todas las sedes · Click para filtrar por sede actual' : 'Ver conversaciones de todas las sedes'}
           >
@@ -1541,25 +1624,25 @@ export default function WhatsAppPage() {
 
       {/* Chat layout */}
       <div
-        className="flex flex-1 min-h-0 rounded-2xl overflow-hidden border border-white/8"
-        style={{ background: '#111b21' }}
+        className="flex flex-1 min-h-0 rounded-2xl overflow-hidden border border-[hsl(var(--wa-borde))]"
+        style={{ background: 'hsl(var(--wa-panel))' }}
       >
         {/* ── Left: conversation list ── */}
         <div
           className={cn(
-            'flex flex-col flex-shrink-0 w-full md:w-[340px] border-r border-white/6',
+            'flex flex-col flex-shrink-0 w-full md:w-[340px] border-r border-[hsl(var(--wa-borde))]',
             showMobileChat ? 'hidden md:flex' : 'flex'
           )}
-          style={{ background: '#202c33' }}
+          style={{ background: 'hsl(var(--wa-panel-alt))' }}
         >
-          <div className="px-3 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-            <div className="flex items-center gap-2 rounded-lg px-3 py-2" style={{ background: '#2a3942' }}>
-              <Search className="w-4 h-4 text-white/40 flex-shrink-0" />
+          <div className="px-3 py-3" style={{ borderBottom: '1px solid hsl(var(--wa-borde))' }}>
+            <div className="flex items-center gap-2 rounded-lg px-3 py-2" style={{ background: 'hsl(var(--wa-hover))' }}>
+              <Search className="w-4 h-4 text-[hsl(var(--wa-texto-suave))] flex-shrink-0" />
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder="Buscar o empezar un chat"
-                className="flex-1 bg-transparent text-sm text-white/80 placeholder:text-white/35 outline-none"
+                className="flex-1 bg-transparent text-sm text-[hsl(var(--wa-texto))] placeholder:text-[hsl(var(--wa-texto-suave))] outline-none"
               />
             </div>
           </div>
@@ -1570,11 +1653,16 @@ export default function WhatsAppPage() {
                scroll horizontal el último chip quedaba escondido, que es la
                forma más segura de que nadie lo use. */
             className="flex flex-wrap gap-1.5 px-3 py-2"
-            style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+            style={{ borderBottom: '1px solid hsl(var(--wa-borde))' }}
           >
             {([
               { id: 'todas', label: 'Todas' },
               { id: 'sin_leer', label: 'No leídas' },
+              { id: 'clientes', label: 'Clientes' },
+              { id: 'ventas', label: 'Ventas' },
+              // Bot y Humano no están en el diseño pero son la distinción que
+              // de verdad hace falta aquí: qué chats atiende el bot y cuáles
+              // esperan a una persona.
               { id: 'bot', label: 'Bot' },
               { id: 'humano', label: 'Humano' },
             ] as const).map(f => {
@@ -1587,8 +1675,8 @@ export default function WhatsAppPage() {
                   onClick={() => setFiltroLista(f.id)}
                   className="flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors"
                   style={{
-                    background: activo ? '#f97316' : 'rgba(255,255,255,0.06)',
-                    color: activo ? '#fff' : 'rgba(255,255,255,0.6)',
+                    background: activo ? '#f97316' : 'hsl(var(--wa-borde))',
+                    color: activo ? '#fff' : 'hsl(var(--wa-texto-suave))',
                   }}
                 >
                   {f.label}
@@ -1609,8 +1697,8 @@ export default function WhatsAppPage() {
           <div className="min-h-0 flex-1 overflow-y-auto">
             {filtered.length === 0 && (
               <div className="flex flex-col items-center justify-center h-40 text-center p-4">
-                <MessageSquare className="w-8 h-8 mb-2" style={{ color: 'rgba(255,255,255,0.2)' }} />
-                <p className="text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>Sin conversaciones aún</p>
+                <MessageSquare className="w-8 h-8 mb-2" style={{ color: 'hsl(var(--wa-texto-suave))' }} />
+                <p className="text-xs" style={{ color: 'hsl(var(--wa-texto-suave))' }}>Sin conversaciones aún</p>
               </div>
             )}
             {filtered.map(conv => {
@@ -1623,27 +1711,44 @@ export default function WhatsAppPage() {
                   key={conv.id}
                   onClick={() => selectConv(conv)}
                   className="flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors"
-                  style={{ background: isActive ? '#2a3942' : 'transparent', borderBottom: '1px solid rgba(255,255,255,0.04)' }}
-                  onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = '#202c33'; }}
+                  style={{ background: isActive ? 'hsl(var(--wa-hover))' : 'transparent', borderBottom: '1px solid hsl(var(--wa-borde))' }}
+                  onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = 'hsl(var(--wa-panel-alt))'; }}
                   onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
                 >
                   <div className="relative flex-shrink-0">
                     <UserAvatar conv={conv} className="w-10 h-10" />
-                    <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2" style={{ background: dotColor, borderColor: '#202c33' }} />
+                    <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2" style={{ background: dotColor, borderColor: 'hsl(var(--wa-panel-alt))' }} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium truncate" style={{ color: '#e9edef' }}>{displayName(conv)}</span>
-                      <span className="text-[11px] flex-shrink-0 ml-2" style={{ color: '#8696a0' }}>
+                      <span className="text-sm font-medium truncate" style={{ color: 'hsl(var(--wa-texto))' }}>{displayName(conv)}</span>
+                      <span className="text-[11px] flex-shrink-0 ml-2" style={{ color: 'hsl(var(--wa-texto-suave))' }}>
                         {conv.ultimo_mensaje_at ? formatRelativeTime(conv.ultimo_mensaje_at) : ''}
                       </span>
                     </div>
-                    <div className="flex items-center justify-between mt-0.5">
-                      <p className="text-[12px] truncate" style={{ color: '#8696a0' }}>
+                    <div className="flex items-center justify-between gap-2 mt-0.5">
+                      <p className="text-[12px] truncate min-w-0 flex-1" style={{ color: 'hsl(var(--wa-texto-suave))' }}>
                         {conv.ultimo_mensaje ? conv.ultimo_mensaje.replace(/\s*\[env:(.*?)\]$/, '') : '...'}
                       </p>
+                      {/* Qué tiene pendiente este cliente, de un vistazo. Una
+                          sola etiqueta, la más urgente: tres chips en una fila
+                          de lista no se leen y nada destacaría. */}
+                      {(() => {
+                        const et = ETIQUETAS[etiquetaDe(conv.cliente_id, indiceEtiquetas)];
+                        return (
+                          <span
+                            title={et.ayuda}
+                            className={cn(
+                              'shrink-0 rounded-md border px-1.5 py-0.5 text-[9.5px] font-bold',
+                              et.clase,
+                            )}
+                          >
+                            {et.label}
+                          </span>
+                        );
+                      })()}
                       {(conv.mensajes_sin_leer ?? 0) > 0 && (
-                        <span className="flex-shrink-0 ml-2 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ background: '#00a884', color: '#111b21' }}>
+                        <span className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white" style={{ background: '#f97316' }}>
                           {conv.mensajes_sin_leer}
                         </span>
                       )}
@@ -1665,13 +1770,13 @@ export default function WhatsAppPage() {
         {/* ── Right: chat window ── */}
         <div
           className={cn('flex-1 flex flex-col min-h-0', !showMobileChat && 'hidden md:flex')}
-          style={{ background: '#0b141a' }}
+          style={{ background: 'hsl(var(--wa-fondo))' }}
         >
           {selected ? (
             <div className="flex-1 flex overflow-hidden relative">
               {/* Chat Main Area */}
               <div
-                className="flex-1 flex flex-col min-w-0 min-h-0 relative" style={{ background: '#0b141a' }}
+                className="flex-1 flex flex-col min-w-0 min-h-0 relative" style={{ background: 'hsl(var(--wa-fondo))' }}
                 onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                 onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
                 onDrop={(e) => {
@@ -1688,44 +1793,44 @@ export default function WhatsAppPage() {
                 {/* Drag Overlay */}
                 {isDragging && (
                   <div className="absolute inset-x-0 bottom-0 top-[72px] z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm pointer-events-none">
-                    <div className="bg-[#202c33] p-8 rounded-2xl border-2 border-dashed border-[#00a884] flex flex-col items-center gap-4 text-center animate-in fade-in zoom-in duration-200">
-                      <div className="w-16 h-16 rounded-full bg-[#00a884]/20 flex items-center justify-center">
-                        <Paperclip className="w-8 h-8 text-[#00a884]" />
+                    <div className="bg-[hsl(var(--wa-panel-alt))] p-8 rounded-2xl border-2 border-dashed border-[hsl(var(--wa-marca))] flex flex-col items-center gap-4 text-center animate-in fade-in zoom-in duration-200">
+                      <div className="w-16 h-16 rounded-full bg-[hsl(var(--wa-marca))]/20 flex items-center justify-center">
+                        <Paperclip className="w-8 h-8 text-[hsl(var(--wa-marca))]" />
                       </div>
                       <div>
                         <h3 className="text-lg font-bold text-white">Suelta para adjuntar</h3>
-                        <p className="text-sm text-white/60">Los archivos se agregarán al mensaje</p>
+                        <p className="text-sm text-[hsl(var(--wa-texto-suave))]">Los archivos se agregarán al mensaje</p>
                       </div>
                     </div>
                   </div>
                 )}
                 {/* Chat header */}
-                <div className="flex items-center justify-between gap-2 px-3 py-2.5 flex-shrink-0 flex-wrap" style={{ background: '#202c33', borderBottom: '1px solid rgba(255,255,255,0.06)', minHeight: '56px' }}>
+                <div className="flex items-center justify-between gap-2 px-3 py-2.5 flex-shrink-0 flex-wrap" style={{ background: 'hsl(var(--wa-panel-alt))', borderBottom: '1px solid hsl(var(--wa-borde))', minHeight: '56px' }}>
                   {/* Identity Row */}
                   <div className="flex items-center gap-2 min-w-0 flex-1">
-                    <button onClick={() => setShowMobileChat(false)} className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/5 transition-colors flex-shrink-0">
+                    <button onClick={() => setShowMobileChat(false)} className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[hsl(var(--wa-hover))] transition-colors flex-shrink-0">
                       <X className="w-5 h-5" style={{ color: '#aebac1' }} />
                     </button>
-                    <button onClick={() => setShowMobileInfo(true)} className="lg:hidden w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/5 transition-colors flex-shrink-0">
+                    <button onClick={() => setShowMobileInfo(true)} className="lg:hidden w-7 h-7 flex items-center justify-center rounded-lg hover:bg-[hsl(var(--wa-hover))] transition-colors flex-shrink-0">
                       <Info className="w-4 h-4" style={{ color: '#aebac1' }} />
                     </button>
                     <button
                       onClick={() => setShowInfoDesktop(v => !v)}
                       title={showInfoDesktop ? 'Ocultar panel de información' : 'Mostrar panel de información'}
-                      className="hidden lg:flex w-7 h-7 items-center justify-center rounded-lg hover:bg-white/5 transition-colors flex-shrink-0"
+                      className="hidden lg:flex w-7 h-7 items-center justify-center rounded-lg hover:bg-[hsl(var(--wa-hover))] transition-colors flex-shrink-0"
                     >
-                      <Info className="w-4 h-4" style={{ color: showInfoDesktop ? '#00a884' : '#aebac1' }} />
+                      <Info className="w-4 h-4" style={{ color: showInfoDesktop ? 'hsl(var(--wa-marca))' : '#aebac1' }} />
                     </button>
                     <UserAvatar conv={selected} className="w-9 h-9 flex-shrink-0 shadow-xl" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
-                        <p className="text-[14px] font-bold text-[#e9edef] leading-tight truncate">{displayName(selected)}</p>
-                        <button onClick={startEditingName} className="p-1 hover:bg-white/5 rounded-full transition-colors text-white/20 hover:text-green-400 flex-shrink-0">
+                        <p className="text-[14px] font-bold text-[hsl(var(--wa-texto))] leading-tight truncate">{displayName(selected)}</p>
+                        <button onClick={startEditingName} className="p-1 hover:bg-[hsl(var(--wa-hover))] rounded-full transition-colors text-[hsl(var(--wa-texto-suave))] hover:text-emerald-500 flex-shrink-0">
                           <User className="w-3 h-3" />
                         </button>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <p className="text-[11px] opacity-50 text-[#8696a0] tabular-nums truncate">{selected.telefono}</p>
+                        <p className="text-[11px] opacity-50 text-[hsl(var(--wa-texto-suave))] tabular-nums truncate">{selected.telefono}</p>
                         {showAllSedes && (() => {
                           const si = getSedeLabel((selected as any).sede_id);
                           return si ? (
@@ -1797,7 +1902,7 @@ export default function WhatsAppPage() {
                           );
                         })()}
                         {retryStatus && (
-                          <div className="absolute top-full mt-1 right-0 z-50 px-2.5 py-1.5 rounded-lg text-[11px] font-medium whitespace-nowrap shadow-xl max-w-[280px] truncate" style={{ background: '#2a3942', color: '#e9edef', border: '1px solid rgba(255,255,255,0.08)' }}>
+                          <div className="absolute top-full mt-1 right-0 z-50 px-2.5 py-1.5 rounded-lg text-[11px] font-medium whitespace-nowrap shadow-xl max-w-[280px] truncate" style={{ background: 'hsl(var(--wa-hover))', color: 'hsl(var(--wa-texto))', border: '1px solid hsl(var(--wa-borde))' }}>
                             {retryStatus}
                           </div>
                         )}
@@ -1805,7 +1910,7 @@ export default function WhatsAppPage() {
                       <button
                         onClick={() => setMode('bot')}
                         disabled={togglingMode || selected.estado === 'bot'}
-                        className={cn('flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-sm', selected.estado === 'bot' ? 'bg-[#a78bfa]/20 text-[#a78bfa] border border-[#a78bfa]/30' : 'bg-white/5 text-white/40 border border-white/10 hover:bg-white/10')}
+                        className={cn('flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-sm', selected.estado === 'bot' ? 'bg-[#a78bfa]/20 text-[#a78bfa] border border-[#a78bfa]/30' : 'bg-[hsl(var(--wa-panel-alt))] text-[hsl(var(--wa-texto-suave))] border border-[hsl(var(--wa-borde))] hover:bg-[hsl(var(--wa-hover))]')}
                       >
                         <Bot className="w-3.5 h-3.5" />
                         <span className="hidden sm:inline">Bot</span>
@@ -1813,7 +1918,7 @@ export default function WhatsAppPage() {
                       <button
                         onClick={() => setMode('humano')}
                         disabled={togglingMode || selected.estado === 'humano'}
-                        className={cn('flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-sm', selected.estado === 'humano' ? 'bg-[#fb923c]/20 text-[#fb923c] border border-[#fb923c]/30' : 'bg-white/5 text-white/40 border border-white/10 hover:bg-white/10')}
+                        className={cn('flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-sm', selected.estado === 'humano' ? 'bg-[#fb923c]/20 text-[#fb923c] border border-[#fb923c]/30' : 'bg-[hsl(var(--wa-panel-alt))] text-[hsl(var(--wa-texto-suave))] border border-[hsl(var(--wa-borde))] hover:bg-[hsl(var(--wa-hover))]')}
                       >
                         <UserCheck className="w-3.5 h-3.5" />
                         <span className="hidden sm:inline">Tú</span>
@@ -1839,12 +1944,12 @@ export default function WhatsAppPage() {
                   ref={chatScrollRef}
                   onScroll={handleScrollEvents}
                   className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-4 space-y-1 w-full"
-                  style={{ minHeight: 0, background: '#0b141a' }}
+                  style={{ minHeight: 0, background: 'hsl(var(--wa-fondo))' }}
                 >
                   {/* Load more above */}
                   {loadingMore && (
                     <div className="flex justify-center py-2">
-                      <span className="text-[11px] animate-pulse" style={{ color: '#8696a0' }}>Cargando mensajes anteriores...</span>
+                      <span className="text-[11px] animate-pulse" style={{ color: 'hsl(var(--wa-texto-suave))' }}>Cargando mensajes anteriores...</span>
                     </div>
                   )}
                   {hasMoreAbove && !loadingMore && (
@@ -1852,7 +1957,7 @@ export default function WhatsAppPage() {
                       <button
                         onClick={loadOlderMsgs}
                         className="flex items-center gap-1 text-[11px] px-3 py-1 rounded-full transition-colors hover:opacity-80"
-                        style={{ background: '#2a3942', color: '#8696a0' }}
+                        style={{ background: 'hsl(var(--wa-hover))', color: 'hsl(var(--wa-texto-suave))' }}
                       >
                         <ChevronDown className="w-3 h-3 rotate-180" /> Ver mensajes anteriores
                       </button>
@@ -1861,14 +1966,14 @@ export default function WhatsAppPage() {
 
                   {loadingMsgs && (
                     <div className="flex flex-col items-center justify-center h-40 gap-2">
-                      <div className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: '#2a3942', borderTopColor: '#00a884' }} />
-                      <span className="text-xs" style={{ color: '#8696a0' }}>Cargando mensajes...</span>
+                      <div className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: 'hsl(var(--wa-hover))', borderTopColor: 'hsl(var(--wa-marca))' }} />
+                      <span className="text-xs" style={{ color: 'hsl(var(--wa-texto-suave))' }}>Cargando mensajes...</span>
                     </div>
                   )}
                   {!loadingMsgs && msgs.length === 0 && (
                     <div className="flex flex-col items-center justify-center h-40 text-center">
-                      <MessageSquare className="w-8 h-8 mb-2" style={{ color: 'rgba(255,255,255,0.15)' }} />
-                      <p className="text-xs" style={{ color: '#8696a0' }}>Sin mensajes en este chat aún</p>
+                      <MessageSquare className="w-8 h-8 mb-2" style={{ color: 'hsl(var(--wa-borde))' }} />
+                      <p className="text-xs" style={{ color: 'hsl(var(--wa-texto-suave))' }}>Sin mensajes en este chat aún</p>
                     </div>
                   )}
 
@@ -1894,7 +1999,7 @@ export default function WhatsAppPage() {
                       <React.Fragment key={msg.id}>
                         {showDivider && (
                           <div className="flex justify-center my-3">
-                            <span className="text-[11px] px-3 py-1 rounded-full" style={{ background: '#182229', color: '#8696a0' }}>
+                            <span className="text-[11px] px-3 py-1 rounded-full" style={{ background: 'hsl(var(--wa-panel-alt))', color: 'hsl(var(--wa-texto-suave))' }}>
                               {thisDay === new Date().toLocaleDateString('es-VE') ? 'Hoy' : thisDay}
                             </span>
                           </div>
@@ -1902,20 +2007,20 @@ export default function WhatsAppPage() {
                         <div id={`msg-${msg.id}`} className={cn('flex w-full group relative', isOut ? 'justify-end' : 'justify-start')} style={{ marginBottom: '2px' }}>
                           <div
                             className="relative max-w-[88%] md:max-w-[75%] rounded-lg px-3 py-2 shadow-sm flex flex-col min-w-[60px]"
-                            style={{ background: isOut ? '#005c4b' : '#202c33', opacity: isOptimistic ? 0.75 : 1, borderRadius: isOut ? '8px 8px 2px 8px' : '8px 8px 8px 2px' }}
+                            style={{ background: isOut ? 'hsl(var(--wa-burbuja-sale))' : 'hsl(var(--wa-panel-alt))', opacity: isOptimistic ? 0.75 : 1, borderRadius: isOut ? '8px 8px 2px 8px' : '8px 8px 8px 2px' }}
                           >
                             {/* Reaction Picker Popover (Responsive Position) */}
                             {!isOptimistic && (
                               <div className={cn(
-                                "absolute -top-12 z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all flex items-center gap-1 p-1 rounded-full shadow-2xl border border-white/10 scale-90 group-hover:scale-100 backdrop-blur-md",
+                                "absolute -top-12 z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all flex items-center gap-1 p-1 rounded-full shadow-2xl border border-[hsl(var(--wa-borde))] scale-90 group-hover:scale-100 backdrop-blur-md",
                                 isOut ? "right-0" : "left-0"
                               )} style={{ background: 'rgba(32, 44, 51, 0.9)' }}>
-                                <div className="flex gap-1 pr-2 border-r border-white/10 mr-1">
+                                <div className="flex gap-1 pr-2 border-r border-[hsl(var(--wa-borde))] mr-1">
                                   {['❤️', '👍', '😂', '😮', '🙏'].map(emoji => (
                                     <button key={emoji} onClick={() => handleReact(msg, emoji)} className="hover:scale-125 transition-transform p-0.5">{emoji}</button>
                                   ))}
                                 </div>
-                                <button onClick={() => copyToClipboard(cleanBody)} className="p-1.5 hover:bg-white/10 rounded-full text-white/60 hover:text-white" title="Copiar">
+                                <button onClick={() => copyToClipboard(cleanBody)} className="p-1.5 hover:bg-[hsl(var(--wa-hover))] rounded-full text-[hsl(var(--wa-texto-suave))] hover:text-white" title="Copiar">
                                   <Copy className="w-3.5 h-3.5" />
                                 </button>
                                 {!isOut && (msg.media_type === 'audio' || msg.media_type === 'image' || msg.media_type === 'video' || msg.body.startsWith('[Cliente envió') || msg.body === '[Video]' || msg.body === '[Cliente envió audio]') && (
@@ -1966,7 +2071,7 @@ export default function WhatsAppPage() {
                               </div>
                             </div>
                             {msg.reaccion && (
-                              <div className={cn("absolute -bottom-2 px-1.5 py-0.5 rounded-full text-xs shadow-md border border-white/10", isOut ? "left-0" : "right-0")} style={{ background: '#374045' }}>{msg.reaccion}</div>
+                              <div className={cn("absolute -bottom-2 px-1.5 py-0.5 rounded-full text-xs shadow-md border border-[hsl(var(--wa-borde))]", isOut ? "left-0" : "right-0")} style={{ background: '#374045' }}>{msg.reaccion}</div>
                             )}
                           </div>
                         </div>
@@ -1976,38 +2081,51 @@ export default function WhatsAppPage() {
                   <div style={{ height: '4px' }} />
                 </div>
 
-                {/* Quick replies */}
-                {showQuickReplies && (
-                  <div className="flex gap-2 overflow-x-auto px-3 py-2 flex-shrink-0" style={{ background: '#202c33', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                    {QUICK_REPLIES.map((r, i) => (
+                {/* Respuestas rápidas — a la vista, no escondidas tras un
+                    botón: son para escribir menos, y si hay que buscarlas
+                    primero dejan de ahorrar nada. El título dice qué son. */}
+                <div
+                  className="flex-shrink-0 px-3 pt-2 pb-1"
+                  style={{ background: 'hsl(var(--wa-panel-alt))', borderTop: '1px solid hsl(var(--wa-borde))' }}
+                >
+                  <p className="mb-1.5 text-[10px] font-black uppercase tracking-wider" style={{ color: 'hsl(var(--wa-texto-suave))' }}>
+                    Respuestas rápidas
+                  </p>
+                  <div className="flex gap-1.5 overflow-x-auto pb-1">
+                    {QUICK_REPLIES.map(r => (
                       <button
-                        key={i}
-                        onClick={() => { setMessage(r); setShowQuickReplies(false); inputRef.current?.focus(); }}
-                        className="flex-shrink-0 text-[11px] px-2.5 py-1.5 rounded-lg whitespace-nowrap transition-colors hover:opacity-80"
-                        style={{ background: '#2a3942', color: '#8696a0', border: '1px solid rgba(255,255,255,0.06)' }}
+                        key={r.label}
+                        onClick={() => { setMessage(r.texto); inputRef.current?.focus(); }}
+                        title={r.texto}
+                        className="flex-shrink-0 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-[11.5px] font-medium transition-colors"
+                        style={{
+                          background: 'hsl(var(--wa-panel))',
+                          color: 'hsl(var(--wa-texto))',
+                          borderColor: 'hsl(var(--wa-borde))',
+                        }}
                       >
-                        {r.length > 38 ? r.slice(0, 38) + '…' : r}
+                        {r.label}
                       </button>
                     ))}
                   </div>
-                )}
+                </div>
 
                 {/* Input area */}
-                <div className="flex flex-col flex-shrink-0" style={{ background: '#202c33', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="flex flex-col flex-shrink-0" style={{ background: 'hsl(var(--wa-panel-alt))', borderTop: '1px solid hsl(var(--wa-borde))' }}>
                   
                   {/* Reply Preview */}
                   {replyingTo && (
-                    <div className="px-3 py-2 border-b border-white/5 bg-[#111b21] flex items-center gap-3 animate-in slide-in-from-bottom-1 duration-200">
-                      <div className="w-1 self-stretch rounded-full bg-[#00a884]" />
+                    <div className="px-3 py-2 border-b border-white/5 bg-[hsl(var(--wa-panel))] flex items-center gap-3 animate-in slide-in-from-bottom-1 duration-200">
+                      <div className="w-1 self-stretch rounded-full bg-[hsl(var(--wa-marca))]" />
                       <div className="flex-1 min-w-0 py-1">
-                        <div className="text-[11px] font-bold text-[#00a884]">
+                        <div className="text-[11px] font-bold text-[hsl(var(--wa-marca))]">
                           {replyingTo.tipo === 'saliente' ? 'Tú' : (selected?.datos_cliente?.nombre || selected?.telefono || 'Cliente')}
                         </div>
-                        <div className="text-xs text-[#8696a0] truncate">
+                        <div className="text-xs text-[hsl(var(--wa-texto-suave))] truncate">
                           {replyingTo.body || (replyingTo.media_type ? `[${replyingTo.media_type}]` : 'Mensaje')}
                         </div>
                       </div>
-                      <button onClick={() => setReplyingTo(null)} className="p-1.5 rounded-full hover:bg-white/5 text-[#8696a0]">
+                      <button onClick={() => setReplyingTo(null)} className="p-1.5 rounded-full hover:bg-[hsl(var(--wa-hover))] text-[hsl(var(--wa-texto-suave))]">
                         <X className="w-4 h-4" />
                       </button>
                     </div>
@@ -2017,11 +2135,11 @@ export default function WhatsAppPage() {
                   {files.length > 0 && (
                     <div className="p-3 border-b border-white/5 flex gap-3 overflow-x-auto custom-scrollbar">
                       {files.map((f, idx) => (
-                        <div key={idx} className="relative inline-block border-2 border-[#00a884] rounded-xl overflow-hidden shadow-lg bg-black/20 flex-shrink-0 group">
+                        <div key={idx} className="relative inline-block border-2 border-[hsl(var(--wa-marca))] rounded-xl overflow-hidden shadow-lg bg-black/20 flex-shrink-0 group">
                           {f.file.type.startsWith('image/') ? (
                             <img src={f.url} alt="Preview" className="h-20 w-auto object-cover min-w-[80px]" />
                           ) : (
-                            <div className="h-20 w-24 flex flex-col items-center justify-center bg-[#111b21]">
+                            <div className="h-20 w-24 flex flex-col items-center justify-center bg-[hsl(var(--wa-panel))]">
                               {f.file.type.startsWith('video/') ? <Video className="w-7 h-7 opacity-70 text-white" /> : <FileText className="w-7 h-7 opacity-70 text-white" />}
                               <span className="text-[9px] mt-1 opacity-60 px-2 line-clamp-2 text-center text-ellipsis overflow-hidden text-white">{f.file.name}</span>
                             </div>
@@ -2037,7 +2155,7 @@ export default function WhatsAppPage() {
                     <div className="flex items-center gap-2 px-2 md:px-3 py-2 md:py-3 relative min-h-[52px]">
                       {isRecording && (
                         <div 
-                          className="absolute inset-0 z-30 flex items-center px-4 bg-[#202c33] animate-in fade-in slide-in-from-bottom-2 duration-200"
+                          className="absolute inset-0 z-30 flex items-center px-4 bg-[hsl(var(--wa-panel-alt))] animate-in fade-in slide-in-from-bottom-2 duration-200"
                           onMouseMove={handleRecordingMove}
                           onTouchMove={handleRecordingMove}
                           onMouseUp={() => stopRecording(true)}
@@ -2057,8 +2175,8 @@ export default function WhatsAppPage() {
                                   opacity: Math.max(0.2, 1 - (slideOffset / 120)) 
                                 }}
                               >
-                                <ChevronLeft className="w-4 h-4 text-[#8696a0] animate-pulse" />
-                                <span className="text-xs md:text-sm text-[#8696a0] whitespace-nowrap">
+                                <ChevronLeft className="w-4 h-4 text-[hsl(var(--wa-texto-suave))] animate-pulse" />
+                                <span className="text-xs md:text-sm text-[hsl(var(--wa-texto-suave))] whitespace-nowrap">
                                   {slideOffset > 40 ? 'Suelta para cancelar' : 'Desliza para cancelar'}
                                 </span>
                               </div>
@@ -2076,14 +2194,14 @@ export default function WhatsAppPage() {
 
                       {!isRecording && (
                         <>
-                          <button onClick={() => setShowQuickReplies(!showQuickReplies)} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors flex-shrink-0">
+                          <button onClick={() => setShowQuickReplies(!showQuickReplies)} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-[hsl(var(--wa-hover))] transition-colors flex-shrink-0">
                             <Smile className="w-5 h-5" style={{ color: '#aebac1' }} />
                           </button>
                           
-                          <button onClick={() => fileInputRef.current?.click()} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors flex-shrink-0 mr-1 relative">
+                          <button onClick={() => fileInputRef.current?.click()} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-[hsl(var(--wa-hover))] transition-colors flex-shrink-0 mr-1 relative">
                             <Paperclip className="w-5 h-5" style={{ color: '#aebac1' }} />
                             {files.length > 0 && (
-                               <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#00a884] text-black text-[9px] font-bold rounded-full flex items-center justify-center pointer-events-none border border-[#202c33]">
+                               <span className="absolute -top-1 -right-1 w-4 h-4 bg-[hsl(var(--wa-marca))] text-black text-[9px] font-bold rounded-full flex items-center justify-center pointer-events-none border border-[hsl(var(--wa-panel-alt))]">
                                  {files.length}
                                </span>
                             )}
@@ -2097,7 +2215,7 @@ export default function WhatsAppPage() {
                         onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
                         placeholder={isWindowOpen ? (files.length > 0 ? (files.length === 1 ? 'Añade un comentario...' : 'El comentario irá con el primer archivo...') : 'Escribe un mensaje') : 'Ventana de 24h cerrada'}
                         className={cn("flex-1 py-2 px-4 rounded-lg text-sm outline-none transition-all", isRecording && "opacity-0 pointer-events-none")}
-                        style={{ background: '#2a3942', color: '#e9edef', border: 'none' }}
+                        style={{ background: 'hsl(var(--wa-hover))', color: 'hsl(var(--wa-texto))', border: 'none' }}
                       />
                       
                       {message.trim() || files.length > 0 ? (
@@ -2105,9 +2223,9 @@ export default function WhatsAppPage() {
                           onClick={() => { handleSend(); setReplyingTo(null); }} 
                           disabled={sending} 
                           className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-all shadow-lg" 
-                          style={{ background: '#00a884' }}
+                          style={{ background: 'hsl(var(--wa-marca))' }}
                         >
-                          <Send className={cn('w-4 h-4', sending && 'animate-pulse')} style={{ color: '#e9edef' }} />
+                          <Send className={cn('w-4 h-4', sending && 'animate-pulse')} style={{ color: 'hsl(var(--wa-texto))' }} />
                         </button>
                       ) : (
                         <button 
@@ -2117,7 +2235,7 @@ export default function WhatsAppPage() {
                           onTouchEnd={() => stopRecording(true)}
                           className={cn(
                             "w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-300",
-                            isRecording ? "bg-red-500 scale-125 shadow-xl z-30" : "bg-white/5 hover:bg-white/10"
+                            isRecording ? "bg-red-500 scale-125 shadow-xl z-30" : "bg-[hsl(var(--wa-panel-alt))] hover:bg-[hsl(var(--wa-hover))]"
                           )}
                         >
                           <Mic className={cn("w-5 h-5", isRecording ? "text-white" : "text-[#aebac1]")} />
@@ -2127,158 +2245,61 @@ export default function WhatsAppPage() {
                 </div>
               </div>
 
-              {/* ── Right Sidebar: Client Details & Garage ── */}
+              {/* ── Ficha del cliente, junto al chat ──────────────────────
+                  El contenido vive en `components/whatsapp/PanelCliente.tsx`.
+                  Aquí solo queda la caja y su visibilidad: el panel es lo que
+                  más creció con el rediseño y dentro de esta página, que ya
+                  tiene 2.400 líneas, habría sido imposible de mantener.
+                  Toda la lógica que ya existía —editar el nombre, enviar la
+                  ubicación de una sede, mandar la tarjeta del asesor, los
+                  vehículos en vivo— se le pasa por props. */}
               <div className={cn(
                 showMobileInfo ? 'absolute inset-0 z-30 flex' : 'hidden',
-                'flex-col w-full lg:w-72 border-l border-white/6 overflow-y-auto',
+                'flex-col w-full lg:w-72 border-l border-[hsl(var(--wa-borde))]',
                 showInfoDesktop ? 'lg:relative lg:flex' : 'lg:hidden'
-              )} style={{ background: '#0b141a' }}>
-                <div className="flex items-center justify-between p-4" style={{ background: '#202c33', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                   <h2 className="text-sm font-semibold flex items-center gap-2" style={{ color: '#e9edef' }}>
-                     <Info className="w-4 h-4 text-green-400" /> Información
-                   </h2>
-                   <button onClick={() => setShowMobileInfo(false)} className="lg:hidden w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/5 transition-colors flex-shrink-0">
-                     <X className="w-5 h-5" style={{ color: '#aebac1' }} />
-                   </button>
-                </div>
-                
-                <div className="p-4 space-y-6">
-                  {/* Garage Section */}
-                  <div>
-                    <h3 className="text-[11px] font-bold uppercase tracking-wider mb-3 flex items-center gap-2" style={{ color: '#8696a0' }}>
-                      <Car className="w-3.5 h-3.5" /> Garage del Cliente
-                    </h3>
-                    <div className="space-y-2.5">
-                      {loadingVehicles ? (
-                        <div className="flex items-center gap-2 py-2 opacity-50">
-                          <RefreshCw className="w-3 h-3 animate-spin" />
-                          <span className="text-xs">Buscando vehículos...</span>
-                        </div>
-                      ) : selectedVehicles.length > 0 ? (
-                        selectedVehicles.map((v, idx) => (
-                          <div key={v.id || idx} className="p-3 rounded-xl border border-white/5 transition-all hover:bg-white/5" style={{ background: 'rgba(255,255,255,0.03)' }}>
-                            <div className="flex items-start justify-between mb-1">
-                              <span className="text-sm font-semibold truncate pr-2" style={{ color: '#e9edef' }}>
-                                {v.marca} {v.modelo}
-                              </span>
-                              {v.anio && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-white/40 border border-white/5">
-                                  {v.anio}
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-3 mt-2">
-                               <div className="flex items-center gap-1 text-[11px]" style={{ color: '#8696a0' }}>
-                                 <Hash className="w-3 h-3 opacity-50" />
-                                 <span className="font-mono text-green-400/80">{v.placa || 'SIN PLACA'}</span>
-                               </div>
-                               <div className="w-1 h-1 rounded-full bg-white/10" />
-                               <div className="flex items-center gap-1 text-[11px]" style={{ color: '#8696a0' }}>
-                                 <Calendar className="w-3 h-3 opacity-50" />
-                                 <span>{v.created_at ? new Date(v.created_at).getFullYear() : 'N/A'}</span>
-                               </div>
-                            </div>
-                          </div>
-                        ))
-                      ) : (selected.memoria?.vehiculos && selected.memoria.vehiculos.length > 0) ? (
-                        selected.memoria.vehiculos.map((v, idx: number) => (
-                          <div key={idx} className="p-3 rounded-xl border border-dashed border-white/10 transition-all hover:bg-white/5" style={{ background: 'rgba(255,255,255,0.02)' }}>
-                            <div className="flex items-start justify-between mb-1">
-                              <span className="text-sm font-medium truncate pr-2" style={{ color: '#e9edef' }}>
-                                {v.marca || 'Marca?'} {v.modelo || 'Modelo?'}
-                              </span>
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500/80 border border-amber-500/10">
-                                Por confirmar
-                              </span>
-                            </div>
-                            <p className="text-[10px] italic" style={{ color: '#8696a0' }}>Detectado en conversación</p>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="p-4 rounded-xl border border-dashed border-white/10 text-center">
-                          <Car className="w-6 h-6 mx-auto mb-2 opacity-10" />
-                          <p className="text-[11px]" style={{ color: '#8696a0' }}>No hay vehículos registrados</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Quick Metadata */}
-                  <div className="pt-4 border-t border-white/5">
-                    <div className="flex items-center justify-between py-1">
-                       <span className="text-[11px]" style={{ color: '#8696a0' }}>ID Cliente</span>
-                       <span className="text-[10px] font-mono opacity-40">{selected.cliente_id?.slice(0,8) || 'N/A'}</span>
-                    </div>
-                     <div className="flex items-center justify-between py-1 border-t border-white/5 mt-1 pt-1">
-                        <span className="text-[11px]" style={{ color: '#8696a0' }}>Nombre CRM</span>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px]" style={{ color: '#e9edef' }}>{selected.datos_cliente?.nombre || 'No registrado'}</span>
-                          <button onClick={startEditingName} className="p-1 hover:bg-white/5 rounded text-white/30 hover:text-green-400"><User className="w-2.5 h-2.5" /></button>
-                        </div>
-                     </div>
-                    <div className="flex items-center justify-between py-1">
-                       <span className="text-[11px]" style={{ color: '#8696a0' }}>Perfil WhatsApp</span>
-                       <span className="text-[10px]" style={{ color: '#e9edef' }}>{selected.datos_cliente?.wa_name || 'Desconocido'}</span>
-                    </div>
-
-                    {/* Send Contact Button */}
-                    <div className="mt-4 pt-4 border-t border-white/5 space-y-4">
-                      {/* Native Locations Section */}
-                      <div className="space-y-2">
-                        <h3 className="text-[11px] font-bold uppercase tracking-wider flex items-center gap-2" style={{ color: '#8696a0' }}>
-                          <MapPin className="w-3.5 h-3.5" /> Enviar Ubicaciones GPS
-                        </h3>
-                        <div className="grid grid-cols-1 gap-1.5">
-                          {SEDE_LOCATIONS.map(sede => (
-                            <button
-                              key={sede.id}
-                              onClick={() => handleSendLocation(sede)}
-                              disabled={sending}
-                              className="flex items-center justify-between w-full p-2.5 rounded-xl text-[11px] font-medium transition-all bg-white/5 border border-white/5 hover:bg-white/10 hover:border-white/10 group"
-                            >
-                              <div className="flex items-center gap-2">
-                                <Navigation className="w-3 h-3 text-blue-400 opacity-50 group-hover:opacity-100" />
-                                <span style={{ color: '#e9edef' }}>{sede.name.replace('Sede ', '')}</span>
-                              </div>
-                              <Send className="w-2.5 h-2.5 opacity-20 group-hover:opacity-60" />
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="pt-2">
-                        <button
-                          onClick={handleSendContact}
-                          disabled={sendingContact}
-                          className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-bold transition-all shadow-sm bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 disabled:opacity-50"
-                        >
-                          {sendingContact ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
-                          <span>Enviar Contacto Asesor</span>
-                        </button>
-                        <p className="text-[9px] mt-2 px-1 text-center leading-tight" style={{ color: '#8696a0' }}>
-                          Envía la tarjeta VCard del Asesor Lycos para que el cliente guarde el contacto.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+              )} style={{ background: 'hsl(var(--wa-panel))' }}>
+                <PanelCliente
+                  nombre={displayName(selected)}
+                  telefono={selected.telefono}
+                  clienteId={selected.cliente_id ?? selected.clientes?.id ?? null}
+                  email={selected.clientes?.email ?? null}
+                  direccion={selected.clientes?.direccion ?? null}
+                  cedula={selected.clientes?.cedula ?? null}
+                  clienteDesde={selected.clientes?.created_at ?? null}
+                  nota={selected.memoria?.notas ?? null}
+                  vehiculos={selectedVehicles}
+                  cargandoVehiculos={loadingVehicles}
+                  vehiculosMemoria={selected.memoria?.vehiculos ?? []}
+                  editandoNombre={isEditingName}
+                  nombreEditado={editName}
+                  onCambiarNombre={setEditName}
+                  onEmpezarEdicion={startEditingName}
+                  onGuardarNombre={handleSaveName}
+                  guardandoNombre={savingName}
+                  sedes={SEDE_LOCATIONS}
+                  onEnviarUbicacion={handleSendLocation}
+                  onEnviarContacto={handleSendContact}
+                  enviandoContacto={sendingContact}
+                  onRespuestaRapida={t => setMessage(m => (m ? `${m} ${t}` : t))}
+                  onCerrarMovil={() => setShowMobileInfo(false)}
+                />
               </div>
             </div>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
               <div className="w-20 h-20 rounded-full flex items-center justify-center mb-4" style={{ background: 'rgba(0,168,132,0.1)', border: '2px solid rgba(0,168,132,0.2)' }}>
-                <MessageSquare className="w-9 h-9" style={{ color: '#00a884' }} />
+                <MessageSquare className="w-9 h-9" style={{ color: 'hsl(var(--wa-marca))' }} />
               </div>
-              <h3 className="font-medium mb-1 text-base" style={{ color: '#e9edef' }}>WhatsApp CRM</h3>
-              <p className="text-sm" style={{ color: '#8696a0' }}>Selecciona una conversación para ver los mensajes en tiempo real</p>
+              <h3 className="font-medium mb-1 text-base" style={{ color: 'hsl(var(--wa-texto))' }}>WhatsApp CRM</h3>
+              <p className="text-sm" style={{ color: 'hsl(var(--wa-texto-suave))' }}>Selecciona una conversación para ver los mensajes en tiempo real</p>
             </div>
           )}
         </div>
 
         {/* ── Audit View Overlay ── */}
         {viewMode === 'audit' && (
-          <div className="absolute inset-x-0 bottom-0 top-[110px] z-[60] flex flex-col" style={{ background: '#111b21' }}>
-            <div className="p-4 flex items-center justify-between border-b border-white/5 bg-[#202c33]">
+          <div className="absolute inset-x-0 bottom-0 top-[110px] z-[60] flex flex-col" style={{ background: 'hsl(var(--wa-panel))' }}>
+            <div className="p-4 flex items-center justify-between border-b border-white/5 bg-[hsl(var(--wa-panel-alt))]">
               <div>
                 <h2 className="text-lg font-bold flex items-center gap-2 text-red-400">
                   <Trash2 className="w-5 h-5" /> Papelera de Auditoría
@@ -2287,7 +2308,7 @@ export default function WhatsAppPage() {
               </div>
               <button 
                 onClick={() => setViewMode('chat')}
-                className="px-4 py-2 text-xs font-bold rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+                className="px-4 py-2 text-xs font-bold rounded-lg bg-[hsl(var(--wa-panel-alt))] hover:bg-[hsl(var(--wa-hover))] transition-colors"
               >
                 Cerrar Papelera
               </button>
@@ -2296,8 +2317,8 @@ export default function WhatsAppPage() {
             <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
               {loadingAudit ? (
                 <div className="flex flex-col items-center justify-center py-20 gap-3">
-                  <RefreshCw className="w-10 h-10 animate-spin text-white/10" />
-                  <p className="text-sm text-white/40">Cargando auditoría...</p>
+                  <RefreshCw className="w-10 h-10 animate-spin text-[hsl(var(--wa-texto-suave))]" />
+                  <p className="text-sm text-[hsl(var(--wa-texto-suave))]">Cargando auditoría...</p>
                 </div>
               ) : auditMsgs.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 opacity-20">
@@ -2307,11 +2328,11 @@ export default function WhatsAppPage() {
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {auditMsgs.map(msg => (
-                    <div key={msg.id} className="p-4 rounded-xl border border-white/5 bg-[#202c33] flex flex-col gap-3 relative group">
+                    <div key={msg.id} className="p-4 rounded-xl border border-white/5 bg-[hsl(var(--wa-panel-alt))] flex flex-col gap-3 relative group">
                        <div className="flex items-center justify-between gap-2">
                          <div className="flex items-center gap-2">
                            <div className="w-2 h-2 rounded-full bg-red-400" />
-                           <span className="text-[10px] font-bold text-white/40 uppercase">Eliminado en {new Date(msg.deleted_at).toLocaleDateString()}</span>
+                           <span className="text-[10px] font-bold text-[hsl(var(--wa-texto-suave))] uppercase">Eliminado en {new Date(msg.deleted_at).toLocaleDateString()}</span>
                          </div>
                          <button 
                            onClick={() => restoreMsg(msg.id)}
@@ -2321,12 +2342,12 @@ export default function WhatsAppPage() {
                            <RotateCcw className="w-4 h-4" />
                          </button>
                        </div>
-                       <div className="bg-black/20 p-3 rounded-lg border border-white/5 italic text-sm text-[#e9edef] whitespace-pre-wrap line-clamp-4">
+                       <div className="bg-black/20 p-3 rounded-lg border border-white/5 italic text-sm text-[hsl(var(--wa-texto))] whitespace-pre-wrap line-clamp-4">
                          {msg.body}
                        </div>
                        <div className="flex items-center justify-between mt-1">
-                         <span className="text-[11px] text-white/30 truncate max-w-[150px]">De: {msg.from_number}</span>
-                         <span className="text-[10px] text-white/20">{new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                         <span className="text-[11px] text-[hsl(var(--wa-texto-suave))] truncate max-w-[150px]">De: {msg.from_number}</span>
+                         <span className="text-[10px] text-[hsl(var(--wa-texto-suave))]">{new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                        </div>
                     </div>
                   ))}
@@ -2340,27 +2361,27 @@ export default function WhatsAppPage() {
       {/* Edit Name Modal */}
       {isEditingName && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-white/10 shadow-2xl p-6" style={{ background: '#202c33' }}>
-            <h3 className="text-lg font-bold mb-4" style={{ color: '#e9edef' }}>Editar Contacto</h3>
+          <div className="w-full max-w-md rounded-2xl border border-[hsl(var(--wa-borde))] shadow-2xl p-6" style={{ background: 'hsl(var(--wa-panel-alt))' }}>
+            <h3 className="text-lg font-bold mb-4" style={{ color: 'hsl(var(--wa-texto))' }}>Editar Contacto</h3>
             <div className="space-y-4">
               <div>
-                <label className="text-[11px] font-bold uppercase tracking-wider mb-1.5 block" style={{ color: '#8696a0' }}>Nombre</label>
+                <label className="text-[11px] font-bold uppercase tracking-wider mb-1.5 block" style={{ color: 'hsl(var(--wa-texto-suave))' }}>Nombre</label>
                 <input
                   value={editName.nombre}
                   onChange={e => setEditName(prev => ({ ...prev, nombre: e.target.value }))}
                   className="w-full py-2 px-3 rounded-lg text-sm outline-none"
-                  style={{ background: '#2a3942', color: '#e9edef', border: '1px solid rgba(255,255,255,0.06)' }}
+                  style={{ background: 'hsl(var(--wa-hover))', color: 'hsl(var(--wa-texto))', border: '1px solid hsl(var(--wa-borde))' }}
                   placeholder="Ej: Juan"
                   autoFocus
                 />
               </div>
               <div>
-                <label className="text-[11px] font-bold uppercase tracking-wider mb-1.5 block" style={{ color: '#8696a0' }}>Apellido</label>
+                <label className="text-[11px] font-bold uppercase tracking-wider mb-1.5 block" style={{ color: 'hsl(var(--wa-texto-suave))' }}>Apellido</label>
                 <input
                   value={editName.apellido}
                   onChange={e => setEditName(prev => ({ ...prev, apellido: e.target.value }))}
                   className="w-full py-2 px-3 rounded-lg text-sm outline-none"
-                  style={{ background: '#2a3942', color: '#e9edef', border: '1px solid rgba(255,255,255,0.06)' }}
+                  style={{ background: 'hsl(var(--wa-hover))', color: 'hsl(var(--wa-texto))', border: '1px solid hsl(var(--wa-borde))' }}
                   placeholder="Ej: Perez"
                 />
               </div>
@@ -2368,8 +2389,8 @@ export default function WhatsAppPage() {
             <div className="flex items-center justify-end gap-3 mt-8">
               <button 
                 onClick={() => setIsEditingName(false)}
-                className="px-4 py-2 text-sm font-medium rounded-lg hover:bg-white/5 transition-colors"
-                style={{ color: '#8696a0' }}
+                className="px-4 py-2 text-sm font-medium rounded-lg hover:bg-[hsl(var(--wa-hover))] transition-colors"
+                style={{ color: 'hsl(var(--wa-texto-suave))' }}
               >
                 Cancelar
               </button>
@@ -2377,7 +2398,7 @@ export default function WhatsAppPage() {
                 onClick={handleSaveName}
                 disabled={savingName || !editName.nombre.trim()}
                 className="px-4 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-2"
-                style={{ background: '#00a884', color: '#111b21', opacity: savingName ? 0.7 : 1 }}
+                style={{ background: 'hsl(var(--wa-marca))', color: 'hsl(var(--wa-panel))', opacity: savingName ? 0.7 : 1 }}
               >
                 {savingName && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
                 Guardar Cambios
@@ -2395,7 +2416,7 @@ export default function WhatsAppPage() {
         onClick={() => setPreviewImage(null)}
       >
         <button 
-          className="absolute top-6 right-6 p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-full transition-all z-[210] md:top-10 md:right-10"
+          className="absolute top-6 right-6 p-2 text-[hsl(var(--wa-texto-suave))] hover:text-white hover:bg-[hsl(var(--wa-hover))] rounded-full transition-all z-[210] md:top-10 md:right-10"
           onClick={() => setPreviewImage(null)}
         >
           <X className="w-10 h-10" />
@@ -2403,7 +2424,7 @@ export default function WhatsAppPage() {
         <div className="relative max-w-full max-h-full flex items-center justify-center p-2">
           <img 
             src={previewImage} 
-            className="max-w-full max-h-[90vh] object-contain shadow-2xl rounded-lg animate-in zoom-in-95 duration-200 border border-white/10" 
+            className="max-w-full max-h-[90vh] object-contain shadow-2xl rounded-lg animate-in zoom-in-95 duration-200 border border-[hsl(var(--wa-borde))]" 
             alt="Preview"
             onClick={(e) => e.stopPropagation()} 
           />
