@@ -82,20 +82,49 @@ export function limpiarDescripcionTrabajo(texto: string): string {
   return out.charAt(0).toUpperCase() + out.slice(1);
 }
 
-/** Precio dictado dentro de la frase: "soldadura 15$", "$65", "40 dolares". */
+/**
+ * Palabras tras las cuales un número suelto es un precio.
+ *
+ * Sin esto, «mano de obra 250» no daba precio y la orden quedaba en cero: el
+ * taller casi nunca escribe el símbolo. No vale para cualquier número —«2
+ * cauchos» es una cantidad, no un cobro— así que hace falta que lo anteceda una
+ * palabra de dinero o de mano de obra.
+ */
+const ANTES_DE_PRECIO =
+  /(?:mano\s+de\s+(?:obra|trabajo)|mano\s+de\s+obra\s+de|costo|precio|monto|cobr(?:o|a|ar)|vale|sale\s+en|queda\s+en|son)\b[^0-9]{0,24}?(\d{1,7}(?:[.,]\d{1,2})?)/i;
+
+/**
+ * Precio dictado dentro de la frase.
+ *
+ * Reconoce «soldadura 15$», «$65», «40 dolares» y también «mano de obra 250»,
+ * donde no hay símbolo pero sí una palabra que anuncia dinero.
+ */
 export function precioDeTexto(texto: string): number | null {
   const t = String(texto || '');
-  const m = t.match(/(?:\$\s*(\d+(?:[.,]\d{1,2})?))|(?:(\d+(?:[.,]\d{1,2})?)\s*(?:\$|d[oó]lares?|usd))/i);
-  if (!m) return null;
-  const bruto = m[1] ?? m[2];
-  const n = parseFloat(String(bruto).replace(',', '.'));
-  return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
+
+  const aNumero = (bruto: string | undefined): number | null => {
+    if (bruto == null) return null;
+    const n = parseFloat(String(bruto).replace(',', '.'));
+    return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
+  };
+
+  // Primero lo que lleva símbolo o moneda: es inequívoco.
+  const conSimbolo = t.match(/(?:\$\s*(\d+(?:[.,]\d{1,2})?))|(?:(\d+(?:[.,]\d{1,2})?)\s*(?:\$|d[oó]lares?|usd))/i);
+  if (conSimbolo) return aNumero(conSimbolo[1] ?? conSimbolo[2]);
+
+  // Y solo después el número anunciado por una palabra de dinero.
+  const anunciado = t.match(ANTES_DE_PRECIO);
+  return anunciado ? aNumero(anunciado[1]) : null;
 }
 
 /** Quita el precio del texto para que no quede repetido dentro del renglón. */
 export function sinPrecio(texto: string): string {
   return String(texto || '')
     .replace(/(?:\$\s*\d+(?:[.,]\d{1,2})?)|(?:\d+(?:[.,]\d{1,2})?\s*(?:\$|d[oó]lares?|usd))/gi, '')
+    // El número sin símbolo que anuncia una palabra de dinero: se quita el
+    // número y se deja el concepto. «Mano de obra 250» → «Mano de obra».
+    .replace(/(mano\s+de\s+(?:obra|trabajo)[^0-9]{0,24}?)\d{1,7}(?:[.,]\d{1,2})?/gi, '$1')
+    .replace(/\b(?:costo|precio|monto)\s*(?:de\s*)?\d{1,7}(?:[.,]\d{1,2})?/gi, '')
     // El precio suele venir entre paréntesis —"resonador ($40)"—; al quitarlo
     // quedaban unos paréntesis vacíos colgando del nombre del trabajo.
     .replace(/\(\s*\)|\[\s*\]/g, '')
@@ -147,33 +176,70 @@ export function renglonesDeTexto(texto: string, costoTotal?: number | null): Ren
 export const totalRenglones = (rs: readonly RenglonServicio[]) =>
   Math.round(rs.reduce((s, r) => s + (Number(r.total) || 0), 0) * 100) / 100;
 
+/** Un nombre que se parece a alguien, pero no lo suficiente para darlo por hecho. */
+export interface PersonalDudoso {
+  texto_original: string;
+  /** A quién se parece, para poder preguntarlo por su nombre. */
+  candidato: string;
+  candidato_id: string;
+}
+
 /**
  * Enlaza los nombres dictados con las fichas del personal.
  *
- * Devuelve también los que no se pudieron enlazar, para poder decirlo en vez de
- * dejarlos caer en silencio: un técnico que no queda registrado es un técnico
- * al que no se le paga.
+ * Tres cubos, y la diferencia importa:
+ *
+ *   · `enlazados` — coincidencia exacta. Estos entran a la orden y a nómina.
+ *   · `porConfirmar` — se parece a alguien pero no es seguro. NO se enlazan.
+ *   · `sinFicha` — no se parece a nadie del taller.
+ *
+ * Antes valía cualquier coincidencia, incluida la aproximada, y eso costó un
+ * caso real: «Se la entregué a Juan Pablo» quedó registrado con JUAN ANCHUNDIA
+ * como encargado del trabajo. No existe ningún Juan Pablo en el taller; casó
+ * por el nombre de pila. Enlazar por parecido no es un detalle de interfaz: es
+ * la comisión de ese trabajo yendo al bolsillo equivocado.
+ *
+ * Los tres cubos se devuelven para poder decirlos. Un técnico que no queda
+ * registrado es un técnico al que no se le paga, y eso hay que avisarlo en vez
+ * de dejarlo caer en silencio.
  */
 export async function enlazarPersonal(
   // Solo se le pide leer `usuarios`; el cliente concreto lo pone quien llama.
   db: { from: (tabla: string) => { select: (cols: string) => PromiseLike<{ data: unknown }> } },
   nombres: readonly string[],
-): Promise<{ enlazados: EncargadoEnlazado[]; sinFicha: string[] }> {
+): Promise<{
+  enlazados: EncargadoEnlazado[];
+  porConfirmar: PersonalDudoso[];
+  sinFicha: string[];
+}> {
   const limpios = nombres.map(n => String(n || '').trim()).filter(n => n.length > 1);
-  if (limpios.length === 0) return { enlazados: [], sinFicha: [] };
+  if (limpios.length === 0) return { enlazados: [], porConfirmar: [], sinFicha: [] };
 
   const { data } = await db.from('usuarios').select('id, nombre, alias, activo');
   const personal = (data || []) as { id: string; nombre: string; alias: string | null; activo: boolean | null }[];
 
   const enlazados: EncargadoEnlazado[] = [];
+  const porConfirmar: PersonalDudoso[] = [];
   const sinFicha: string[] = [];
+
   for (const nombre of limpios) {
     const hit = resolverEncargado(nombre, personal);
     if (!hit) { sinFicha.push(nombre); continue; }
+
+    if (hit.certeza !== 'exacta') {
+      porConfirmar.push({
+        texto_original: nombre,
+        candidato: hit.persona.nombre,
+        candidato_id: hit.persona.id,
+      });
+      continue;
+    }
+
     if (enlazados.some(e => e.empleado_id === hit.persona.id)) continue;
     enlazados.push({ empleado_id: hit.persona.id, nombre: hit.persona.nombre, texto_original: nombre });
   }
-  return { enlazados, sinFicha };
+
+  return { enlazados, porConfirmar, sinFicha };
 }
 
 /** Los nombres sueltos dentro de un campo tipo "Brayan, Freddy" o "Brayan y Jim". */

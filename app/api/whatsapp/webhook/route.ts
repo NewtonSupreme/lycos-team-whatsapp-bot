@@ -676,6 +676,20 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
     - Cualquier dato extra relevante que no tenga una columna específica (como color del carro, cédula del cliente, dirección, o notas administrativas extras) debe ser obligatoriamente colocado en el campo 'descripcion' o concatenado de forma legible en el tag de registro para que nada de información se pierda en el sistema.
 
 11. GESTIÓN DE SERVICIOS (ÓRDENES DE TALLER) [SERVICIO_UPSERT]:
+    - ⛔ EL PRECIO QUE DIGA EL ADMIN VA SIEMPRE EN EL TAG. Si dice "mano de trabajo de caja
+      400$", "mano de obra 250", "son 80 dólares" o cualquier cifra, ESA CIFRA ES EL COSTO y
+      el concepto ES UN RENGLÓN del trabajo. Ponlos en 'descripcion' tal cual
+      ("Mano de trabajo de caja 400$") y en el campo de costo. ¡PROHIBIDO preguntar después
+      "¿deseas que registre algún costo?" cuando el admin YA dijo el precio: eso es no
+      haberlo escuchado, y la orden queda en $0 sin mano de obra ni comisión.
+    - ⛔ «SE LA ENTREGUÉ A X», «SE LO DI A X», «LO RECIBIÓ X», «PARA X» **NO** ES EL PERSONAL A
+      CARGO. Eso dice a quién se le ENTREGÓ una pieza o el vehículo, y esa persona puede no
+      trabajar aquí. El campo de personal es SOLO para quien EJECUTA el trabajo, y se
+      reconoce por "lo hizo X", "técnico X", "mecánico X", "trabajó X", "a cargo de X".
+      Si no está claro quién lo ejecutó, DEJA EL CAMPO VACÍO y pregúntalo: poner al
+      equivocado le paga la comisión de ese trabajo a quien no lo hizo.
+      · Si la entrega es un dato que conviene guardar, va dentro de 'descripcion'
+        ("Triceta — entregada a Juan Pablo"), NUNCA en el campo de personal.
     - Para REGISTRAR un nuevo servicio/orden de taller, usa el tag [SERVICIO_UPSERT: ...] con los campos correspondientes.
     - Para ACTUALIZAR un servicio existente (cambiar estado, actualizar costo, etc.), incluye el ID del servicio en el tag.
     - ⛔ AGREGAR UN TRABAJO A UNA ORDEN EXISTENTE — OBLIGATORIO EMITIR EL TAG:
@@ -4293,6 +4307,10 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       let servicioOK = false;
       let servicioFallo = false;
       let servicioDuplicado: any | null = null; // servicio activo ya existente (evita doble registro)
+      // Lo que quedó a medias del registro: personal que no se pudo enlazar,
+      // precios que hubo que rescatar. Va al ámbito de afuera para poder
+      // contárselo al admin al final; dentro del bucle se perdía.
+      const avisosServicio: string[] = [];
       let dupNuevaDesc = '';                     // descripción del trabajo NUEVO (para co-registro)
       // Precio, renglones y técnico del trabajo nuevo, para que al combinar no
       // se pierdan: son los datos que hacen que el trabajo cuente y se cobre.
@@ -4835,17 +4853,73 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             // soldadura, no un trabajo llamado "agregar a este trabajo". De ahí
             // salen los renglones con su precio y el total real de la orden.
             const descripcionLimpia = limpiarDescripcionTrabajo(descripcion || '');
-            const renglones: RenglonServicio[] = renglonesDeTexto(descripcion || '', costoEstimado);
-            const sumaRenglones = totalRenglones(renglones);
+            let renglones: RenglonServicio[] = renglonesDeTexto(descripcion || '', costoEstimado);
+            let sumaRenglones = totalRenglones(renglones);
+
+            // ── Red de seguridad del precio ────────────────────────────────
+            //
+            // Hasta aquí solo se leía la descripción que redacta la IA. Si el
+            // admin dijo el precio y la IA no lo puso en su tag, el precio se
+            // perdía: pasó con «Mano de trabajo de caja 400$», que quedó como
+            // una orden de $0 y encima el bot preguntó después si quería
+            // registrar algún costo. El admin ya lo había dicho.
+            //
+            // Así que se vuelve a leer el mensaje del admin. Su palabra manda
+            // sobre lo que la IA haya resumido.
+            if (sumaRenglones === 0 && !(Number(costoEstimado) > 0)) {
+              const delMensaje = renglonesDeTexto(messageBody || '');
+              const sumaMensaje = totalRenglones(delMensaje);
+              if (sumaMensaje > 0) {
+                // Los renglones con precio del mensaje se añaden a los que ya
+                // había; los que no aportan nada nuevo no se repiten.
+                const clave = (t: string) => t.normalize('NFD')
+                  .replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+                const yaEstan = new Set(renglones.map(r => clave(r.descripcion)));
+                const nuevos = delMensaje.filter(r =>
+                  r.total > 0 && !yaEstan.has(clave(r.descripcion)));
+                // Un renglón sin precio no aporta si ya hay otros con precio.
+                renglones = [...renglones.filter(r => r.total > 0 || nuevos.length === 0), ...nuevos];
+                sumaRenglones = totalRenglones(renglones);
+                console.log(
+                  `💵 Precio recuperado del mensaje del admin: $${sumaMensaje} `
+                  + `(${nuevos.map(r => r.descripcion).join(' + ')})`,
+                );
+              }
+            }
+
             const costoFinalServicio = sumaRenglones > 0 ? sumaRenglones : costoEstimado;
             const categoriaTrabajo = inferirCategoria(
               `${tipoPersonalizado || ''} ${tipo || ''} ${descripcionLimpia}`,
             );
 
             // El encargado dictado, enlazado a su ficha real.
-            const { enlazados: personalEnlazado, sinFicha: personalSinFicha } =
-              personalCargo ? await enlazarPersonal(db, nombresDePersonal(personalCargo))
-                : { enlazados: [], sinFicha: [] };
+            const {
+              enlazados: personalEnlazado,
+              porConfirmar: personalDudoso,
+              sinFicha: personalSinFicha,
+            } = personalCargo
+              ? await enlazarPersonal(db, nombresDePersonal(personalCargo))
+              : { enlazados: [], porConfirmar: [], sinFicha: [] };
+
+            // Lo que no se pudo enlazar se DICE, no se traga.
+            //
+            // Un nombre que solo se parece a alguien no se enlaza: «Se la
+            // entregué a Juan Pablo» quedó una vez registrado con JUAN
+            // ANCHUNDIA de encargado, y esa comisión habría ido a quien no
+            // trabajó. Se pregunta en vez de adivinar.
+            for (const d of personalDudoso) {
+              avisosServicio.push(
+                `«${d.texto_original}» no está en el personal; lo más parecido es ${d.candidato}. `
+                + 'Si es esa persona, dímelo y lo asigno.',
+              );
+              console.warn(`⚠️ Personal por confirmar: "${d.texto_original}" ≈ ${d.candidato}`);
+            }
+            for (const n of personalSinFicha) {
+              avisosServicio.push(
+                `«${n}» no tiene ficha en el taller, así que el trabajo quedó sin asignar `
+                + 'y no genera comisión.',
+              );
+            }
             if (personalSinFicha.length > 0) {
               console.warn(`⚠️ Personal sin ficha, no entra a nómina: ${personalSinFicha.join(', ')}`);
             }

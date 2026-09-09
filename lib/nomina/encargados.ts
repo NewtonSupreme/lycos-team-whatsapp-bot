@@ -96,6 +96,37 @@ function clavesDe(p: PersonaResoluble): string[] {
 }
 
 /**
+ * ¿El resto del texto desmiente esta coincidencia?
+ *
+ * `clave` es lo que coincidió. Si es una sola palabra —el nombre de pila— y el
+ * texto trae otra palabra larga que no aparece en el nombre completo de esa
+ * persona, lo más probable es que sea OTRO nombre: «Juan Pablo» no es «Juan
+ * Anchundia», y darlo por bueno le paga la comisión al que no trabajó.
+ *
+ * Solo se mira cuando lo que casó es una palabra suelta. Si coincidió el nombre
+ * y el apellido, no hay nada que desmentir.
+ */
+function contradice(
+  clave: string, palabras: readonly string[], p: PersonaResoluble,
+): boolean {
+  if (clave.includes(' ')) return false;   // casó nombre y apellido: no hay duda
+
+  // Todas las palabras que forman parte de la identidad de esta persona.
+  // `nombre` ya trae el nombre completo («JUAN ANCHUNDIA»).
+  const suyas = new Set(
+    [p.nombre, p.alias]
+      .filter(Boolean)
+      .flatMap(x => limpiarNombre(String(x)).split(' '))
+      .filter(Boolean),
+  );
+
+  // Palabras del texto que no son la que casó, que son largas —para no tropezar
+  // con «de» o «la»— y que no pertenecen a esta persona.
+  const ajenas = palabras.filter(w => w !== clave && w.length >= 4 && !suyas.has(w));
+  return ajenas.length > 0;
+}
+
+/**
  * Encuentra a quién se refiere el texto.
  *
  * El orden importa: primero lo que coincide tal cual, y solo después lo que se
@@ -122,11 +153,18 @@ export function resolverEncargado<T extends PersonaResoluble>(
   }
 
   // El nombre aparece dentro del texto: "TECNICO FREDDY" → "freddy".
+  //
+  // Con una salvedad que costó dinero: si lo que coincide es SOLO el nombre de
+  // pila y el texto trae además un apellido que no es el de esa persona, no es
+  // la misma persona. «Juan Pablo» se enlazó con «Juan Anchundia» por el
+  // «juan», y el trabajo —y su comisión— quedó a nombre de alguien que no lo
+  // hizo. En el taller hay varios Juan y varios José: el nombre de pila solo
+  // basta cuando el texto no dice nada que lo contradiga.
   for (const p of orden) {
     for (const clave of clavesDe(p)) {
-      if (clave.length >= 4 && palabras.includes(clave)) {
-        return { persona: p, motivo: `La orden dice «${texto.trim()}»`, certeza: 'exacta' };
-      }
+      if (clave.length < 4 || !palabras.includes(clave)) continue;
+      if (contradice(clave, palabras, p)) continue;
+      return { persona: p, motivo: `La orden dice «${texto.trim()}»`, certeza: 'exacta' };
     }
   }
 
