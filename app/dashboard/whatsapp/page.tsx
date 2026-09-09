@@ -12,6 +12,7 @@ import { cn, formatRelativeTime } from '@/lib/utils';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useAppStore } from '@/lib/store';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
+import TiraMetricas from '@/components/whatsapp/TiraMetricas';
 
 const QUICK_REPLIES = [
   '¡Hola! ¿En qué le puedo ayudar? 😊',
@@ -421,6 +422,10 @@ export default function WhatsAppPage() {
   const [editName, setEditName] = useState({ nombre: '', apellido: '' });
   const [savingName, setSavingName] = useState(false);
   const [retryingIA, setRetryingIA] = useState(false);
+  // Con qué se filtra la lista. «bot» y «humano» son el estado real de la
+  // conversación, que es lo que de verdad hay que poder separar: saber qué
+  // chats está atendiendo el bot y cuáles esperan a una persona.
+  const [filtroLista, setFiltroLista] = useState<'todas' | 'sin_leer' | 'bot' | 'humano'>('todas');
   const [retryStatus, setRetryStatus] = useState<string | null>(null);
   const [retranscribing, setRetranscribing] = useState(false);
   const [sendingContact, setSendingContact] = useState(false);
@@ -1429,8 +1434,23 @@ export default function WhatsAppPage() {
 
   const filtered = convs.filter(c => {
     const q = search.toLowerCase();
-    return (displayName(c) + c.telefono + (c.ultimo_mensaje || '')).toLowerCase().includes(q);
+    const coincide = (displayName(c) + c.telefono + (c.ultimo_mensaje || '')).toLowerCase().includes(q);
+    if (!coincide) return false;
+    if (filtroLista === 'sin_leer') return (c.mensajes_sin_leer ?? 0) > 0;
+    if (filtroLista === 'bot') return c.estado === 'bot';
+    if (filtroLista === 'humano') return c.estado === 'humano';
+    return true;
   });
+
+  // Los contadores se cuentan sobre TODAS las conversaciones, no sobre las ya
+  // filtradas: si contaran lo filtrado, al elegir «No leídas» los demás chips
+  // se pondrían a cero y no habría forma de volver.
+  const cuentaFiltros = {
+    todas: convs.length,
+    sin_leer: convs.filter(c => (c.mensajes_sin_leer ?? 0) > 0).length,
+    bot: convs.filter(c => c.estado === 'bot').length,
+    humano: convs.filter(c => c.estado === 'humano').length,
+  };
 
   const isHumano = selected?.estado === 'humano';
   const totalUnread = convs.reduce((s, c) => s + (c.mensajes_sin_leer ?? 0), 0);
@@ -1445,17 +1465,36 @@ export default function WhatsAppPage() {
     <>
     <div className="relative flex flex-col h-[calc(100dvh-12rem)] md:h-[calc(100dvh-7.5rem)] min-h-[480px]">
       <div className="flex flex-col flex-1 min-h-0 gap-3 transition-opacity duration-300">
-      {/* Page header */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-0 justify-between">
-        <div>
-          <h1 className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
-            WhatsApp CRM
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5 flex items-center gap-1.5">
+      {/* Cabecera */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-0 justify-between shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[#25d366] to-[#128c7e] text-white">
+            <MessageSquare className="h-[22px] w-[22px]" aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold leading-none" style={{ fontFamily: 'Syne, sans-serif' }}>
+              WhatsApp
+            </h1>
+            <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+              Gestiona tus conversaciones, automatiza respuestas y convierte más clientes.
+            </p>
+          </div>
+          {/* El estado de la conexión, junto al título: si el enlace se cae,
+              los mensajes dejan de llegar y hay que verlo sin buscarlo. */}
+          <span
+            title={isConnected ? 'Recibiendo mensajes en vivo' : 'Reintentando la conexión'}
+            className={cn(
+              'hidden shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold lg:flex',
+              isConnected
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                : 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+            )}
+          >
             {isConnected
-              ? <><Wifi className="w-3 h-3 text-green-400" />En vivo{totalUnread > 0 ? ` · ${totalUnread} sin leer` : ''}</>
-              : <><WifiOff className="w-3 h-3 text-yellow-400 animate-pulse" />Conectando...</>}
-          </p>
+              ? <><Wifi className="h-3 w-3" aria-hidden /> Conectado</>
+              : <><WifiOff className="h-3 w-3 animate-pulse" aria-hidden /> Conectando…</>}
+            <span className="font-normal text-muted-foreground/70">WhatsApp Cloud API</span>
+          </span>
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
           <button 
@@ -1495,6 +1534,11 @@ export default function WhatsAppPage() {
         </div>
       </div>
 
+      {/* El pulso del día. Se puede plegar: el chat vive debajo con altura
+          fija y en un portátil estas tarjetas le quitan justo el espacio que
+          hace falta para leer una conversación. */}
+      <TiraMetricas />
+
       {/* Chat layout */}
       <div
         className="flex flex-1 min-h-0 rounded-2xl overflow-hidden border border-white/8"
@@ -1518,6 +1562,40 @@ export default function WhatsAppPage() {
                 className="flex-1 bg-transparent text-sm text-white/80 placeholder:text-white/35 outline-none"
               />
             </div>
+          </div>
+
+          {/* Filtros de la lista */}
+          <div
+            /* Envuelven en vez de desplazarse: la columna mide 340 px y con
+               scroll horizontal el último chip quedaba escondido, que es la
+               forma más segura de que nadie lo use. */
+            className="flex flex-wrap gap-1.5 px-3 py-2"
+            style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+          >
+            {([
+              { id: 'todas', label: 'Todas' },
+              { id: 'sin_leer', label: 'No leídas' },
+              { id: 'bot', label: 'Bot' },
+              { id: 'humano', label: 'Humano' },
+            ] as const).map(f => {
+              const activo = filtroLista === f.id;
+              const n = cuentaFiltros[f.id];
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setFiltroLista(f.id)}
+                  className="flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors"
+                  style={{
+                    background: activo ? '#f97316' : 'rgba(255,255,255,0.06)',
+                    color: activo ? '#fff' : 'rgba(255,255,255,0.6)',
+                  }}
+                >
+                  {f.label}
+                  <span className="tabular-nums" style={{ opacity: activo ? 0.85 : 0.5 }}>({n})</span>
+                </button>
+              );
+            })}
           </div>
 
           {/* Banner todas las sedes */}
