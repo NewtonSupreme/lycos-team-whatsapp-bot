@@ -17,6 +17,10 @@ import {
   cargarTelefonosDeLaCasa, telefonoParaCliente, esTelefonoDeLaCasa,
   type CasaTelefonos,
 } from '@/lib/bot/telefonos-casa';
+import {
+  buscarCliente, coincidenciaSegura, formatearCedula, claveTelefono,
+  type ClienteIdentificable,
+} from '@/lib/clientes/identidad';
 
 async function checkIsBotAdmin(phone: string, db: any, adminPhones: string[]): Promise<boolean> {
   const phoneClean = phone.replace(/[^0-9]/g, '');
@@ -5145,23 +5149,77 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             const dir = (parts[5] && parts[5] !== 'null') ? parts[5] : null;
             const sedeId = parts[6] || ctx.sede_id || DEFAULT_SEDE_ID;
 
-            const clientObj = {
+            if (!db) continue;
+
+            // La cédula se normaliza: la base tiene «11464383», «V-19734521» y
+            // 18 filas que dicen literalmente «N/A». Sin esto, «N/A» pasaba por
+            // un documento válido compartido por 18 personas.
+            const cedulaLimpia = formatearCedula(ced);
+            // El teléfono del taller o del admin nunca queda como el del
+            // cliente: si no, el siguiente vehículo se pega a esa misma ficha.
+            const casaCli = await cargarTelefonosDeLaCasa(db, ADMIN_PHONES);
+            const telefonoLimpio = telefonoParaCliente(tel, casaCli);
+
+            // ⚠️ Solo se escribe lo que el mensaje trae de verdad.
+            //
+            // Antes este objeto llevaba `cedula` y `direccion` siempre, así que
+            // un «actualiza la dirección de Pedro» le BORRABA la cédula que ya
+            // tenía. Lo mismo con el teléfono, que además se rellenaba con
+            // '00000000000' y dejaba fichas imposibles de reconocer después.
+            const clientObj: Record<string, unknown> = {
               nombre: name || 'Desconocido',
-              apellido: last,
-              telefono: tel || '00000000000',
-              cedula: ced,
-              direccion: dir,
-              sede_id: sedeId
+              sede_id: sedeId,
             };
-            if (id && id.length > 5 && db) {
+            if (last) clientObj.apellido = last;
+            if (telefonoLimpio) clientObj.telefono = telefonoLimpio;
+            if (cedulaLimpia) clientObj.cedula = cedulaLimpia;
+            if (dir) clientObj.direccion = dir;
+
+            if (id && id.length > 5) {
               await db.from('clientes').update(clientObj).eq('id', id);
               console.log(`👤 ADMIN: Cliente actualizado: ${id}`);
               await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Actualizó cliente', `Cliente actualizado vía ChatBot`, sedeId);
-            } else if (db) {
-              await db.from('clientes').insert(clientObj);
-              console.log(`👤 ADMIN: Nuevo cliente agregado por administrador`);
-              await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Creó cliente', `Cliente creado vía ChatBot`, sedeId);
+              continue;
             }
+
+            // ⚠️ Buscar antes de crear.
+            //
+            // Esto insertaba a ciegas: cada vez que el bot registraba a alguien
+            // nacía otra ficha. De ahí salieron «no registrado» nueve veces,
+            // «perfecto (whatsapp)» cinco y compañía. Ahora se busca por cédula,
+            // nombre y teléfono normalizados, y solo se crea si de verdad no
+            // está. La cédula manda: es el único dato que señala a una persona
+            // y solo a una.
+            const nombreCompleto = `${name || ''} ${last || ''}`.trim();
+            const { data: posibles } = await db.from('clientes')
+              .select('id, nombre, apellido, telefono, cedula')
+              .eq('sede_id', sedeId)
+              .limit(500);
+
+            const halladas = buscarCliente(
+              nombreCompleto, telefonoLimpio, (posibles as ClienteIdentificable[]) || [], cedulaLimpia,
+            );
+            const yaExiste = coincidenciaSegura(halladas);
+
+            if (yaExiste) {
+              // Se completa lo que faltaba —típicamente la cédula— sin tocar
+              // nada de lo que ya estaba puesto.
+              const aRellenar: Record<string, unknown> = {};
+              const actual = halladas.find(h => h.cliente.id === yaExiste.id)?.cliente;
+              if (cedulaLimpia && !formatearCedula(actual?.cedula)) aRellenar.cedula = cedulaLimpia;
+              if (dir) aRellenar.direccion = dir;
+              if (telefonoLimpio && !claveTelefono(actual?.telefono)) aRellenar.telefono = telefonoLimpio;
+              if (Object.keys(aRellenar).length > 0) {
+                await db.from('clientes').update(aRellenar).eq('id', yaExiste.id);
+              }
+              console.log(`👤 ADMIN: Cliente ya existía (${yaExiste.id}); no se duplicó.`);
+              await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Completó cliente', `Cliente ya registrado; se completaron sus datos`, sedeId);
+              continue;
+            }
+
+            await db.from('clientes').insert(clientObj);
+            console.log(`👤 ADMIN: Nuevo cliente agregado por administrador`);
+            await logActivityAdmin(db, ctx.memoria?.nombre || ctx.adminName || 'Admin IA', 'Creó cliente', `Cliente creado vía ChatBot`, sedeId);
           } catch (e) { console.error('Error in CLIENTE_UPSERT:', e); }
         }
 

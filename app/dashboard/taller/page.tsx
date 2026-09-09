@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, autoRegisterSaleFromService } from '@/lib/supabase';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Wrench, Loader2, RefreshCw, Car, Trash, User, Phone, Search, X, ChevronLeft, ChevronRight, Banknote } from 'lucide-react';
+import { Wrench, Loader2, RefreshCw, Car, Trash, User, Phone, Search, X, ChevronLeft, ChevronRight, Banknote, Package } from 'lucide-react';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from '@/lib/store/useSedeStore';
@@ -10,6 +10,9 @@ import { logActivity } from '@/lib/activity';
 import { cn } from '@/lib/utils';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 import PersonalYComisiones, { type AsignacionEmpleado } from '@/components/nomina/PersonalYComisiones';
+import {
+  ModalCatalogoInventario, useInventario, precioEfectivoDe, type ProductoInventario,
+} from '@/components/inventario/SelectorRepuesto';
 import { asignacionesValidas, buildJobsDesdeAsignacion } from '@/lib/nomina/asignaciones';
 import { categoriaToZona, inferirCategoria } from '@/lib/categorias';
 import { getLocalISODate } from '@/lib/utils';
@@ -31,6 +34,23 @@ interface ServicioRow {
   created_at: string;
   registrado_por: string | null;
   sede_id?: string | null;
+}
+
+/**
+ * Un repuesto del almacén usado en el trabajo.
+ *
+ * Se guarda dentro de `servicios.items` con la misma forma que los renglones de
+ * una orden de servicio, para que el descuento de inventario, la factura y la
+ * ficha del vehículo lo entiendan sin casos especiales.
+ */
+interface RepuestoTaller {
+  inventario_id: string;
+  descripcion: string;
+  cantidad: number;
+  precio_unitario: number;
+  costo_unitario: number;
+  total: number;
+  stock_descontado: number;
 }
 
 const ESTADO_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
@@ -110,6 +130,50 @@ export default function TallerPage() {
   const [tipoPersonalizado, setTipoPersonalizado] = useState('');
   const [customTypes, setCustomTypes] = useState<string[]>([]);
   const [costoEstimado, setCostoEstimado] = useState('');
+
+  // ── Repuestos tomados del almacén ────────────────────────────────────────
+  // Antes esta pantalla registraba el trabajo con `items: []`, así que la pieza
+  // salía del taller y el inventario se quedaba igual. Enlazar el repuesto es
+  // lo único que permite descontarlo.
+  const { productos: inventario } = useInventario();
+  const [repuestos, setRepuestos] = useState<RepuestoTaller[]>([]);
+  const [catalogoAbierto, setCatalogoAbierto] = useState(false);
+
+  const agregarRepuesto = (p: ProductoInventario, pedidas = 1) => {
+    const suma = Math.max(1, pedidas);
+    setRepuestos(prev => {
+      // Si ya está en la lista se suma la cantidad en vez de repetir la línea.
+      const i = prev.findIndex(r => r.inventario_id === p.id);
+      if (i >= 0) {
+        const copia = [...prev];
+        const cantidad = copia[i].cantidad + suma;
+        copia[i] = { ...copia[i], cantidad, total: cantidad * copia[i].precio_unitario };
+        return copia;
+      }
+      const precio = precioEfectivoDe(p);
+      return [...prev, {
+        inventario_id: p.id,
+        descripcion: p.nombre,
+        cantidad: suma,
+        precio_unitario: precio,
+        costo_unitario: Number(p.precio_fabricante) || 0,
+        total: suma * precio,
+        stock_descontado: 0,
+      }];
+    });
+  };
+
+  const cambiarCantidad = (idx: number, cantidad: number) => {
+    setRepuestos(prev => prev.map((r, i) => (
+      i === idx ? { ...r, cantidad: Math.max(1, cantidad || 1), total: Math.max(1, cantidad || 1) * r.precio_unitario } : r
+    )));
+  };
+
+  const quitarRepuesto = (idx: number) => setRepuestos(prev => prev.filter((_, i) => i !== idx));
+
+  const totalRepuestos = repuestos.reduce((s, r) => s + (Number(r.total) || 0), 0);
+  const manoDeObra = parseFloat(costoEstimado) || 0;
+  const totalTrabajo = manoDeObra + totalRepuestos;
 
   // Personal a cargo. Antes esto era un buscador de texto libre: el nombre se
   // guardaba dentro de `notas` y no quedaba enlazado a ninguna ficha, así que
@@ -414,7 +478,23 @@ export default function TallerPage() {
         tipo: finalTipo,
         tipo_personalizado: finalTipoPersonalizado,
         estado: 'pendiente',
-        costo_estimado: parseFloat(costoEstimado) || 0,
+        // El trabajo cuesta la mano de obra MÁS los repuestos que salieron del
+        // almacén. Antes solo se guardaba lo escrito a mano y las piezas no
+        // aparecían por ningún lado: ni en el cobro, ni en la factura, ni en el
+        // stock.
+        costo_estimado: totalTrabajo,
+        // Los repuestos viajan como renglones, igual que en la orden de
+        // servicio, para que se puedan descontar y facturar.
+        items: [
+          ...(manoDeObra > 0 ? [{
+            descripcion: descripcion.trim() || finalTipoPersonalizado || 'Mano de obra',
+            cantidad: 1,
+            precio_unitario: manoDeObra,
+            total: manoDeObra,
+            inventario_id: null,
+          }] : []),
+          ...repuestos,
+        ],
         registrado_por: user?.nombre || 'Admin',
         fecha: now.toISOString().split('T')[0],
         hora: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
@@ -440,6 +520,25 @@ export default function TallerPage() {
         .insert(withSedeInsert(payload)).select().single();
       if (error) throw error;
 
+      // Almacén: se descuenta contra el trabajo ya grabado, nunca antes. Si el
+      // registro hubiera fallado, el stock no se habría movido.
+      let avisosStock: string[] = [];
+      if (repuestos.length > 0 && nuevoServicio?.id) {
+        try {
+          const res = await fetch('/api/inventario/descontar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ servicio_id: nuevoServicio.id }),
+          });
+          const d = await res.json().catch(() => null);
+          avisosStock = res.ok
+            ? (Array.isArray(d?.avisos) ? d.avisos : [])
+            : [d?.error || 'No se pudo ajustar el inventario.'];
+        } catch {
+          avisosStock = ['No se pudo contactar con el servidor para ajustar el inventario.'];
+        }
+      }
+
       // El trabajo entra a nómina por el mismo camino que la orden de servicio y
       // el punto de venta. Sin esto el trabajo quedaba cobrado y sin comisión,
       // que es exactamente lo que pasó con cientos de órdenes de esta pantalla.
@@ -451,7 +550,7 @@ export default function TallerPage() {
             referencia_id: nuevoServicio?.id || null,
             jobs: validas.flatMap(a => buildJobsDesdeAsignacion(a, {
               items: [],
-              costoTotal: parseFloat(costoEstimado) || 0,
+              costoTotal: manoDeObra,   // la comisión sale de la mano de obra, no del precio de la pieza
               tipoTrabajo: finalTipoPersonalizado || finalTipo,
               descripcionBase: descripcion.trim() || finalTipoPersonalizado || finalTipo,
               referenciaTabla: 'servicios',
@@ -477,8 +576,14 @@ export default function TallerPage() {
       // Reset form
       setNombreCliente(''); setTelefono(''); setVehiculoInfo(''); setPlaca('');
       setDescripcion(''); setTipo('mecanica'); setTipoPersonalizado(''); setCostoEstimado('');
-      setAsignaciones([]);
+      setAsignaciones([]); setRepuestos([]);
       setSelectedClienteId(null); setClientSearch(''); setClientResults([]);
+
+      // El trabajo ya quedó registrado; lo del almacén se cuenta al final para
+      // que un aviso de stock no parezca que falló el registro.
+      if (avisosStock.length > 0) {
+        alert(`El trabajo se registró.\n\nSobre el inventario:\n· ${avisosStock.join('\n· ')}`);
+      }
     } catch (err: any) {
       console.error(err);
       alert('Error registrando el trabajo: ' + (err.message || 'desconocido'));
@@ -647,7 +752,7 @@ export default function TallerPage() {
                 </div>
                 <div className="flex flex-col justify-end space-y-1.5">
                   <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1 mb-1.5 flex items-center gap-1 min-h-[16px]">
-                    <Banknote className="w-3 h-3" /> Costo $US
+                    <Banknote className="w-3 h-3" /> Mano de obra $US
                   </label>
                   <input
                     type="number"
@@ -692,6 +797,68 @@ export default function TallerPage() {
                 />
               </div>
 
+              {/* Repuestos del almacén — lo que hace que la pieza usada aquí
+                  deje de salir del taller sin bajar del stock. */}
+              <div className="space-y-1.5">
+                <div className="ml-1 flex items-center justify-between">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                    Repuestos del inventario
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setCatalogoAbierto(true)}
+                    className="flex items-center gap-1 rounded-lg bg-primary/10 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-primary transition-colors hover:bg-primary/20"
+                  >
+                    <Package className="h-3 w-3" /> Buscar en el almacén
+                  </button>
+                </div>
+                <div className="space-y-1.5 rounded-xl border border-border/50 bg-muted/20 p-2">
+                  {repuestos.length === 0 ? (
+                    <p className="px-1 py-1 text-[10.5px] leading-snug text-muted-foreground">
+                      Sin repuestos. Si el trabajo lleva piezas del almacén, búscalas ahí arriba:
+                      se descuentan solas, se suman al cobro y el gasto queda cargado a ese vehículo.
+                    </p>
+                  ) : (
+                    <>
+                      {repuestos.map((r, i) => (
+                        <div key={r.inventario_id} className="flex items-center gap-2">
+                          <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-foreground">
+                            {r.descripcion}
+                          </span>
+                          <input
+                            type="number"
+                            min="1"
+                            value={r.cantidad}
+                            onChange={e => cambiarCantidad(i, parseInt(e.target.value, 10))}
+                            title="Cantidad"
+                            className="w-12 rounded-lg border border-border bg-background/60 px-1.5 py-1.5 text-center text-[11px] font-bold focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          />
+                          <span className="w-16 text-right text-[11px] font-black tabular-nums text-primary">
+                            ${r.total.toFixed(2)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => quitarRepuesto(i)}
+                            title="Quitar"
+                            className="shrink-0 p-1 text-muted-foreground transition-colors hover:text-red-400"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                      <div className="mt-1 flex items-center justify-end gap-3 border-t border-border/40 pt-1.5">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                          Mano de obra ${manoDeObra.toFixed(2)} + repuestos ${totalRepuestos.toFixed(2)}
+                        </span>
+                        <span className="text-sm font-black tabular-nums text-primary">
+                          ${totalTrabajo.toFixed(2)}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
               {/* Personal a cargo — el mismo selector de la orden de servicio y
                   el punto de venta, para que el trabajo salga de aquí ya con su
                   comisión calculada en vez de un nombre suelto en las notas. */}
@@ -718,6 +885,15 @@ export default function TallerPage() {
                 </button>
               )}
             </form>
+
+            {/* El almacén, con buscador y los dos precios. Se queda abierto al
+                elegir: en el taller se cargan varias piezas de una vez. */}
+            <ModalCatalogoInventario
+              abierto={catalogoAbierto}
+              onCerrar={() => setCatalogoAbierto(false)}
+              productos={inventario}
+              onElegir={agregarRepuesto}
+            />
           </CardContent>
         </Card>
 

@@ -1,8 +1,11 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Phone, Mail, Car, Edit, Trash2, Eye, ArrowRightLeft, Wallet } from 'lucide-react';
+import { Plus, Search, Phone, Mail, Car, Edit, Trash2, Eye, ArrowRightLeft, Wallet, Wrench } from 'lucide-react';
 import GastosVehiculoModal from '@/components/egresos/GastosVehiculoModal';
-import HistorialServiciosCliente from '@/components/clientes/HistorialServiciosCliente';
+import PerfilCliente from '@/components/clientes/PerfilCliente';
+import { SEGMENTOS, textoUltimaVisita, contarSegmentos,
+  type DesempenoCliente, type Segmento } from '@/lib/clientes/desempeno';
+import { formatearCedula } from '@/lib/clientes/identidad';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,6 +40,19 @@ export default function ClientesPage() {
   const [viewCliente, setViewCliente] = useState<Cliente | null>(null);
   const [form, setForm] = useState({ nombre: '', apellido: '', email: '', telefono: '', cedula: '', direccion: '', notas: '' });
   
+  // ── Desempeño del cliente ────────────────────────────────────────────────
+  // Cuántos servicios lleva, cuánto ha dejado y cuándo vino por última vez. Se
+  // pide agregado al servidor: contar aquí obligaría a traerse los 522
+  // servicios y los vehículos cada vez que se abre la pantalla.
+  const [desempeno, setDesempeno] = useState<DesempenoCliente[]>([]);
+  const [segmentoFiltro, setSegmentoFiltro] = useState<Segmento | 'todos'>('todos');
+
+  const desempenoPor = React.useMemo(
+    () => Object.fromEntries(desempeno.map(d => [d.cliente_id, d])) as Record<string, DesempenoCliente>,
+    [desempeno],
+  );
+  const conteoSegmentos = React.useMemo(() => contarSegmentos(desempeno), [desempeno]);
+
   // Filtering & Sorting
   const [sortBy, setSortBy] = useState('recent');
   const [dateFilter, setDateFilter] = useState<Date | undefined>(undefined);
@@ -63,6 +79,15 @@ export default function ClientesPage() {
     try {
       const cData = await fetchClientes();
       if (cData) setClientes(cData);
+      // El desempeño va aparte y no bloquea la lista: si falla, los clientes se
+      // ven igual, solo sin sus etiquetas.
+      try {
+        const r = await fetch('/api/clientes/desempeno');
+        const d = await r.json();
+        if (Array.isArray(d?.clientes)) setDesempeno(d.clientes);
+      } catch {
+        console.error('No se pudo cargar el desempeño de los clientes');
+      }
     } catch {
       console.error('Error loading data');
     } finally {
@@ -90,7 +115,12 @@ export default function ClientesPage() {
         matchesMonth = mStr === monthFilter;
       }
 
-      return matchesSearch && matchesDate && matchesMonth;
+      // Segmento de desempeño: es lo que permite ver de un tirón a los que
+      // vinieron una vez y no volvieron, o a los que se están perdiendo.
+      const matchesSegmento = segmentoFiltro === 'todos'
+        || desempenoPor[c.id]?.segmento === segmentoFiltro;
+
+      return matchesSearch && matchesDate && matchesMonth && matchesSegmento;
     })
     .sort((a, b) => {
       if (sortBy === 'recent') {
@@ -102,6 +132,18 @@ export default function ClientesPage() {
       if (sortBy === 'za') {
         return `${b.nombre} ${b.apellido}`.localeCompare(`${a.nombre} ${a.apellido}`);
       }
+      // Ordenaciones por desempeño. Un cliente sin datos cae al final en vez de
+      // colarse arriba con un cero.
+      const da = desempenoPor[a.id];
+      const db = desempenoPor[b.id];
+      if (sortBy === 'mejores') return (db?.puntos ?? -1) - (da?.puntos ?? -1);
+      if (sortBy === 'mas_servicios') return (db?.servicios ?? -1) - (da?.servicios ?? -1);
+      if (sortBy === 'mas_facturado') return (db?.total ?? -1) - (da?.total ?? -1);
+      if (sortBy === 'olvidados') {
+        // Los que llevan más tiempo sin venir, primero; los que nunca vinieron
+        // van al final: ahí no hay nada que recuperar todavía.
+        return (db?.diasSinVenir ?? -1) - (da?.diasSinVenir ?? -1);
+      }
       return 0;
     });
 
@@ -110,9 +152,11 @@ export default function ClientesPage() {
     setDateFilter(undefined);
     setMonthFilter('all');
     setSortBy('recent');
+    setSegmentoFiltro('todos');
   };
 
-  const hasActiveFilters = search || dateFilter || monthFilter !== 'all' || sortBy !== 'recent';
+  const hasActiveFilters = search || dateFilter || monthFilter !== 'all' || sortBy !== 'recent'
+    || segmentoFiltro !== 'todos';
 
   const openNew = () => { 
     if (!can('clientes', 'crear')) return alert('No tienes permisos para crear clientes.');
@@ -129,6 +173,11 @@ export default function ClientesPage() {
         ...form,
         nombre: form.nombre.trim() || 'Desconocido',
         telefono: form.telefono.trim() || '00000000000',
+        // La cédula se guarda normalizada («V-16278639») y lo que no es un
+        // documento se guarda vacío. Sin esto la base acumula «11464383»,
+        // «V-19734521» y dieciocho fichas con la palabra «N/A», y entonces la
+        // cédula deja de servir para reconocer a nadie.
+        cedula: formatearCedula(form.cedula) ?? '',
       };
 
       if (editCliente) {
@@ -315,6 +364,10 @@ export default function ClientesPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="recent">Recientes</SelectItem>
+              <SelectItem value="mejores">Mejores clientes</SelectItem>
+              <SelectItem value="mas_servicios">M&aacute;s servicios</SelectItem>
+              <SelectItem value="mas_facturado">M&aacute;s facturado</SelectItem>
+              <SelectItem value="olvidados">Sin venir hace m&aacute;s tiempo</SelectItem>
               <SelectItem value="az">A - Z (Nombre)</SelectItem>
               <SelectItem value="za">Z - A (Nombre)</SelectItem>
             </SelectContent>
@@ -379,6 +432,47 @@ export default function ClientesPage() {
         </div>
       </div>
 
+      {/* Segmentos — de un tirón se ve cuántos clientes hay de cada clase y se
+          filtra por ellos. Los accionables van primero: son los que dan trabajo
+          que hacer hoy, y son justo los que una lista por fecha de alta
+          escondía. */}
+      {desempeno.length > 0 && (
+        <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
+          <button
+            type="button"
+            onClick={() => setSegmentoFiltro('todos')}
+            className={cn(
+              'shrink-0 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition-colors',
+              segmentoFiltro === 'todos'
+                ? 'border-primary bg-primary/10 text-primary'
+                : 'border-border/60 hover:border-primary/40',
+            )}
+          >
+            Todos <span className="tabular-nums opacity-60">{desempeno.length}</span>
+          </button>
+          {(Object.values(SEGMENTOS))
+            .filter(s => conteoSegmentos[s.id] > 0)
+            .sort((a, b) => Number(b.accionable) - Number(a.accionable)
+              || conteoSegmentos[b.id] - conteoSegmentos[a.id])
+            .map(s => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => setSegmentoFiltro(segmentoFiltro === s.id ? 'todos' : s.id)}
+                title={s.descripcion}
+                className={cn(
+                  'shrink-0 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition-all',
+                  segmentoFiltro === s.id
+                    ? `${s.claseChip} ring-2 ring-offset-1 ring-current/30`
+                    : 'border-border/60 text-muted-foreground hover:border-primary/40',
+                )}
+              >
+                {s.label} <span className="tabular-nums opacity-60">{conteoSegmentos[s.id]}</span>
+              </button>
+            ))}
+        </div>
+      )}
+
       {/* Grid */}
       {loading ? (
         <div className="flex items-center justify-center py-20">
@@ -388,6 +482,8 @@ export default function ClientesPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {filtered.map((cliente, i) => {
           const colorClass = COLORS[i % COLORS.length];
+          const d = desempenoPor[cliente.id];
+          const seg = d ? SEGMENTOS[d.segmento] : null;
           return (
             <Card key={cliente.id} className="hover:border-primary/20 transition-all duration-200 hover:shadow-[0_0_20px_rgba(249,115,22,0.05)] group">
               <CardContent className="p-4">
@@ -416,7 +512,24 @@ export default function ClientesPage() {
                         )}
                       </div>
                     </div>
-                    {cliente.cedula && <p className="text-[10px] text-muted-foreground">{cliente.cedula}</p>}
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                      <span className={cn(
+                        'rounded px-1.5 py-0.5 text-[9.5px] font-bold tabular-nums border',
+                        formatearCedula(cliente.cedula)
+                          ? 'border-border/60 bg-muted/40 text-foreground/80'
+                          : 'border-dashed border-border/50 text-muted-foreground/60 italic',
+                      )}>
+                        {formatearCedula(cliente.cedula) || 'Sin cédula'}
+                      </span>
+                      {seg && (
+                        <span
+                          title={seg.descripcion}
+                          className={cn('rounded px-1.5 py-0.5 text-[9.5px] font-black uppercase tracking-wide border', seg.claseChip)}
+                        >
+                          {seg.label}
+                        </span>
+                      )}
+                    </div>
                     <div className="mt-2 space-y-1">
                       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                         <Phone className="w-3 h-3 flex-shrink-0" />
@@ -434,7 +547,30 @@ export default function ClientesPage() {
                         <span className="text-muted-foreground">vehículo{(cliente.vehiculos?.length || 0) !== 1 ? 's' : ''}</span>
                       </div>
                       <span className="text-muted-foreground/30">·</span>
-                      <span className="text-[10px] text-muted-foreground">Desde {formatDate(cliente.created_at, { month: 'short', year: 'numeric' })}</span>
+                      {d ? (
+                        <>
+                          {/* Cuantos servicios lleva: es el dato que pedia verse
+                              de un vistazo en la propia tarjeta. */}
+                          <div className="flex items-center gap-1 text-xs" title={`${d.servicios} servicio(s) · ${d.serviciosPorAno}/año`}>
+                            <Wrench className="w-3 h-3 text-primary" />
+                            <span className="font-medium tabular-nums">{d.servicios}</span>
+                            <span className="text-muted-foreground">serv.</span>
+                          </div>
+                          {d.total > 0 && (
+                            <>
+                              <span className="text-muted-foreground/30">·</span>
+                              <span className="text-xs font-bold text-emerald-500 tabular-nums" title="Total facturado">
+                                ${d.total.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                              </span>
+                            </>
+                          )}
+                          <span className="ml-auto text-[10px] text-muted-foreground" title={d.ultimo || 'Sin servicios'}>
+                            {textoUltimaVisita(d.diasSinVenir)}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground">Desde {formatDate(cliente.created_at, { month: 'short', year: 'numeric' })}</span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -594,76 +730,14 @@ export default function ClientesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Ver cliente */}
-      <Dialog open={!!viewCliente} onOpenChange={() => setViewCliente(null)}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          {viewCliente && (
-            <>
-              <DialogHeader>
-                <DialogTitle>Perfil del Cliente</DialogTitle>
-              </DialogHeader>
-              <div className="flex items-center gap-3 p-3 rounded-xl bg-muted/30 border border-border/30">
-                <Avatar className="w-12 h-12">
-                  <AvatarFallback className="text-base font-bold bg-primary/20 text-primary">
-                    {getInitials(`${viewCliente.nombre} ${viewCliente.apellido}`)}
-                  </AvatarFallback>
-                </Avatar>
-                <div>
-                  <h3 className="font-semibold">{viewCliente.nombre} {viewCliente.apellido}</h3>
-                  <p className="text-xs text-muted-foreground">{viewCliente.cedula || 'Sin cédula'}</p>
-                  <p className="text-xs text-muted-foreground">Cliente desde {formatDate(viewCliente.created_at)}</p>
-                </div>
-              </div>
-              <div className="space-y-2">
-                {[
-                  { label: 'Teléfono', value: viewCliente.telefono },
-                  { label: 'Email', value: viewCliente.email },
-                  { label: 'Dirección', value: viewCliente.direccion || 'No registrada' },
-                ].map(({ label, value }) => (
-                  <div key={label} className="flex items-center gap-2 p-2.5 rounded-lg border border-border/30">
-                    <span className="text-xs text-muted-foreground w-16 flex-shrink-0">{label}</span>
-                    <span className="text-xs font-medium">{value}</span>
-                  </div>
-                ))}
-              </div>
-              <div>
-                <p className="text-xs font-medium text-muted-foreground mb-2">Vehículos ({getVehiculos(viewCliente.id).length})</p>
-                <div className="space-y-1.5">
-                   {getVehiculos(viewCliente.id).map(v => (
-                    <div key={v.id} className="flex flex-col gap-1 p-3 rounded-lg bg-muted/20 border border-border/20">
-                      <div className="flex items-center gap-2">
-                        <Car className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-                        <span className="text-xs font-bold">{v.marca} {v.modelo} ({v.anio})</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary uppercase font-mono ml-auto">
-                          {v.placa}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3 mt-1 px-5">
-                        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: v.color === 'GRIS' ? '#888' : v.color === 'BLANCO' ? '#fff' : v.color === 'NEGRO' ? '#000' : '#444' }} />
-                        <span className="text-[10px] text-muted-foreground uppercase">{v.color || 'Sin color'}</span>
-                        {v.vin && <span className="text-[10px] text-muted-foreground font-mono">VIN: {v.vin}</span>}
-                      </div>
-                    </div>
-                  ))}
-                  {getVehiculos(viewCliente.id).length === 0 && <p className="text-xs text-muted-foreground text-center py-2">Sin vehículos registrados</p>}
-                </div>
-              </div>
-
-              {/* Historial de servicios — click abre el detalle completo */}
-              <div className="pt-1 border-t border-border/30">
-                <HistorialServiciosCliente clienteId={viewCliente.id} />
-              </div>
-
-              {viewCliente.notas && (
-                <div className="p-3 rounded-xl bg-muted/20 border border-border/30">
-                  <p className="text-xs text-muted-foreground mb-1">Notas</p>
-                  <p className="text-xs">{viewCliente.notas}</p>
-                </div>
-              )}
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
+      {/* Ver cliente — ahora con ModalBase, para que el detalle de servicio
+          que se abre encima se pueda pinchar y desplazar. */}
+      <PerfilCliente
+        cliente={viewCliente}
+        onCerrar={() => setViewCliente(null)}
+        vehiculos={viewCliente ? getVehiculos(viewCliente.id) : []}
+        desempeno={viewCliente ? (desempenoPor[viewCliente.id] ?? null) : null}
+      />
 
       {/* Modal Vehículo (Sub-modal) */}
       <Dialog open={showVehiculoModal} onOpenChange={setShowVehiculoModal}>

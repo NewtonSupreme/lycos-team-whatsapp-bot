@@ -1,5 +1,6 @@
 'use client';
 
+import type React from 'react';
 import MetodoPagoPanel from '@/components/pos/MetodoPagoPanel';
 import { emptyBins, type Bins, type BankBin } from '@/lib/reporte/ventas-mapping';
 
@@ -35,11 +36,25 @@ interface Props {
   conCabecera?: boolean;
   /** Bins a ocultar (siguen contando en los totales). */
   hideBins?: BankBin[];
+  /**
+   * El simulador de cuotas de Cashea.
+   *
+   * Antes esto no se pasaba y el comentario de arriba lo daba por bueno: «vive
+   * en el POS porque es allí donde se calculan la inicial y las cuotas». Era
+   * falso en la práctica —al taller le financian servicios igual que
+   * productos—, y sin el selector de porcentaje había que calcular la inicial a
+   * mano y escribirla. De ahí salieron los tres cobros con el monto en la
+   * moneda equivocada.
+   */
+  cashea?: PropsPanelCashea;
 }
+
+/** El contrato del simulador, tal y como lo espera el panel del POS. */
+type PropsPanelCashea = NonNullable<React.ComponentProps<typeof MetodoPagoPanel>['cashea']>;
 
 export default function DesglosePagoBancos({
   bins, onBinsChange, totalUSD, tasa, onTasaChange, tasaAuto,
-  className, conCabecera = false, hideBins = [],
+  className, conCabecera = false, hideBins = [], cashea,
 }: Props) {
   // Un bin oculto no debe quedar con dinero dentro: sería plata registrada que
   // nadie puede ver ni corregir desde esta pantalla.
@@ -60,6 +75,7 @@ export default function DesglosePagoBancos({
       tasaAuto={tasaAuto}
       customRate={onTasaChange ? (tasa || null) : null}
       onCustomRate={onTasaChange}
+      cashea={cashea}
       conCabecera={conCabecera}
       // El anfitrión ya dibuja la tarjeta y su encabezado; el panel no repite
       // el marco ni abre un scroll propio dentro del modal.

@@ -249,7 +249,6 @@ export async function autoRegisterSaleFromService(
 
   const refTag = `[ServicioID: ${id}]`;
   const descStr = service.descripcion || service.tipo || 'Servicio de taller';
-  const notesFinal = `${descStr} [Total: $${precio} (Divisas)] | Cliente: ${clienteNombre} | Vehículo: ${vehiculoStr} ${refTag}`.trim();
 
   let desglose = service.items;
   if (!desglose || !Array.isArray(desglose) || desglose.length === 0) {
@@ -258,18 +257,72 @@ export async function autoRegisterSaleFromService(
   }
 
   const { data: existingVD } = await supabase.from('ventas_dia')
-    .select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle();
+    .select('id, metodos_pago, tasa_cambio, categoria').like('notas', `%${refTag}%`).limit(1).maybeSingle();
+
+  // ── El cobro real de la orden ────────────────────────────────────────────
+  //
+  // Esto antes escribía `{ divisas: precio }` a secas, así que TODA venta de
+  // servicio quedaba registrada como efectivo en dólares aunque se hubiera
+  // cobrado por Banesco, punto de venta o Cashea. Peor: al editar una orden ya
+  // completada, este escritor pisaba el desglose por banco que había capturado
+  // el modal de cobro. El dinero seguía ahí, pero en la cuenta equivocada.
+  //
+  // El orden de preferencia es: lo que trae la orden → lo que ya tenía la venta
+  // registrada → y solo si no hay ninguna de las dos, efectivo en divisas.
+  const { normalizeMetodo, buildPagoColumns, buildCategoriaColumns, inferirCategoria } =
+    await import('@/lib/categorias');
+
+  const deLaOrden = (service.metodos_pago && typeof service.metodos_pago === 'object')
+    ? Object.entries(service.metodos_pago as Record<string, unknown>)
+      .filter(([, v]) => Number(v) > 0)
+    : [];
+  const yaRegistrado = (existingVD?.metodos_pago && typeof existingVD.metodos_pago === 'object')
+    ? Object.entries(existingVD.metodos_pago as Record<string, unknown>)
+      .filter(([, v]) => Number(v) > 0)
+    : [];
+
+  const fuente = deLaOrden.length > 0 ? deLaOrden : yaRegistrado;
+  const metodos: Record<string, number> = fuente.length > 0
+    ? Object.fromEntries(fuente.map(([k, v]) => [normalizeMetodo(k), Number(v)]))
+    : { efectivo_usd: precio };
+
+  // Etiqueta honesta para la nota: antes decía «(Divisas)» siempre.
+  const comoSePago = fuente.length > 0
+    ? Object.keys(metodos).map(k => k.replace(/_/g, ' ')).join(' + ')
+    : 'efectivo $';
+  const notesFinal = `${descStr} [Total: $${precio} (${comoSePago})] `
+    + `| Cliente: ${clienteNombre} | Vehículo: ${vehiculoStr} ${refTag}`.trim();
+
+  // La tasa NUNCA se inventa. El 518 fijo que había aquí llevaba meses obsoleto
+  // —hoy el BCV va por 814— y convertía mal todo lo cobrado en bolívares.
+  const tasa = Number(opts?.bcvRate) || Number(service.tasa_cambio)
+    || Number(existingVD?.tasa_cambio) || 0;
+
+  // Clasificación del servicio: sin esto la venta no cae en ninguna columna de
+  // departamento y desaparece del reporte por área.
+  const categoria = service.categoria
+    || existingVD?.categoria
+    || inferirCategoria(descStr || service.tipo_personalizado || service.tipo);
 
   const vdData = {
     fecha: opts?.customDate || (service.fecha ? service.fecha.split('T')[0] : getLocalISODate()),
     cliente: clienteNombre,
+    // Identidad real, no solo un nombre suelto en una nota de texto.
+    cliente_id: service.cliente_id || null,
+    vehiculo_id: service.vehiculo_id || null,
+    servicio_id: id,
+    placa: service.placa || service.vehiculos?.placa || null,
+    vehiculo_info: vehiculoStr || null,
+    categoria,
+    ...buildCategoriaColumns(categoria, precio),
     total_ingresos: precio,
     total_servicios: 1,
     total_clientes: 1,
     desglose,
-    metodos_pago: { divisas: precio },
-    tasa_cambio: opts?.bcvRate || 518.0,
-    con_iva: false,
+    metodos_pago: metodos,
+    ...buildPagoColumns(metodos),
+    tasa_cambio: tasa,
+    con_iva: !!service.con_iva,
     notas: notesFinal,
     creado_por: opts?.userName || service.registrado_por || 'Admin',
     sede_id: sedeId,

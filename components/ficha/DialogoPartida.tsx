@@ -23,6 +23,9 @@ interface Props {
     precio_venta: number;
     fecha?: string | null;
     servicio_id?: string | null;
+    /** Lo que costó la pieza, cuando el renglón salió del almacén. */
+    costo_unitario?: number;
+    inventario_id?: string | null;
   } | null;
   placa: string;
   vehiculoId: string | null;
@@ -52,7 +55,12 @@ export default function DialogoPartida({
   const [tipo, setTipo] = useState<TipoPartida>(partida?.tipo || 'repuesto');
   const [cantidad, setCantidad] = useState(String(partida?.cantidad ?? precarga?.cantidad ?? 1));
   const [precioVenta, setPrecioVenta] = useState(String(partida?.precio_venta ?? precarga?.precio_venta ?? ''));
-  const [costo, setCosto] = useState(String(partida?.costo ?? ''));
+  // Un renglón que salió del almacén ya sabe lo que costó: se precarga para que
+  // la utilidad salga sola en vez de tener que buscar el precio del proveedor.
+  const [costo, setCosto] = useState(
+    String(partida?.costo ?? (precarga?.costo_unitario ? precarga.costo_unitario : '')),
+  );
+  // Una pieza salida del almacén propio la puso el taller, no el cliente.
   const [origen, setOrigen] = useState<OrigenPartida>(partida?.origen || 'taller');
   const [proveedor, setProveedor] = useState(partida?.proveedor || '');
   const [proveedorId, setProveedorId] = useState<string | null>(partida?.proveedor_id || null);

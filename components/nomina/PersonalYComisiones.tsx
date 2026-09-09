@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus, Trash2, Wrench, Building2, Loader2, Users, Search, TrendingUp, AlertTriangle, Check, PencilLine,
+  Package,
 } from 'lucide-react';
 import { ZONAS_TRABAJO } from '@/types';
 
@@ -23,6 +24,15 @@ export interface ItemDesglose {
   cantidad: number;
   precio_unitario: number;
   total: number;
+  /**
+   * El renglón es una pieza del almacén, no mano de obra.
+   *
+   * Se marca en pantalla porque el precio de un repuesto no es lo que ejecutó
+   * el técnico: asignárselo sin querer le pagaría comisión sobre el precio de
+   * venta del silenciador. Se puede asignar igual —hay talleres que lo pagan—,
+   * pero a la vista y a propósito.
+   */
+  inventario_id?: string | null;
 }
 
 export interface AsignacionEmpleado {
@@ -443,7 +453,13 @@ export default function PersonalYComisiones({
                           type="button"
                           disabled={!!tomado && !activo}
                           onClick={() => toggleItem(i, idx)}
-                          title={tomado && !activo ? `Ya asignado a ${tomado}` : undefined}
+                          title={
+                            tomado && !activo
+                              ? `Ya asignado a ${tomado}`
+                              : it.inventario_id
+                                ? 'Es un repuesto del almacén, no mano de obra: asignarlo paga comisión sobre el precio de la pieza.'
+                                : undefined
+                          }
                           className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all flex items-center gap-1 ${
                             activo
                               ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-500'
@@ -453,6 +469,7 @@ export default function PersonalYComisiones({
                           }`}
                         >
                           {activo && <Check className="w-2.5 h-2.5" />}
+                          {it.inventario_id && <Package className="w-2.5 h-2.5 opacity-70" />}
                           {it.descripcion.slice(0, 26)} · {money(Number(it.total))}
                         </button>
                       );

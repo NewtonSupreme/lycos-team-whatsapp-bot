@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  ArrowLeftRight, Banknote, CreditCard, Smartphone, Store, Wallet, X,
+  AlertTriangle, ArrowLeftRight, Banknote, CreditCard, Smartphone, Store, Wallet, X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import LogoBanco from '@/components/pagos/LogoBanco';
@@ -190,6 +190,30 @@ export default function MetodoPagoPanel({
 
   const setBin = (id: BankBin, valor: number) =>
     onBinsChange({ ...bins, [id]: Math.max(0, Math.round((Number(valor) || 0) * 100) / 100) });
+
+  /**
+   * ¿Este monto en dólares son bolívares tecleados por equivocación?
+   *
+   * Los bins tienen moneda fija: unos guardan bolívares y otros dólares. Nada
+   * comprobaba que lo escrito fuera de la moneda del bin, y así entraron tres
+   * cobros de Cashea con el monto en bolívares dentro de un bin en dólares
+   * ($17.010 en un servicio de $180). El reporte los sumó como dólares e infló
+   * las cuentas del mes en más de $44.000.
+   *
+   * La señal es inequívoca: el importe se parece al total multiplicado por la
+   * tasa. No se bloquea el campo —hay ventas grandes legítimas— pero se avisa
+   * y se ofrece la corrección en un clic.
+   */
+  const pareceBolivares = (id: BankBin, monto: number): boolean => {
+    const meta = BANK_METHODS.find(m => m.id === id);
+    if (!meta || meta.moneda !== 'USD') return false;
+    if (!(tasa > 0) || !(totalUSD > 0) || !(monto > 0)) return false;
+    // Diez veces el total ya no es un descuadre, es otra moneda.
+    if (monto < totalUSD * 10) return false;
+    const enDolares = monto / tasa;
+    // Y al dividirlo por la tasa vuelve a parecerse al total a cobrar.
+    return enDolares <= totalUSD * 1.5;
+  };
 
   const limpiarBins = (ids: readonly BankBin[], base: Bins = bins) => {
     const out = { ...base };
@@ -421,8 +445,14 @@ export default function MetodoPagoPanel({
           <>
             <p className="mb-1.5 mt-3 text-[11.5px] font-medium text-[#5b616e]">Montos por banco</p>
             <ul className="space-y-1.5">
-              {binsVisibles.map(meta => (
-                <li key={meta.id} className="flex items-center gap-2 rounded-lg border border-[#e8eaed] px-2.5 py-1.5">
+              {binsVisibles.map(meta => {
+                const enBs = pareceBolivares(meta.id, bins[meta.id] || 0);
+                return (
+                <li key={meta.id} className={cn(
+                  'rounded-lg border px-2.5 py-1.5',
+                  enBs ? 'border-[#f59e0b] bg-[#fffbeb]' : 'border-[#e8eaed]',
+                )}>
+                <div className="flex items-center gap-2">
                   {/* Seis cuentas distintas y hay que acertar con la correcta:
                       el dinero en la columna equivocada descuadra el día. */}
                   <LogoBanco id={meta.id} size={22} />
@@ -448,8 +478,29 @@ export default function MetodoPagoPanel({
                   >
                     Saldar
                   </button>
+                </div>
+
+                {/* Aviso de moneda equivocada. Esta cuenta se lleva en dólares y
+                    lo escrito parece bolívares: se ofrece la conversión hecha. */}
+                {enBs && (
+                  <div className="mt-1.5 flex items-center gap-2 border-t border-[#fcd34d] pt-1.5">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[#b45309]" aria-hidden />
+                    <p className="min-w-0 flex-1 text-[10.5px] leading-tight text-[#92400e]">
+                      Esta cuenta se lleva <strong>en dólares</strong> y esto parece bolívares.
+                      A la tasa de {tasa.toFixed(2)} serían <strong>${(bins[meta.id] / tasa).toFixed(2)}</strong>.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setBin(meta.id, bins[meta.id] / tasa)}
+                      className="h-[26px] shrink-0 rounded-md bg-[#b45309] px-2 text-[10.5px] font-bold text-white hover:bg-[#92400e]"
+                    >
+                      Convertir a $
+                    </button>
+                  </div>
+                )}
                 </li>
-              ))}
+                );
+              })}
             </ul>
           </>
         )}

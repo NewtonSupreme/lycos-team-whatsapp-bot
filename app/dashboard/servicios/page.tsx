@@ -6,7 +6,7 @@ import {
   Banknote, BadgeCheck, Activity, Plus, Trash2, Edit3,
   ChevronRight, ChevronLeft, MoreHorizontal, MessageSquare, Tag, Info,
   MapPin, Filter, LayoutGrid, List, FileText, MoveHorizontal, Download,
-  TrendingUp, Save, CheckCircle2, XCircle, Wallet
+  TrendingUp, Save, CheckCircle2, XCircle, Wallet, Package
 } from 'lucide-react';
 import GastosVehiculoModal from '@/components/egresos/GastosVehiculoModal';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -25,6 +25,15 @@ import { cn, getLocalISODate, parseDescripcionItems } from '@/lib/utils';
 import DesglosePagoBancos from '@/components/pos/DesglosePagoBancos';
 import { buildVentaDiaFields, emptyBins, binsTotalUSD, deptFromServicioTipo, type Bins } from '@/lib/reporte/ventas-mapping';
 import PersonalYComisiones, { type AsignacionEmpleado } from '@/components/nomina/PersonalYComisiones';
+import SelectorRepuesto, {
+  ModalCatalogoInventario, useInventario, precioEfectivoDe, type ProductoInventario,
+} from '@/components/inventario/SelectorRepuesto';
+import CampoRenglon from '@/components/inventario/CampoRenglon';
+import { buscarCliente, coincidenciaSegura, claveTelefono } from '@/lib/clientes/identidad';
+import { planCashea, type PorcentajeCashea } from '@/lib/pagos/cashea';
+import AvisoRepuestosSueltos, {
+  detectarRepuestosSueltos, type RenglonSospechoso,
+} from '@/components/inventario/AvisoRepuestosSueltos';
 import { asignacionesValidas, buildJobsDesdeAsignacion } from '@/lib/nomina/asignaciones';
 import { CATEGORIAS_VENTA, inferirCategoria, categoriaToZona, buildCategoriaColumns, buildPagoColumns, sumaMetodos } from '@/lib/categorias';
 
@@ -34,6 +43,31 @@ interface ServicioItem {
   cantidad: number;
   precio_unitario: number;
   total: number;
+  /**
+   * Producto del catálogo, cuando el renglón es mercancía y no mano de obra.
+   * Es lo único que permite descontarlo del almacén: sin este enlace el
+   * repuesto salía físicamente y el stock se quedaba igual.
+   */
+  inventario_id?: string | null;
+  /** Unidades ya restadas del stock por este renglón (evita restar dos veces). */
+  stock_descontado?: number;
+  /** Lo que costó la pieza, para poder calcular la utilidad real del renglón. */
+  costo_unitario?: number;
+  /**
+   * El renglón dejó de descontar del almacén.
+   *
+   * Se marca en vez de borrar `inventario_id`, porque lo que ya salió del stock
+   * hay que poder devolverlo: sin saber de qué producto era, esas unidades
+   * quedarían restadas para siempre.
+   */
+  sin_descuento?: boolean;
+  /**
+   * Alguien confirmó que este renglón es mano de obra, no mercancía.
+   *
+   * Se guarda para no volver a preguntar por lo mismo en cada guardado: un
+   * aviso que reaparece siempre acaba siendo un aviso que nadie lee.
+   */
+  es_mano_obra?: boolean;
 }
 
 // Desglosa una descripción (incluyendo las registradas por el bot, que pueden venir
@@ -57,6 +91,33 @@ function parseServicioItemsFromText(descripcion: string, totalPrecio = 0): Servi
     return [{ descripcion: pedazos[0], cantidad: 1, precio_unitario: totalPrecio, total: totalPrecio }];
   }
   return pedazos.map(p => ({ descripcion: p, cantidad: 1, precio_unitario: 0, total: 0 }));
+}
+
+/**
+ * Ajusta el almacén con los repuestos de una orden YA guardada.
+ *
+ * Se llama después de grabar, nunca antes: se descuenta contra lo que de verdad
+ * quedó en la orden, y una orden que no se pudo guardar no mueve el stock.
+ * Volver a llamarla con la misma orden no resta de nuevo — el servidor lleva la
+ * cuenta de lo que ya salió.
+ *
+ * Nunca tumba el guardado: si el ajuste falla, la orden sigue grabada y lo que
+ * se devuelve son los avisos para que alguien mire el inventario.
+ */
+async function ajustarStockDeOrden(servicioId: string, devolver = false): Promise<string[]> {
+  if (!servicioId) return [];
+  try {
+    const res = await fetch('/api/inventario/descontar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ servicio_id: servicioId, devolver }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) return [data?.error || 'No se pudo ajustar el inventario.'];
+    return Array.isArray(data?.avisos) ? data.avisos : [];
+  } catch {
+    return ['No se pudo contactar con el servidor para ajustar el inventario.'];
+  }
 }
 
 interface CitaServicio {
@@ -188,6 +249,11 @@ export default function ServiciosPage() {
   const [cobroTasa, setCobroTasa] = useState<number | null>(null);
   const [cobroConIva, setCobroConIva] = useState(false);
   const [cobroProcesando, setCobroProcesando] = useState(false);
+  // El porcentaje de la inicial de Cashea en el modal de cobro. Aquí es donde
+  // se cobra de verdad, así que es donde más falta hacía: sin el simulador la
+  // inicial se calculaba a mano y se escribía, y así entraron los tres cobros
+  // con el monto en bolívares dentro de la cuenta en dólares.
+  const [cobroCasheaPct, setCobroCasheaPct] = useState<PorcentajeCashea>(30);
   const [inventory, setInventory] = useState<any[]>([]);
   const [selectedForDual, setSelectedForDual] = useState<string[]>([]);
   const [mounted, setMounted] = useState(false);
@@ -201,7 +267,11 @@ export default function ServiciosPage() {
     if (!supabase) return;
     setLoading(true);
     try {
-      const { data: invData } = await supabase.from('inventario').select('nombre, precio_usd').eq('activo', true);
+      // El `id` es imprescindible: sin él, el presupuesto guardaba `inventario_id`
+      // vacío en todos sus renglones y ninguno quedaba enlazado con el almacén.
+      const { data: invData } = await supabase.from('inventario')
+        .select('id, nombre, precio_usd, stock, precio_fabricante')
+        .eq('activo', true);
       setInventory(invData || []);
 
       const { data, error } = await withSedeFilter(supabase.from('servicios'))
@@ -897,6 +967,14 @@ export default function ServiciosPage() {
         const casheaEnJuego = (cobroBins.cashea || 0) > 0;
         const ivaEfectivo = cobroConIva || casheaEnJuego;
         const totalConIva = Math.round(precio * (ivaEfectivo ? 1.16 : 1) * 100) / 100;
+        // El plan se calcula sobre el precio SIN IVA: Cashea financia el total
+        // con IVA y de ahí saca la inicial, así que el 16% lo pone el plan.
+        const planCobroCashea = planCashea(precio, cobroCasheaPct);
+        const aplicarCasheaAlCobro = (pct: PorcentajeCashea = cobroCasheaPct) => {
+          const plan = planCashea(precio, pct);
+          setCobroBins(prev => ({ ...prev, cashea: plan.inicial }));
+          setCobroConIva(true);
+        };
         const pagado = binsTotalUSD(cobroBins, cobroTasa || globalBcvRate || 0);
         const saldo = Math.max(0, Math.round((totalConIva - pagado) * 100) / 100);
         const esCredito = saldo > 0.01;
@@ -940,6 +1018,16 @@ export default function ServiciosPage() {
                   tasa={cobroTasa || globalBcvRate || 0}
                   tasaAuto={globalBcvRate}
                   onTasaChange={setCobroTasa}
+                  cashea={{
+                    pct: cobroCasheaPct,
+                    onPct: p => { setCobroCasheaPct(p); aplicarCasheaAlCobro(p); },
+                    activo: casheaEnJuego,
+                    onUsar: () => aplicarCasheaAlCobro(),
+                    inicial: planCobroCashea.inicial,
+                    resto: planCobroCashea.resto,
+                    cuota: planCobroCashea.cuota,
+                    cuotas: planCobroCashea.cuotas,
+                  }}
                 />
 
                 {esCredito && (
@@ -1317,6 +1405,25 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
   // que no se cobre hoy queda como saldo pendiente, no como venta cerrada.
   const hayCashea = Number((metodosPago as Record<string, number>)?.cashea || 0) > 0;
   const ivaObligatorio = conIva || hayCashea;
+
+  // ── Financiamiento con Cashea ──────────────────────────────────────────────
+  // El porcentaje de la inicial lo elige el cliente en la app de Cashea, así
+  // que aquí tiene que poder seleccionarse: sin el selector había que calcular
+  // la inicial a mano y escribirla, y así entraron tres cobros con el monto en
+  // bolívares dentro de una cuenta que se lleva en dólares.
+  const [casheaPct, setCasheaPct] = useState<PorcentajeCashea>(30);
+  const planCasheaOrden = useMemo(
+    () => planCashea(parseFloat(formData.costo_estimado) || 0, casheaPct),
+    [formData.costo_estimado, casheaPct],
+  );
+  /** Carga en Cashea la inicial que toca; el resto queda por cobrar. */
+  const usarCashea = useCallback((pct: PorcentajeCashea = casheaPct) => {
+    const plan = planCashea(parseFloat(formData.costo_estimado) || 0, pct);
+    setMetodosPago(prev => ({ ...prev, cashea: plan.inicial }));
+    // Con Cashea el IVA deja de ser opcional: es sobre el total con IVA sobre
+    // lo que se financia.
+    setConIva(true);
+  }, [formData.costo_estimado, casheaPct]);
   // Tasa REAL del día del servicio (se guarda con la orden).
   const [tasaDiaBcv, setTasaDiaBcv] = useState<number>(0);
   useEffect(() => {
@@ -1336,11 +1443,25 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
         cantidad: Number(i.cantidad) || 1,
         precio_unitario: Number(i.precio_unitario) || 0,
         total: Number(i.total) || (Number(i.cantidad) || 1) * (Number(i.precio_unitario) || 0),
+        // El enlace con el inventario y la marca de lo ya descontado tienen que
+        // sobrevivir a la edición: si se perdieran aquí, el siguiente guardado
+        // volvería a restar del almacén lo que ya se restó.
+        inventario_id: i.inventario_id ?? null,
+        stock_descontado: Number(i.stock_descontado) || 0,
+        costo_unitario: Number(i.costo_unitario) || 0,
       }));
     }
     const total = Number(cita?.costo_final ?? cita?.costo_estimado ?? 0);
     return parseServicioItemsFromText(cita?.descripcion || '', total);
   });
+  // Catálogo del almacén: permite marcar qué renglones son mercancía para que se
+  // descuenten solos. La mano de obra se sigue escribiendo a mano y no lleva stock.
+  const { productos: inventario } = useInventario();
+  // Qué renglón pidió el catálogo. `null` = cerrado; un número = ese renglón.
+  const [catalogoPara, setCatalogoPara] = useState<number | null>(null);
+  // Renglones escritos a mano que se parecen a algo del almacén. Se resuelven
+  // antes de guardar; ver `AvisoRepuestosSueltos`.
+  const [sospechosos, setSospechosos] = useState<RenglonSospechoso[] | null>(null);
   const [staffSuggestions, setStaffSuggestions] = useState<{ nombre: string; rol: string }[]>([]);
   const sedeNomina = useSedeStore(s => s.currentSede);
   const [staffSearch, setStaffSearch] = useState('');
@@ -1561,16 +1682,101 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
     const newTotal = newItems.reduce((s, it) => s + (Number(it.total) || 0), 0);
     setFormData(prev => ({ ...prev, costo_estimado: String(newTotal) }));
   };
-  const updateItem = (idx: number, field: keyof ServicioItem, value: string | number) => {
-    const newItems = items.map((it, i) => {
+  // Recalcula el costo de la orden a partir de los renglones. Se hace en un solo
+  // sitio porque antes cada manipulación de la lista repetía la misma suma.
+  const aplicarItems = (nuevos: ServicioItem[]) => {
+    setItems(nuevos);
+    const total = nuevos.reduce((s, it) => s + (Number(it.total) || 0), 0);
+    setFormData(prev => ({ ...prev, costo_estimado: String(total) }));
+  };
+
+  const updateItem = (idx: number, field: 'descripcion' | 'cantidad' | 'precio_unitario', value: string | number) => {
+    aplicarItems(items.map((it, i) => {
       if (i !== idx) return it;
       const next: ServicioItem = { ...it, [field]: field === 'descripcion' ? String(value) : (Number(value) || 0) };
       next.total = (Number(next.cantidad) || 1) * (Number(next.precio_unitario) || 0);
       return next;
-    });
-    setItems(newItems);
-    const newTotal = newItems.reduce((s, it) => s + (Number(it.total) || 0), 0);
-    setFormData(prev => ({ ...prev, costo_estimado: String(newTotal) }));
+    }));
+  };
+
+  /**
+   * Enlaza el renglón con un producto del almacén.
+   *
+   * Se copian el nombre y el precio para no tener que escribirlos, y el costo
+   * del proveedor para que la utilidad del renglón sea la real y no una resta
+   * inventada. A partir de aquí este renglón sí descuenta stock.
+   */
+  const enlazarInventario = (idx: number, p: ProductoInventario, cantidadPedida?: number) => {
+    aplicarItems(items.map((it, i) => {
+      if (i !== idx) return it;
+      const cantidad = Math.max(1, cantidadPedida ?? Number(it.cantidad) ?? 1);
+      // El precio que entra es el de efectivo. Si el cobro va en bolívares se
+      // cambia en el propio renglón: el catálogo enseña los dos para que se
+      // vea cuál es cuál.
+      const precio = precioEfectivoDe(p) || Number(it.precio_unitario) || 0;
+      return {
+        ...it,
+        // Se toma el nombre del catálogo: escrito a medias («silenc cl40»)
+        // luego no hay forma de reconocer qué pieza fue.
+        descripcion: p.nombre,
+        inventario_id: p.id,
+        sin_descuento: false,
+        es_mano_obra: false,
+        costo_unitario: Number(p.precio_fabricante) || 0,
+        precio_unitario: precio,
+        cantidad,
+        total: cantidad * precio,
+      };
+    }));
+  };
+
+  /** Deja constancia de que el renglón es mano de obra y no vuelve a avisar. */
+  const marcarManoDeObra = (idx: number) => {
+    aplicarItems(items.map((it, i) => (i === idx ? { ...it, es_mano_obra: true } : it)));
+  };
+
+  /**
+   * Añade un renglón nuevo ya enlazado a un producto del almacén.
+   *
+   * Es el camino del catálogo cuando se abre sin renglón de origen: si el
+   * último renglón está vacío se usa ese, y si no se agrega uno.
+   */
+  const agregarDesdeCatalogo = (p: ProductoInventario, cantidad: number) => {
+    const precio = precioEfectivoDe(p);
+    const nuevo: ServicioItem = {
+      descripcion: p.nombre,
+      cantidad: Math.max(1, cantidad),
+      precio_unitario: precio,
+      total: Math.max(1, cantidad) * precio,
+      inventario_id: p.id,
+      costo_unitario: Number(p.precio_fabricante) || 0,
+      stock_descontado: 0,
+    };
+    // Si el producto ya está en la orden se suma la cantidad en vez de repetirlo.
+    const yaEsta = items.findIndex(x => x.inventario_id === p.id && !x.sin_descuento);
+    if (yaEsta >= 0) {
+      aplicarItems(items.map((it, i) => {
+        if (i !== yaEsta) return it;
+        const c = (Number(it.cantidad) || 0) + Math.max(1, cantidad);
+        return { ...it, cantidad: c, total: c * (Number(it.precio_unitario) || precio) };
+      }));
+      return;
+    }
+    const ultimo = items[items.length - 1];
+    const hayHueco = items.length > 0 && !(ultimo.descripcion || '').trim() && !ultimo.inventario_id;
+    aplicarItems(hayHueco ? [...items.slice(0, -1), nuevo] : [...items, nuevo]);
+  };
+
+  /**
+   * Desliga el renglón del almacén: deja de descontar y devuelve lo que ya
+   * había restado.
+   *
+   * El `inventario_id` se conserva a propósito. Si se borrara, las unidades ya
+   * descontadas quedarían restadas para siempre: nadie sabría de qué producto
+   * eran para devolverlas.
+   */
+  const quitarInventario = (idx: number) => {
+    aplicarItems(items.map((it, i) => (i === idx ? { ...it, sin_descuento: true } : it)));
   };
   // Repuebla los ítems desde la descripción actual (botón "Desglosar").
   const autoDesglosar = () => {
@@ -1622,16 +1828,39 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
           // Mismo cliente: solo actualizamos su teléfono (NUNCA renombramos aquí).
           await supabase!.from('clientes').update({ telefono: tel || 'S/N' }).eq('id', clienteId);
         } else {
-          // Dedup SOLO por nombre+apellido EXACTO. ⚠️ NO buscamos por teléfono: al editar,
-          // el teléfono suele ser el del cliente anterior y enlazaría al equivocado en vez
-          // de crear el nuevo. Si no existe un cliente con ese nombre exacto → se CREA.
-          const { data: existing } = await withSedeFilter(supabase!.from('clientes'))
-            .select('id').ilike('nombre', nombre).ilike('apellido', apellido).limit(1).maybeSingle();
-          if (existing) {
-            clienteId = existing.id;
+          // Buscar al cliente que ya existe antes de crear otro.
+          //
+          // Antes esto comparaba `nombre` y `apellido` con `ilike` literal, y
+          // el teléfono se ignoraba a propósito. El resultado son 1.261 fichas
+          // para 1.170 nombres: «DAVID ALARCON» y «David  Alarcon» eran dos
+          // clientes, y «04127419438» no encontraba a «+584127419438».
+          //
+          // Ahora se comparan normalizados —sin acentos, sin dobles espacios y
+          // el teléfono por sus últimos 10 dígitos—. El teléfono solo CONFIRMA
+          // un nombre parecido: hay 59 números compartidos por gente distinta
+          // (el del taller, el de la esposa), y uno tiene siete clientes
+          // colgando. Fusionar por número sería peor que duplicar.
+          const { data: candidatos } = await withSedeFilter(supabase!.from('clientes'))
+            .select('id, nombre, apellido, telefono')
+            .or(`nombre.ilike.${nombre},telefono.ilike.%${tel.replace(/\D/g, '').slice(-8)}`)
+            .limit(60);
+
+          const hallados = buscarCliente(nombreFull, tel, (candidatos as {
+            id: string; nombre: string | null; apellido: string | null; telefono: string | null;
+          }[]) || []);
+          const seguro = coincidenciaSegura(hallados);
+
+          if (seguro) {
+            clienteId = seguro.id;
           } else {
             const { data: created, error } = await withSedeFilter(supabase!.from('clientes'))
-              .insert(withSedeInsert({ nombre, apellido, telefono: tel || 'S/N', notas: 'Registrado desde Orden de Servicio' }))
+              .insert(withSedeInsert({
+                nombre, apellido,
+                // El teléfono se guarda normalizado para que la próxima
+                // búsqueda lo encuentre sea como sea que se escriba.
+                telefono: claveTelefono(tel) ? `0${claveTelefono(tel)}` : (tel || 'S/N'),
+                notas: 'Registrado desde Orden de Servicio',
+              }))
               .select('id').single();
             if (error) throw error;
             clienteId = created.id;
@@ -1692,8 +1921,28 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
     return { clienteId, vehiculoId };
   };
 
-  const handleSave = async (force = false, transferVeh = false) => {
+  /**
+   * El guardado, con una parada antes si hay mercancía escrita a mano.
+   *
+   * `saltarAviso` lo pone el propio aviso al continuar: sin él, aceptar el
+   * diálogo volvería a abrirlo y no se podría guardar nunca.
+   */
+  const handleSave = async (force = false, transferVeh = false, saltarAviso = false) => {
     if (!supabase) return;
+
+    // Renglones que parecen repuestos del almacén y nadie ha enlazado. Se
+    // resuelven ahora: escritos a mano se cobran, pero no bajan del stock ni
+    // quedan como gasto del vehículo, y el inventario deja de servir.
+    if (!saltarAviso) {
+      const dudosos = detectarRepuestosSueltos(items, inventario);
+      if (dudosos.length > 0) {
+        setSospechosos(dudosos);
+        return;
+      }
+    }
+    // Lo que el almacén tenga que decir (faltó stock, un producto ya no existe).
+    // Se guarda para contarlo al final: nunca impide grabar la orden.
+    let avisosStock: string[] = [];
     if (!formData.nombre_cliente || !formData.vehiculo_info) {
       alert('Campos obligatorios incompletos');
       return;
@@ -1780,6 +2029,14 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
           cantidad: Number(i.cantidad) || 1,
           precio_unitario: Number(i.precio_unitario) || 0,
           total: Number(i.total) || (Number(i.cantidad) || 1) * (Number(i.precio_unitario) || 0),
+          // El enlace con el almacén y la marca de lo ya descontado viajan con el
+          // renglón. Perderlos aquí significaría restar el mismo repuesto en cada
+          // guardado de la orden.
+          inventario_id: i.inventario_id ?? null,
+          stock_descontado: Number(i.stock_descontado) || 0,
+          costo_unitario: Number(i.costo_unitario) || 0,
+          ...(i.sin_descuento ? { sin_descuento: true } : {}),
+          ...(i.es_mano_obra ? { es_mano_obra: true } : {}),
         }));
       // Si los ítems ya tienen precios (suma > 0) el costo = suma de ítems; si aún no
       // se asignaron precios, se conserva el costo del campo manual (no se pone en 0).
@@ -1823,6 +2080,11 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
           .update(updatePayload)
           .eq('id', cita.id);
         if (error) throw error;
+
+        // Almacén: se ajusta contra la orden ya grabada. Si la orden se anula,
+        // los repuestos que no salieron del taller vuelven a contarse.
+        const anulada = ['cancelada', 'cancelado', 'anulada'].includes(String(cita.estado || ''));
+        avisosStock = await ajustarStockDeOrden(cita.id, anulada);
 
         // Nómina: re-sincroniza el personal a cargo y sus comisiones.
         // Sólo se reemplazan los trabajos PENDIENTES; lo ya liquidado nunca se toca.
@@ -1974,6 +2236,10 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
         const { data: nuevoServicio, error } = await withSedeFilter(supabase!.from('servicios')).insert(withSedeInsert(payload)).select().single();
         if (error) throw error;
 
+        // Almacén: los repuestos tomados del catálogo salen del stock ahora que
+        // la orden existe de verdad.
+        avisosStock = await ajustarStockDeOrden(nuevoServicio?.id || '');
+
         // Registra trabajos + comisiones vinculados (no bloquea la creación si falla).
         try {
           await fetch('/api/nomina/jobs', {
@@ -2003,6 +2269,11 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
           detalles: `Creada orden manual para ${formData.nombre_cliente} (IDs: C:${finalClienteId} V:${finalVehiculoId})`
         });
       }
+      // La orden ya está guardada. Si el almacén tuvo algo que decir se dice
+      // ahora, después de grabar y sin deshacer nada.
+      if (avisosStock.length > 0) {
+        alert(`La orden se guardó.\n\nSobre el inventario:\n· ${avisosStock.join('\n· ')}`);
+      }
       onClose();
     } catch (err: any) { alert('Error: ' + err.message); }
     finally { setIsSaving(false); }
@@ -2010,7 +2281,11 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
 
   return (
     <div className="fixed inset-0 z-[110] flex justify-center items-start sm:items-center bg-black/60 backdrop-blur-xl p-4 overflow-y-auto">
-      <div className="bg-card border border-border w-full max-w-xl shadow-2xl flex flex-col my-auto sm:my-0 rounded-[24px] sm:rounded-[32px] overflow-hidden sm:max-h-[90vh]">
+      {/* Ancho de trabajo, no de diálogo: aquí caben el desglose con su
+          autocompletado, el personal a cargo y los métodos de pago. En `max-w-xl`
+          el catálogo del almacén se salía de la pantalla y el desglose obligaba a
+          desplazar todo el rato. */}
+      <div className="bg-card border border-border w-full max-w-4xl shadow-2xl flex flex-col my-auto sm:my-0 rounded-[24px] sm:rounded-[32px] overflow-hidden sm:max-h-[92vh]">
         <div className="p-4 sm:p-6 border-b border-border flex items-center justify-between bg-gradient-to-br from-primary/5 to-transparent shrink-0">
           <div className="flex items-center gap-3 sm:gap-4">
             <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-primary/10 flex items-center justify-center border border-primary/20 shrink-0">
@@ -2249,6 +2524,103 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
                 />
               )}
             </div>
+            <div className="col-span-2 space-y-2">
+              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Descripci&oacute;n de la Falla / Trabajo</label>
+              <textarea 
+                className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all min-h-[80px] sm:min-h-[100px] resize-none"
+                placeholder="Escribe aqu&iacute; los detalles t&eacute;cnicos..."
+                value={formData.descripcion}
+                onChange={e => setFormData({...formData, descripcion: e.target.value})}
+              />
+            </div>
+
+            {/* ── Servicios desglosados (para imprimir la factura por ítems) ── */}
+            <div className="col-span-2 space-y-2">
+              <div className="flex items-center justify-between ml-1">
+                <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest">
+                  Servicios desglosados <span className="normal-case opacity-60">(para la factura)</span>
+                </label>
+                <div className="flex items-center gap-3">
+                  {/* Del almacén: es el camino que debería usarse siempre que la
+                      pieza exista en el inventario, así que va primero y con el
+                      peso visual del botón principal. */}
+                  <button
+                    type="button" onClick={() => setCatalogoPara(-1)}
+                    className="flex items-center gap-1 rounded-lg bg-primary/10 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-primary transition-colors hover:bg-primary/20"
+                  >
+                    <Package className="w-3 h-3" /> Del inventario
+                  </button>
+                  <button type="button" onClick={autoDesglosar} className="text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:text-primary hover:underline">
+                    Auto-desglosar
+                  </button>
+                  <button type="button" onClick={addItem} className="text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:text-primary flex items-center gap-1">
+                    <Plus className="w-3 h-3" /> Mano de obra
+                  </button>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-border/60 bg-muted/20 p-2 sm:p-3 space-y-2">
+                {items.length === 0 && (
+                  <p className="px-1 py-2 text-[10.5px] leading-snug text-muted-foreground">
+                    Sin renglones. Si el trabajo lleva piezas, tómalas <b>del inventario</b> y se
+                    descuentan solas; la mano de obra se escribe a mano.
+                  </p>
+                )}
+                {items.length > 0 && (
+                  <p className="px-1 pb-1 text-[10px] leading-snug text-muted-foreground">
+                    Escribe y aparecen los artículos del almacén: elige uno y el renglón queda
+                    enlazado, con su precio. La mano de obra no lleva existencias — no elijas nada.
+                  </p>
+                )}
+                {items.map((it, idx) => (
+                  <div key={idx} className="flex items-center gap-1.5 sm:gap-2">
+                    <SelectorRepuesto
+                      productos={inventario}
+                      seleccionadoId={it.sin_descuento ? null : it.inventario_id}
+                      cantidad={Number(it.cantidad) || 1}
+                      onAbrirCatalogo={() => setCatalogoPara(idx)}
+                      onQuitar={() => quitarInventario(idx)}
+                      compacto
+                    />
+                    <CampoRenglon
+                      valor={it.descripcion}
+                      onValor={v => updateItem(idx, 'descripcion', v)}
+                      productos={inventario}
+                      enlazado={!!it.inventario_id && !it.sin_descuento}
+                      onElegir={p => enlazarInventario(idx, p)}
+                      tasa={tasaCustom || tasaDiaBcv || globalBcvRate || 0}
+                      placeholder="Trabajo / repuesto"
+                      className="w-full bg-background/60 border border-border rounded-lg px-2.5 py-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                    <input
+                      type="number" min="1" value={it.cantidad}
+                      onChange={e => updateItem(idx, 'cantidad', e.target.value)}
+                      title="Cantidad"
+                      className="w-12 bg-background/60 border border-border rounded-lg px-1.5 py-2 text-xs text-center font-bold focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                    <div className="relative">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">$</span>
+                      <input
+                        type="number" step="0.01" value={it.precio_unitario}
+                        onChange={e => updateItem(idx, 'precio_unitario', e.target.value)}
+                        placeholder="0.00" title="Precio unitario"
+                        className="w-20 bg-background/60 border border-border rounded-lg pl-5 pr-2 py-2 text-xs text-right font-bold focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      />
+                    </div>
+                    <span className="w-16 text-right text-xs font-black text-primary tabular-nums">${Number(it.total).toFixed(2)}</span>
+                    <button type="button" onClick={() => removeItem(idx)} className="p-1 text-muted-foreground hover:text-red-400 transition-colors shrink-0" title="Quitar">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+                {items.length > 0 && (
+                  <div className="flex items-center justify-end gap-3 pt-2 mt-1 border-t border-border/40">
+                    <span className="text-[10px] uppercase font-black tracking-widest text-muted-foreground">Total</span>
+                    <span className="text-sm font-black text-primary tabular-nums">${itemsTotal.toFixed(2)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div className="col-span-2 sm:col-span-1 space-y-2">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Costo Estimado ($)</label>
               <input 
@@ -2334,84 +2706,28 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
                 tasa={tasaCustom || globalBcvRate || 0}
                 tasaAuto={globalBcvRate}
                 onTasaChange={v => setTasaCustom(v ?? 0)}
+                cashea={{
+                  pct: casheaPct,
+                  onPct: p => { setCasheaPct(p); usarCashea(p); },
+                  activo: hayCashea,
+                  onUsar: () => usarCashea(),
+                  inicial: planCasheaOrden.inicial,
+                  resto: planCasheaOrden.resto,
+                  cuota: planCasheaOrden.cuota,
+                  cuotas: planCasheaOrden.cuotas,
+                }}
               />
               <p className="text-[11px] leading-snug text-[#8a909c]">Cada cobro cae en su banco y de ah&iacute; a su columna del Reporte de Ventas al completar el servicio.</p>
               {hayCashea && (
                 <p className="rounded-lg bg-[#fff7ed] px-2.5 py-2 text-[11.5px] leading-snug text-[#9a3412]">
-                  <strong className="font-semibold">Cashea:</strong> el IVA del 16% va incluido y el resto
-                  queda como <strong className="font-semibold">pendiente por cobrar</strong> hasta que el
-                  cliente termine sus cuotas.
+                  <strong className="font-semibold">Cashea:</strong> financia ${planCasheaOrden.total.toFixed(2)}
+                  {' '}(IVA ${planCasheaOrden.iva.toFixed(2)} incluido). Hoy se cobra la inicial del{' '}
+                  {planCasheaOrden.pct}% — <strong className="font-semibold">${planCasheaOrden.inicial.toFixed(2)}</strong>
+                  {' '}— y ${planCasheaOrden.resto.toFixed(2)} quedan{' '}
+                  <strong className="font-semibold">pendientes por cobrar</strong> en{' '}
+                  {planCasheaOrden.cuotas} cuotas de ${planCasheaOrden.cuota.toFixed(2)}.
                 </p>
               )}
-            </div>
-
-            <div className="col-span-2 space-y-2">
-              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Descripci&oacute;n de la Falla / Trabajo</label>
-              <textarea 
-                className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all min-h-[80px] sm:min-h-[100px] resize-none"
-                placeholder="Escribe aqu&iacute; los detalles t&eacute;cnicos..."
-                value={formData.descripcion}
-                onChange={e => setFormData({...formData, descripcion: e.target.value})}
-              />
-            </div>
-
-            {/* ── Servicios desglosados (para imprimir la factura por ítems) ── */}
-            <div className="col-span-2 space-y-2">
-              <div className="flex items-center justify-between ml-1">
-                <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest">
-                  Servicios desglosados <span className="normal-case opacity-60">(para la factura)</span>
-                </label>
-                <div className="flex items-center gap-3">
-                  <button type="button" onClick={autoDesglosar} className="text-[10px] font-black uppercase tracking-widest text-primary hover:underline">
-                    Auto-desglosar
-                  </button>
-                  <button type="button" onClick={addItem} className="text-[10px] font-black uppercase tracking-widest text-primary flex items-center gap-1">
-                    <Plus className="w-3 h-3" /> Agregar
-                  </button>
-                </div>
-              </div>
-              <div className="rounded-2xl border border-border/60 bg-muted/20 p-2 sm:p-3 space-y-2">
-                {items.length === 0 && (
-                  <p className="text-[10px] text-muted-foreground italic px-1 py-2">
-                    Sin ítems. Usa <b>Auto-desglosar</b> para separar la descripción en líneas, o <b>Agregar</b> una manual.
-                  </p>
-                )}
-                {items.map((it, idx) => (
-                  <div key={idx} className="flex items-center gap-1.5 sm:gap-2">
-                    <input
-                      value={it.descripcion}
-                      onChange={e => updateItem(idx, 'descripcion', e.target.value)}
-                      placeholder="Trabajo / repuesto"
-                      className="flex-1 min-w-0 bg-background/60 border border-border rounded-lg px-2.5 py-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    />
-                    <input
-                      type="number" min="1" value={it.cantidad}
-                      onChange={e => updateItem(idx, 'cantidad', e.target.value)}
-                      title="Cantidad"
-                      className="w-12 bg-background/60 border border-border rounded-lg px-1.5 py-2 text-xs text-center font-bold focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    />
-                    <div className="relative">
-                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">$</span>
-                      <input
-                        type="number" step="0.01" value={it.precio_unitario}
-                        onChange={e => updateItem(idx, 'precio_unitario', e.target.value)}
-                        placeholder="0.00" title="Precio unitario"
-                        className="w-20 bg-background/60 border border-border rounded-lg pl-5 pr-2 py-2 text-xs text-right font-bold focus:outline-none focus:ring-2 focus:ring-primary/30"
-                      />
-                    </div>
-                    <span className="w-16 text-right text-xs font-black text-primary tabular-nums">${Number(it.total).toFixed(2)}</span>
-                    <button type="button" onClick={() => removeItem(idx)} className="p-1 text-muted-foreground hover:text-red-400 transition-colors shrink-0" title="Quitar">
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-                {items.length > 0 && (
-                  <div className="flex items-center justify-end gap-3 pt-2 mt-1 border-t border-border/40">
-                    <span className="text-[10px] uppercase font-black tracking-widest text-muted-foreground">Total</span>
-                    <span className="text-sm font-black text-primary tabular-nums">${itemsTotal.toFixed(2)}</span>
-                  </div>
-                )}
-              </div>
             </div>
           </div>
         </div>
@@ -2428,6 +2744,32 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
           </Button>
         </div>
       </div>
+
+      {/* 📦 El almacén, en su propia ventana con buscador y los dos precios.
+          Se abre desde la cabecera del desglose (agrega renglones) o desde un
+          renglón concreto (lo enlaza y se cierra). */}
+      <ModalCatalogoInventario
+        abierto={catalogoPara !== null}
+        onCerrar={() => setCatalogoPara(null)}
+        productos={inventario}
+        tasa={tasaCustom || tasaDiaBcv || globalBcvRate || 0}
+        cerrarAlElegir={catalogoPara !== null && catalogoPara >= 0}
+        onElegir={(p, cantidad) => {
+          if (catalogoPara !== null && catalogoPara >= 0) enlazarInventario(catalogoPara, p, cantidad);
+          else agregarDesdeCatalogo(p, cantidad);
+        }}
+      />
+
+      {/* ⚠️ Mercancía escrita a mano: se resuelve antes de guardar. */}
+      <AvisoRepuestosSueltos
+        abierto={!!sospechosos}
+        sospechosos={sospechosos || []}
+        tasa={tasaCustom || tasaDiaBcv || globalBcvRate || 0}
+        onEnlazar={(idx, p) => enlazarInventario(idx, p)}
+        onEsManoDeObra={marcarManoDeObra}
+        onVolver={() => setSospechosos(null)}
+        onContinuar={() => { setSospechosos(null); handleSave(false, false, true); }}
+      />
 
       {/* 🚨 Alerta de servicio duplicado (mismo vehículo/cliente ya registrado) */}
       {dupAlert && (

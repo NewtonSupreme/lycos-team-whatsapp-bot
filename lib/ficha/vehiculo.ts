@@ -98,7 +98,13 @@ export interface FichaVehiculo {
     /** De cuál de los tres salió: cambia lo que significa la cifra. */
     montoOrigen: 'final' | 'pagado' | 'estimado' | 'ninguno';
     /** Renglones de la orden, si los tiene. */
-    items: { descripcion?: string; cantidad?: number; precio_unitario?: number; total?: number }[];
+    items: {
+      descripcion?: string; cantidad?: number; precio_unitario?: number; total?: number;
+      /** Producto del almacén, cuando el renglón es mercancía y no mano de obra. */
+      inventario_id?: string | null;
+      /** Lo que costó la pieza al taller. Es la mitad que faltaba para la utilidad. */
+      costo_unitario?: number;
+    }[];
   }[];
   /**
    * Renglones sacados de las órdenes que aún no se han pasado a la ficha.
@@ -114,6 +120,16 @@ export interface FichaVehiculo {
     descripcion: string;
     cantidad: number;
     precio_venta: number;
+    /**
+     * Lo que costó la pieza, cuando el renglón salió del almacén.
+     *
+     * Los renglones enlazados al inventario ya traen su costo, así que la
+     * partida entra a la ficha con la utilidad hecha en vez de pedir que
+     * alguien la busque y la teclee.
+     */
+    costo_unitario: number;
+    /** El producto del almacén, si lo hay. */
+    inventario_id: string | null;
   }[];
 }
 
@@ -255,7 +271,7 @@ export async function buildFichaVehiculo(db: SupabaseClient, p: Params): Promise
     id: string; fecha: string | null; tipo: string | null;
     tipo_personalizado: string | null; estado: string | null;
     descripcion: string | null;
-    items: { descripcion?: string; cantidad?: number; precio_unitario?: number; total?: number }[] | null;
+    items: FichaVehiculo['servicios'][number]['items'] | null;
     costo_final: number | null; total_pagado: number | null; costo_estimado: number | null;
   }[];
 
@@ -305,6 +321,8 @@ export async function buildFichaVehiculo(db: SupabaseClient, p: Params): Promise
         descripcion: desc,
         cantidad: Number(it?.cantidad) || 1,
         precio_venta: n2(Number(it?.precio_unitario) || Number(it?.total) || 0),
+        costo_unitario: n2(Number(it?.costo_unitario) || 0),
+        inventario_id: it?.inventario_id ?? null,
       });
     }
   }
