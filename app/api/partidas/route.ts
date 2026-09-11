@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authorize } from '@/lib/auth-server';
 import { logActivityServer } from '@/lib/activity-server';
+import { claveRenglon, sincronizarDesdePartida, type Partida } from '@/lib/ficha/sincronizar';
 
 export const dynamic = 'force-dynamic';
 
@@ -93,8 +94,15 @@ export async function POST(req: NextRequest) {
   fila.sede_id = auth.effectiveSede((body.sede as string) ?? null) ?? auth.user!.sede_id ?? null;
   fila.registrado_por = auth.user!.nombre;
 
+  fila.clave_item = claveRenglon(fila.descripcion);
+
   const { data, error } = await auth.db.from('vehiculo_partidas').insert(fila).select().single();
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+
+  // Con el renglón guardado, se pone al día lo que depende de él: el precio de
+  // la orden y el gasto de la empresa. Nunca tumba el alta: lo que falle sale
+  // como aviso, porque el renglón ya está y callarlo es peor.
+  const sinc = await sincronizarDesdePartida(auth.db, data as Partida, auth.user!.nombre);
 
   await logActivityServer(auth.db, {
     usuario: auth.user!.nombre, modulo: 'vehiculos', accion: 'Ficha · renglón',
@@ -103,5 +111,5 @@ export async function POST(req: NextRequest) {
     sede_id: fila.sede_id as string | null,
   });
 
-  return NextResponse.json({ partida: data });
+  return NextResponse.json({ partida: data, ...sinc });
 }

@@ -25,6 +25,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
 import MetodoPagoPanel from '@/components/pos/MetodoPagoPanel';
+import { planCashea, type PorcentajeCashea } from '@/lib/pagos/cashea';
 import { buildVentaDiaFields, emptyBins, binsTotalUSD, deptFromInventario, type Bins } from '@/lib/reporte/ventas-mapping';
 import { ComprobanteInput, emptyComprobante, type ComprobanteValue } from '@/components/ventas/ComprobanteInput';
 import { uploadComprobante, comprobanteFields } from '@/lib/comprobante';
@@ -73,8 +74,7 @@ export default function VentasPage() {
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   // Cashea: porcentaje de inicial (40, 50 o 60%)
-  type CasheaPct = 10 | 20 | 30 | 40 | 50 | 60;
-  const [casheaPct, setCasheaPct] = useState<CasheaPct>(50);
+  const [casheaPct, setCasheaPct] = useState<PorcentajeCashea>(50);
   // Cashea: moneda visual ('usd' o 'ves')
   const [casheaCurrency, setCasheaCurrency] = useState<'usd' | 'ves'>('usd');
   // Custom item prices (for tubería and variable-price items)
@@ -539,8 +539,16 @@ export default function VentasPage() {
         bins,
         subtotal,
         conIva,
-        saldo: saldoRestante,
+        // Con el plan de Cashea puesto, el resto financiado lo reparte el
+        // porcentaje. Pasarlo también aquí lo sumaba dos veces al saldo.
+        //
+        // Se mira `modoCashea` y no que la casilla tenga monto: si alguien
+        // teclea a mano un importe en la casilla de Cashea, el reparto por
+        // porcentaje se lo pisaría con otra cifra sin avisar. Con el plan
+        // activo manda el plan; escrito a mano, manda lo escrito.
+        saldo: modoCashea ? 0 : saldoRestante,
         tasa: activeRate,
+        casheaPct: modoCashea ? casheaPct : null,
         deptItems,
       });
 
@@ -577,10 +585,13 @@ export default function VentasPage() {
           total_clientes: 1,
           notas: `${notas}${vehiculoInfo ? ` | Vehículo: ${vehiculoInfo}` : ''}${tieneAbono ? ` | Abono: $${abonoAmount.toFixed(2)} | Saldo: $${saldoRestante.toFixed(2)}` : ''}${esRegistroAtrasado ? ' | ⚠️ REGISTRO ATRASADO' : ''}`,
           creado_por: 'Admin',
-          tiene_abono: tieneAbono,
-          abono: abonoAmount,
-          saldo_pendiente: saldoRestante,
-          estado: estadoVenta,
+          // El saldo y el estado los manda el mapeo cuando hay Cashea: la
+          // inicial entra hoy y el resto queda financiado, y tener la cifra en
+          // dos sitios es lo que dejaba la venta cerrada con dinero sin cobrar.
+          tiene_abono: modoCashea ? mapped.saldo_pendiente > 0.01 : tieneAbono,
+          abono: modoCashea ? mapped.inicial : abonoAmount,
+          saldo_pendiente: modoCashea ? mapped.saldo_pendiente : saldoRestante,
+          estado: modoCashea ? mapped.estado : estadoVenta,
           fecha_registro: new Date().toISOString(),
           registro_atrasado: esRegistroAtrasado
         }))
@@ -777,16 +788,25 @@ export default function VentasPage() {
     setBins(prev => ({ ...prev, cashea: isNaN(val) ? 0 : Math.max(0, val) }));
   };
 
-  const autoFillCashea = () => {
+  /**
+   * Carga en Cashea la inicial que le toca al plan.
+   *
+   * El porcentaje se recibe en vez de leerlo del estado: al pulsar otro plan,
+   * `setCasheaPct` aún no se ha aplicado y se calculaba con el anterior.
+   *
+   * Cashea financia SOBRE el precio con IVA, y el precio base es el de tasa BCV
+   * (`precio_bs`, que está en dólares) porque es el que aplica al no pagar en
+   * efectivo. Solo la INICIAL entra como cobro; el resto es crédito.
+   */
+  const autoFillCashea = (pct: PorcentajeCashea = casheaPct) => {
     setModoCashea(true);
     const casheaSubtotal = cart.reduce((sum, item) => {
       const basePrice = item.precio_bs || item.precio_unitario;
       return sum + (item.cantidad * basePrice);
     }, 0);
-    const casheaTotal = casheaSubtotal * 1.16;
-    const inicial = casheaTotal * (casheaPct / 100);
+    const plan = planCashea(casheaSubtotal, pct);
     const otrosPagos = binsTotalUSD({ ...bins, cashea: 0 }, activeRate);
-    const targetVal = Math.max(0, inicial - otrosPagos);
+    const targetVal = Math.max(0, plan.inicial - otrosPagos);
     setBins(prev => ({ ...prev, cashea: Number(targetVal.toFixed(2)) }));
   };
 
@@ -1582,9 +1602,11 @@ export default function VentasPage() {
                 onCustomRate={setCustomRate}
                 cashea={{
                   pct: casheaPct,
-                  onPct: pct => { setCasheaPct(pct); setConIva(true); setModoCashea(true); if (bins.cashea === 0) autoFillCashea(); },
+                  // Se recalcula SIEMPRE al cambiar de plan. Antes solo se rellenaba si la
+                  // inicial estaba en cero, así que con el plan al 0% se quedaba pegada.
+                  onPct: pct => { setCasheaPct(pct); setConIva(true); setModoCashea(true); autoFillCashea(pct); },
                   activo: isCasheaActive,
-                  onUsar: () => { setConIva(true); setModoCashea(true); autoFillCashea(); },
+                  onUsar: () => { setConIva(true); setModoCashea(true); autoFillCashea(casheaPct); },
                   inicial: casheaInicial,
                   resto: casheaResto,
                   cuota: casheaCuota,

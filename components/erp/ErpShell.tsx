@@ -53,6 +53,7 @@ const NAV: readonly NavItem[] = [
   { label: 'Presupuestos', href: '/dashboard/presupuestos', icon: FileSpreadsheet, permKey: 'presupuestos' },
   { label: 'WhatsApp', href: '/dashboard/whatsapp', icon: WhatsAppIcon as unknown as LucideIcon, permKey: 'whatsapp' },
   { label: 'Nómina', href: '/dashboard/nomina', icon: NominaIcon as unknown as LucideIcon, permKey: 'nomina', prefijo: true },
+  { label: 'Proveedores', href: '/dashboard/proveedores', icon: Truck, permKey: 'vehiculos' },
   { label: 'Finanzas', href: '/dashboard/finanzas', icon: Landmark, permKey: 'reportes' },
   { label: 'Reportes', href: '/dashboard/reportes', icon: ChartIcon as unknown as LucideIcon, permKey: 'reportes' },
   { label: 'Calculadora', href: '/dashboard/calculadora', icon: Calculator, permKey: 'calculadora' },

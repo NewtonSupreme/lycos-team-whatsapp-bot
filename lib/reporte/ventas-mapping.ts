@@ -8,6 +8,8 @@
 // del Reporte Diario en papel → así el dinero cae siempre en el lugar correcto.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { repartirCashea } from '@/lib/pagos/cashea';
+
 export type BankBin =
   | 'pago_movil_banesco'   // Banesco Cta Jurídica — pago móvil / transferencia (Bs)
   | 'bnc'                  // BNC Cta Jurídica — pago móvil / transferencia (Bs)
@@ -130,6 +132,14 @@ export interface BuildVentaDiaInput {
   saldo?: number;             // USD por cobrar / financiado (si aplica)
   tasa: number;               // tasa BCV del día
   deptItems?: DeptItem[];     // atribución por departamento (opcional)
+  /**
+   * El porcentaje de inicial del plan de Cashea, cuando la venta va financiada.
+   *
+   * Va explícito porque con un plan al 0% no hay inicial que cobrar, así que
+   * «¿esto es Cashea?» no se puede deducir de que el monto sea mayor que cero.
+   * Y es lo que decide el reparto: la inicial entra hoy, el resto es crédito.
+   */
+  casheaPct?: number | null;
 }
 
 export interface VentaDiaMappedFields {
@@ -143,6 +153,12 @@ export interface VentaDiaMappedFields {
   // Agregados financieros (USD salvo efectivo_bs/tasa)
   contado: number; por_cobrar: number; iva: number; inicial: number; financiado: number;
   tasa: number;
+  /** El plan de Cashea con el que se guardó. Nulo = sin Cashea. */
+  cashea_pct: number | null;
+  /** Lo que queda por cobrar de esta venta, Cashea incluido. */
+  saldo_pendiente: number;
+  /** `pendiente` mientras quede saldo; `pagado` cuando no queda nada. */
+  estado: 'pendiente' | 'pagado';
   // Retrocompatibilidad
   metodos_pago: Record<string, number>;
 }
@@ -160,16 +176,47 @@ export function buildVentaDiaFields(input: BuildVentaDiaInput): VentaDiaMappedFi
 
   const departamentos = sumDepartamentos(input.deptItems || []);
 
-  const casheaUSD = r2(bins.cashea);
-  const recibidoUSD = binsTotalUSD(bins, tasa);
+  // ── El reparto de Cashea ──────────────────────────────────────────────────
+  //
+  // La regla: de una venta financiada, HOY entra la inicial y nada más. El resto
+  // es crédito y se cobra en cuotas.
+  //
+  // Antes en la cuenta de Cashea se guardaba el importe completo de la venta, así
+  // que el día cerraba como si hubiera entrado todo: de 27 ventas financiadas,
+  // las 27 tenían la inicial en cero y el total dentro de la cuenta. Por eso los
+  // ingresos del día no cuadraban nunca con el dinero que había.
+  const tienePlan = input.casheaPct !== null && input.casheaPct !== undefined
+    && Number.isFinite(Number(input.casheaPct));
+  const plan = tienePlan ? repartirCashea(subtotal, input.casheaPct) : null;
+
+  // Cashea financia SOBRE el precio con IVA: en cuanto hay plan, el 16% no es
+  // opcional, porque de ese total salen la inicial y las cuotas.
+  const ivaFinal = plan ? plan.iva : iva;
+
+  // En la cuenta de Cashea va solo la inicial. Lo que llegue por otras cuentas
+  // —un cliente que además paga algo en efectivo— se respeta tal cual.
+  const binsFinal: Bins = plan ? { ...bins, cashea: plan.inicial } : bins;
+
+  const casheaUSD = r2(binsFinal.cashea);
+  const recibidoUSD = binsTotalUSD(binsFinal, tasa);
   const contado = Math.max(0, r2(recibidoUSD - casheaUSD)); // recibido de contado (sin Cashea)
   const saldoUSD = r2(input.saldo || 0);
-  const esCashea = casheaUSD > 0;
+  const esCashea = Boolean(plan) || casheaUSD > 0;
 
   let inicial = 0, financiado = 0, por_cobrar = 0;
-  if (esCashea) {
-    financiado = saldoUSD;   // parte financiada por Cashea
-    inicial = contado;       // cuota inicial pagada hoy
+  let saldoFinal = saldoUSD;
+
+  if (plan) {
+    inicial = plan.inicial;
+    financiado = plan.financiado;
+    // El saldo de la venta es lo financiado más lo que quedara a deber de la
+    // parte de contado, si el cliente tampoco la cubrió entera.
+    saldoFinal = r2(plan.financiado + saldoUSD);
+  } else if (esCashea) {
+    // Fila sin plan: se conserva el comportamiento de siempre para no cambiar
+    // de significado lo que ya se venía guardando.
+    financiado = saldoUSD;
+    inicial = contado;
   } else if (saldoUSD > 0) {
     por_cobrar = saldoUSD;   // crédito simple
   }
@@ -178,32 +225,39 @@ export function buildVentaDiaFields(input: BuildVentaDiaInput): VentaDiaMappedFi
   // El dato preciso por banco vive en las columnas dedicadas de arriba.
   const legacy: Record<string, number> = {};
   const put = (k: string, v: number) => { if (v && v > 0) legacy[k] = r2(v); };
-  put('efectivo_usd', bins.dolares);
-  put('zelle', bins.zelle);
-  put('binance', bins.binance);
-  put('cashea', bins.cashea);
-  put('efectivo_ves', bins.efectivo_bs);
-  put('pago_movil', bins.pago_movil_banesco + bins.bnc + bins.pago_movil_exterior);
-  put('punto_de_venta', bins.punto_banesco + bins.punto_bancamiga);
+  put('efectivo_usd', binsFinal.dolares);
+  put('zelle', binsFinal.zelle);
+  put('binance', binsFinal.binance);
+  put('cashea', binsFinal.cashea);
+  put('efectivo_ves', binsFinal.efectivo_bs);
+  put('pago_movil', binsFinal.pago_movil_banesco + binsFinal.bnc + binsFinal.pago_movil_exterior);
+  put('punto_de_venta', binsFinal.punto_banesco + binsFinal.punto_bancamiga);
+
+  // Con un plan al 0% no entra ni un dólar hoy, y la cuenta de Cashea queda en
+  // cero. Se deja la marca para que la venta no parezca de contado al releerla.
+  if (plan && plan.inicial === 0) legacy.cashea = 0;
 
   return {
     ...departamentos,
-    pago_movil_banesco: r2(bins.pago_movil_banesco),
-    bnc: r2(bins.bnc),
-    punto_banesco: r2(bins.punto_banesco),
-    punto_bancamiga: r2(bins.punto_bancamiga),
-    pago_movil_exterior: r2(bins.pago_movil_exterior),
-    dolares: r2(bins.dolares),
-    binance: r2(bins.binance),
-    zelle: r2(bins.zelle),
-    efectivo_bs: r2(bins.efectivo_bs),
-    cashea: r2(bins.cashea),
+    pago_movil_banesco: r2(binsFinal.pago_movil_banesco),
+    bnc: r2(binsFinal.bnc),
+    punto_banesco: r2(binsFinal.punto_banesco),
+    punto_bancamiga: r2(binsFinal.punto_bancamiga),
+    pago_movil_exterior: r2(binsFinal.pago_movil_exterior),
+    dolares: r2(binsFinal.dolares),
+    binance: r2(binsFinal.binance),
+    zelle: r2(binsFinal.zelle),
+    efectivo_bs: r2(binsFinal.efectivo_bs),
+    cashea: r2(binsFinal.cashea),
     contado,
     por_cobrar,
-    iva,
+    iva: ivaFinal,
     inicial,
     financiado,
     tasa,
+    cashea_pct: plan ? plan.pct : null,
+    saldo_pendiente: saldoFinal,
+    estado: saldoFinal > 0.01 ? 'pendiente' : 'pagado',
     metodos_pago: legacy,
   };
 }

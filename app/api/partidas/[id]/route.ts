@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authorize } from '@/lib/auth-server';
 import { logActivityServer } from '@/lib/activity-server';
 import { normalizarPartida } from '../route';
+import {
+  claveRenglon, quitarRenglonDeOrden, sincronizarDesdePartida, type Partida,
+} from '@/lib/ficha/sincronizar';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,13 +28,30 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { data, error } = await auth.db.from('vehiculo_partidas').update(cambios).eq('id', id).select().single();
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
+  // El renglón ya está guardado; ahora se pone al día lo que depende de él: el
+  // precio de la orden y el gasto de la empresa. Si la descripción cambió, se
+  // pasa la anterior para poder encontrar su renglón en la orden en vez de
+  // añadir uno nuevo y dejar el viejo cobrándose.
+  const claveAnterior = claveRenglon(actual.descripcion) !== claveRenglon(data.descripcion)
+    ? (actual.clave_item || actual.descripcion)
+    : (actual.clave_item || data.descripcion);
+
+  const sinc = await sincronizarDesdePartida(auth.db, data as Partida, auth.user!.nombre, {
+    claveAnterior,
+  });
+
+  // La clave queda guardada para poder reencontrar el renglón la próxima vez
+  // aunque alguien corrija el texto.
+  await auth.db.from('vehiculo_partidas')
+    .update({ clave_item: claveRenglon(data.descripcion) }).eq('id', id);
+
   await logActivityServer(auth.db, {
     usuario: auth.user!.nombre, modulo: 'vehiculos', accion: 'Ficha · renglón editado',
     detalles: `${data.descripcion} · placa ${data.placa || '—'}`,
     referencia_id: id, referencia_tabla: 'vehiculo_partidas', sede_id: data.sede_id,
   });
 
-  return NextResponse.json({ partida: data });
+  return NextResponse.json({ partida: data, ...sinc });
 }
 
 /** Borra un renglón. */
@@ -40,13 +60,34 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const auth = await authorize('vehiculos', 'eliminar');
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
+  // Se lee antes de borrar: hace falta saber a qué orden pertenecía para
+  // quitarle el renglón y bajarle el precio.
+  const { data: previa } = await auth.db.from('vehiculo_partidas')
+    .select('id, servicio_id, descripcion, clave_item, placa').eq('id', id).maybeSingle();
+
   const { error } = await auth.db.from('vehiculo_partidas').delete().eq('id', id);
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
+  // El gasto asociado se va solo: `egresos.partida_id` borra en cascada. Lo que
+  // hay que hacer a mano es quitar el renglón de la orden, porque si no el
+  // cliente seguiría viendo ese cobro.
+  const avisos: string[] = [];
+  let totalOrden: number | null = null;
+  const quitarDeOrden = _req.headers.get('x-quitar-de-orden') !== 'no';
+
+  if (previa?.servicio_id && quitarDeOrden) {
+    const r = await quitarRenglonDeOrden(
+      auth.db, previa.servicio_id, previa.clave_item || previa.descripcion,
+    );
+    totalOrden = r.total;
+    if (r.aviso) avisos.push(r.aviso);
+  }
+
   await logActivityServer(auth.db, {
     usuario: auth.user!.nombre, modulo: 'vehiculos', accion: 'Ficha · renglón borrado',
-    detalles: `Renglón ${id}`, referencia_id: id, referencia_tabla: 'vehiculo_partidas',
+    detalles: `${previa?.descripcion || id} · placa ${previa?.placa || '—'}`,
+    referencia_id: id, referencia_tabla: 'vehiculo_partidas',
   });
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, totalOrden, avisos });
 }

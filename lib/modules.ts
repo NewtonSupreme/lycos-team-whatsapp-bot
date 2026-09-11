@@ -62,6 +62,7 @@ export const MODULES: readonly AppModule[] = [
 
   { id: 'inventario', href: '/dashboard/inventario', label: 'Inventario', description: 'Stock, precios y movimientos', icon: Package, group: 'Inventario', permKey: 'inventario', tint: '188 86% 38%', keywords: ['stock', 'repuestos', 'almacen'] },
   { id: 'distribucion', href: '/dashboard/distribuidor', label: 'Distribución', description: 'Traslados entre sedes y ganancia', icon: Truck, group: 'Inventario', permKey: 'distribuidor', tint: '217 91% 50%', keywords: ['traslados', 'sedes', 'reparto'] },
+  { id: 'proveedores', href: '/dashboard/proveedores', label: 'Proveedores', description: 'A quien le compras, que le debes y que esta por llegar', icon: Truck, group: 'Inventario', permKey: 'vehiculos', tint: '24 95% 53%', keywords: ['compras', 'ordenes', 'credito', 'deuda', 'repuestos', 'pagar'] },
   { id: 'papelera', href: '/dashboard/inventario/papelera', label: 'Papelera', description: 'Artículos eliminados recuperables', icon: Trash2, group: 'Inventario', permKey: 'papelera', tint: '215 16% 47%', keywords: ['borrados', 'eliminados'] },
 
   { id: 'nomina', href: '/dashboard/nomina', label: 'Nómina', description: 'Sueldos, comisiones y adelantos', icon: Banknote, group: 'Finanzas', permKey: 'nomina', tint: '142 60% 32%', keywords: ['sueldos', 'pagos', 'comisiones'] },

@@ -4,6 +4,7 @@ import {
   binsFromLegacyMetodos, binsTotalUSD, binToUSD,
   BANK_METHODS, DEPT_LABELS, type Bins, type BankBin, type DeptKey,
 } from '@/lib/reporte/ventas-mapping';
+import { leerCasheaGuardado } from '@/lib/pagos/cashea';
 
 // Comisión que cobra el banco por cada transacción de punto de venta (referencial, ajustable).
 const COMISION_PUNTO_PCT = 0.05;
@@ -108,9 +109,24 @@ export async function GET(req: NextRequest) {
       const saldo = n(v.saldo_pendiente);
       const total = n(v.total_ingresos);
       const iva = v.con_iva ? r2(total * 0.16) : n(v.iva);
-      const esCashea = cashea > 0;
-      const inicial = esCashea ? contado : n(v.inicial);
-      const financiado = esCashea ? saldo : n(v.financiado);
+
+      // ── Cashea: la inicial es lo cobrado, el resto es crédito ──────────────
+      //
+      // Una venta guardada con `cashea_pct` ya trae el reparto hecho: en la
+      // cuenta de Cashea solo está la inicial. Se lee tal cual.
+      //
+      // Las filas viejas (sin porcentaje) tienen el importe COMPLETO metido en
+      // la cuenta y la inicial en cero, así que su cifra mezcla cobro y crédito.
+      // No se reparte a posteriori —inventar un porcentaje sería peor—: se
+      // conserva el cálculo de siempre para no cambiarle el significado a lo
+      // que ya estaba reportado.
+      const cx = leerCasheaGuardado({
+        cashea, cashea_pct: v.cashea_pct,
+        inicial: v.inicial, financiado: v.financiado, saldo_pendiente: v.saldo_pendiente,
+      });
+      const esCashea = cx.usa;
+      const inicial = !esCashea ? n(v.inicial) : cx.legado ? contado : cx.inicial;
+      const financiado = !esCashea ? n(v.financiado) : cx.legado ? saldo : cx.financiado;
       const porCobrar = !esCashea ? (saldo || n(v.por_cobrar)) : n(v.por_cobrar);
 
       return {

@@ -24,8 +24,18 @@
 
 export const IVA = 0.16;
 
-/** Los porcentajes de inicial que ofrece Cashea. */
-export const PORCENTAJES_CASHEA = [10, 20, 30, 40, 50, 60] as const;
+/**
+ * Los porcentajes de inicial que ofrece Cashea.
+ *
+ * El 0% existe y hay que poder elegirlo: Cashea aprueba planes sin inicial y
+ * entonces el taller no cobra nada ese día —todo queda financiado—. Faltaba, y
+ * sin él un plan al 0% había que meterlo a mano y acababa mal registrado.
+ *
+ * Con 0% el importe del cobro es cero, así que «¿se está usando Cashea?» NO se
+ * puede deducir de que el monto sea mayor que cero. Hace falta un interruptor
+ * explícito; si no, el 0% apaga el IVA obligatorio y el saldo financiado.
+ */
+export const PORCENTAJES_CASHEA = [0, 10, 20, 30, 40, 50, 60] as const;
 export type PorcentajeCashea = (typeof PORCENTAJES_CASHEA)[number];
 
 /** Cuántas cuotas van después de la inicial. Hoy Cashea cobra tres. */
@@ -69,9 +79,125 @@ export function planCashea(subtotalSinIva: number, pct: PorcentajeCashea): PlanC
   };
 }
 
-/** Un porcentaje válido, por si llega cualquier cosa de la interfaz. */
+/**
+ * Un porcentaje válido, por si llega cualquier cosa de la interfaz.
+ *
+ * Ojo con el 0: `Number(v) || 0` lo dejaba en 0 y antes 0 no estaba en la
+ * lista, así que caía en el 30 por omisión. Ahora el 0 es un plan legítimo y
+ * tiene que sobrevivir; solo lo que NO está en la lista cae en el 30.
+ *
+ * Y ojo con lo vacío: `Number(null)` y `Number('')` valen 0, que ahora ES un
+ * plan válido. Sin apartarlos primero, «esta venta no lleva Cashea» se
+ * convertiría en «lleva Cashea al 0%» y aparecería un crédito financiado por el
+ * total de una venta que se pagó al contado.
+ */
 export function normalizarPct(v: unknown): PorcentajeCashea {
-  const n = Math.round(Number(v) || 0);
-  const encontrado = PORCENTAJES_CASHEA.find(p => p === n);
-  return encontrado ?? 30;
+  if (v === null || v === undefined || v === '') return 30;
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n)) return 30;
+  return PORCENTAJES_CASHEA.find(p => p === n) ?? 30;
+}
+
+/**
+ * Lo que de verdad entra en caja hoy con este plan.
+ *
+ * Es la inicial y nada más. El resto es crédito: el taller lo cobrará en
+ * cuotas, o se lo pagará Cashea, pero hoy no ha entrado. Contarlo como ingreso
+ * del día infla la caja con dinero que no está.
+ */
+export const ingresoDeHoy = (plan: PlanCashea) => plan.inicial;
+
+/** Y lo que queda a deber. Con 0% de inicial, es el total. */
+export const creditoPendiente = (plan: PlanCashea) => plan.resto;
+
+// ── Cómo se guarda y cómo se lee ────────────────────────────────────────────
+
+export interface RepartoCashea {
+  pct: PorcentajeCashea;
+  /** Lo que se cobró hoy por Cashea. Es lo único que es ingreso del día. */
+  inicial: number;
+  /** Lo que queda financiado: crédito, no caja. */
+  financiado: number;
+  /** El total financiado por Cashea, con IVA. */
+  total: number;
+  iva: number;
+}
+
+/**
+ * Reparte una venta financiada con Cashea entre lo cobrado y lo financiado.
+ *
+ * Esta es la regla que faltaba y que descuadraba la caja: en la cuenta de
+ * Cashea se estaba guardando el importe COMPLETO de la venta, así que el día
+ * cerraba como si hubiera entrado todo. De 27 ventas con Cashea, las 27 tenían
+ * la inicial en cero y el total metido en la cuenta.
+ *
+ * Lo correcto: la inicial entra hoy, el resto es un crédito que se cobrará en
+ * cuotas. Son dos cifras distintas y nunca se suman.
+ */
+export function repartirCashea(subtotalSinIva: number, pct: unknown): RepartoCashea {
+  const plan = planCashea(subtotalSinIva, normalizarPct(pct));
+  return {
+    pct: plan.pct,
+    inicial: plan.inicial,
+    financiado: plan.resto,
+    total: plan.total,
+    iva: plan.iva,
+  };
+}
+
+/**
+ * Cómo interpretar una venta con Cashea ya guardada.
+ *
+ * Hay dos generaciones de filas y no significan lo mismo:
+ *
+ *   · Con el reparto hecho —`cashea_pct`, o `inicial`/`financiado` rellenos—:
+ *     la cuenta de Cashea tiene solo la inicial y el resto está en `financiado`.
+ *     Se leen tal cual.
+ *
+ *   · Sin nada de eso (las 27 históricas): la cuenta tiene el importe COMPLETO
+ *     y la inicial está en cero. No se puede saber qué inicial se cobró de
+ *     verdad, así que NO se adivina —repartirlo por un porcentaje inventado
+ *     sería peor que dejarlo—: se devuelve como estaba y se marca `legado`
+ *     para que el reporte pueda decir que esa cifra mezcla cobro y crédito.
+ *
+ * Se mira también `inicial`/`financiado` y no solo el porcentaje porque el bot
+ * escribe el reparto sin guardar un porcentaje redondo: el operador dicta la
+ * inicial en bolívares y de ahí puede salir cualquier porcentaje. Exigir
+ * `cashea_pct` habría mandado esas ventas al camino de las históricas, y su
+ * inicial —que sí se conoce— se habría dado por perdida.
+ */
+export function leerCasheaGuardado(fila: {
+  cashea?: unknown;
+  cashea_pct?: unknown;
+  inicial?: unknown;
+  financiado?: unknown;
+  saldo_pendiente?: unknown;
+}): { usa: boolean; legado: boolean; inicial: number; financiado: number; enCuenta: number } {
+  const enCuenta = r2(Number(fila.cashea) || 0);
+  const inicial = r2(Number(fila.inicial) || 0);
+  const financiado = r2(Number(fila.financiado) || 0);
+
+  const pct = fila.cashea_pct;
+  const tienePct = pct !== null && pct !== undefined && Number.isFinite(Number(pct));
+  const repartida = tienePct || inicial > 0 || financiado > 0;
+
+  if (!repartida) {
+    return {
+      usa: enCuenta > 0,
+      legado: enCuenta > 0,
+      inicial: 0,
+      financiado: r2(Number(fila.saldo_pendiente) || 0),
+      enCuenta,
+    };
+  }
+
+  return {
+    usa: true,
+    legado: false,
+    // Con el reparto hecho, lo que hay en la cuenta ES la inicial; la columna
+    // manda cuando está, por si la venta llevaba además otro método de pago.
+    inicial: inicial || enCuenta,
+    financiado: financiado || r2(Number(fila.saldo_pendiente) || 0),
+    enCuenta,
+  };
 }

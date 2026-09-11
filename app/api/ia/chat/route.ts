@@ -1427,6 +1427,11 @@ REGLA CASHEA:
 - Cashea usa PRECIO BCV (precio_bs) como base, NO precio divisas.
 - Total Cashea = Precio_BCV ÷ Tasa_BCV_actual × 1.16 (16% IVA).
 - metodo_pago = cashea_bcv. En 'total' el monto en USD al cambio BCV.
+- 'inicial' es lo que el cliente paga HOY. Es lo unico que entra en caja: el
+  resto queda como credito financiado, no como venta cobrada.
+- SIEMPRE pregunta la inicial antes de registrar una venta con Cashea. Si no la
+  sabes, NO la inventes: registra sin 'inicial' y avisa que quedo todo como
+  financiado para que lo corrijan.
 
 PAGOS MIXTOS:
 - Usa 'pago_mixto' con formato: "$20 Divisas + $30 BCV"

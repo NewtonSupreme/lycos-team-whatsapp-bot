@@ -27,6 +27,14 @@ interface Props {
   onEditar: (p: PartidaCalculada) => void;
   onBorrar: (p: PartidaCalculada) => void;
   onMarcarPagado: (p: PartidaCalculada) => void;
+  /**
+   * Qué decir cuando no hay nada.
+   *
+   * Con un trabajo elegido, «este vehículo no tiene renglones» es falso —los
+   * tiene, en otros trabajos— y además esconde lo que hay que hacer, que es
+   * costear los renglones de la orden de arriba.
+   */
+  vacio?: { titulo: string; detalle: string };
 }
 
 /**
@@ -36,13 +44,19 @@ interface Props {
  * cuánto se vendió y quién lo vendió. Las dos columnas de dinero van juntas a
  * propósito, porque la comparación entre ellas es todo el punto de la hoja.
  */
-export default function TablaPartidas({ partidas, canEdit, onEditar, onBorrar, onMarcarPagado }: Props) {
+export default function TablaPartidas({
+  partidas, canEdit, onEditar, onBorrar, onMarcarPagado, vacio,
+}: Props) {
   if (partidas.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[#d5d9e0] py-12 text-center">
         <Wrench className="mb-2 h-8 w-8 text-[#d5d9e0]" aria-hidden />
-        <p className="text-[13px] font-medium text-[#8a909c]">Este vehículo aún no tiene renglones</p>
-        <p className="text-[12px] text-[#9ba1ab]">Agrega lo que se le hizo y lo que costó para ver la ganancia.</p>
+        <p className="text-[13px] font-medium text-[#8a909c]">
+          {vacio?.titulo || 'Este vehículo aún no tiene renglones'}
+        </p>
+        <p className="max-w-[42ch] text-[12px] leading-snug text-[#9ba1ab]">
+          {vacio?.detalle || 'Agrega lo que se le hizo y lo que costó para ver la ganancia.'}
+        </p>
       </div>
     );
   }

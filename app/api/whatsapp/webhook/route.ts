@@ -517,6 +517,7 @@ CASHEA:
   - Nivel 3 en adelante: 40% inicial.
 - DESGLOSE: Indica claramente el monto de la Inicial ($ a tasa BCV) y el monto de cada una de las 3 cuotas ($ a tasa BCV).
 - PAGOS: Aclara que la inicial se paga únicamente en el taller y el resto de las cuotas a través de la plataforma de Cashea cada 14 días.
+- AL REGISTRAR: la inicial es lo ÚNICO que entra en caja hoy; el resto queda como crédito financiado, no como venta cobrada. Pasa siempre 'inicial=' con lo que el cliente pagó. Si no lo sabes NO lo inventes: regístralo sin 'inicial' y avisa de que quedó todo financiado para que lo corrijan.
 
 CITAS — REGLAS ABSOLUTAS:
 Pedir OBLIGATORIAMENTE antes de confirmar la cita: nombre completo, placa del vehículo (si la tiene), MARCA Y MODELO del vehículo, servicio y el DÍA exacto (Lunes-Sábados). **La hora es opcional**, si el cliente no la da, asúmela a las 08:00 AM por defecto.
@@ -5407,11 +5408,39 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             }
 
             const isCashea = metodo === 'cashea_bcv';
-            const inicialCashea = p.inicial ? parseFloat(p.inicial) : (totalNum * 0.5); // Default 50% si no viene
+
+            /*
+             * Con Cashea, HOY entra la inicial y nada más. El resto es crédito.
+             *
+             * Antes, si no venía la inicial se daba por hecho el 50% del total.
+             * Eso escribía en los libros un cobro que nadie había visto: medio
+             * ticket de ingreso inventado en cada venta financiada que el
+             * operador dictara sin decir la inicial.
+             *
+             * Ahora, sin inicial dicha no se cobra nada: todo queda financiado y
+             * la venta sale marcada para poder corregirla. Quedarse corto se ve
+             * y se arregla; pasarse infla la caja y no lo nota nadie.
+             */
+            const inicialDicha = p.inicial != null && String(p.inicial).trim() !== ''
+              ? Math.max(0, parseFloat(String(p.inicial).replace(',', '.')) || 0)
+              : null;
+            const inicialCashea = Math.min(totalNum, inicialDicha ?? 0);
+            const faltaInicial = isCashea && inicialDicha === null;
+
             const montoPagado = isCashea ? inicialCashea : totalNum;
-            const saldoPendiente = isCashea ? Math.max(0, totalNum - montoPagado) : 0;
+            const saldoPendiente = isCashea
+              ? Math.max(0, Math.round((totalNum - montoPagado) * 100) / 100) : 0;
             const estadoVenta = saldoPendiente > 0 ? 'pendiente' : 'pagado';
-            
+            // El porcentaje real del plan, para poder releer la venta después.
+            const pctCashea = isCashea && totalNum > 0
+              ? Math.round((inicialCashea / totalNum) * 100) : null;
+
+            // Si faltó la inicial, la venta lo dice. Un dato que falta y se ve
+            // se corrige; uno que se rellena solo se queda mal para siempre.
+            const notasVenta = faltaInicial
+              ? `${notasFinales} | ⚠️ CASHEA SIN INICIAL INDICADA: se registró todo como financiado`
+              : notasFinales;
+
             const ventaFecha = p.fecha || getVzlaDateString();
             const hoyStr = new Date().toISOString().split('T')[0];
             const esRegistroAtrasado = ventaFecha !== hoyStr;
@@ -5424,14 +5453,20 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               desglose,
               con_iva: !!p.iva,
               tasa_cambio: rates?.bcv || 0,
-              notes: notasFinales,
-              notas: notasFinales,
+              notes: notasVenta,
+              notas: notasVenta,
               creado_por: 'Admin IA',
               sede_id: targetSedeId,
               tiene_abono: isCashea,
               abono: isCashea ? montoPagado : 0,
               saldo_pendiente: saldoPendiente,
               estado: estadoVenta,
+              // El reparto, en las columnas que leen los reportes. Sin esto la
+              // venta se leía como las históricas y su inicial —que sí se
+              // conoce— se daba por perdida.
+              inicial: isCashea ? montoPagado : 0,
+              financiado: isCashea ? saldoPendiente : 0,
+              cashea_pct: pctCashea,
               fecha_registro: nowIso,
               registro_atrasado: esRegistroAtrasado,
               metodos_pago: {

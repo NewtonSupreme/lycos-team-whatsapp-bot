@@ -3,7 +3,13 @@ import { authorize } from '@/lib/auth-server';
 
 export const dynamic = 'force-dynamic';
 
-const CAMPOS = ['nombre', 'contacto', 'telefono', 'email', 'enlace', 'rif', 'direccion', 'notas', 'activo'] as const;
+const CAMPOS = [
+  'nombre', 'contacto', 'telefono', 'email', 'enlace', 'rif', 'direccion',
+  'notas', 'activo',
+  // Lo que faltaba para responder «¿este nos da credito?» sin llamarlo:
+  // que vende, en que condiciones y a cuantos dias.
+  'categoria', 'condiciones_pago', 'dias_credito',
+] as const;
 
 /** Catálogo de proveedores. */
 export async function GET(req: NextRequest) {

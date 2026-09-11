@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Loader2, Plus, X } from 'lucide-react';
+import { AlertCircle, Link2, Loader2, Plus, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { EstadoPago, OrigenPartida, PartidaCalculada, TipoPartida } from '@/lib/ficha/vehiculo';
 
@@ -32,8 +32,19 @@ interface Props {
   vehiculoInfo?: string | null;
   clienteId?: string | null;
   clienteNombre?: string | null;
+  /**
+   * La orden a la que pertenece el renglón.
+   *
+   * Sin esto la ficha era una libreta por vehículo: el renglón no pertenecía a
+   * ningún trabajo, así que no había a qué orden subirle el precio ni a qué
+   * servicio cargarle el gasto. Va explícito para que se vea a qué se enlaza
+   * antes de guardar.
+   */
+  servicioId?: string | null;
+  /** Cómo se llama esa orden, para poder nombrarla en pantalla. */
+  servicioEtiqueta?: string | null;
   onCerrar: () => void;
-  onGuardado: () => void;
+  onGuardado: (r: { totalOrden?: number | null; avisos?: string[] }) => void;
 }
 
 const TIPOS: { id: TipoPartida; label: string }[] = [
@@ -47,9 +58,18 @@ const hoy = () => new Date().toISOString().slice(0, 10);
 
 export default function DialogoPartida({
   partida, precarga, placa, vehiculoId, vehiculoInfo, clienteId, clienteNombre,
-  onCerrar, onGuardado,
+  servicioId, servicioEtiqueta, onCerrar, onGuardado,
 }: Props) {
   const editando = Boolean(partida?.id);
+
+  /**
+   * A qué orden se enlaza.
+   *
+   * Manda lo que ya tenga el renglón si se está editando —moverlo de trabajo
+   * sin querer cambiaría dos precios de golpe—, luego el renglón precargado, y
+   * por último el trabajo elegido en la pantalla.
+   */
+  const ordenDestino = partida?.servicio_id || precarga?.servicio_id || servicioId || null;
 
   const [descripcion, setDescripcion] = useState(partida?.descripcion || precarga?.descripcion || '');
   const [tipo, setTipo] = useState<TipoPartida>(partida?.tipo || 'repuesto');
@@ -118,6 +138,7 @@ export default function DialogoPartida({
     try {
       const cuerpo = {
         vehiculo_id: vehiculoId,
+        servicio_id: ordenDestino,
         placa,
         vehiculo_info: vehiculoInfo || null,
         cliente_id: clienteId || null,
@@ -145,7 +166,9 @@ export default function DialogoPartida({
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'No se pudo guardar');
-      onGuardado();
+      // El precio nuevo de la orden y lo que no se pudo sincronizar viajan de
+      // vuelta: callarlos dejaría al usuario creyendo que todo cuadró.
+      onGuardado({ totalOrden: d.totalOrden, avisos: d.avisos });
       onCerrar();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Error al guardar');
@@ -185,6 +208,28 @@ export default function DialogoPartida({
         </header>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
+          {/* A qué trabajo se engancha. Va arriba y siempre visible porque es
+              lo que decide si el precio del cliente se actualiza o no. */}
+          {ordenDestino ? (
+            <p className="flex items-start gap-2 rounded-lg border border-[#bfdbfe] bg-[#eff6ff] px-3 py-2 text-[11.5px] leading-snug text-[#1d4ed8]">
+              <Link2 className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span>
+                Se enlaza a la orden <strong className="font-semibold">{servicioEtiqueta || 'seleccionada'}</strong>.
+                El precio que pongas abajo se le cobrará al cliente en ese trabajo, y el
+                costo entrará como gasto de la empresa de ese día.
+              </span>
+            </p>
+          ) : (
+            <p className="flex items-start gap-2 rounded-lg border border-[#fde68a] bg-[#fffbeb] px-3 py-2 text-[11.5px] leading-snug text-[#92400e]">
+              <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span>
+                Este renglón no queda enlazado a ninguna orden, así que <strong className="font-semibold">no
+                cambiará lo que se le cobra al cliente</strong>. Cierra, elige el trabajo arriba
+                y vuelve a agregarlo para que el precio se actualice solo.
+              </span>
+            </p>
+          )}
+
           <label className="block">
             <span className="mb-1 block text-[11.5px] font-medium text-[#5b616e]">¿Qué se hizo o qué pieza se puso? *</span>
             <input

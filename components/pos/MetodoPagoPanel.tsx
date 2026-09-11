@@ -77,7 +77,9 @@ const METODOS: readonly MetodoTile[] = [
   { id: 'pdv', label: 'Punto de Venta', icono: <Store className="h-[18px] w-[18px]" aria-hidden />, tinte: 'bg-[#e4f6f6] text-[#0d9488]', bins: ['punto_banesco', 'punto_bancamiga'] },
 ];
 
-const PORCENTAJES = [10, 20, 30, 40, 50, 60] as const;
+// El 0% es un plan real de Cashea: aprueban sin inicial y el taller no cobra
+// nada ese dia. Faltaba en la lista.
+const PORCENTAJES = [0, 10, 20, 30, 40, 50, 60] as const;
 
 const TASAS = [
   { id: 'bcv' as const, label: 'BCV', ayuda: 'Tasa oficial del Banco Central. Es la que corresponde a lo que va en factura fiscal.' },
@@ -102,7 +104,7 @@ interface Props {
    */
   cashea?: {
     pct: number;
-    onPct: (p: 10 | 20 | 30 | 40 | 50 | 60) => void;
+    onPct: (p: 0 | 10 | 20 | 30 | 40 | 50 | 60) => void;
     activo: boolean;
     onUsar: () => void;
     inicial: number;
@@ -537,11 +539,11 @@ export default function MetodoPagoPanel({
 
             <input
               type="range"
-              min={10}
+              min={0}
               max={60}
               step={10}
               value={cashea?.pct ?? 30}
-              onChange={e => cashea?.onPct(Number(e.target.value) as 10 | 20 | 30 | 40 | 50 | 60)}
+              onChange={e => cashea?.onPct(Number(e.target.value) as 0 | 10 | 20 | 30 | 40 | 50 | 60)}
               aria-label="Porcentaje de la cuota inicial"
               className="mt-2 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-[#ffe0cb] accent-[#f97316]"
             />

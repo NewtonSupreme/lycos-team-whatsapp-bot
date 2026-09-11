@@ -30,7 +30,7 @@ import SelectorRepuesto, {
 } from '@/components/inventario/SelectorRepuesto';
 import CampoRenglon from '@/components/inventario/CampoRenglon';
 import { buscarCliente, coincidenciaSegura, claveTelefono } from '@/lib/clientes/identidad';
-import { planCashea, type PorcentajeCashea } from '@/lib/pagos/cashea';
+import { planCashea, normalizarPct, type PorcentajeCashea } from '@/lib/pagos/cashea';
 import AvisoRepuestosSueltos, {
   detectarRepuestosSueltos, type RenglonSospechoso,
 } from '@/components/inventario/AvisoRepuestosSueltos';
@@ -254,6 +254,8 @@ export default function ServiciosPage() {
   // inicial se calculaba a mano y se escribía, y así entraron los tres cobros
   // con el monto en bolívares dentro de la cuenta en dólares.
   const [cobroCasheaPct, setCobroCasheaPct] = useState<PorcentajeCashea>(30);
+  // Igual que en el formulario: Cashea puede estar en uso con inicial cero.
+  const [cobroCasheaActivo, setCobroCasheaActivo] = useState(false);
   const [inventory, setInventory] = useState<any[]>([]);
   const [selectedForDual, setSelectedForDual] = useState<string[]>([]);
   const [mounted, setMounted] = useState(false);
@@ -348,7 +350,10 @@ export default function ServiciosPage() {
     // cobro porque no siempre es la del día: en el taller se cobra tanto al
     // BCV como al de Binance P2P, y convertir con la que no era descuadra el
     // reporte sin dejar rastro de por qué.
-    cobro?: { bins: Bins; conIva: boolean; saldo: number; tasa?: number }
+    // `casheaPct` va aparte del monto porque con un plan al 0% no entra nada
+    // hoy: sin él, la venta se guardaría como de contado y el crédito
+    // financiado desaparecería del reporte.
+    cobro?: { bins: Bins; conIva: boolean; saldo: number; tasa?: number; casheaPct?: number | null }
   ) => {
     const COMPLETED_STATES = ['completada', 'finalizado', 'finalizada', 'completado'];
     const id = cita.id;
@@ -428,18 +433,43 @@ export default function ServiciosPage() {
               conIva: cobro.conIva,
               saldo: cobro.saldo,
               tasa: cobro.tasa || globalBcvRate || 0,
+              casheaPct: cobro.casheaPct ?? null,
               deptItems: [{ dept: deptFromServicioTipo(cita.tipo), monto: precio }],
             });
+            // El saldo y el estado salen del mapeo, no de la pantalla: con Cashea
+            // el resto financiado lo calcula el plan, y tenerlo en dos sitios era
+            // justo lo que dejaba la venta cerrada con dinero sin cobrar.
             const totalConIva = precio * (cobro.conIva ? 1.16 : 1);
-            const hayAbono = cobro.saldo > 0.01;
+            const hayAbono = mapped.saldo_pendiente > 0.01;
             extra = {
               ...mapped,
               con_iva: cobro.conIva,
               clientes_atendidos: 1,
               tiene_abono: hayAbono,
-              abono: hayAbono ? Math.max(0, Math.round((totalConIva - cobro.saldo) * 100) / 100) : 0,
-              saldo_pendiente: cobro.saldo,
-              estado: hayAbono ? 'pendiente' : 'pagado',
+              abono: hayAbono
+                ? Math.max(0, Math.round((totalConIva - mapped.saldo_pendiente) * 100) / 100)
+                : 0,
+            };
+          } else if (svcAny.cashea_pct !== null && svcAny.cashea_pct !== undefined) {
+            // La orden ya traía su plan de Cashea de cuando se registró, aunque
+            // no se pasara por el modal de cobro. Se reparte igual: la inicial
+            // entra hoy, el resto queda financiado. Sin esto la venta se cerraba
+            // como pagada al completo con dinero que aún no ha entrado.
+            const plan = planCashea(precio, normalizarPct(svcAny.cashea_pct));
+            extra = {
+              ...buildVentaDiaFields({
+                bins: { ...emptyBins(), cashea: plan.inicial },
+                subtotal: precio,
+                conIva: true,
+                saldo: 0,
+                tasa: svcAny.tasa_cambio || globalBcvRate || 0,
+                casheaPct: plan.pct,
+                deptItems: [{ dept: deptFromServicioTipo(cita.tipo), monto: precio }],
+              }),
+              con_iva: true,
+              clientes_atendidos: 1,
+              tiene_abono: plan.resto > 0.01,
+              abono: plan.inicial,
             };
           } else {
             extra = { metodos_pago: { divisas: precio }, con_iva: false, estado: 'pagado' };
@@ -517,6 +547,7 @@ export default function ServiciosPage() {
     if (entrandoCompletado && precioServicio > 0 && (cita.sede_id || currentSede?.id)) {
       setCobroBins(emptyBins());
       setCobroConIva(false);
+      setCobroCasheaActivo(false);
       setCobroTasa(null);
       setCobroModal({ cita, nuevoEstado });
       return;
@@ -530,15 +561,34 @@ export default function ServiciosPage() {
     if (!cobroModal) return;
     const { cita, nuevoEstado } = cobroModal;
     const precio = Number(cita.costo_final ?? cita.costo_estimado ?? 0);
+    // Con un plan al 0% la cuenta de Cashea queda en cero, así que «¿hay
+    // Cashea?» no se puede deducir del monto: hace falta el interruptor.
+    const casheaEnCobro = cobroCasheaActivo || (cobroBins.cashea || 0) > 0;
     // Igual que en la vista: con Cashea el IVA va siempre.
-    const conIvaEfectivo = cobroConIva || (cobroBins.cashea || 0) > 0;
-    const totalConIva = precio * (conIvaEfectivo ? 1.16 : 1);
-    const pagado = binsTotalUSD(cobroBins, cobroTasa || globalBcvRate || 0);
-    const saldo = Math.max(0, Math.round((totalConIva - pagado) * 100) / 100);
+    const conIvaEfectivo = cobroConIva || casheaEnCobro;
     const tasaDelCobro = cobroTasa || globalBcvRate || 0;
+
+    // El reparto por porcentaje solo cuando el plan está puesto de verdad.
+    // Si alguien tecleó un importe a mano en la casilla de Cashea, el plan se
+    // lo pisaría con otra cifra sin avisar: ahí manda lo escrito.
+    const conPlanCashea = cobroCasheaActivo;
+
+    // Con el plan puesto el saldo NO se calcula aquí: lo reparte el mapeo desde
+    // el porcentaje —la inicial entra hoy, el resto queda financiado—.
+    // Calcularlo también aquí lo sumaba dos veces.
+    let saldo = 0;
+    if (!conPlanCashea) {
+      const totalConIva = precio * (conIvaEfectivo ? 1.16 : 1);
+      const pagado = binsTotalUSD(cobroBins, tasaDelCobro);
+      saldo = Math.max(0, Math.round((totalConIva - pagado) * 100) / 100);
+    }
+
     setCobroProcesando(true);
     try {
-      await applyEstadoChange(cita, nuevoEstado, { bins: cobroBins, conIva: conIvaEfectivo, saldo, tasa: tasaDelCobro });
+      await applyEstadoChange(cita, nuevoEstado, {
+        bins: cobroBins, conIva: conIvaEfectivo, saldo, tasa: tasaDelCobro,
+        casheaPct: conPlanCashea ? cobroCasheaPct : null,
+      });
       setCobroModal(null);
       setCobroBins(emptyBins());
       setCobroConIva(false);
@@ -964,7 +1014,7 @@ export default function ServiciosPage() {
         // Cashea financia SOBRE el precio con IVA: la inicial y las cuotas se
         // calculan de ese total. Si se cobrara sin IVA, lo que financia Cashea
         // y lo que cobra el taller dejarían de ser la misma cifra.
-        const casheaEnJuego = (cobroBins.cashea || 0) > 0;
+        const casheaEnJuego = cobroCasheaActivo || (cobroBins.cashea || 0) > 0;
         const ivaEfectivo = cobroConIva || casheaEnJuego;
         const totalConIva = Math.round(precio * (ivaEfectivo ? 1.16 : 1) * 100) / 100;
         // El plan se calcula sobre el precio SIN IVA: Cashea financia el total
@@ -972,7 +1022,9 @@ export default function ServiciosPage() {
         const planCobroCashea = planCashea(precio, cobroCasheaPct);
         const aplicarCasheaAlCobro = (pct: PorcentajeCashea = cobroCasheaPct) => {
           const plan = planCashea(precio, pct);
+          // La inicial es lo único que se cobra hoy; el resto queda a crédito.
           setCobroBins(prev => ({ ...prev, cashea: plan.inicial }));
+          setCobroCasheaActivo(true);
           setCobroConIva(true);
         };
         const pagado = binsTotalUSD(cobroBins, cobroTasa || globalBcvRate || 0);
@@ -1403,7 +1455,20 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
   // Cashea financia SOBRE el precio con IVA: de ese total salen la inicial y
   // las cuotas. Por eso el 16% deja de ser opcional en cuanto se usa, y lo
   // que no se cobre hoy queda como saldo pendiente, no como venta cerrada.
-  const hayCashea = Number((metodosPago as Record<string, number>)?.cashea || 0) > 0;
+  /**
+   * Si la orden se cobra con Cashea.
+   *
+   * Se guarda aparte y NO se deduce de que el monto sea mayor que cero: con un
+   * plan al 0% la inicial es cero y Cashea seguiría estando en uso. Deduciéndolo
+   * del monto, el 0% apagaba el IVA obligatorio y el saldo financiado no se
+   * registraba: la orden quedaba como si nadie la hubiera financiado.
+   */
+  const [casheaActivo, setCasheaActivo] = useState<boolean>(
+    () => Number(((cita as any)?.metodos_pago as Record<string, number>)?.cashea || 0) > 0
+      || !!(cita as any)?.cashea_pct,
+  );
+  const hayCashea = casheaActivo
+    || Number((metodosPago as Record<string, number>)?.cashea || 0) > 0;
   const ivaObligatorio = conIva || hayCashea;
 
   // ── Financiamiento con Cashea ──────────────────────────────────────────────
@@ -1411,7 +1476,9 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
   // que aquí tiene que poder seleccionarse: sin el selector había que calcular
   // la inicial a mano y escribirla, y así entraron tres cobros con el monto en
   // bolívares dentro de una cuenta que se lleva en dólares.
-  const [casheaPct, setCasheaPct] = useState<PorcentajeCashea>(30);
+  const [casheaPct, setCasheaPct] = useState<PorcentajeCashea>(
+    () => normalizarPct((cita as any)?.cashea_pct ?? 30),
+  );
   const planCasheaOrden = useMemo(
     () => planCashea(parseFloat(formData.costo_estimado) || 0, casheaPct),
     [formData.costo_estimado, casheaPct],
@@ -1419,7 +1486,10 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
   /** Carga en Cashea la inicial que toca; el resto queda por cobrar. */
   const usarCashea = useCallback((pct: PorcentajeCashea = casheaPct) => {
     const plan = planCashea(parseFloat(formData.costo_estimado) || 0, pct);
+    // Solo la inicial entra como cobro. El resto es crédito y se guarda como
+    // saldo pendiente, no como dinero recibido.
     setMetodosPago(prev => ({ ...prev, cashea: plan.inicial }));
+    setCasheaActivo(true);
     // Con Cashea el IVA deja de ser opcional: es sobre el total con IVA sobre
     // lo que se financia.
     setConIva(true);
@@ -2062,6 +2132,10 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
           categoria,
           metodos_pago: metodosPago,
           con_iva: ivaObligatorio,
+          // El plan de Cashea se guarda aparte del monto: con un 0% la cuenta
+          // queda en cero y sin esto la orden se releería como de contado,
+          // apagando el IVA obligatorio y perdiendo el saldo financiado.
+          cashea_pct: hayCashea ? casheaPct : null,
           tasa_cambio: tasaDiaBcv || globalBcvRate || null,
           total_pagado: sumaMetodos(metodosPago),
           notas: encargados.length > 0
@@ -2202,6 +2276,10 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
           categoria,
           metodos_pago: metodosPago,
           con_iva: ivaObligatorio,
+          // El plan de Cashea se guarda aparte del monto: con un 0% la cuenta
+          // queda en cero y sin esto la orden se releería como de contado,
+          // apagando el IVA obligatorio y perdiendo el saldo financiado.
+          cashea_pct: hayCashea ? casheaPct : null,
           tasa_cambio: tasaDiaBcv || globalBcvRate || null,
           total_pagado: sumaMetodos(metodosPago),
           notas: encargados.length > 0

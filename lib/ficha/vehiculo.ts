@@ -43,7 +43,23 @@ export interface Partida {
   nota: string | null;
   registrado_por: string | null;
   sede_id: string | null;
+  /**
+   * La descripción normalizada del renglón de la orden del que salió.
+   *
+   * Sobrevive a que alguien corrija el texto de la partida después, que es lo
+   * que antes rompía el emparejamiento y hacía que el mismo renglón se
+   * ofreciera —y se cobrara— dos veces.
+   */
+  clave_item?: string | null;
 }
+
+/**
+ * Estados en los que el trabajo sigue abierto.
+ *
+ * Importa para la ficha: sobre un trabajo cerrado, cambiar el precio al cliente
+ * es reescribir algo ya cobrado. La pantalla lo advierte antes de dejar.
+ */
+const ABIERTOS = new Set(['pendiente', 'en_proceso', 'en_revision', 'confirmada']);
 
 /** Una partida con sus totales ya resueltos. */
 export interface PartidaCalculada extends Partida {
@@ -53,6 +69,51 @@ export interface PartidaCalculada extends Partida {
   margen: number;
   /** Lo que aún se le debe al proveedor por este renglón. */
   saldo_proveedor: number;
+}
+
+/** Un renglón de la orden, tal como lo ve la ficha. */
+export interface ItemOrden {
+  descripcion?: string;
+  cantidad?: number;
+  precio_unitario?: number;
+  total?: number;
+  /** Producto del almacén, cuando el renglón es mercancía y no mano de obra. */
+  inventario_id?: string | null;
+  /** Lo que costó la pieza al taller. Es la mitad que faltaba para la utilidad. */
+  costo_unitario?: number;
+  es_mano_obra?: boolean;
+  /** Unidades ya restadas del almacén por este renglón. */
+  stock_descontado?: number;
+  /** La descripción normalizada, para emparejarlo con la ficha. */
+  clave: string;
+  /** Si este renglón ya tiene su costo anotado en la ficha. */
+  enFicha: boolean;
+}
+
+export interface ServicioFicha {
+  id: string;
+  fecha: string | null;
+  tipo: string | null;
+  tipo_personalizado?: string | null;
+  estado: string | null;
+  descripcion: string | null;
+  costo_final: number | null;
+  total_pagado: number | null;
+  costo_estimado: number | null;
+  /** El importe que se muestra, ya resuelto entre los tres campos. */
+  monto: number;
+  /** De cuál de los tres salió: cambia lo que significa la cifra. */
+  montoOrigen: 'final' | 'pagado' | 'estimado' | 'ninguno';
+  /** Si el trabajo sigue abierto. Solo sobre uno abierto se debería editar. */
+  abierto: boolean;
+  /** Renglones de la orden, si los tiene. */
+  items: ItemOrden[];
+  /** Lo que suman los renglones de la orden: el precio al cliente. */
+  totalItems: number;
+  /** Renglones de la ficha enlazados a este trabajo. */
+  nPartidas: number;
+  /** Lo que costó al taller según la ficha, solo de este trabajo. */
+  costoFicha: number;
 }
 
 export interface FichaVehiculo {
@@ -89,23 +150,18 @@ export interface FichaVehiculo {
   };
   /** Diferencias entre la ficha y la caja. Vacío = todo cuadra. */
   alertas: string[];
-  servicios: {
-    id: string; fecha: string | null; tipo: string | null; estado: string | null;
-    descripcion: string | null; costo_final: number | null; total_pagado: number | null;
-    costo_estimado: number | null;
-    /** El importe que se muestra, ya resuelto entre los tres campos. */
-    monto: number;
-    /** De cuál de los tres salió: cambia lo que significa la cifra. */
-    montoOrigen: 'final' | 'pagado' | 'estimado' | 'ninguno';
-    /** Renglones de la orden, si los tiene. */
-    items: {
-      descripcion?: string; cantidad?: number; precio_unitario?: number; total?: number;
-      /** Producto del almacén, cuando el renglón es mercancía y no mano de obra. */
-      inventario_id?: string | null;
-      /** Lo que costó la pieza al taller. Es la mitad que faltaba para la utilidad. */
-      costo_unitario?: number;
-    }[];
-  }[];
+  servicios: ServicioFicha[];
+  /**
+   * El trabajo al que se enlaza la ficha por omisión.
+   *
+   * La ficha se estaba usando como una libreta por vehículo: se editaba «en
+   * tiempo real» sin pertenecer a ningún trabajo, así que no se sabía a qué
+   * servicio cargarle el gasto ni qué precio actualizar. Abriéndola ya apuntada
+   * al trabajo abierto del carro, cada renglón nace enlazado.
+   *
+   * Es el servicio abierto más reciente; si no hay ninguno abierto, el último.
+   */
+  servicioActivo: string | null;
   /**
    * Renglones sacados de las órdenes que aún no se han pasado a la ficha.
    *
@@ -271,34 +327,14 @@ export async function buildFichaVehiculo(db: SupabaseClient, p: Params): Promise
     id: string; fecha: string | null; tipo: string | null;
     tipo_personalizado: string | null; estado: string | null;
     descripcion: string | null;
-    items: FichaVehiculo['servicios'][number]['items'] | null;
+    items: Omit<ItemOrden, 'clave' | 'enFicha'>[] | null;
     costo_final: number | null; total_pagado: number | null; costo_estimado: number | null;
   }[];
 
-  // ── El importe de cada servicio, resuelto ────────────────────────────────
+  // ── Emparejar los renglones de la orden con los de la ficha ─────────────
   //
-  // El orden importa: lo cobrado de verdad manda sobre lo presupuestado. Se
-  // guarda de dónde salió porque no significan lo mismo —«$105 estimado» y
-  // «$105 cobrado» son cosas distintas— y la pantalla lo distingue.
-  const serviciosCalc = servicios.map(x => {
-    const final = Number(x.costo_final) || 0;
-    const pagado = Number(x.total_pagado) || 0;
-    const estimado = Number(x.costo_estimado) || 0;
-    const monto = final || pagado || estimado;
-    const montoOrigen: 'final' | 'pagado' | 'estimado' | 'ninguno' =
-      final ? 'final' : pagado ? 'pagado' : estimado ? 'estimado' : 'ninguno';
-    return {
-      ...x,
-      items: Array.isArray(x.items) ? x.items : [],
-      monto: n2(monto),
-      montoOrigen,
-    };
-  });
-
-  // ── Renglones de las órdenes que todavía no están en la ficha ───────────
-  //
-  // Se compara por descripción porque es lo único que comparten: la partida
-  // se crea a mano y no guarda de qué renglón salió.
+  // Se compara por descripción porque es lo único que comparten: la orden
+  // guarda sus renglones en un jsonb sin identificadores.
   //
   // La comparación va sin acentos ni espacios de más: el mismo renglón escrito
   // en la orden y a mano en la ficha rara vez coincide letra por letra, y
@@ -307,22 +343,79 @@ export async function buildFichaVehiculo(db: SupabaseClient, p: Params): Promise
     .normalize('NFD').replace(/[̀-ͯ]/g, '')
     .toLowerCase().replace(/\s+/g, ' ').trim();
 
-  const yaEnFicha = new Set(partidas.map(x => clave(x.descripcion)));
+  /**
+   * ¿Este renglón de esta orden ya tiene su costo en la ficha?
+   *
+   * Se exige que la partida sea de ESTA orden, o que sea una partida vieja sin
+   * orden asignada. Antes bastaba con que la descripción coincidiera en
+   * cualquier parte de la ficha, así que un cambio de aceite de enero tapaba el
+   * de marzo y el segundo nunca se podía costear.
+   */
+  const estaEnFicha = (servicioId: string, desc: string) => {
+    const k = clave(desc);
+    return partidas.some(x =>
+      clave(x.clave_item || x.descripcion) === k
+      && (x.servicio_id === servicioId || !x.servicio_id));
+  };
+
+  // ── El importe de cada servicio, resuelto ────────────────────────────────
+  //
+  // El orden importa: lo cobrado de verdad manda sobre lo presupuestado. Se
+  // guarda de dónde salió porque no significan lo mismo —«$105 estimado» y
+  // «$105 cobrado» son cosas distintas— y la pantalla lo distingue.
+  const serviciosCalc: ServicioFicha[] = servicios.map(x => {
+    const final = Number(x.costo_final) || 0;
+    const pagado = Number(x.total_pagado) || 0;
+    const estimado = Number(x.costo_estimado) || 0;
+    const monto = final || pagado || estimado;
+    const montoOrigen: 'final' | 'pagado' | 'estimado' | 'ninguno' =
+      final ? 'final' : pagado ? 'pagado' : estimado ? 'estimado' : 'ninguno';
+
+    const brutos = Array.isArray(x.items) ? x.items : [];
+    const items: ItemOrden[] = brutos
+      .filter(it => String(it?.descripcion || '').trim())
+      .map(it => {
+        const desc = String(it.descripcion).trim();
+        return {
+          ...it,
+          descripcion: desc,
+          clave: clave(desc),
+          enFicha: estaEnFicha(x.id, desc),
+        };
+      });
+
+    const mias = partidas.filter(pt => pt.servicio_id === x.id);
+
+    return {
+      ...x,
+      items,
+      totalItems: n2(items.reduce((s, it) =>
+        s + (Number(it.total) || (Number(it.cantidad) || 1) * (Number(it.precio_unitario) || 0)), 0)),
+      nPartidas: mias.length,
+      costoFicha: n2(mias.reduce((s, pt) => s + pt.total_costo, 0)),
+      monto: n2(monto),
+      montoOrigen,
+      abierto: ABIERTOS.has(String(x.estado || '').toLowerCase()),
+    };
+  });
+
+  // ── A qué trabajo se engancha la ficha al abrirla ────────────────────────
+  const servicioActivo =
+    serviciosCalc.find(s => s.abierto)?.id ?? serviciosCalc[0]?.id ?? null;
+
+  // ── Renglones de las órdenes que todavía no están en la ficha ───────────
   const sugeridas: FichaVehiculo['sugeridas'] = [];
   for (const sv of serviciosCalc) {
     for (const it of sv.items) {
-      const desc = String(it?.descripcion || '').trim();
-      if (!desc || yaEnFicha.has(clave(desc))) continue;
-      // Una misma descripción no se ofrece dos veces.
-      if (sugeridas.some(x => clave(x.descripcion) === clave(desc))) continue;
+      if (it.enFicha) continue;
       sugeridas.push({
         servicio_id: sv.id,
         fecha: sv.fecha,
-        descripcion: desc,
-        cantidad: Number(it?.cantidad) || 1,
-        precio_venta: n2(Number(it?.precio_unitario) || Number(it?.total) || 0),
-        costo_unitario: n2(Number(it?.costo_unitario) || 0),
-        inventario_id: it?.inventario_id ?? null,
+        descripcion: it.descripcion!,
+        cantidad: Number(it.cantidad) || 1,
+        precio_venta: n2(Number(it.precio_unitario) || Number(it.total) || 0),
+        costo_unitario: n2(Number(it.costo_unitario) || 0),
+        inventario_id: it.inventario_id ?? null,
       });
     }
   }
@@ -369,7 +462,8 @@ export async function buildFichaVehiculo(db: SupabaseClient, p: Params): Promise
     totales,
     registrado,
     alertas,
-    servicios: serviciosCalc as FichaVehiculo['servicios'],
+    servicios: serviciosCalc,
+    servicioActivo,
     sugeridas,
   };
 }
