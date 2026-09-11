@@ -18,9 +18,12 @@ import {
   type CasaTelefonos,
 } from '@/lib/bot/telefonos-casa';
 import {
-  buscarCliente, coincidenciaSegura, formatearCedula, claveTelefono,
+  buscarCliente, coincidenciaSegura, formatearCedula, claveTelefono, claveCedula,
   type ClienteIdentificable,
 } from '@/lib/clientes/identidad';
+import {
+  partirVehiculo, anioValido, cambiosDeVehiculo,
+} from '@/lib/vehiculos/identidad';
 
 async function checkIsBotAdmin(phone: string, db: any, adminPhones: string[]): Promise<boolean> {
   const phoneClean = phone.replace(/[^0-9]/g, '');
@@ -692,6 +695,16 @@ REGLAS DE OPERACIÓN ADMINISTRATIVA:
       · Si la entrega es un dato que conviene guardar, va dentro de 'descripcion'
         ("Triceta — entregada a Juan Pablo"), NUNCA en el campo de personal.
     - Para REGISTRAR un nuevo servicio/orden de taller, usa el tag [SERVICIO_UPSERT: ...] con los campos correspondientes.
+    - 📋 ORDEN DE LOS CAMPOS: id | cliente_id | vehiculo_id | nombre_cliente | telefono |
+      vehiculo_info | placa | tipo | descripcion | estado | costo_estimado | sede_id |
+      tipo_personalizado | personal_cargo | **cedula** | **anio**
+    - 🪪 CÉDULA (campo 15): si el admin la dice, ponla (V-12345678). Es lo único que
+      distingue a dos clientes con el mismo nombre. Si no te la dan, déjala VACÍA;
+      NUNCA la inventes ni pongas el teléfono ahí.
+    - 📅 AÑO (campo 16): el año del vehículo, solo los cuatro dígitos (2015). En
+      'vehiculo_info' pon SOLO marca y modelo («Dodge Forza»), el año va aparte.
+      Si no sabes el año, déjalo VACÍO: se queda sin dato y se corrige después.
+      ⛔ JAMÁS pongas el año actual por rellenar: un carro de 2015 quedaría como de este año.
     - Para ACTUALIZAR un servicio existente (cambiar estado, actualizar costo, etc.), incluye el ID del servicio en el tag.
     - ⛔ AGREGAR UN TRABAJO A UNA ORDEN EXISTENTE — OBLIGATORIO EMITIR EL TAG:
       Cuando el admin diga "agregar a este trabajo X", "añádele Y", "súmale el costo de Z",
@@ -823,6 +836,7 @@ REGLA DE TAGS (Imprimir SIEMPRE al final de tu respuesta):
    - [STOCK_UPSERT: nombre | categoria | precio_usd | stock | codigo | marca | sede_id | ubicacion | clasificacion]
    - [STOCK_DELETE: id_o_codigo | sede_id]
    - [VEHICULO_UPSERT: id_opcional | cliente_id | placa | marca | modelo | anio | sede_id]
+   - [SERVICIO_UPSERT: id_opcional | cliente_id | vehiculo_id | nombre_cliente | telefono | vehiculo_info | placa | tipo | descripcion | estado | costo_estimado | sede_id | tipo_personalizado | personal_cargo | cedula | anio]
     - [CITA_UPSERT: id_opcional | fecha | hora | cliente_id | vehiculo_id | estado | descripcion | sede_id | costo_estimado | nombre_cliente | vehiculo_info | placa | telefono]
     - ⚠️ REGLA CRITICA CITA_UPSERT: La fecha y hora deben ir en CAMPOS SEPARADOS. NO pongas "2026-06-02 08:00" en el campo fecha. Debe ser: fecha="2026-06-02" y hora="08:00" en campos separados.
     - ✅ EJEMPLO CORRECTO: [CITA_UPSERT: | 2026-06-02 | 08:00 | | | pendiente | Cambio de aceite | | 45 | Juan Pérez | Chevrolet D-MAX | | ]
@@ -2953,15 +2967,20 @@ async function getOrCreateClientAndVehicle(
 
     // 2. Vehicle — search by plate if available, then by client+marca
     if (clientId && (vehicleInfo || placa)) {
-      const vehParts = (vehicleInfo || '').split(' ').filter(Boolean);
-      const marca = vehParts[0] || '';
-      const modelo = vehParts.slice(1).join(' ') || '';
+      // El texto se parte con la misma regla en todo el sistema: marca, modelo
+      // y año aparte. Antes «Dodge Forza 2015» dejaba el modelo como
+      // «Forza 2015», y el mismo carro salía distinto según quién lo escribiera.
+      const partido = partirVehiculo(vehicleInfo);
+      const marca = partido.marca;
+      const modelo = partido.modelo;
+      // El año dicho manda; si no hay ninguno queda vacío, nunca inventado.
+      const anioNum = anioValido(anio) ?? partido.anio;
 
       if (placa && placa.length >= 4) {
         // Try exact plate match (global — could be shared vehicle).
         // Tolerante a duplicados: no usamos maybeSingle (lanza error si hay >1).
         const { data: vehByPlacaRows } = await db.from('vehiculos')
-          .select('id, cliente_id')
+          .select('id, cliente_id, marca, modelo, anio, placa')
           .eq('placa', placa)
           .order('created_at', { ascending: true })
           .limit(1);
@@ -2972,24 +2991,30 @@ async function getOrCreateClientAndVehicle(
           if (vehByPlaca.cliente_id !== clientId) {
             await db.from('vehiculos').update({ cliente_id: clientId }).eq('id', vehicleId);
           }
-          // Update marca/modelo if we now have them and they were unknown
-          if (marca) {
-            await db.from('vehiculos').update({
-              marca: marca || undefined,
-              modelo: modelo || undefined,
-              ...(anio ? { anio: parseInt(anio) } : {})
-            }).eq('id', vehicleId).eq('marca', 'Desconocida');
+          // ── La ficha del vehículo se pone al día ──────────────────────
+          //
+          // Antes esta corrección llevaba `.eq('marca', 'Desconocida')`, así
+          // que SOLO se aplicaba a vehículos sin marca. Un «GODGE FORZA» mal
+          // escrito se quedaba mal para siempre por más veces que se dictara
+          // bien, y el año nunca llegaba a la ficha.
+          const cambios = cambiosDeVehiculo(vehByPlaca, {
+            marca, modelo, anio: anioNum, placa,
+          });
+          if (Object.keys(cambios).length > 0) {
+            await db.from('vehiculos')
+              .update({ ...cambios, updated_at: new Date().toISOString() })
+              .eq('id', vehicleId);
+            console.log(`🚗 Ficha del vehículo al día: ${vehicleId} ${JSON.stringify(cambios)}`);
           }
           console.log(`🚗 Vehículo existente (por placa): ${vehicleId}`);
         } else {
           // Create new vehicle with plate
-          const yearVal = parseInt(anio || '2025');
           const { data: newVeh, error: vehErr } = await db.from('vehiculos').insert({
             cliente_id: clientId,
             placa: placa.toUpperCase(),
             marca: marca || 'Desconocida',
             modelo: modelo || 'Modelo',
-            anio: isNaN(yearVal) ? 2025 : yearVal,
+            anio: anioNum,
             estado: 'activo',
             sede_id: DEFAULT_SEDE_ID
           }).select('id').single();
@@ -3000,25 +3025,25 @@ async function getOrCreateClientAndVehicle(
       } else if (marca) {
         // No plate — search by client + marca
         const { data: vehByMarca } = await db.from('vehiculos')
-          .select('id').eq('cliente_id', clientId).ilike('marca', `%${marca}%`).limit(1).maybeSingle();
+          .select('id, marca, modelo, anio, placa')
+          .eq('cliente_id', clientId).ilike('marca', `%${marca}%`).limit(1).maybeSingle();
         if (vehByMarca) {
           vehicleId = vehByMarca.id;
-          // Update modelo/anio if missing
-          if (modelo || anio) {
-            await db.from('vehiculos').update({
-              ...(modelo ? { modelo } : {}),
-              ...(anio ? { anio: parseInt(anio) } : {})
-            }).eq('id', vehicleId);
+          const cambios = cambiosDeVehiculo(vehByMarca, { marca, modelo, anio: anioNum });
+          if (Object.keys(cambios).length > 0) {
+            await db.from('vehiculos')
+              .update({ ...cambios, updated_at: new Date().toISOString() })
+              .eq('id', vehicleId);
           }
           console.log(`🚗 Vehículo existente (por marca): ${vehicleId}`);
         } else {
           // Create without plate
-          const yearVal = parseInt(anio || '2025');
           const { data: newVeh, error: vehErr } = await db.from('vehiculos').insert({
             cliente_id: clientId,
             marca: marca,
             modelo: modelo || 'Modelo',
-            anio: isNaN(yearVal) ? 2025 : yearVal,
+            // Sin año dicho se deja vacío. Antes se ponía 2025 fijo.
+            anio: anioNum,
             estado: 'activo',
             sede_id: DEFAULT_SEDE_ID
           }).select('id').single();
@@ -3368,16 +3393,40 @@ async function ensureVehiculoId(db: any, opts: {
   try {
     const placaNorm = (opts.placa || '').toUpperCase().replace(/[-\s]/g, '');
     const placaValida = !!placaNorm && !['SINPLACA', 'SIN', 'NA', 'N/A'].includes(placaNorm);
+    // Se resuelve primero por placa, pero NO se devuelve a ciegas: si el bot
+    // acaba de oír el año o la marca bien escrita, hay que guardarlos. Antes se
+    // devolvía el id sin más y la ficha del vehículo se quedaba con el primer
+    // dato que le entró —mal escrito y sin año— para siempre.
+    let encontrado: {
+      id: string; marca: string | null; modelo: string | null;
+      anio: number | null; placa: string | null;
+    } | null = null;
     if (placaValida) {
-      const { data: byPlaca } = await db.from('vehiculos').select('id').eq('placa', placaNorm).limit(1).maybeSingle();
-      if (byPlaca?.id) return byPlaca.id;
+      const { data: byPlaca } = await db.from('vehiculos')
+        .select('id, marca, modelo, anio, placa').eq('placa', placaNorm).limit(1).maybeSingle();
+      if (byPlaca?.id) encontrado = byPlaca;
     }
-    const parts = String(opts.vehiculoInfo || '').trim().split(/\s+/).filter(Boolean);
-    const marca = parts[0] || 'Desconocida';
-    const modelo = parts.slice(1).join(' ').replace(/\b(19|20)\d{2}\b/, '').trim() || 'Modelo';
-    let anioNum = parseInt(String(opts.anio || '').replace(/[^0-9]/g, '')) || new Date().getFullYear();
-    if (anioNum < 1950 || anioNum > 2030) anioNum = new Date().getFullYear();
+    const partido = partirVehiculo(opts.vehiculoInfo);
+    const marca = partido.marca || 'Desconocida';
+    const modelo = partido.modelo || 'Modelo';
+    // El año dicho manda sobre el que venga dentro del texto. Si no hay
+    // ninguno se deja VACÍO: antes se ponía el año en curso, así que un Forza
+    // 2015 quedaba registrado como de este año y nadie lo notaba.
+    const anioNum = anioValido(opts.anio) ?? partido.anio;
     const sede = opts.sedeId || DEFAULT_SEDE_ID;
+
+    if (encontrado) {
+      const cambios = cambiosDeVehiculo(encontrado, {
+        marca: partido.marca, modelo: partido.modelo, anio: anioNum, placa: placaNorm,
+      });
+      if (Object.keys(cambios).length > 0) {
+        await db.from('vehiculos')
+          .update({ ...cambios, updated_at: new Date().toISOString() })
+          .eq('id', encontrado.id);
+        console.log(`🚗 Ficha del vehículo al día: ${encontrado.id} ${JSON.stringify(cambios)}`);
+      }
+      return encontrado.id;
+    }
 
     let clienteId = opts.clienteId || null;
     if (clienteId) {
@@ -4717,7 +4766,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             const FIELD_LABELS = new Set([
               'id_opcional', 'cliente_id', 'vehiculo_id', 'nombre_cliente', 'telefono',
               'vehiculo_info', 'placa', 'tipo', 'descripcion', 'estado', 'costo_estimado',
-              'sede_id', 'tipo_personalizado', 'personal_cargo'
+              'sede_id', 'tipo_personalizado', 'personal_cargo', 'cedula', 'anio'
             ]);
 
             let id: string | null = null;
@@ -4734,6 +4783,10 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             let sedeId: string | null = null;
             let tipoPersonalizado: string | null = null;
             let personalCargo: string | null = null;
+            // Dos campos nuevos, AL FINAL a proposito: los tags que ya se
+            // emitian sin ellos siguen parseandose igual.
+            let cedulaServicio: string | null = null;
+            let anioVehiculo: string | null = null;
 
             // Detect labeled format: first part is a known field label (e.g., "nombre_cliente" not a UUID)
             const isLabeledFormat = rawParts.length > 13 && FIELD_LABELS.has(rawParts[0]?.toLowerCase());
@@ -4762,6 +4815,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               sedeId = fieldMap['sede_id'] || ctx.sede_id || DEFAULT_SEDE_ID;
               tipoPersonalizado = fieldMap['tipo_personalizado'] || null;
               personalCargo = fieldMap['personal_cargo'] || null;
+              cedulaServicio = fieldMap['cedula'] || null;
+              anioVehiculo = fieldMap['anio'] || null;
               console.log(`🔧 ADMIN: Tag etiquetado parseado: nombre=${nombreCliente}, placa=${placa}, tipo=${tipo}, sede=${sedeId}`);
             } else {
               // Standard positional parsing
@@ -4780,6 +4835,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
               sedeId = (rawParts[11] && rawParts[11] !== 'null' && rawParts[11] !== 'undefined' && UUID_RE.test(rawParts[11])) ? rawParts[11] : (ctx.sede_id || DEFAULT_SEDE_ID);
               tipoPersonalizado = (rawParts[12] && rawParts[12] !== 'null' && !FIELD_LABELS.has(rawParts[12].toLowerCase())) ? rawParts[12] : null;
               personalCargo = (rawParts[13] && rawParts[13] !== 'null' && !FIELD_LABELS.has(rawParts[13].toLowerCase())) ? rawParts[13] : null;
+              cedulaServicio = (rawParts[14] && rawParts[14] !== 'null' && !FIELD_LABELS.has(rawParts[14].toLowerCase())) ? rawParts[14] : null;
+              anioVehiculo = (rawParts[15] && rawParts[15] !== 'null' && !FIELD_LABELS.has(rawParts[15].toLowerCase())) ? rawParts[15] : null;
             }
 
             const now = new Date();
@@ -4794,17 +4851,43 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             const isSenderAdmin = !!ctx.isAdmin || (await checkIsBotAdmin(from || '', db, ADMIN_PHONES));
             const defaultPhone = isSenderAdmin ? '00000000' : from;
             const clientPhone = telefono || (nameToUse ? defaultPhone : null);
-            if (!finalClientId && nameToUse && clientPhone) {
-              const { clientId: newCId } = await getOrCreateClientAndVehicle(
-                db, clientPhone, nameToUse, vehiculoInfo || '', placa || '', undefined, undefined, sedeId
+            // ── Cliente y vehículo, en UNA sola pasada ────────────────────
+            //
+            // Antes esto llamaba a la misma función dos veces seguidas: una
+            // para el cliente y otra para el vehículo. La segunda volvía a
+            // buscar al cliente que la primera acababa de crear y, si esa
+            // lectura llegaba antes de que la escritura fuera visible, creaba
+            // otro. Así nacieron dos fichas de «Roosewel Gonzalez» con dos
+            // segundos de diferencia, y una quedó huérfana para siempre.
+            //
+            // La función ya devuelve los dos identificadores: pedirlos juntos
+            // cierra la ventana en la que cabía el duplicado.
+            if ((!finalClientId || !finalVehId) && nameToUse && clientPhone) {
+              const { clientId: newCId, vehicleId: newVId } = await getOrCreateClientAndVehicle(
+                db, clientPhone, nameToUse, vehiculoInfo || '', placa || '',
+                anioVehiculo || undefined, undefined, sedeId,
               );
-              finalClientId = newCId || null;
+              finalClientId = finalClientId || newCId || null;
+              finalVehId = finalVehId || newVId || null;
             }
-            if (finalClientId && !finalVehId && (vehiculoInfo || placa) && clientPhone) {
-              const { vehicleId: newVId } = await getOrCreateClientAndVehicle(
-                db, clientPhone, nameToUse || '', vehiculoInfo || '', placa || '', undefined, undefined, sedeId
-              );
-              finalVehId = newVId || null;
+
+            // ── La cédula, en la ficha del cliente ────────────────────────
+            //
+            // Si el admin la dicta, se guarda. Solo cuando el cliente no tenía
+            // otra: sobrescribir la cédula de alguien es convertirlo en otra
+            // persona, y es justo lo que hace falta para NO fusionar homónimos.
+            const cedulaDicha = claveCedula(cedulaServicio);
+            if (finalClientId && cedulaDicha) {
+              const { data: cliCed } = await db.from('clientes')
+                .select('cedula').eq('id', finalClientId).maybeSingle();
+              if (!claveCedula(cliCed?.cedula)) {
+                await db.from('clientes')
+                  .update({ cedula: formatearCedula(cedulaDicha), updated_at: new Date().toISOString() })
+                  .eq('id', finalClientId);
+                console.log(`🪪 Cédula guardada para ${finalClientId}: ${formatearCedula(cedulaDicha)}`);
+              } else if (claveCedula(cliCed?.cedula) !== cedulaDicha) {
+                console.warn(`🪪 Cédula distinta a la registrada para ${finalClientId}; no se cambió.`);
+              }
             }
 
             // 🔧 GARANTÍA CRÍTICA: servicios.vehiculo_id es NOT NULL. Si el admin registró

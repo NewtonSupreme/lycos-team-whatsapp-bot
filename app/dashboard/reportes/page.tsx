@@ -81,7 +81,56 @@ interface VentaDia {
     otro?: number;
     [key: string]: number | undefined;
   };
+  /** El vehiculo de la venta. La factura lo lleva impreso; sin el no se sabe
+   *  a que carro pertenece el trabajo que se esta cobrando. */
+  vehiculo_info?: string | null;
+  placa?: string | null;
+  comprobante_url?: string | null;
+  comprobante_referencia?: string | null;
 }
+
+/**
+ * El vehiculo tal como va impreso en la factura.
+ *
+ * La factura descargada desde Reportes salia SIN vehiculo mientras la de
+ * Servicios si lo llevaba: era la misma venta con dos caras distintas. Los
+ * datos estaban en la fila (`vehiculo_info`, `placa`), solo faltaba pasarlos.
+ */
+const vehiculoDeLaVenta = (v: { vehiculo_info?: string | null; placa?: string | null }): string | undefined => {
+  const info = String(v.vehiculo_info || '').trim();
+  const placa = String(v.placa || '').trim().toUpperCase();
+  // La placa no se repite si ya viene dentro del texto del vehiculo.
+  const yaTienePlaca = placa && info.toUpperCase().replace(/[^A-Z0-9]/g, '')
+    .includes(placa.replace(/[^A-Z0-9]/g, ''));
+  const txt = [info, (placa && !yaTienePlaca) ? placa : ''].filter(Boolean).join(' ');
+  return txt || undefined;
+};
+
+/**
+ * Los renglones de la factura, a partir del desglose de la venta.
+ *
+ * `parseDescripcionItems` parte un texto por « + » y le da el precio SOLO al
+ * primer trozo, dejando el resto en cero. Eso sirve para una venta antigua
+ * cuyo desglose es una sola linea con todo pegado, pero DESTROZA un desglose
+ * que ya viene renglon a renglon con su precio: los trabajos 2 y 3 se
+ * quedarian a cero y la factura cobraria de menos.
+ *
+ * Por eso se parte solo lo que de verdad es un bloque de texto.
+ */
+const renglonesDeFactura = (desglose: readonly DesglosItem[] | null | undefined) =>
+  (desglose || []).flatMap(item => {
+    const desc = String(item?.descripcion || '');
+    const monto = Number(item?.total ?? item?.precio_unitario ?? 0);
+    if (!desc.includes(' + ')) {
+      return [{
+        descripcion: desc.trim() || 'Servicio General',
+        cantidad: Number(item?.cantidad) || 1,
+        precio_unitario: Number(item?.precio_unitario) || monto,
+        total: monto,
+      }];
+    }
+    return parseDescripcionItems(desc, monto);
+  });
 
 interface DesglosItem {
   descripcion: string;
@@ -1808,8 +1857,7 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
       try {
         const referencia_tabla = venta.source === 'ia' ? 'ventas_silenciadores' : 'ventas_dia';
         const modulo_origen = venta.source === 'ia' ? 'bot' : 'ventas_pos';
-        const localParsedItems = (venta.desglose || []).flatMap((item: any) =>
-          parseDescripcionItems(item.descripcion || '', item.total ?? item.precio_unitario ?? 0));
+        const localParsedItems = renglonesDeFactura(venta.desglose);
         const localCliente = venta.cliente ? venta.cliente.replace(/\(WhatsApp\)/gi, '').replace(/ADMIN IA/gi, '').trim() || 'No definido' : 'Consumidor Final';
         const reg = await registrarFactura({
           tipo: 'venta', modulo_origen, referencia_id: venta.id, referencia_tabla,
@@ -1827,9 +1875,7 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
   }, [venta?.id]);
 
   // Parse desglose items — split multi-component descriptions into individual lines
-  const parsedItems = (venta.desglose || []).flatMap((item: any) =>
-    parseDescripcionItems(item.descripcion || '', item.total ?? item.precio_unitario ?? 0)
-  );
+  const parsedItems = renglonesDeFactura(venta.desglose);
 
   const cleanCliente = venta.cliente ? venta.cliente.replace(/\(WhatsApp\)/gi, '').replace(/ADMIN IA/gi, '').trim() || 'No definido' : 'Consumidor Final';
 
@@ -1877,6 +1923,7 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
         correlativo: correlativo || undefined,
         fecha: venta.fecha,
         cliente: cleanCliente === 'Consumidor Final' ? undefined : cleanCliente,
+        vehiculo: vehiculoDeLaVenta(venta),
         items: parsedItems,
         total: venta.total_ingresos,
         notas: venta.notas || undefined,
@@ -1915,8 +1962,7 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
               const cleanSecondClienteTmp = secondVenta.cliente ? secondVenta.cliente.replace(/\(WhatsApp\)/gi, '').replace(/ADMIN IA/gi, '').trim() || 'No definido' : 'Consumidor Final';
               const referencia_tabla2 = secondVenta.source === 'ia' ? 'ventas_silenciadores' : 'ventas_dia';
               const modulo_origen2 = secondVenta.source === 'ia' ? 'bot' : 'ventas_pos';
-              const parsedSecondItemsTmp = (secondVenta.desglose || []).flatMap((item: any) =>
-                parseDescripcionItems(item.descripcion || '', item.total ?? item.precio_unitario ?? 0));
+              const parsedSecondItemsTmp = renglonesDeFactura(secondVenta.desglose);
               const reg2 = await registrarFactura({
                 tipo: 'venta', modulo_origen: modulo_origen2, referencia_id: secondVenta.id, referencia_tabla: referencia_tabla2,
                 cliente: cleanSecondClienteTmp || 'Consumidor Final',
@@ -1933,14 +1979,13 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
           }
         } catch { /* non-blocking */ }
         const cleanSecondCliente = secondVenta.cliente ? secondVenta.cliente.replace(/\(WhatsApp\)/gi, '').replace(/ADMIN IA/gi, '').trim() || 'No definido' : 'Consumidor Final';
-        const parsedSecondItems = (secondVenta.desglose || []).flatMap((item: any) =>
-          parseDescripcionItems(item.descripcion || '', item.total ?? item.precio_unitario ?? 0)
-        );
+        const parsedSecondItems = renglonesDeFactura(secondVenta.desglose);
         dataList.push({
           id: secondVenta.id,
           correlativo: correlativoSecond || undefined,
           fecha: secondVenta.fecha,
           cliente: cleanSecondCliente === 'Consumidor Final' ? undefined : cleanSecondCliente,
+          vehiculo: vehiculoDeLaVenta(secondVenta),
           items: parsedSecondItems,
           total: secondVenta.total_ingresos,
           notas: secondVenta.notas || undefined,

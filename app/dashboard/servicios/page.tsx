@@ -29,7 +29,12 @@ import SelectorRepuesto, {
   ModalCatalogoInventario, useInventario, precioEfectivoDe, type ProductoInventario,
 } from '@/components/inventario/SelectorRepuesto';
 import CampoRenglon from '@/components/inventario/CampoRenglon';
-import { buscarCliente, coincidenciaSegura, claveTelefono } from '@/lib/clientes/identidad';
+import {
+  buscarCliente, coincidenciaSegura, claveTelefono, claveCedula, formatearCedula,
+} from '@/lib/clientes/identidad';
+import {
+  anioDeTexto, anioValido, cambiosDeVehiculo, partirVehiculo,
+} from '@/lib/vehiculos/identidad';
 import { planCashea, normalizarPct, type PorcentajeCashea } from '@/lib/pagos/cashea';
 import AvisoRepuestosSueltos, {
   detectarRepuestosSueltos, type RenglonSospechoso,
@@ -152,7 +157,16 @@ interface CitaServicio {
   con_iva?: boolean | null;
   tasa_cambio?: number | null;
   total_pagado?: number | null;
-  vehiculos?: { marca: string; modelo: string; placa: string; anio?: number; clientes?: { nombre: string; apellido: string; telefono: string } | null } | null;
+  /** Porcentaje de la inicial de Cashea. Nulo = la orden no va financiada. */
+  cashea_pct?: number | null;
+  vehiculos?: {
+    marca: string; modelo: string; placa: string; anio?: number | null;
+    clientes?: {
+      nombre: string; apellido: string; telefono: string;
+      /** La cédula del dueño: sin ella no se puede facturar a su nombre. */
+      cedula?: string | null;
+    } | null;
+  } | null;
 }
 
 const ESTADOS = ['pendiente', 'confirmada', 'en_revision', 'en_proceso', 'completada', 'cancelada'];
@@ -282,8 +296,8 @@ export default function ServiciosPage() {
           nombre_cliente, vehiculo_info, placa, telefono, created_at,
           cliente_id, vehiculo_id, sede_id, seguimiento, notas, items,
           costo_estimado, costo_final, registrado_por, fecha_inicio, fecha_fin,
-          categoria, metodos_pago, con_iva, tasa_cambio, total_pagado,
-          vehiculos (marca, modelo, placa, anio, clientes (nombre, apellido, telefono))
+          categoria, metodos_pago, con_iva, tasa_cambio, total_pagado, cashea_pct,
+          vehiculos (marca, modelo, placa, anio, clientes (nombre, apellido, telefono, cedula))
         `)
         .order('fecha', { ascending: false })
         .limit(200);
@@ -409,7 +423,30 @@ export default function ServiciosPage() {
           const refTag = `[ServicioID: ${id}]`;
           const descStr = cita.descripcion || 'Servicio de taller';
           const notesFinal = `${descStr} | Cliente: ${clienteNombre} | Vehículo: ${vehiculoStr} ${refTag}`.trim();
-          const desglose = parseDescripcionItems(descStr, precio);
+          /*
+           * El desglose de la venta es el de la ORDEN, no el del texto.
+           *
+           * Antes se volvía a deducir de la descripción con
+           * `parseDescripcionItems`, aunque la orden ya tuviera sus renglones
+           * con su precio cada uno. El resultado: una orden de tres trabajos
+           * («Cambio gomas $70 + Mano de obra $150 + Estopera $60») se guardaba
+           * como un solo renglón con el total pegado, y la factura descargada
+           * desde Reportes salía sin desglosar mientras la de Servicios sí lo
+           * tenía. Era la misma venta contada de dos maneras.
+           *
+           * Se cae al texto solo cuando la orden no trae renglones.
+           */
+          const renglonesOrden = (Array.isArray(cita.items) ? cita.items : [])
+            .filter(it => String(it?.descripcion || '').trim())
+            .map(it => ({
+              descripcion: String(it.descripcion).trim(),
+              cantidad: Number(it.cantidad) || 1,
+              precio_unitario: Number(it.precio_unitario) || 0,
+              total: Number(it.total) || (Number(it.cantidad) || 1) * (Number(it.precio_unitario) || 0),
+            }));
+          const desglose = renglonesOrden.length > 0
+            ? renglonesOrden
+            : parseDescripcionItems(descStr, precio);
 
           // Métodos de pago reales capturados en la orden; si no hay, se asume divisas.
           const svcAny = cita as any;
@@ -687,17 +724,30 @@ export default function ServiciosPage() {
       const clientName = getDisplayName(cita) || 'CONSUMIDOR FINAL';
       const vehicleStr = getDisplayVehicle(cita);
       
+      // El desglose real de la orden. Antes esta impresión sacaba un único
+      // renglón «SERVICIO GENERAL» con el total pegado, así que la misma orden
+      // salía detallada o en bloque según por dónde se imprimiera.
+      const renglones = (Array.isArray(cita.items) ? cita.items : [])
+        .filter(it => String(it?.descripcion || '').trim())
+        .map(it => ({
+          descripcion: String(it.descripcion).trim(),
+          cantidad: Number(it.cantidad) || 1,
+          precio_unitario: Number(it.precio_unitario) || 0,
+          total: Number(it.total) || (Number(it.cantidad) || 1) * (Number(it.precio_unitario) || 0),
+        }));
+
       return {
         id: cita.id,
         fecha: cita.fecha,
         cliente: clientName,
         vehiculo: vehicleStr,
-        items: [{
+        items: renglones.length > 0 ? renglones : [{
           descripcion: (cita.tipo === 'otro' ? 'Servicio General' : `Servicio de ${cita.tipo}`).toUpperCase(),
           cantidad: 1,
           precio_unitario: cita.costo_estimado || 0,
           total: cita.costo_estimado || 0
         }],
+        notas: cita.descripcion || undefined,
         total: cita.costo_estimado || 0,
         tasa_bcv: globalBcvRate || 518.0, 
         total_ves: (cita.costo_estimado || 0) * (globalBcvRate || 518.0)
@@ -1430,12 +1480,35 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
     nombre_cliente: cita?.nombre_cliente || cita?.vehiculos?.clientes?.nombre || '',
     // Saneado: solo dígitos/símbolos de teléfono (datos viejos con letras se limpian al abrir).
     telefono: String(cita?.telefono || cita?.vehiculos?.clientes?.telefono || '').replace(/[^\d+()\s-]/g, '').trim(),
+    /**
+     * La cédula del cliente.
+     *
+     * Faltaba en la orden, que es donde se pregunta por primera vez. Sin ella
+     * no se puede facturar a nombre del cliente y, peor, dos personas con el
+     * mismo nombre acaban siendo la misma ficha: la cédula es lo único que
+     * distingue de verdad.
+     */
+    cedula: formatearCedula(cita?.vehiculos?.clientes?.cedula) || '',
     vehiculo_info: cita?.vehiculo_info || (cita?.vehiculos ? `${cita?.vehiculos.marca} ${cita?.vehiculos.modelo}` : ''),
     placa: cita?.placa || cita?.vehiculos?.placa || '',
+    /**
+     * El año del vehículo.
+     *
+     * Se guardaba adivinándolo del texto —«Dodge Forza 2015»— y, si no venía,
+     * se ponía el año en curso. Un Forza 2015 quedaba como 2026 y nadie lo
+     * notaba. Aquí se pide aparte y se escribe en la ficha del vehículo.
+     */
+    anio: String(cita?.vehiculos?.anio || anioDeTexto(cita?.vehiculo_info) || ''),
     tipo: cita?.tipo || 'otro',
     descripcion: cita?.descripcion || '',
     costo_estimado: cita?.costo_estimado?.toString() || '',
   });
+  /** ¿La cédula escrita ya es la que tiene la ficha del cliente? */
+  const cedulaYaRegistrada = useMemo(() => {
+    const k = claveCedula(formData.cedula);
+    return !!k && k === claveCedula(cita?.vehiculos?.clientes?.cedula);
+  }, [formData.cedula, cita]);
+
   // Clasificación del servicio → determina en qué columna del Reporte de Ventas
   // cae y, a través de la zona, qué regla de comisión se aplica.
   const [categoria, setCategoria] = useState<string>(
@@ -1623,7 +1696,7 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
       if (!supabase) return;
       // Fetch Clients
       const { data: clients } = await withSedeFilter(supabase.from('clientes'))
-        .select('id, nombre, apellido, telefono, vehiculos(id, marca, modelo, placa)');
+        .select('id, nombre, apellido, telefono, cedula, vehiculos(id, marca, modelo, placa, anio)');
       if (clients) setAllClientes(clients);
 
       // Fetch Staff from Users (Filtered by Sede automatically by withSedeFilter)
@@ -1677,8 +1750,12 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
       ...formData,
       nombre_cliente: `${c.nombre} ${c.apellido}`,
       telefono: c.telefono || '',
+      // La cedula y el anio se traen de la ficha: son los datos que antes habia
+      // que volver a preguntar en cada orden porque nunca subian del formulario.
+      cedula: formatearCedula(c.cedula) || formData.cedula,
       vehiculo_info: mainVehiculo ? `${mainVehiculo.marca} ${mainVehiculo.modelo}` : formData.vehiculo_info,
       placa: mainVehiculo ? mainVehiculo.placa : formData.placa,
+      anio: mainVehiculo?.anio ? String(mainVehiculo.anio) : formData.anio,
     });
     if (mainVehiculo) setPlateStatus('found');
     setShowClientResults(false);
@@ -1691,7 +1768,7 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
     try {
       if (!supabase) { setPlateStatus('idle'); return; }
       const { data } = await supabase.from('vehiculos')
-        .select('id, marca, modelo, anio, placa, clientes(id, nombre, apellido, telefono, vehiculos(id, marca, modelo, placa))')
+        .select('id, marca, modelo, anio, placa, clientes(id, nombre, apellido, telefono, cedula, vehiculos(id, marca, modelo, placa, anio))')
         .ilike('placa', clean)
         .limit(1)
         .maybeSingle();
@@ -1704,14 +1781,19 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
           setSelectedClienteId(c.id);
           setFormData(prev => ({
             ...prev,
-            vehiculo_info: `${data.marca} ${data.modelo}${data.anio ? ` ${data.anio}` : ''}`,
+            // El anio va en su campo, no pegado al nombre del modelo: asi la
+            // ficha guarda «Dodge / Forza / 2015» y no «Forza 2015» de modelo.
+            vehiculo_info: `${data.marca} ${data.modelo}`.trim(),
+            anio: data.anio ? String(data.anio) : prev.anio,
             nombre_cliente: `${c.nombre} ${c.apellido}`,
             telefono: c.telefono || prev.telefono,
+            cedula: formatearCedula(c.cedula) || prev.cedula,
           }));
         } else {
           setFormData(prev => ({
             ...prev,
-            vehiculo_info: `${data.marca} ${data.modelo}${data.anio ? ` ${data.anio}` : ''}`,
+            vehiculo_info: `${data.marca} ${data.modelo}`.trim(),
+            anio: data.anio ? String(data.anio) : prev.anio,
           }));
         }
         setPlateStatus('found');
@@ -1860,7 +1942,12 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
   const resolveClienteYVehiculo = async (transferVeh = false): Promise<{
     clienteId: string | null; vehiculoId: string | null;
     conflict?: { vehiculoId: string; ownerName: string; newClienteId: string; placa: string };
+    /** Lo que no se pudo escribir en las fichas y hay que decirle al usuario. */
+    avisos: string[];
   }> => {
+    // Lo que se decide NO cambiar por seguridad se cuenta al final. Callarlo
+    // dejaría al usuario creyendo que su corrección se guardó.
+    const avisosIdentidad: string[] = [];
     let clienteId = selectedClienteId || cita?.cliente_id || null;
     let vehiculoId = selectedVehiculoId || cita?.vehiculo_id || null;
     const nombreFull = formData.nombre_cliente.trim();
@@ -1954,7 +2041,7 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
         if (!transferVeh) {
           const owner: any = (vcur as any).clientes;
           return {
-            clienteId, vehiculoId,
+            clienteId, vehiculoId, avisos: avisosIdentidad,
             conflict: {
               vehiculoId, newClienteId: clienteId, placa: vcur.placa || placaNorm,
               ownerName: owner ? `${owner.nombre || ''} ${owner.apellido || ''}`.trim() : 'otro cliente',
@@ -1973,22 +2060,76 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
       }
     }
 
+    // ── Lo que la orden dice del carro, escrito en la ficha del carro ────────
+    //
+    // Esto era el agujero: la orden guardaba «Dodge Forza 2015» y la ficha del
+    // vehículo seguía diciendo «GODGE FORZA» con el año en blanco. Corregir la
+    // orden no corregía nada; al siguiente trabajo volvía a salir mal escrito y
+    // el mismo carro acababa pareciendo dos.
+    //
+    // Solo se escriben los campos que DIFIEREN y nunca se borra: un campo vacío
+    // en la orden significa «aquí no se escribió», no «no tiene».
+    const partido = partirVehiculo(formData.vehiculo_info);
+    const anioForm = anioValido(formData.anio) ?? partido.anio;
+
+    if (vehiculoId) {
+      const { data: vficha } = await supabase!.from('vehiculos')
+        .select('marca, modelo, anio, placa').eq('id', vehiculoId).maybeSingle();
+      if (vficha) {
+        const cambios = cambiosDeVehiculo(vficha, {
+          marca: partido.marca, modelo: partido.modelo,
+          anio: anioForm, placa: placaValida ? placaNorm : null,
+        });
+        if (Object.keys(cambios).length > 0) {
+          await supabase!.from('vehiculos')
+            .update({ ...cambios, updated_at: new Date().toISOString() })
+            .eq('id', vehiculoId);
+        }
+      }
+    }
+
     // Crear el vehículo si no existe (bajo el cliente resuelto).
     if (!vehiculoId && clienteId && (formData.vehiculo_info.trim() || placaValida)) {
-      const vparts = formData.vehiculo_info.trim().split(/\s+/);
-      const marca = vparts[0] || 'Desconocida';
-      const modelo = vparts.slice(1).join(' ').replace(/\b(19|20)\d{2}\b/, '').trim() || '—';
-      const yearMatch = formData.vehiculo_info.match(/\b(19\d\d|20\d\d)\b/);
-      let anio = yearMatch ? parseInt(yearMatch[0]) : new Date().getFullYear();
-      if (anio < 1950 || anio > 2030) anio = new Date().getFullYear();
       const { data: created, error } = await withSedeFilter(supabase!.from('vehiculos'))
-        .insert(withSedeInsert({ cliente_id: clienteId, marca, modelo, placa: placaValida ? placaNorm : `SP${String(Date.now()).slice(-7)}`, anio, estado: 'en_servicio' }))
+        .insert(withSedeInsert({
+          cliente_id: clienteId,
+          marca: partido.marca || 'Desconocida',
+          modelo: partido.modelo || '—',
+          placa: placaValida ? placaNorm : `SP${String(Date.now()).slice(-7)}`,
+          // Sin año dicho, se deja vacío. Antes se ponía el año en curso y un
+          // Forza 2015 quedaba registrado como 2026.
+          anio: anioForm,
+          estado: 'en_servicio',
+        }))
         .select('id').single();
       if (error) throw error;
       vehiculoId = created.id;
     }
 
-    return { clienteId, vehiculoId };
+    // ── La cédula, en la ficha del cliente ──────────────────────────────────
+    //
+    // Va al final, con el cliente ya resuelto. Solo se escribe si es una cédula
+    // de verdad (`claveCedula` descarta «N/A», ceros y números imposibles) y si
+    // el cliente no tenía otra distinta: sobrescribir la cédula de alguien es
+    // convertirlo en otra persona.
+    const cedNueva = claveCedula(formData.cedula);
+    if (clienteId && cedNueva) {
+      const { data: ccur } = await supabase!.from('clientes')
+        .select('cedula').eq('id', clienteId).maybeSingle();
+      const cedActual = claveCedula(ccur?.cedula);
+      if (!cedActual) {
+        await supabase!.from('clientes')
+          .update({ cedula: formatearCedula(cedNueva) }).eq('id', clienteId);
+      } else if (cedActual !== cedNueva) {
+        avisosIdentidad.push(
+          `Este cliente ya tenía la cédula ${formatearCedula(cedActual)} y la orden dice `
+          + `${formatearCedula(cedNueva)}. No se cambió: si de verdad es otra persona, `
+          + 'créala como cliente aparte.',
+        );
+      }
+    }
+
+    return { clienteId, vehiculoId, avisos: avisosIdentidad };
   };
 
   /**
@@ -2013,6 +2154,8 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
     // Lo que el almacén tenga que decir (faltó stock, un producto ya no existe).
     // Se guarda para contarlo al final: nunca impide grabar la orden.
     let avisosStock: string[] = [];
+    // Lo que no se pudo escribir en la ficha del cliente o del vehiculo.
+    let avisosIdentidad: string[] = [];
     if (!formData.nombre_cliente || !formData.vehiculo_info) {
       alert('Campos obligatorios incompletos');
       return;
@@ -2089,6 +2232,7 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
         }
         finalClienteId = resolved.clienteId;
         finalVehiculoId = resolved.vehiculoId;
+        avisosIdentidad = resolved.avisos;
       }
 
       // Datos desglosados para guardar (ítems + total).
@@ -2349,9 +2493,10 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
       }
       // La orden ya está guardada. Si el almacén tuvo algo que decir se dice
       // ahora, después de grabar y sin deshacer nada.
-      if (avisosStock.length > 0) {
-        alert(`La orden se guardó.\n\nSobre el inventario:\n· ${avisosStock.join('\n· ')}`);
-      }
+      const partes: string[] = [];
+      if (avisosIdentidad.length > 0) partes.push(`Sobre el cliente:\n· ${avisosIdentidad.join('\n· ')}`);
+      if (avisosStock.length > 0) partes.push(`Sobre el inventario:\n· ${avisosStock.join('\n· ')}`);
+      if (partes.length > 0) alert(`La orden se guardó.\n\n${partes.join('\n\n')}`);
       onClose();
     } catch (err: any) { alert('Error: ' + err.message); }
     finally { setIsSaving(false); }
@@ -2446,6 +2591,35 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
                 value={formData.telefono}
                 onChange={e => setFormData({...formData, telefono: e.target.value.replace(/[^\d+()\s-]/g, '')})}
               />
+            </div>
+
+            {/* La cédula: faltaba, y es lo único que distingue de verdad a dos
+                clientes con el mismo nombre. Se guarda en la ficha del cliente
+                al grabar la orden. */}
+            <div className="col-span-2 sm:col-span-1 space-y-2">
+              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">
+                C&eacute;dula / RIF
+              </label>
+              <input
+                className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground font-mono uppercase focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
+                placeholder="V-12345678"
+                value={formData.cedula}
+                onChange={e => setFormData({ ...formData, cedula: e.target.value.toUpperCase() })}
+                onBlur={e => {
+                  // Se normaliza al salir del campo: «12.345.678», «v12345678» y
+                  // «V-12345678» son la misma persona y así se guardan igual.
+                  const limpia = formatearCedula(e.target.value);
+                  if (limpia) setFormData(f => ({ ...f, cedula: limpia }));
+                }}
+              />
+              {formData.cedula.trim() && !claveCedula(formData.cedula) && (
+                <p className="text-[10px] text-yellow-400 ml-1">
+                  Esa c&eacute;dula no parece v&aacute;lida; no se guardar&aacute; en la ficha.
+                </p>
+              )}
+              {cedulaYaRegistrada && (
+                <p className="text-[10px] text-green-400 ml-1">Ya registrada en la ficha del cliente</p>
+              )}
             </div>
             <div className="col-span-2 sm:col-span-1 space-y-2 relative">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Veh&iacute;culo / Modelo</label>
@@ -2571,6 +2745,33 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
               </div>
               {plateStatus === 'found' && <p className="text-[10px] text-green-400 ml-1">Vehículo encontrado en sistema</p>}
               {plateStatus === 'new' && <p className="text-[10px] text-yellow-400 ml-1">Placa no registrada — se vinculará al guardar</p>}
+            </div>
+
+            {/* El año, aparte del texto del vehículo. Antes se adivinaba de
+                «Forza 2015» y, si no venía, se ponía el año EN CURSO: un carro
+                de 2015 quedaba registrado como de este año y nadie lo notaba. */}
+            <div className="col-span-2 sm:col-span-1 space-y-2">
+              <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">
+                A&ntilde;o del veh&iacute;culo
+              </label>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1950}
+                max={new Date().getFullYear() + 2}
+                className="w-full bg-muted/50 border border-border rounded-xl sm:rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm text-foreground placeholder:text-muted-foreground font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
+                placeholder="2015"
+                value={formData.anio}
+                onChange={e => setFormData({ ...formData, anio: e.target.value })}
+              />
+              {!formData.anio.trim() && (
+                <p className="text-[10px] text-muted-foreground ml-1">
+                  Si no lo sabes, d&eacute;jalo vac&iacute;o. No se inventa.
+                </p>
+              )}
+              {formData.anio.trim() && !anioValido(formData.anio) && (
+                <p className="text-[10px] text-yellow-400 ml-1">Ese a&ntilde;o no es v&aacute;lido.</p>
+              )}
             </div>
             <div className="col-span-2 sm:col-span-1 space-y-2">
               <label className="text-[10px] text-muted-foreground uppercase font-black tracking-widest ml-1">Tipo de Servicio</label>
