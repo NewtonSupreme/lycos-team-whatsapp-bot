@@ -1,5 +1,6 @@
 'use client';
 import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   Wrench, Search, Calendar, Clock, CheckCircle, AlertCircle,
   Loader2, RefreshCw, User, Car, Phone, ChevronDown, X,
@@ -40,7 +41,7 @@ import AvisoRepuestosSueltos, {
   detectarRepuestosSueltos, type RenglonSospechoso,
 } from '@/components/inventario/AvisoRepuestosSueltos';
 import { asignacionesValidas, buildJobsDesdeAsignacion } from '@/lib/nomina/asignaciones';
-import { CATEGORIAS_VENTA, inferirCategoria, categoriaToZona, buildCategoriaColumns, buildPagoColumns, sumaMetodos } from '@/lib/categorias';
+import { CATEGORIAS_VENTA, inferirCategoria, categoriaToZona, buildCategoriaColumns, buildPagoColumnsCompletas, sumaMetodos } from '@/lib/categorias';
 
 // ── Types ─────────────────────────────────────────────────────
 interface ServicioItem {
@@ -240,6 +241,7 @@ export default function ServiciosPage() {
   const [citas, setCitas] = useState<CitaServicio[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const params = useSearchParams();
   const [viewMode, setViewMode] = useState<'kanban' | 'list'>('kanban');
   const [dateFilter, setDateFilter] = useState<'hoy' | 'semana' | 'mes' | 'todos'>('hoy');
   const [specificDateFilter, setSpecificDateFilter] = useState('');
@@ -307,6 +309,27 @@ export default function ServiciosPage() {
     } catch (e) { console.error(e); }
     setLoading(false);
   }, []);
+
+  /**
+   * Se puede llegar con una orden abierta: `/dashboard/servicios?id=<uuid>`.
+   *
+   * La ficha del vehiculo ya enlazaba asi, pero esta pantalla ignoraba el
+   * parametro: el enlace abria Servicios y el usuario tenia que volver a buscar
+   * la orden que acababa de pulsar. El filtro de fecha empieza en HOY, asi que
+   * una orden de otro dia no salia ni buscandola.
+   */
+  const ordenAbierta = useRef<string | null>(null);
+  useEffect(() => {
+    const id = (params.get('id') || '').trim();
+    if (!id || citas.length === 0 || ordenAbierta.current === id) return;
+    const cita = citas.find(c => c.id === id);
+    if (!cita) return;
+    ordenAbierta.current = id;
+    // El filtro de fecha NO se toca. Abrirlo a «todos» pinta las 200 ordenes en
+    // columnas sin tope de alto —la mas larga medía 65.885 px— y la pantalla se
+    // vuelve inmanejable justo cuando lo que se queria era ver una sola orden.
+    setEditCita(cita);
+  }, [params, citas]);
 
   useEffect(() => { 
     loadCitas(); 
@@ -529,7 +552,10 @@ export default function ServiciosPage() {
             total_clientes: 1,
             desglose,
             metodos_pago: metodos,
-            ...buildPagoColumns(metodos),
+            // Las diez columnas SIEMPRE: al actualizar una venta, una columna que
+            // no viaje en el payload se queda con su importe anterior, y el
+            // reporte suma el pago viejo y el nuevo.
+            ...buildPagoColumnsCompletas(metodos),
             tasa_cambio: cobro?.tasa || svcAny.tasa_cambio || globalBcvRate || 0,
             con_iva: !!svcAny.con_iva,
             notas: notesFinal,
@@ -537,6 +563,10 @@ export default function ServiciosPage() {
             sede_id: sedeId,
             fecha_registro: new Date().toISOString(),
             registro_atrasado: false,
+            // Sin esto una venta reescrita seguia diciendo que no se habia tocado
+            // desde que nacio, y el residuo de la version anterior no se podia
+            // ni fechar.
+            updated_at: new Date().toISOString(),
             ...extra,
           };
 
@@ -740,6 +770,9 @@ export default function ServiciosPage() {
         id: cita.id,
         fecha: cita.fecha,
         cliente: clientName,
+        // La cedula va en la factura: sin el documento del cliente es una nota
+        // de entrega, no una factura a su nombre.
+        cedula: formatearCedula(cita.vehiculos?.clientes?.cedula),
         vehiculo: vehicleStr,
         items: renglones.length > 0 ? renglones : [{
           descripcion: (cita.tipo === 'otro' ? 'Servicio General' : `Servicio de ${cita.tipo}`).toUpperCase(),
@@ -3493,6 +3526,7 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
       correlativo: correlativo || existingCorrelativo || undefined,
       fecha: cita.fecha,
       cliente: clientName,
+      cedula: formatearCedula(cita.vehiculos?.clientes?.cedula),
       vehiculo: vehicleStr,
       items,
       total,
@@ -3571,13 +3605,14 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
         total_clientes: 1,
         desglose: items,
         metodos_pago: payments,
-        ...buildPagoColumns(payments),
+        ...buildPagoColumnsCompletas(payments),
         tasa_cambio: rates.bcv || globalBcvRate || 518.0,
         con_iva: withIva,
         notas: vdNotas,
         creado_por: 'Admin',
         sede_id: sedeIdFinal,
         estado: 'pagado',
+        updated_at: new Date().toISOString(),
         ...comprobanteFields(comprobanteUrl, comprobanteRef),
       };
 

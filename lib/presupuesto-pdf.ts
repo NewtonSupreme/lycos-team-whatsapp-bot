@@ -287,7 +287,7 @@ export function generatePresupuestoPDF(data: PresupuestoPDFData) {
     doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
     const totalVes = data.total * (data.tasa_cambio || 1);
-    doc.text(`${totalVes.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`, rightMargin, totalY, { align: 'right' });
+    doc.text(`${totalVes.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Bs.`, rightMargin, totalY, { align: 'right' });
     totalY += 10;
   }
 

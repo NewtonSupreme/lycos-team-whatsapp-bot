@@ -27,6 +27,7 @@ import {
 import { supabase, registrarFactura } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
 import { cn, getLocalISODate, parseDescripcionItems } from '@/lib/utils';
+import { formatearCedula } from '@/lib/clientes/identidad';
 import PanelGeneral from '@/components/reportes/PanelGeneral';
 import { generateInvoicePDF, generateEgresoPDF, type InvoicePDFItem } from '@/lib/invoice-pdf';
 import { generateCierrePDF, type CierreData } from '@/lib/cierre-pdf';
@@ -84,6 +85,8 @@ interface VentaDia {
   /** El vehiculo de la venta. La factura lo lleva impreso; sin el no se sabe
    *  a que carro pertenece el trabajo que se esta cobrando. */
   vehiculo_info?: string | null;
+  /** Para poder buscar la cedula del cliente al emitir la factura. */
+  cliente_id?: string | null;
   placa?: string | null;
   comprobante_url?: string | null;
   comprobante_referencia?: string | null;
@@ -1874,6 +1877,23 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
     })();
   }, [venta?.id]);
 
+  /**
+   * La cedula del cliente, para la factura.
+   *
+   * No viaja en la fila de la venta, asi que se busca por `cliente_id`. Sin el
+   * documento del cliente el PDF es una nota de entrega, no una factura a su
+   * nombre, y la de Servicios si lo llevaba: la misma venta con dos caras.
+   */
+  const [cedulaCliente, setCedulaCliente] = useState<string | null>(null);
+  useEffect(() => {
+    const id = venta?.cliente_id;
+    if (!id || !supabase) { setCedulaCliente(null); return; }
+    let vivo = true;
+    supabase.from('clientes').select('cedula').eq('id', id).maybeSingle()
+      .then(({ data }) => { if (vivo) setCedulaCliente(formatearCedula(data?.cedula)); });
+    return () => { vivo = false; };
+  }, [venta?.cliente_id]);
+
   // Parse desglose items — split multi-component descriptions into individual lines
   const parsedItems = renglonesDeFactura(venta.desglose);
 
@@ -1923,6 +1943,7 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
         correlativo: correlativo || undefined,
         fecha: venta.fecha,
         cliente: cleanCliente === 'Consumidor Final' ? undefined : cleanCliente,
+        cedula: cedulaCliente,
         vehiculo: vehiculoDeLaVenta(venta),
         items: parsedItems,
         total: venta.total_ingresos,

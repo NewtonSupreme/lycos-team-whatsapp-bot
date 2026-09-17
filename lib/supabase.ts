@@ -269,7 +269,7 @@ export async function autoRegisterSaleFromService(
   //
   // El orden de preferencia es: lo que trae la orden → lo que ya tenía la venta
   // registrada → y solo si no hay ninguna de las dos, efectivo en divisas.
-  const { normalizeMetodo, buildPagoColumns, buildCategoriaColumns, inferirCategoria } =
+  const { normalizeMetodo, buildPagoColumnsCompletas, buildCategoriaColumns, inferirCategoria } =
     await import('@/lib/categorias');
 
   const deLaOrden = (service.metodos_pago && typeof service.metodos_pago === 'object')
@@ -320,7 +320,7 @@ export async function autoRegisterSaleFromService(
     total_clientes: 1,
     desglose,
     metodos_pago: metodos,
-    ...buildPagoColumns(metodos),
+    ...buildPagoColumnsCompletas(metodos),
     tasa_cambio: tasa,
     con_iva: !!service.con_iva,
     notas: notesFinal,
@@ -329,6 +329,7 @@ export async function autoRegisterSaleFromService(
     fecha_registro: new Date().toISOString(),
     registro_atrasado: false,
     estado: 'pagado',
+    updated_at: new Date().toISOString(),
   };
 
   if (existingVD) {

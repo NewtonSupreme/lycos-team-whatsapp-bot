@@ -6,6 +6,14 @@ export interface InvoiceData {
   correlativo?: string;
   fecha: string;
   cliente?: string;
+  /**
+   * La cedula o RIF del cliente.
+   *
+   * Una factura a nombre de alguien necesita su documento; sin el es una nota
+   * de entrega, no una factura. Se pide en la orden de servicio y hasta ahora
+   * no llegaba al PDF.
+   */
+  cedula?: string | null;
   vehiculo?: string;
   items: Array<{
     descripcion: string;
@@ -40,6 +48,27 @@ export interface InvoiceData {
   // Comprobante de pago (referencia + imagen del pago móvil / transferencia)
   comprobante_url?: string;
   comprobante_referencia?: string;
+}
+
+/**
+ * La fecha como se lee en Venezuela: 16/09/2026.
+ *
+ * El PDF imprimia `data.fecha` en crudo, y lo que llega es la fecha ISO de la
+ * base (`2026-09-16`). En un documento que va al cliente eso se lee como el mes
+ * 09 del dia 16 solo si ya sabes que es ISO.
+ *
+ * El `T12:00:00` es a proposito: `new Date('2026-09-16')` se interpreta como
+ * medianoche UTC y en Venezuela (UTC-4) se imprimiria el 15.
+ */
+function fechaVE(iso?: string | null): string {
+  const t = String(iso || '').trim();
+  if (!t) return '';
+  const soloFecha = /^\d{4}-\d{2}-\d{2}$/.test(t);
+  const d = new Date(soloFecha ? `${t}T12:00:00` : t);
+  if (Number.isNaN(d.getTime())) return t;  // lo que no se entiende se deja tal cual
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
 /** Carga una imagen remota o dataURL y la devuelve como dataURL para jsPDF. */
@@ -198,7 +227,7 @@ export const generateInvoicePDF = async (
     doc.setTextColor(...grayDark);
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
-    doc.text(data.fecha, rightAlign, 33, { align: 'right' });
+    doc.text(fechaVE(data.fecha), rightAlign, 33, { align: 'right' });
 
     // Divider
     doc.setDrawColor(...border);
@@ -215,6 +244,15 @@ export const generateInvoicePDF = async (
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
     doc.text(data.cliente?.toUpperCase() || 'CONSUMIDOR FINAL', margin, 54);
+
+    // La cedula va debajo del nombre, no en su propia fila: cuando no la hay
+    // —y en muchas fichas todavia no la hay— no queda un hueco con etiqueta.
+    if (data.cedula) {
+      doc.setTextColor(...grayDark);
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      doc.text(String(data.cedula).toUpperCase(), margin, 58.5);
+    }
     
     doc.setTextColor(...grayLight);
     doc.setFontSize(7);
@@ -259,7 +297,7 @@ export const generateInvoicePDF = async (
       ? [
           item.descripcion.toUpperCase(),
           item.cantidad,
-          `${(Number(item.total) * bcvRateUsed).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`,
+          `${(Number(item.total) * bcvRateUsed).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Bs.`,
           `${sym}${Number(item.total).toFixed(2)}`
         ]
       : [
@@ -288,11 +326,18 @@ export const generateInvoicePDF = async (
         cellPadding: 3,
         font: 'helvetica'
       },
+      // El ancho útil es de 124,5 mm (del margen al borde derecho). Los anchos
+      // fijos suman 68 y la descripción se queda con el resto.
+      //
+      // «CANT» salía partido en dos líneas («CA / NT») porque su columna medía
+      // 10 mm, y un importe en bolívares como «126.976,97 Bs.» tampoco cabía en
+      // los 20 mm de la suya. En una factura que se entrega al cliente, un
+      // encabezado roto en dos parece un error de impresión.
       columnStyles: isDual ? {
         0: { cellWidth: 'auto' },
-        1: { cellWidth: 10, halign: 'center' },
-        2: { cellWidth: 20, halign: 'right', fontStyle: 'bold', textColor: grayDark },
-        3: { cellWidth: 20, halign: 'right', fontStyle: 'bold', textColor: black }
+        1: { cellWidth: 13, halign: 'center' },
+        2: { cellWidth: 32, halign: 'right', fontStyle: 'bold', textColor: grayDark },
+        3: { cellWidth: 23, halign: 'right', fontStyle: 'bold', textColor: black }
       } : {
         0: { cellWidth: 'auto' },
         1: { cellWidth: 15, halign: 'center' },
@@ -353,7 +398,7 @@ export const generateInvoicePDF = async (
       doc.setFontSize(10);
       doc.setFont('helvetica', 'bold');
       const vesTotal = data.total_ves || (data.total * bcvRateUsed);
-      doc.text(`${vesTotal.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs.`, rightAlign - 4, boxY + 20, { align: 'right' });
+      doc.text(`${vesTotal.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Bs.`, rightAlign - 4, boxY + 20, { align: 'right' });
     }
 
     // ── Bottom Info ─────────────────────────────────────────────
@@ -405,7 +450,7 @@ export const generateInvoicePDF = async (
         ay += 4;
         doc.setTextColor(...grayDark);
         abonosList.forEach((a: any, i: number) => {
-          const fecha = a.created_at ? new Date(a.created_at).toLocaleDateString('es-VE') : '';
+          const fecha = fechaVE(a.created_at);
           const metodo = a.metodo_pago ? a.metodo_pago.replace(/_/g, ' ') : '';
           const linea = `Abono ${i + 1}: $${Number(a.monto).toFixed(2)}${fecha ? `  ·  ${fecha}` : ''}${metodo ? `  ·  ${metodo}` : ''}`;
           doc.text(linea, margin + 5, ay);
@@ -483,9 +528,15 @@ export const generateInvoicePDF = async (
   }
 
   // Save
+  // El archivo se llama como el documento: con correlativo es una FACTURA y sin
+  // el una NOTA DE ENTREGA, que es lo que ya dice impreso arriba a la derecha.
+  // Antes todo salia como «Nota_…» y una factura fiscal no se distinguia del
+  // resto en la carpeta de descargas.
+  const cliente0 = dataList[0].cliente?.replace(/\s+/g, '_') || 'Cliente';
+  const tipo0 = dataList[0].correlativo ? 'Factura' : 'Nota';
   const fileName = dataList.length > 1
-    ? `Dual_Lycos_${dataList[0].id?.slice(0,4)}_${dataList[1].id?.slice(0,4)}.pdf`
-    : `Nota_Lycos_${dataList[0].cliente?.replace(/\s/g, '_') || 'Cliente'}.pdf`;
+    ? `${tipo0}_Lycos_${dataList[0].id?.slice(0, 4)}_${dataList[1].id?.slice(0, 4)}.pdf`
+    : `${tipo0}_Lycos_${dataList[0].correlativo || cliente0}.pdf`;
     
   doc.save(fileName);
 };

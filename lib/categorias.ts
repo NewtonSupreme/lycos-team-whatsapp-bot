@@ -165,6 +165,35 @@ export function buildPagoColumns(metodos: Record<string, number> | null | undefi
   return out;
 }
 
+/** Todas las columnas de pago de `ventas_dia`, en un solo sitio. */
+export const COLUMNAS_PAGO: readonly string[] =
+  [...new Set(METODOS_PAGO.map(m => m.columna).filter(Boolean) as string[])];
+
+/**
+ * Las columnas de pago COMPLETAS, con cero en las que no llevan dinero.
+ *
+ * `buildPagoColumns` devuelve solo las columnas con importe, y eso está bien
+ * para un alta. Pero al ACTUALIZAR una venta, las columnas que no viajan en el
+ * payload conservan su valor anterior: si un cobro se pasa de Divisa a Pago
+ * Móvil, la Divisa se queda con el importe viejo y el reporte suma las dos.
+ *
+ * Así aparecieron $130 de la nada en el reporte del 16/09 —una venta de $150
+ * cobrada íntegra por pago móvil exterior que arrastraba $130 en Divisa de una
+ * versión anterior de la misma venta— y ocho casos más, unos $300 y Bs 1,09
+ * millones entre todos.
+ *
+ * Esta versión escribe las diez columnas siempre, así que el dinero que ya no
+ * está se borra. Se usa solo donde el desglose que se pasa es el DEFINITIVO de
+ * la venta; para un desglose parcial o aproximado, `buildPagoColumns`.
+ */
+export function buildPagoColumnsCompletas(
+  metodos: Record<string, number> | null | undefined,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const col of COLUMNAS_PAGO) out[col] = 0;
+  return { ...out, ...buildPagoColumns(metodos) };
+}
+
 /**
  * Los cobros que NO caen en ninguna columna del reporte.
  *

@@ -32,6 +32,28 @@ const fmt = (x: number, dec = 2) =>
 const usd = (x: number) => `$${fmt(x)}`;
 const bs = (x: number) => `${fmt(x, 0)}`;
 
+/**
+ * El carro para la columna CARRO, recortado sin perder la placa.
+ *
+ * Antes se cortaba a 20 caracteres a secas y «Chevrolet Spark AC383BA» salía
+ * como «Chevrolet Spark AC38»: la placa, que es lo único que identifica al
+ * vehículo, quedaba mutilada. Aquí se recorta el modelo y la placa se conserva
+ * entera.
+ */
+const carro = (texto: string, largo = 22): string => {
+  const t = String(texto || '').trim();
+  if (!t) return '—';
+  if (t.length <= largo) return t;
+  // La placa es la última palabra cuando lleva dígitos: 5 a 9 caracteres.
+  const partes = t.split(/\s+/);
+  const ultima = partes[partes.length - 1];
+  const esPlaca = /\d/.test(ultima) && ultima.length >= 5 && ultima.length <= 9;
+  if (!esPlaca) return t.slice(0, largo);
+  const sitio = largo - ultima.length - 1;
+  if (sitio < 3) return ultima;   // si no cabe ni el modelo, manda la placa
+  return `${partes.slice(0, -1).join(' ').slice(0, sitio).trim()} ${ultima}`;
+};
+
 interface DeptRec { silenciador: number; cauchera: number; alineacion: number; electronica: number; mecanica: number; frenos: number; lavado: number; repuestos: number; }
 interface BankRec { pago_movil_banesco: number; bnc: number; punto_banesco: number; punto_bancamiga: number; pago_movil_exterior: number; dolares: number; binance: number; zelle: number; efectivo_bs: number; cashea: number; }
 
@@ -74,7 +96,10 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   };
   const accentBar = () => { doc.setFillColor(...C.orange); doc.rect(0, 0, pageW, 2, 'F'); };
   const section = (title: string, extra?: string) => {
-    ensure(14);
+    // Se reserva sitio para el titulo Y para unas filas de su tabla. Con solo
+    // 14 mm cabia el titulo y nada mas, asi que la seccion 7 salia sola al pie
+    // de la primera pagina y su tabla empezaba en la siguiente.
+    ensure(30);
     doc.setFillColor(...C.dark);
     doc.roundedRect(margin, y, pageW - margin * 2, 7, 1, 1, 'F');
     doc.setTextColor(...C.white); doc.setFontSize(8); doc.setFont('helvetica', 'bold');
@@ -115,7 +140,10 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
     { label: 'INGRESOS DÍA', value: usd(tv.total), color: C.orange, light: C.orangeL },
     { label: 'CONTADO', value: usd(tv.contado), color: C.green, light: C.greenL },
     { label: 'CASHEA', value: usd(tv.cashea), color: C.purple, light: [237, 233, 254] as RGB },
-    { label: 'POR COBRAR', value: usd(data.porCobrarTotal), color: C.amber, light: C.amberL },
+    // Este NO es del dia: es todo el saldo abierto del taller. Al lado de
+    // «INGRESOS DIA» y «GASTOS DIA» se leia como si fueran $5.546 pendientes
+    // de ese mismo dia.
+    { label: 'POR COBRAR (TOTAL)', value: usd(data.porCobrarTotal), color: C.amber, light: C.amberL },
     { label: 'GASTOS DÍA', value: usd(data.gastosTotal.usd), color: C.red, light: [254, 226, 226] as RGB },
     { label: 'CLIENTES BD', value: `${data.clientesBD.total} (+${data.clientesBD.nuevos})`, color: C.blue, light: C.blueL },
   ];
@@ -137,7 +165,7 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
     startY: y,
     head: [['Nº', 'CLIENTE', 'CARRO', 'TOTAL', 'CONT.', 'CASHEA', 'IVA', 'INIC.', 'FINAN', 'X COB', 'PM BCO', 'PM EXT', 'P.BCM', 'P.BCO', 'BNC', 'DIV', 'BINAN', 'ZELLE', 'EF.BS']],
     body: data.ventas.map((v, i) => [
-      i + 1, v.nombre.substring(0, 22), (v.carro || '—').substring(0, 20),
+      i + 1, v.nombre.substring(0, 22), carro(v.carro),
       usd(v.total), usd(v.contado), usd(v.cashea), usd(v.iva), usd(v.inicial), usd(v.financiado), usd(v.porCobrar),
       bs(v.bancos.pago_movil_banesco), bs(v.bancos.pago_movil_exterior), bs(v.bancos.punto_bancamiga),
       bs(v.bancos.punto_banesco), bs(v.bancos.bnc), fmt(v.bancos.dolares), fmt(v.bancos.binance), fmt(v.bancos.zelle), bs(v.bancos.efectivo_bs),
@@ -208,7 +236,11 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
     headStyles: { fillColor: C.dark, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
     bodyStyles: { fontSize: 6.5, cellPadding: 1.4, textColor: C.dark },
     footStyles: { fillColor: C.orange, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
-    columnStyles: { 0: { cellWidth: 60 }, 1: { cellWidth: 18, halign: 'center' }, 2: { cellWidth: 40, halign: 'right' }, 3: { cellWidth: 25, halign: 'right' }, 4: { cellWidth: 30, halign: 'right' } },
+    // La primera columna se estira. Con las cinco a ancho fijo la tabla medía
+    // 173 mm dentro de los 277 disponibles: dejaba 104 mm en blanco a la
+    // derecha mientras el resto del reporte ocupa la página entera, y autoTable
+    // avisaba de esos 104 en cada generación.
+    columnStyles: { 0: { cellWidth: 'auto' }, 1: { cellWidth: 18, halign: 'center' }, 2: { cellWidth: 40, halign: 'right' }, 3: { cellWidth: 25, halign: 'right' }, 4: { cellWidth: 30, halign: 'right' } },
     margin: { left: margin, right: margin },
   });
   afterTable();

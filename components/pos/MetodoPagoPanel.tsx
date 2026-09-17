@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import LogoBanco from '@/components/pagos/LogoBanco';
+import { metodosConDinero } from '@/lib/pos/metodos-abiertos';
 import {
   BANK_METHODS, binToUSD, binsTotalUSD, type BankBin, type Bins,
 } from '@/lib/reporte/ventas-mapping';
@@ -134,7 +135,12 @@ export default function MetodoPagoPanel({
   const [moneda, setMoneda] = useState<Moneda>('Bs.');
   // Null mientras el usuario no elija: así el panel puede seguir al cobro.
   const [monedaManual, setMonedaManual] = useState<Moneda | null>(null);
-  const [abiertos, setAbiertos] = useState<readonly string[]>(['efectivo']);
+  // Se calcula al montar, a partir del cobro que ya traiga la orden. Después
+  // manda el usuario: recalcularlo en cada render le cerraría en la cara el
+  // grupo que acaba de abrir para escribir.
+  const [abiertos, setAbiertos] = useState<readonly string[]>(
+    () => metodosConDinero(bins, casheaActivo),
+  );
   // Qué métodos tienen su logo oficial disponible. Se sabe al cargarlo, no antes.
   const [conLogo, setConLogo] = useState<Record<string, boolean>>({});
   const [tasasDia, setTasasDia] = useState({ bcv: 0, binance: 0, euro: 0, eur: 0 });

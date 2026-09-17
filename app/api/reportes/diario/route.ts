@@ -27,7 +27,31 @@ interface VentaNorm {
   bancos: Bins;
 }
 
-function extraerVehiculo(notas: string | null, desglose: unknown): string {
+/**
+ * El vehículo de la venta, para la columna CARRO del reporte.
+ *
+ * Se mira primero la COLUMNA y solo después se rasca el texto de las notas.
+ * Antes iba al revés —solo notas— y una venta con su `vehiculo_info` y su
+ * placa bien guardados salía con lo que hubiera escrito alguien en la nota, o
+ * en blanco. El último recurso es la primera línea del desglose, que no es el
+ * carro sino el trabajo: se deja porque en las filas viejas no hay nada mejor.
+ */
+function extraerVehiculo(
+  notas: string | null,
+  desglose: unknown,
+  vehiculoInfo?: string | null,
+  placa?: string | null,
+): string {
+  const info = String(vehiculoInfo || '').trim();
+  const pl = String(placa || '').trim().toUpperCase();
+  if (info) {
+    // La placa no se repite si ya viene dentro del texto del vehículo.
+    const yaTiene = pl && info.toUpperCase().replace(/[^A-Z0-9]/g, '')
+      .includes(pl.replace(/[^A-Z0-9]/g, ''));
+    return [info, (pl && !yaTiene) ? pl : ''].filter(Boolean).join(' ');
+  }
+  if (pl) return pl;
+
   const m = (notas || '').match(/Veh[ií]culo:\s*([^|[\]]+)/i);
   if (m) return m[1].trim();
   if (Array.isArray(desglose) && desglose[0]?.descripcion) return String(desglose[0].descripcion);
@@ -131,7 +155,7 @@ export async function GET(req: NextRequest) {
 
       return {
         nombre: v.cliente || 'Consumidor Final',
-        carro: extraerVehiculo(v.notas, v.desglose),
+        carro: extraerVehiculo(v.notas, v.desglose, v.vehiculo_info, v.placa),
         departamentos: deptCols,
         total, contado, cashea, iva, inicial, financiado, porCobrar,
         bancos,
@@ -327,7 +351,14 @@ export async function GET(req: NextRequest) {
       taller,
       bancos,
       gastos, gastosTotal,
-      generadoEn: new Date().toLocaleString('es-VE'),
+      // El servidor corre en UTC, asi que la hora se fija a Caracas: si no, el
+      // pie de un reporte sacado a las 9 de la noche dice el dia siguiente.
+      // Y los dos digitos evitan el «17/9/2026» suelto.
+      generadoEn: new Date().toLocaleString('es-VE', {
+        timeZone: 'America/Caracas',
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: true,
+      }),
     });
   } catch (err: any) {
     console.error('Error en reporte diario:', err);
