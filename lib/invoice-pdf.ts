@@ -1,5 +1,9 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { completarFactura } from '@/lib/facturas/completar';
+import {
+  montoConMoneda, nombreDeLinea, tipoDePago, totalUSD, type LineaPago,
+} from '@/lib/pagos/desglose';
 
 export interface InvoiceData {
   id?: string;
@@ -48,6 +52,20 @@ export interface InvoiceData {
   // Comprobante de pago (referencia + imagen del pago móvil / transferencia)
   comprobante_url?: string;
   comprobante_referencia?: string;
+  /**
+   * Quién hizo el trabajo. Si no llega, se busca por la orden o la venta; y si
+   * tampoco consta, la factura dice «Sin asignar» en vez de callarlo.
+   */
+  mecanico?: string | null;
+  /** Cómo se pagó, ya en líneas. Si no llega, se saca de `metodos_pago` o de la venta. */
+  pagos?: LineaPago[];
+  /** La tasa con la que se cobraron los bolívares. */
+  tasa_pago?: number | null;
+  /** Para encontrar la orden o la venta de esta factura. */
+  servicio_id?: string | null;
+  venta_id?: string | null;
+  referencia_id?: string | null;
+  referencia_tabla?: string | null;
 }
 
 /**
@@ -187,6 +205,9 @@ export const generateInvoicePDF = async (
   // Orientation: Landscape (l), Unit: mm, Format: a4 (297x210)
   const doc = new jsPDF('l', 'mm', 'a4') as any;
 
+  // El mecánico y el cobro real, que ninguna pantalla traía completos.
+  dataList = await Promise.all(dataList.map(d => (d ? completarFactura(d as never) : d)));
+
   const drawInvoice = (data: any, startX: number) => {
     if (!data) return;
 
@@ -262,6 +283,20 @@ export const generateInvoicePDF = async (
     doc.setFontSize(11);
     doc.text(data.vehiculo?.toUpperCase() || '---', rightAlign, 54, { align: 'right' });
 
+    // El mecánico va siempre. Si no consta, se dice: una nota de entrega sin
+    // responsable es justo lo que hay que notar.
+    const mecanico = String(data.mecanico || '').trim();
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...grayLight);
+    const etiquetaMec = 'MECÁNICO: ';
+    const nombreMec = (mecanico || 'SIN ASIGNAR').toUpperCase().slice(0, 44);
+    doc.setTextColor(...(mecanico ? grayDark : orange));
+    doc.text(nombreMec, rightAlign, 58.5, { align: 'right' });
+    doc.setTextColor(...grayLight);
+    doc.text(etiquetaMec, rightAlign - doc.getTextWidth(nombreMec), 58.5, { align: 'right' });
+    doc.setFont('helvetica', 'normal');
+
     // ── Pending Status Ribbon ───────────────────────────────────
     if (data.estado === 'pendiente') {
       const ribbonY = 40;
@@ -284,7 +319,12 @@ export const generateInvoicePDF = async (
     const bcvRateUsed = data.tasa_bcv || data.tasa_cambio || 518.0;
     const isDual = options.currencyMode === 'dual';
 
-    const isEuro = data.currency === 'eur' || data.metodos_pago?.euros > 0 || /euro/i.test(data.notas || '');
+    // En euros solo si TODO el cobro fue en euros. Con que una parte lo fuera,
+    // la factura entera pasaba a «€55.00» aunque los precios son en dólares.
+    const mpFactura = (data.metodos_pago && typeof data.metodos_pago === 'object') ? data.metodos_pago : {};
+    const conDineroMp = Object.entries(mpFactura).filter(([, v]) => Number(v) > 0);
+    const todoEnEuros = conDineroMp.length > 0 && conDineroMp.every(([k]) => k === 'euros');
+    const isEuro = data.currency === 'eur' || todoEnEuros || /euro/i.test(data.notas || '');
     const sym = isEuro ? '€' : '$';
     const primaryLabel = isEuro ? 'TOTAL EUR' : 'TOTAL USD';
     const totalBoxLabel = isEuro ? 'MONTO TOTAL EUR' : 'MONTO TOTAL USD';
@@ -335,8 +375,9 @@ export const generateInvoicePDF = async (
       // encabezado roto en dos parece un error de impresión.
       columnStyles: isDual ? {
         0: { cellWidth: 'auto' },
-        1: { cellWidth: 13, halign: 'center' },
-        2: { cellWidth: 32, halign: 'right', fontStyle: 'bold', textColor: grayDark },
+        // 16 mm: con 13 el «CANT» en negrita seguía partiéndose en «CAN / T».
+        1: { cellWidth: 16, halign: 'center' },
+        2: { cellWidth: 29, halign: 'right', fontStyle: 'bold', textColor: grayDark },
         3: { cellWidth: 23, halign: 'right', fontStyle: 'bold', textColor: black }
       } : {
         0: { cellWidth: 'auto' },
@@ -410,6 +451,51 @@ export const generateInvoicePDF = async (
       doc.setFont('helvetica', 'bold');
       doc.text(`TASA DE CAMBIO BCV: ${data.tasa_bcv || data.tasa_cambio} Bs/$`, margin, infoY);
       infoY += 5;
+    }
+
+    // ── Forma de pago ─────────────────────────────────────────
+    // Cuál, cuánto y en qué moneda, línea por línea. Un pago mixto se lee
+    // entero: «Pago Móvil · Banesco Bs. 8.556,63 (≈ $10,00)» y debajo el resto.
+    {
+      const pagos: LineaPago[] = Array.isArray(data.pagos) ? data.pagos : [];
+      const visibles = pagos.slice(0, 5);
+      doc.setFontSize(7);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...grayLight);
+      doc.text('FORMA DE PAGO:', margin, infoY);
+      const anchoEtiqueta = doc.getTextWidth('FORMA DE PAGO:') + 1.5;
+      doc.setTextColor(...(pagos.length ? black : orange));
+      doc.text(tipoDePago(pagos).toUpperCase(), margin + anchoEtiqueta, infoY);
+      // El total equivalente solo si todas las líneas se pueden pasar a dólares:
+      // sin la tasa del euro saldría un total menor que el cobrado.
+      if (pagos.length > 1 && pagos.every(l => l.usd > 0)) {
+        doc.setTextColor(...grayDark);
+        doc.text(`TOTAL EQUIV. $${totalUSD(pagos).toFixed(2)}`, rightAlign, infoY, { align: 'right' });
+      }
+      infoY += 4.2;
+      doc.setFont('helvetica', 'normal');
+      for (const l of visibles) {
+        doc.setTextColor(...grayDark);
+        doc.text(`• ${nombreDeLinea(l)}`.toUpperCase(), margin + 2, infoY);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...black);
+        // Mismo formato que el resto de la factura: «$150.00» y «126.976,97 Bs.».
+        const monto = l.moneda === 'USD'
+          ? `$${l.monto.toFixed(2)}`
+          : l.moneda === 'Bs'
+            ? `${l.monto.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Bs.`
+            : montoConMoneda(l.monto, l.moneda);
+        const equiv = l.moneda !== 'USD' && l.usd > 0 ? `  (equiv. $${l.usd.toFixed(2)})` : '';
+        doc.text(`${monto}${equiv}`, rightAlign, infoY, { align: 'right' });
+        doc.setFont('helvetica', 'normal');
+        infoY += 3.8;
+      }
+      if (pagos.length > visibles.length) {
+        doc.setTextColor(...grayLight);
+        doc.text(`+ ${pagos.length - visibles.length} método(s) más`, margin + 2, infoY);
+        infoY += 3.8;
+      }
+      infoY += 1.5;
     }
 
     // Abono / Pending info — con historial completo de abonos
@@ -486,7 +572,9 @@ export const generateInvoicePDF = async (
     doc.text('San Antonio de los Altos, Edo. Miranda - Lycos Team CRM 2026', startX + 74.25, 202, { align: 'center' });
   };
 
-  if (options.mode === 'dual') {
+  // «Diferente» son dos facturas distintas en la misma hoja: se dibuja igual
+  // que la dual. Caía en la rama de una sola y la segunda no salía.
+  if (options.mode === 'dual' || options.mode === 'diferente') {
     // If we have only one invoice, draw it twice
     const data1 = dataList[0];
     const data2 = dataList.length > 1 ? dataList[1] : dataList[0];
@@ -541,68 +629,175 @@ export const generateInvoicePDF = async (
   doc.save(fileName);
 };
 
-export const generateEgresoPDF = (data: InvoiceData & { categoria?: string }) => {
+/**
+ * El comprobante de un gasto.
+ *
+ * Imprimía «LYCOS TEAM», la tabla y el total: sin fecha, sin a quién se le
+ * pagó y sin de dónde salió el dinero, que es justo lo que se busca en un
+ * comprobante de pago. Ahora lleva todo eso, y si el gasto está fiado o
+ * abonado a medias lo dice en vez de rotularlo «TOTAL PAGADO».
+ */
+export interface EgresoPDF {
+  id?: string;
+  fecha: string;
+  categoria?: string;
+  proveedor?: string | null;
+  placa?: string | null;
+  vehiculo_info?: string | null;
+  cliente_nombre?: string | null;
+  items: Array<{ descripcion: string; cantidad: number; precio_unitario: number; total: number }>;
+  total: number;
+  notas?: string | null;
+  enlace?: string | null;
+  estado_pago?: string | null;
+  monto_pagado?: number | null;
+  fecha_vencimiento?: string | null;
+  pagos?: LineaPago[];
+  /** Compatibilidad con quien aún pasa `cliente` como destinatario. */
+  cliente?: string;
+}
+
+export const generateEgresoPDF = (data: EgresoPDF) => {
   const doc = new jsPDF() as any;
 
-  // Colors
   const slate900 = [15, 23, 42] as [number, number, number];
   const slate600 = [71, 85, 105] as [number, number, number];
-  const slate500 = [100, 116, 139] as [number, number, number];
   const slate400 = [148, 163, 184] as [number, number, number];
   const slate200 = [226, 232, 240] as [number, number, number];
-  const accentRed = [225, 29, 72] as [number, number, number]; 
+  const rojo = [220, 38, 38] as [number, number, number];
+  const verde = [21, 128, 61] as [number, number, number];
+  const ambar = [194, 65, 12] as [number, number, number];
+  const izq = 20;
+  const der = 190;
 
-  // Header 
+  // Cabecera
   doc.setTextColor(...slate900);
   doc.setFontSize(24);
+  doc.setFont('helvetica', 'bolditalic');
+  doc.text('LYCOS TEAM', izq, 28);
+  doc.setTextColor(...slate400);
+  doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
-  doc.text('LYCOS TEAM', 20, 30);
+  doc.text('COMPROBANTE DE EGRESO / PAGO', izq, 34);
 
-  doc.setTextColor(...slate500);
+  doc.setFontSize(7);
+  doc.text('Nº', der, 22, { align: 'right' });
+  doc.setTextColor(...slate900);
+  doc.setFontSize(12);
+  doc.text((data.id || 'EGRESO').slice(0, 8).toUpperCase(), der, 28, { align: 'right' });
+  doc.setTextColor(...slate600);
   doc.setFontSize(9);
-  doc.setFont('helvetica', 'bold');
-  doc.text('COMPROBANTE DE EGRESO / PAGO', 20, 36);
+  doc.setFont('helvetica', 'normal');
+  doc.text(fechaVE(data.fecha), der, 34, { align: 'right' });
 
-  // Divider
   doc.setDrawColor(...slate200);
-  doc.line(20, 50, 190, 50);
+  doc.line(izq, 40, der, 40);
 
-  // Table
-  const tableRows = data.items.map((item, i) => [
-    i + 1,
-    item.descripcion,
-    item.cantidad,
-    `$${Number(item.precio_unitario).toFixed(2)}`,
-    `$${Number(item.total).toFixed(2)}`
-  ]);
+  // A quién, por qué y para qué carro
+  const dato = (etiqueta: string, valor: string, x: number, y: number, alinear: 'left' | 'right' = 'left') => {
+    doc.setTextColor(...slate400);
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'bold');
+    doc.text(etiqueta, x, y, { align: alinear });
+    doc.setTextColor(...slate900);
+    doc.setFontSize(10.5);
+    doc.text(valor, x, y + 5.5, { align: alinear });
+  };
+  dato('PAGADO A', String(data.proveedor || data.cliente || 'Sin indicar').toUpperCase().slice(0, 40), izq, 49);
+  dato('CATEGORÍA', String(data.categoria || 'Otro').toUpperCase(), der, 49, 'right');
+  if (data.placa) {
+    dato('VEHÍCULO',
+      `${data.placa}${data.vehiculo_info ? ` · ${data.vehiculo_info}` : ''}`.toUpperCase().slice(0, 48), izq, 63);
+    if (data.cliente_nombre) dato('CLIENTE', data.cliente_nombre.toUpperCase().slice(0, 32), der, 63, 'right');
+  }
 
   autoTable(doc, {
-    startY: 85,
-    head: [['#', 'Concepto / Descripción', 'Cant.', 'Precio Unit.', 'Total']],
-    body: tableRows,
+    startY: data.placa ? 76 : 64,
+    head: [['#', 'Concepto', 'Cant.', 'Precio', 'Total']],
+    body: data.items.map((item, i) => [
+      i + 1,
+      String(item.descripcion || '').toUpperCase(),
+      item.cantidad,
+      `$${Number(item.precio_unitario).toFixed(2)}`,
+      `$${Number(item.total).toFixed(2)}`,
+    ]),
     theme: 'plain',
-    headStyles: { 
-      fillColor: [255, 255, 255], 
-      textColor: slate900, 
-      fontSize: 9, 
-      fontStyle: 'bold',
-      lineColor: slate900,
-      lineWidth: { bottom: 1 }
+    headStyles: {
+      fillColor: [255, 255, 255], textColor: slate900, fontSize: 8.5, fontStyle: 'bold',
+      lineColor: slate900, lineWidth: { bottom: 0.8 },
     },
-    margin: { left: 20, right: 20 }
+    styles: { fontSize: 8.5, cellPadding: 2.5, textColor: slate600 },
+    columnStyles: {
+      0: { cellWidth: 10 }, 2: { cellWidth: 16, halign: 'center' },
+      3: { cellWidth: 26, halign: 'right' }, 4: { cellWidth: 26, halign: 'right', fontStyle: 'bold', textColor: slate900 },
+    },
+    margin: { left: izq, right: 210 - der },
   });
 
-  // Totals
-  const finalY = (doc as any).lastAutoTable.finalY || 120;
-  
-  doc.setTextColor(...slate900);
-  doc.setFontSize(11);
-  doc.setFont('helvetica', 'bold');
-  doc.text('TOTAL PAGADO', 140, finalY + 15);
-  
-  doc.setTextColor(...accentRed);
-  doc.text(`$${Number(data.total).toFixed(2)}`, 190, finalY + 15, { align: 'right' });
+  let y = ((doc as any).lastAutoTable.finalY || 110) + 10;
 
-  // Save
+  // Totales: lo que costó, lo que se pagó y lo que se debe
+  const total = Number(data.total) || 0;
+  const estado = data.estado_pago || 'pagado';
+  const pagado = estado === 'pagado' ? total : estado === 'parcial' ? Number(data.monto_pagado) || 0 : 0;
+  const debe = Math.max(0, total - pagado);
+  const fila = (etiqueta: string, valor: string, color: [number, number, number], grande = false) => {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(grande ? 11 : 9);
+    doc.setTextColor(...slate600);
+    doc.text(etiqueta, 130, y);
+    doc.setTextColor(...color);
+    doc.text(valor, der, y, { align: 'right' });
+    y += grande ? 7 : 5.5;
+  };
+  fila('TOTAL DEL GASTO', `$${total.toFixed(2)}`, rojo, true);
+  if (debe > 0.009) {
+    fila('PAGADO', `$${pagado.toFixed(2)}`, verde);
+    fila('SE DEBE', `$${debe.toFixed(2)}`, ambar);
+    if (data.fecha_vencimiento) fila('VENCE', fechaVE(data.fecha_vencimiento), ambar);
+  }
+
+  // De qué cuenta salió
+  y += 4;
+  const pagos = Array.isArray(data.pagos) ? data.pagos : [];
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(...slate400);
+  doc.text('PAGADO DESDE:', izq, y);
+  doc.setTextColor(...(pagos.length ? slate900 : ambar));
+  doc.text(
+    pagos.length ? tipoDePago(pagos).toUpperCase() : (pagado > 0 ? 'NO CONSTA LA CUENTA' : 'AÚN NO SE HA PAGADO'),
+    izq + doc.getTextWidth('PAGADO DESDE:') + 2, y,
+  );
+  y += 5.5;
+  for (const l of pagos) {
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...slate600);
+    doc.text(`• ${nombreDeLinea(l)}`.toUpperCase(), izq + 2, y);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...slate900);
+    const monto = l.moneda === 'USD'
+      ? `$${l.monto.toFixed(2)}`
+      : l.moneda === 'Bs'
+        ? `${l.monto.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Bs.`
+        : montoConMoneda(l.monto, l.moneda);
+    const equiv = l.moneda !== 'USD' && l.usd > 0 ? `  (equiv. $${l.usd.toFixed(2)})` : '';
+    doc.text(`${monto}${equiv}`, der, y, { align: 'right' });
+    y += 5;
+  }
+
+  if (data.enlace || data.notas) {
+    y += 4;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(...slate600);
+    if (data.enlace) { doc.text(`Referencia: ${data.enlace}`, izq, y); y += 5; }
+    if (data.notas) doc.text(doc.splitTextToSize(`Nota: ${data.notas}`, der - izq), izq, y);
+  }
+
+  doc.setFontSize(6.5);
+  doc.setTextColor(...slate400);
+  doc.text('Lycos Team · San Antonio de los Altos · Documento interno', 105, 287, { align: 'center' });
+
   doc.save(`Egreso_Lycos_${data.fecha}_${data.id?.slice(0, 4) || 'E'}.pdf`);
 };

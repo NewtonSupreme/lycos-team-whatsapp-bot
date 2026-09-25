@@ -26,6 +26,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
 import MetodoPagoPanel from '@/components/pos/MetodoPagoPanel';
 import { planCashea, type PorcentajeCashea } from '@/lib/pagos/cashea';
+import { binsDeColumnas, lineasDePago } from '@/lib/pagos/desglose';
 import { buildVentaDiaFields, emptyBins, binsTotalUSD, deptFromInventario, type Bins } from '@/lib/reporte/ventas-mapping';
 import { ComprobanteInput, emptyComprobante, type ComprobanteValue } from '@/components/ventas/ComprobanteInput';
 import { uploadComprobante, comprobanteFields } from '@/lib/comprobante';
@@ -655,6 +656,9 @@ export default function VentasPage() {
         fecha: format(selectedDate, 'dd/MM/yyyy'),
         cliente: clienteNombre || 'Consumidor Final',
         vehiculo: vehiculoInfo,
+        // La venta recién grabada: de ahí salen el técnico y el cobro por banco.
+        venta_id: ventaDia?.id || null,
+        pagos: lineasDePago(binsDeColumnas(mapped as unknown as Record<string, unknown>), activeRate),
         items: cart.map(item => {
           const effectivePrice = (conIva && isCasheaActive)
             ? (item.precio_bs || item.precio_unitario)
@@ -693,6 +697,8 @@ export default function VentasPage() {
       } else if (printMode === 'diferente' && secondVenta) {
         dataList.push({
           id: secondVenta.id,
+          venta_id: secondVenta.source === 'ia' ? null : secondVenta.id,
+          servicio_id: secondVenta.servicio_id || null,
           fecha: new Date(secondVenta.created_at).toLocaleDateString(),
           cliente: secondVenta.cliente || undefined,
           items: secondVenta.desglose || [],
@@ -942,6 +948,8 @@ export default function VentasPage() {
 
     generateInvoicePDF([{
       id: venta.id,
+      venta_id: venta.source === 'ia' ? null : venta.id,
+      servicio_id: venta.servicio_id || null,
       correlativo: correlativoReprint,
       fecha: new Date(venta.fecha || venta.created_at).toLocaleDateString(),
       cliente: venta.cliente,
@@ -2020,6 +2028,8 @@ export default function VentasPage() {
                           : printCurrencyMode;
                         generateInvoicePDF([{
                           id: selectedSale.id,
+                          venta_id: selectedSale.source === 'ia' ? null : selectedSale.id,
+                          servicio_id: selectedSale.servicio_id || null,
                           fecha: new Date(selectedSale.created_at).toLocaleDateString(),
                           cliente: selectedSale.cliente,
                           items: selectedSale.desglose || [],

@@ -51,6 +51,10 @@ export interface Partida {
    * ofreciera —y se cobrara— dos veces.
    */
   clave_item?: string | null;
+  /** De qué cuentas salió lo pagado al proveedor, cada una en su moneda. */
+  metodos_pago?: Record<string, number> | null;
+  /** La tasa con la que se pagaron los bolívares. */
+  tasa_pago?: number | null;
 }
 
 /**

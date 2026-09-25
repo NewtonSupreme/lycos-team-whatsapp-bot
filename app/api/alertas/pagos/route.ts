@@ -3,6 +3,7 @@ import { authorize } from '@/lib/auth-server';
 import { logActivityServer } from '@/lib/activity-server';
 import { getTasaDia } from '@/lib/tasas';
 import { sincronizarDesdePartida, type Partida } from '@/lib/ficha/sincronizar';
+import { BANK_METHODS } from '@/lib/reporte/ventas-mapping';
 import type { PagoVencido } from '@/lib/alertas/pagos';
 
 export const dynamic = 'force-dynamic';
@@ -168,7 +169,7 @@ export async function POST(req: NextRequest) {
   const auth = await authorize('reportes', 'editar');
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
-  let body: { origen?: string; id?: string; monto?: number };
+  let body: { origen?: string; id?: string; monto?: number; cuenta?: string; tasa?: number };
   try { body = await req.json(); } catch {
     return NextResponse.json({ error: 'Cuerpo de la petición inválido.' }, { status: 400 });
   }
@@ -179,12 +180,44 @@ export async function POST(req: NextRequest) {
 
   const hoy = hoyISO();
 
+  /*
+   * De qué cuenta salió. Se guarda en la moneda de la cuenta —bolívares a la
+   * tasa del día en una cuenta en Bs—, que es como la lee Finanzas para bajar
+   * el saldo de ese banco.
+   */
+  const meta = BANK_METHODS.find(m => m.id === body.cuenta && m.id !== 'cashea');
+  const tasaPago = Number(body.tasa) || 0;
+  if (body.cuenta && !meta) {
+    return NextResponse.json({ error: 'Esa cuenta no existe.' }, { status: 400 });
+  }
+  if (meta?.moneda === 'Bs' && !(tasaPago > 0)) {
+    return NextResponse.json({ error: 'Falta la tasa del día para un pago en bolívares.' }, { status: 400 });
+  }
+  const enCuenta = (usd: number) => (meta
+    ? { [meta.id]: n2(meta.moneda === 'Bs' ? usd * tasaPago : usd) }
+    : null);
+
   if (origen === 'partida') {
     const { data: previa } = await auth.db.from('vehiculo_partidas')
       .select('*').eq('id', id).maybeSingle();
     if (!previa) return NextResponse.json({ error: 'Ese renglón ya no existe.' }, { status: 404 });
 
+    const costoTotal = n2((Number(previa.cantidad) || 1) * (Number(previa.costo) || 0));
+    // Lo ya abonado antes sigue saliendo de su cuenta; lo de hoy, de la elegida.
+    const previo = (previa.metodos_pago && typeof previa.metodos_pago === 'object')
+      ? previa.metodos_pago as Record<string, number> : {};
+    const resto = n2(costoTotal - (previa.estado_pago === 'parcial' ? Number(previa.monto_pagado) || 0 : 0));
+    const hoyPagado = enCuenta(resto);
+    const metodos = hoyPagado
+      ? Object.entries(hoyPagado).reduce(
+        (acc, [k, v]) => ({ ...acc, [k]: n2((Number(acc[k]) || 0) + v) }),
+        { ...previo } as Record<string, number>,
+      )
+      : (Object.keys(previo).length ? previo : null);
+
     const { data, error } = await auth.db.from('vehiculo_partidas').update({
+      metodos_pago: metodos,
+      tasa_pago: tasaPago || previa.tasa_pago || null,
       estado_pago: 'pagado',
       // El abono parcial deja de tener sentido cuando ya está todo pagado: si se
       // quedara, el saldo se calcularía sobre una cifra que ya no significa nada.
@@ -213,13 +246,29 @@ export async function POST(req: NextRequest) {
   }
 
   const { data: previa } = await auth.db.from('egresos')
-    .select('id, proveedor, notas, total_egresos, sede_id').eq('id', id).maybeSingle();
+    .select('id, proveedor, notas, total_egresos, sede_id, monto_pagado, metodos_pago').eq('id', id).maybeSingle();
   if (!previa) return NextResponse.json({ error: 'Ese egreso ya no existe.' }, { status: 404 });
+
+  const restoEgreso = n2((Number(previa.total_egresos) || 0) - (Number(previa.monto_pagado) || 0));
+  const hoyEgreso = enCuenta(restoEgreso > 0 ? restoEgreso : Number(previa.total_egresos) || 0);
+  const previoEgreso = (previa.metodos_pago && typeof previa.metodos_pago === 'object')
+    ? previa.metodos_pago as Record<string, number> : {};
+  const metodosEgreso = hoyEgreso
+    ? Object.entries(hoyEgreso).reduce(
+      (acc, [k, v]) => ({ ...acc, [k]: n2((Number(acc[k]) || 0) + v) }),
+      { ...previoEgreso } as Record<string, number>,
+    )
+    : null;
 
   const { error } = await auth.db.from('egresos').update({
     estado_pago: 'pagado',
     monto_pagado: n2(previa.total_egresos),
     fecha_pago: hoy,
+    ...(metodosEgreso ? {
+      metodos_pago: metodosEgreso,
+      metodo_pago: meta!.id,
+      tasa_cambio: tasaPago || null,
+    } : {}),
     updated_at: new Date().toISOString(),
   }).eq('id', id);
 

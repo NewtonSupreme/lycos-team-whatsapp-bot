@@ -47,6 +47,10 @@ interface Props {
    * moneda equivocada.
    */
   cashea?: PropsPanelCashea;
+  /** Una orden ya guardada sin cobro: no se marca «Efectivo» por defecto. */
+  sinPreseleccion?: boolean;
+  ocultarMetodos?: readonly string[];
+  sentido?: 'cobro' | 'pago';
 }
 
 /** El contrato del simulador, tal y como lo espera el panel del POS. */
@@ -55,6 +59,7 @@ type PropsPanelCashea = NonNullable<React.ComponentProps<typeof MetodoPagoPanel>
 export default function DesglosePagoBancos({
   bins, onBinsChange, totalUSD, tasa, onTasaChange, tasaAuto,
   className, conCabecera = false, hideBins = [], cashea,
+  sinPreseleccion, ocultarMetodos, sentido,
 }: Props) {
   // Un bin oculto no debe quedar con dinero dentro: sería plata registrada que
   // nadie puede ver ni corregir desde esta pantalla.
@@ -77,6 +82,9 @@ export default function DesglosePagoBancos({
       onCustomRate={onTasaChange}
       cashea={cashea}
       conCabecera={conCabecera}
+      sinPreseleccion={sinPreseleccion}
+      ocultarMetodos={ocultarMetodos}
+      sentido={sentido}
       // El anfitrión ya dibuja la tarjeta y su encabezado; el panel no repite
       // el marco ni abre un scroll propio dentro del modal.
       desplazable={false}

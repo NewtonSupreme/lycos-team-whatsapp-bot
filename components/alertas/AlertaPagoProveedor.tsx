@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import LogoBanco from '@/components/pagos/LogoBanco';
+import { BANK_METHODS, type BankBin } from '@/lib/reporte/ventas-mapping';
 import {
   AlertTriangle, CalendarX, CheckCircle2, Clock, ExternalLink, Loader2,
   Mail, Phone, Truck, User,
@@ -65,6 +67,9 @@ export default function AlertaPagoProveedor() {
   const [aparcados, setAparcados] = useState<Set<string>>(new Set());
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
+  // De qué cuenta salió el pago. Sin esto el gasto quedaba asentado, pero
+  // ningún saldo de banco bajaba: Finanzas no sabía de dónde descontarlo.
+  const [cuenta, setCuenta] = useState<BankBin | null>(null);
 
   const cargar = useCallback(async () => {
     try {
@@ -97,22 +102,25 @@ export default function AlertaPagoProveedor() {
 
   const aparcar = () => {
     setAparcados(s => new Set(s).add(clave));
+    setCuenta(null);
     setError('');
   };
 
   const yaPague = async () => {
+    if (!cuenta) { setError('Elige de qué cuenta salió el pago.'); return; }
     setGuardando(true);
     setError('');
     try {
       const r = await fetch('/api/alertas/pagos', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ origen: pago.origen, id: pago.id }),
+        body: JSON.stringify({ origen: pago.origen, id: pago.id, cuenta, tasa }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'No se pudo registrar el pago');
       // Se quita de la lista y se vuelve a consultar: si quedaban más deudas
       // vencidas, la siguiente sale sola.
       setAparcados(s => new Set(s).add(clave));
+      setCuenta(null);
       await cargar();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error al registrar el pago');
@@ -280,6 +288,41 @@ export default function AlertaPagoProveedor() {
             )}
           </div>
 
+          {/* De qué cuenta sale. Una sola: para repartir un pago entre dos
+              cuentas está el renglón de la ficha, con el panel completo. */}
+          {puedePagar && (
+            <div>
+              <p className="mb-1.5 text-[11.5px] font-semibold text-[#3d4350]">¿De qué cuenta salió el pago?</p>
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+                {BANK_METHODS.filter(m => m.id !== 'cashea').map(m => {
+                  const monto = m.moneda === 'Bs'
+                    ? (tasa > 0 ? bs(pago.saldo * tasa) : '—')
+                    : money(pago.saldo);
+                  const elegida = cuenta === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => { setCuenta(m.id); setError(''); }}
+                      disabled={m.moneda === 'Bs' && !(tasa > 0)}
+                      aria-pressed={elegida}
+                      className={cn(
+                        'flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors disabled:opacity-40',
+                        elegida ? 'border-[#16a34a] bg-[#e8f7ee]' : 'border-[#e2e5ea] hover:bg-[#f6f7f9]',
+                      )}
+                    >
+                      <LogoBanco id={m.id} size={20} />
+                      <span className="min-w-0 leading-tight">
+                        <span className="block truncate text-[11px] font-medium text-[#16181d]">{m.label}</span>
+                        <span className="num block text-[10.5px] text-[#8a909c]">{monto}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {error && (
             <p role="alert" className="rounded-lg border border-[#f5c2c2] bg-[#fdeaea] px-3 py-2 text-[12.5px] text-[#b91c1c]">
               {error}
@@ -308,7 +351,8 @@ export default function AlertaPagoProveedor() {
           {puedePagar && (
             <button
               onClick={yaPague}
-              disabled={guardando}
+              disabled={guardando || !cuenta}
+              title={cuenta ? undefined : 'Elige primero de qué cuenta salió'}
               className={cn(
                 'flex h-[42px] items-center gap-2 rounded-lg bg-[#16a34a] px-5 text-[13px] font-bold text-white',
                 'hover:bg-[#15803d] disabled:opacity-50',

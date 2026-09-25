@@ -4,6 +4,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Link2, Loader2, Plus, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { EstadoPago, OrigenPartida, PartidaCalculada, TipoPartida } from '@/lib/ficha/vehiculo';
+import DesglosePagoBancos from '@/components/pos/DesglosePagoBancos';
+import {
+  binsFromLegacyMetodos, binsTotalUSD, emptyBins, type Bins,
+} from '@/lib/reporte/ventas-mapping';
 
 interface Proveedor { id: string; nombre: string; telefono?: string | null; enlace?: string | null }
 
@@ -90,7 +94,17 @@ export default function DialogoPartida({
   const [estadoPago, setEstadoPago] = useState<EstadoPago>(
     partida?.estado_pago || (precarga ? 'por_pagar' : 'pagado'),
   );
-  const [montoPagado, setMontoPagado] = useState(String(partida?.monto_pagado ?? ''));
+  // De qué cuenta salió lo que se le pagó al proveedor, en la moneda de cada
+  // cuenta. Es lo que convierte «pagado» en «pagado desde Banesco»: sin esto
+  // el gasto existía, pero ningún saldo de banco bajaba.
+  const [pagoBins, setPagoBins] = useState<Bins>(() => {
+    const mp = partida?.metodos_pago;
+    return mp ? binsFromLegacyMetodos(mp) : emptyBins();
+  });
+  const [tasaPago, setTasaPago] = useState<number | null>(
+    () => Number(partida?.tasa_pago) || null,
+  );
+  const [tasaDia, setTasaDia] = useState(0);
   const [vence, setVence] = useState(partida?.fecha_vencimiento || '');
   const [fecha, setFecha] = useState(partida?.fecha || precarga?.fecha || hoy());
   const [nota, setNota] = useState(partida?.nota || '');
@@ -98,6 +112,13 @@ export default function DialogoPartida({
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    fetch('/api/rates')
+      .then(r => r.json())
+      .then(d => setTasaDia(Number(d?.bcv) || 0))
+      .catch(() => setTasaDia(0));
+  }, []);
 
   useEffect(() => {
     fetch('/api/proveedores?activos=1')
@@ -115,22 +136,36 @@ export default function DialogoPartida({
   const totalCosto = laTraeElCliente ? 0 : n(cantidad) * n(costo);
   const utilidad = totalVenta - totalCosto;
 
+  const tasa = tasaPago || tasaDia || 0;
+  /** Lo que ya salió de caja, en dólares, según las cuentas del panel. */
+  const pagadoUSD = binsTotalUSD(pagoBins, tasa);
+  const hayPago = Object.values(pagoBins).some(v => v > 0);
+  const lleva = !laTraeElCliente && totalCosto > 0;
+
   const saldo = useMemo(() => {
     if (laTraeElCliente || totalCosto === 0) return 0;
     if (estadoPago === 'por_pagar') return totalCosto;
-    if (estadoPago === 'parcial') return Math.max(0, totalCosto - n(montoPagado));
+    if (estadoPago === 'parcial') return Math.max(0, Math.round((totalCosto - pagadoUSD) * 100) / 100);
     return 0;
-  }, [laTraeElCliente, totalCosto, estadoPago, montoPagado]);
+  }, [laTraeElCliente, totalCosto, estadoPago, pagadoUSD]);
 
   const guardar = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     if (!descripcion.trim()) { setError('Escribe qué se hizo o qué pieza se puso.'); return; }
     if (n(cantidad) <= 0) { setError('La cantidad tiene que ser mayor que cero.'); return; }
-    if (estadoPago === 'parcial' && n(montoPagado) <= 0) {
-      setError('Un pago parcial necesita el monto que ya se abonó.'); return;
+    if (lleva && (estadoPago === 'pagado' || estadoPago === 'parcial') && !hayPago) {
+      setError('Indica de qué cuenta salió el pago al proveedor.'); return;
     }
-    if (estadoPago === 'parcial' && n(montoPagado) >= totalCosto) {
+    // Un céntimo por cada dólar de margen: los bolívares a una tasa dan
+    // decimales que no cuadran exactos.
+    const margen = Math.max(0.05, totalCosto * 0.01);
+    if (lleva && estadoPago === 'pagado' && Math.abs(pagadoUSD - totalCosto) > margen) {
+      setError(`Lo pagado ($${pagadoUSD.toFixed(2)}) no cuadra con el costo ($${totalCosto.toFixed(2)}). `
+        + 'Corrige el monto o marca «Abonado a medias».');
+      return;
+    }
+    if (lleva && estadoPago === 'parcial' && pagadoUSD >= totalCosto - margen) {
       setError('Si ya se pagó todo, marca el renglón como pagado.'); return;
     }
 
@@ -154,7 +189,9 @@ export default function DialogoPartida({
         proveedor: laTraeElCliente ? null : (proveedor.trim() || null),
         enlace: enlace.trim() || null,
         estado_pago: sinCosto && totalCosto === 0 ? 'no_aplica' : estadoPago,
-        monto_pagado: estadoPago === 'parcial' ? n(montoPagado) : 0,
+        monto_pagado: estadoPago === 'parcial' ? Math.round(pagadoUSD * 100) / 100 : 0,
+        metodos_pago: lleva && (estadoPago === 'pagado' || estadoPago === 'parcial') ? pagoBins : null,
+        tasa_pago: lleva && (estadoPago === 'pagado' || estadoPago === 'parcial') ? (tasa || null) : null,
         fecha_vencimiento: vence || null,
         nota: nota.trim() || null,
       };
@@ -377,13 +414,36 @@ export default function DialogoPartida({
                 </div>
               </div>
 
+              {/* Cómo se le pagó: el mismo panel del punto de venta, pero para
+                  pagar. En un abono, lo abonado es lo que se ponga aquí. */}
+              {(estadoPago === 'pagado' || estadoPago === 'parcial') && (
+                <div className="rounded-lg border border-[#e8eaed]">
+                  <p className="px-4 pt-3 text-[11.5px] font-semibold text-[#16181d]">
+                    {estadoPago === 'parcial' ? '¿Cuánto se abonó y de qué cuenta?' : '¿Cómo se le pagó al proveedor?'}
+                  </p>
+                  <DesglosePagoBancos
+                    bins={pagoBins}
+                    onBinsChange={setPagoBins}
+                    totalUSD={totalCosto}
+                    tasa={tasa}
+                    tasaAuto={tasaDia}
+                    onTasaChange={setTasaPago}
+                    sentido="pago"
+                    ocultarMetodos={['cashea']}
+                    sinPreseleccion={editando}
+                  />
+                </div>
+              )}
+
               {estadoPago !== 'pagado' && (
                 <div className="grid grid-cols-2 gap-3">
                   {estadoPago === 'parcial' && (
-                    <label className="block">
+                    <div className="block">
                       <span className="mb-1 block text-[11.5px] font-medium text-[#5b616e]">Ya abonado</span>
-                      <input type="number" step="0.01" min="0" value={montoPagado} onChange={e => setMontoPagado(e.target.value)} className={INPUT} />
-                    </label>
+                      <p className="num flex h-[40px] items-center rounded-lg bg-[#f6f7f9] px-2.5 text-[13px] font-semibold text-[#16181d]">
+                        ${pagadoUSD.toFixed(2)}
+                      </p>
+                    </div>
                   )}
                   <label className="block">
                     <span className="mb-1 block text-[11.5px] font-medium text-[#5b616e]">Fecha límite de pago</span>

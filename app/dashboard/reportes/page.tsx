@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -30,6 +31,11 @@ import { cn, getLocalISODate, parseDescripcionItems } from '@/lib/utils';
 import { formatearCedula } from '@/lib/clientes/identidad';
 import PanelGeneral from '@/components/reportes/PanelGeneral';
 import { generateInvoicePDF, generateEgresoPDF, type InvoicePDFItem } from '@/lib/invoice-pdf';
+import VistaEgresos from '@/components/egresos/VistaEgresos';
+import DialogoEgreso from '@/components/egresos/DialogoEgreso';
+import {
+  conceptoDe, etiquetaCategoria, lineasDeEgreso, type EgresoFila,
+} from '@/components/egresos/tipos';
 import { generateCierrePDF, type CierreData } from '@/lib/cierre-pdf';
 import { generateNotaEntregaPDF } from '@/lib/distribucion-pdf';
 import { generateReporteDiarioPDF } from '@/lib/reporte-diario-pdf';
@@ -99,6 +105,18 @@ interface VentaDia {
  * Servicios si lo llevaba: era la misma venta con dos caras distintas. Los
  * datos estaban en la fila (`vehiculo_info`, `placa`), solo faltaba pasarlos.
  */
+/**
+ * La placa de una venta: la columna, o la que venga escrita en las notas o en
+ * el texto del vehículo de las ventas viejas.
+ */
+const placaDeVenta = (v: { placa?: string | null; vehiculo_info?: string | null; notas?: string | null }): string | null => {
+  const directa = String(v.placa || '').trim().toUpperCase();
+  if (directa) return directa;
+  const texto = `${v.vehiculo_info || ''} ${v.notas || ''}`.toUpperCase();
+  const m = texto.match(/\b([A-Z]{2,3}\d{2,3}[A-Z]{1,3}|[A-Z]\d{2}[A-Z]\d{2}[A-Z]?)\b/);
+  return m ? m[1] : null;
+};
+
 const vehiculoDeLaVenta = (v: { vehiculo_info?: string | null; placa?: string | null }): string | undefined => {
   const info = String(v.vehiculo_info || '').trim();
   const placa = String(v.placa || '').trim().toUpperCase();
@@ -1123,295 +1141,6 @@ function ManualModal({ onClose, onSave, initial, inventario = [] }: {
   );
 }
 
-function EgresoModal({ onClose, onSave, initial }: {
-  onClose: () => void;
-  onSave: (data: Partial<Egreso>) => Promise<void>;
-  initial?: Egreso | null;
-}) {
-  const [form, setForm] = useState({
-    fecha: initial?.fecha || new Date().toISOString().split('T')[0],
-    cliente: initial?.cliente || '',
-    categoria: initial?.categoria || 'otro',
-    total_egresos: initial?.total_egresos || 0,
-    notas: initial?.notas || '',
-  });
-  const [items, setItems] = useState<DesglosItem[]>(
-    initial?.desglose?.length ? initial.desglose : [{ descripcion: '', cantidad: 1, precio_unitario: 0, total: 0 }]
-  );
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  // ── Asociación a un vehículo (para calcular la utilidad de ese carro) ──────
-  const [placaBusqueda, setPlacaBusqueda] = useState(initial?.placa || '');
-  const [vinculo, setVinculo] = useState<{
-    vehiculo_id: string; cliente_id: string | null; placa: string;
-    vehiculo_info: string; cliente_nombre: string;
-  } | null>(
-    initial?.vehiculo_id
-      ? {
-          vehiculo_id: initial.vehiculo_id,
-          cliente_id: initial.cliente_id || null,
-          placa: initial.placa || '',
-          vehiculo_info: initial.vehiculo_info || '',
-          cliente_nombre: initial.cliente_nombre || '',
-        }
-      : null
-  );
-  const [buscandoPlaca, setBuscandoPlaca] = useState(false);
-  const [placaError, setPlacaError] = useState('');
-
-  const buscarVehiculo = async () => {
-    const pl = placaBusqueda.trim().toUpperCase();
-    if (!pl || !supabase) return;
-    setBuscandoPlaca(true); setPlacaError('');
-    try {
-      const { data } = await supabase
-        .from('vehiculos')
-        .select('id, marca, modelo, placa, cliente_id, clientes(nombre, apellido)')
-        .ilike('placa', pl).limit(1).maybeSingle();
-      if (!data) {
-        setVinculo(null);
-        setPlacaError(`No se encontró ningún vehículo con placa ${pl}`);
-      } else {
-        const c: any = data.clientes;
-        setVinculo({
-          vehiculo_id: data.id,
-          cliente_id: data.cliente_id,
-          placa: data.placa,
-          vehiculo_info: `${data.marca || ''} ${data.modelo || ''}`.trim(),
-          cliente_nombre: c ? `${c.nombre || ''} ${c.apellido || ''}`.trim() : '',
-        });
-      }
-    } catch {
-      setPlacaError('Error buscando el vehículo');
-    }
-    setBuscandoPlaca(false);
-  };
-
-  
-
-  
-
-
-  const updateItem = (i: number, key: keyof DesglosItem, val: string | number) => {
-    setItems(prev => {
-      const next = [...prev];
-      next[i] = { ...next[i], [key]: val };
-      if (key === 'cantidad' || key === 'precio_unitario') {
-        next[i].total = Number(next[i].cantidad) * Number(next[i].precio_unitario);
-      }
-      return next;
-    });
-  };
-
-  const totalFromItems = items.reduce((s, it) => s + Number(it.total), 0);
-  useEffect(() => { setForm(f => ({ ...f, total_egresos: totalFromItems })); }, [totalFromItems]);
-
-  const handleSave = async () => {
-    if (!form.fecha) { setError('La fecha es requerida'); return; }
-    setSaving(true);
-    try {
-      await onSave({
-        fecha: form.fecha,
-        cliente: form.cliente || null,
-        proveedor: form.cliente || null,
-        categoria: form.categoria,
-        total_egresos: Number(form.total_egresos),
-        notas: form.notas || null,
-        desglose: items.filter(i => i.descripcion.trim()),
-        // Asociación al vehículo/cliente → alimenta la Utilidad por Vehículo
-        vehiculo_id: vinculo?.vehiculo_id || null,
-        cliente_id: vinculo?.cliente_id || null,
-        placa: vinculo?.placa || null,
-        vehiculo_info: vinculo?.vehiculo_info || null,
-        cliente_nombre: vinculo?.cliente_nombre || null,
-      });
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al guardar');
-    }
-    setSaving(false);
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-card border border-border rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl">
-        <div className="flex items-center justify-between p-5 border-b border-border/30">
-          <div>
-            <h2 className="text-base font-bold text-rose-400">{initial ? 'Editar egreso' : 'Nuevo registro de egreso'}</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">Registra pagos, compras o gastos del taller</p>
-          </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-white/5 flex items-center justify-center">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="p-5 space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Fecha del egreso</label>
-              <input
-                type="date"
-                value={form.fecha}
-                onChange={e => setForm(f => ({ ...f, fecha: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Categoría</label>
-              <select
-                value={form.categoria}
-                onChange={e => setForm(f => ({ ...f, categoria: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm"
-              >
-                <option value="repuestos">Compra de Repuestos</option>
-                <option value="servicios">Pago de Servicios (Luz, Agua, etc)</option>
-                <option value="nomina">Nómina / Personal</option>
-                <option value="herramientas">Herramientas</option>
-                <option value="local">Alquiler / Local</option>
-                <option value="otro">Otro gasto</option>
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Pagado a (Proveedor / Nombre)</label>
-              <input
-                type="text"
-                placeholder="Ej: Repuestos El Chamo"
-                value={form.cliente || ''}
-                onChange={e => setForm(f => ({ ...f, cliente: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Total egreso ($)</label>
-              <input
-                type="number" step="0.01"
-                value={form.total_egresos}
-                onChange={e => setForm(f => ({ ...f, total_egresos: Number(e.target.value) }))}
-                className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm font-bold text-rose-400"
-              />
-            </div>
-          </div>
-
-          {/* Asociar el gasto a un vehículo → utilidad por vehículo */}
-          <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-3 space-y-2">
-            <label className="text-xs font-bold text-blue-400 uppercase tracking-wider">
-              Asociar a un vehículo (opcional)
-            </label>
-            <p className="text-[10px] text-muted-foreground -mt-1">
-              Si este gasto es por un carro específico, indica su placa. El sistema calculará la utilidad real de ese vehículo (ingresos − gastos).
-            </p>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="Placa del vehículo (ej: AG714TG)"
-                value={placaBusqueda}
-                onChange={e => setPlacaBusqueda(e.target.value.toUpperCase())}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); buscarVehiculo(); } }}
-                className="flex-1 px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-sm font-mono uppercase"
-              />
-              <button
-                type="button"
-                onClick={buscarVehiculo}
-                disabled={buscandoPlaca || !placaBusqueda.trim()}
-                className="px-3 py-2 rounded-lg bg-blue-500/20 text-blue-400 hover:bg-blue-500 hover:text-white text-xs font-bold transition-colors disabled:opacity-40"
-              >
-                {buscandoPlaca ? 'Buscando…' : 'Buscar'}
-              </button>
-              {vinculo && (
-                <button
-                  type="button"
-                  onClick={() => { setVinculo(null); setPlacaBusqueda(''); setPlacaError(''); }}
-                  className="px-3 py-2 rounded-lg hover:bg-white/5 text-xs text-muted-foreground"
-                >
-                  Quitar
-                </button>
-              )}
-            </div>
-            {placaError && <p className="text-[11px] text-amber-400">{placaError}</p>}
-            {vinculo && (
-              <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-2">
-                <p className="text-xs font-bold text-blue-300">
-                  🚗 {vinculo.placa} — {vinculo.vehiculo_info || 'Vehículo'}
-                </p>
-                {vinculo.cliente_nombre && (
-                  <p className="text-[11px] text-muted-foreground mt-0.5">Cliente: {vinculo.cliente_nombre}</p>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-xs font-medium text-muted-foreground">Desglose de egreso</label>
-              <button
-                onClick={() => setItems(p => [...p, { descripcion: '', cantidad: 1, precio_unitario: 0, total: 0 }])}
-                className="text-xs text-rose-400 hover:underline flex items-center gap-1"
-              >
-                <Plus className="w-3 h-3" /> Agregar ítem
-              </button>
-            </div>
-            <div className="space-y-2">
-              {items.map((item, i) => (
-                <div key={i} className="grid grid-cols-12 gap-2 items-center group">
-                  <div className="col-span-1 text-[10px] font-bold text-muted-foreground text-center bg-muted/30 h-7 flex items-center justify-center rounded">
-                    {i + 1}
-                  </div>
-                  <input
-                    className="col-span-4 px-2 py-1.5 rounded-lg border border-border/40 bg-background/50 text-xs"
-                    placeholder="¿En qué se gastó?"
-                    value={item.descripcion || ''}
-                    onChange={e => updateItem(i, 'descripcion', e.target.value)}
-                  />
-                  <input
-                    className="col-span-2 px-2 py-1.5 rounded-lg border border-border/40 bg-background/50 text-xs"
-                    type="number" placeholder="Cant." value={item.cantidad}
-                    onChange={e => updateItem(i, 'cantidad', Number(e.target.value))}
-                  />
-                  <input
-                    className="col-span-2 px-2 py-1.5 rounded-lg border border-border/40 bg-background/50 text-xs"
-                    type="number" placeholder="$" value={item.precio_unitario}
-                    onChange={e => updateItem(i, 'precio_unitario', Number(e.target.value))}
-                  />
-                  <div className="col-span-2 text-xs font-medium text-rose-400 text-right">
-                    ${Number(item.total).toFixed(2)}
-                  </div>
-                  <button
-                    onClick={() => setItems(p => p.filter((_, j) => j !== i))}
-                    className="col-span-1 text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Notas</label>
-            <textarea
-              value={form.notas || ''}
-              onChange={e => setForm(f => ({ ...f, notas: e.target.value }))}
-              placeholder="Detalles adicionales..."
-              rows={2}
-              className="w-full px-3 py-2 rounded-lg border border-border/50 bg-background/50 text-xs resize-none"
-            />
-          </div>
-
-          {error && <div className="text-xs text-destructive p-2.5 rounded-lg bg-destructive/10">{error}</div>}
-        </div>
-
-        <div className="flex items-center justify-end gap-2 p-5 border-t border-border/30">
-          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm">Cancelar</button>
-          <Button onClick={handleSave} disabled={saving} className="bg-rose-600 hover:bg-rose-700">
-            {saving ? 'Guardando...' : 'Guardar Egreso'}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── Modal: Scan IA + Confirmación ──────────────────────────────
 function ScanModal({ onClose, onConfirm, modo }: {
   onClose: () => void;
@@ -1940,6 +1669,9 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
 
       const dataList: InvoicePDFItem[] = [{
         id: venta.id,
+        // Con esto el PDF busca el mecánico y el cobro por banco de la venta.
+        venta_id: venta.source === 'ia' ? null : venta.id,
+        servicio_id: venta.servicio_id || null,
         correlativo: correlativo || undefined,
         fecha: venta.fecha,
         cliente: cleanCliente === 'Consumidor Final' ? undefined : cleanCliente,
@@ -2003,6 +1735,8 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
         const parsedSecondItems = renglonesDeFactura(secondVenta.desglose);
         dataList.push({
           id: secondVenta.id,
+          venta_id: secondVenta.source === 'ia' ? null : secondVenta.id,
+          servicio_id: secondVenta.servicio_id || null,
           correlativo: correlativoSecond || undefined,
           fecha: secondVenta.fecha,
           cliente: cleanSecondCliente === 'Consumidor Final' ? undefined : cleanSecondCliente,
@@ -2321,22 +2055,35 @@ function InvoiceModal({ venta, ventas, onClose }: { venta: any; ventas: any[]; o
   );
 }
 
+/** El comprobante del gasto, con proveedor, vehículo, estado y cuentas. */
+function descargarEgresoPdf(e: EgresoFila) {
+  try {
+    generateEgresoPDF({
+      id: e.id,
+      fecha: e.fecha,
+      categoria: etiquetaCategoria(e.categoria),
+      proveedor: e.proveedor || e.cliente,
+      placa: e.placa,
+      vehiculo_info: e.vehiculo_info,
+      cliente_nombre: e.cliente_nombre,
+      items: e.desglose?.length
+        ? e.desglose
+        : [{ descripcion: conceptoDe(e), cantidad: 1, precio_unitario: Number(e.total_egresos) || 0, total: Number(e.total_egresos) || 0 }],
+      total: Number(e.total_egresos) || 0,
+      notas: e.notas,
+      enlace: e.enlace,
+      estado_pago: e.estado_pago,
+      monto_pagado: e.monto_pagado,
+      fecha_vencimiento: e.fecha_vencimiento,
+      pagos: lineasDeEgreso(e),
+    });
+  } catch {
+    alert('No se pudo generar el comprobante en PDF.');
+  }
+}
+
 function EgresoPreviewModal({ egreso, onClose }: { egreso: Egreso; onClose: () => void }) {
-  const handleDownload = () => {
-    try {
-      generateEgresoPDF({
-        id: egreso.id,
-        fecha: egreso.fecha,
-        cliente: egreso.cliente || undefined,
-        categoria: egreso.categoria,
-        items: egreso.desglose || [],
-        total: egreso.total_egresos,
-        notas: egreso.notas || undefined
-      });
-    } catch (err) {
-      alert('Error al generar PDF');
-    }
-  };
+  const handleDownload = () => descargarEgresoPdf(egreso as unknown as EgresoFila);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -3566,6 +3313,8 @@ export default function ReportesPage() {
                       <tr className="border-b border-border/20 bg-muted/5">
                         <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3">Fecha</th>
                         <th className="text-right text-xs text-muted-foreground font-medium px-4 py-3">Ingresos</th>
+                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3">Cliente · vehículo</th>
+                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3">Placa</th>
                         <th className="text-center text-xs text-muted-foreground font-medium px-4 py-3">Servicios</th>
                         <th className="text-center text-xs text-muted-foreground font-medium px-4 py-3">Clientes</th>
                         <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3 hidden md:table-cell">Notas</th>
@@ -3599,6 +3348,22 @@ export default function ReportesPage() {
                                 {(Number(v.total_ingresos) * (v.tasa_cambio || currentTasa || 518.0)).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 3 })} Bs.
                               </span>
                             </div>
+                          </td>
+                          {/* Quién y qué carro. La placa va aparte: es lo único que
+                              identifica al vehículo, y en el texto se perdía. */}
+                          <td className="px-4 py-3 max-w-[200px]">
+                            <p className="text-xs font-medium truncate">{v.cliente || 'Consumidor final'}</p>
+                            <p className="text-[10px] text-muted-foreground truncate">{String(v.vehiculo_info || '').trim() || '—'}</p>
+                          </td>
+                          <td className="px-4 py-3">
+                            {placaDeVenta(v) ? (
+                              <Link
+                                href={`/dashboard/ficha?placa=${encodeURIComponent(placaDeVenta(v)!)}`}
+                                className="font-mono text-xs font-bold text-blue-500 hover:underline"
+                              >
+                                {placaDeVenta(v)}
+                              </Link>
+                            ) : <span className="text-xs text-muted-foreground">—</span>}
                           </td>
                           <td className="px-4 py-3 text-center">
                             <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
@@ -3907,115 +3672,23 @@ export default function ReportesPage() {
 
       {/* ── Tab: Egresos ────────────────────────────────────── */}
       {tab === 'egresos' && (
-        <div className="space-y-3">
-          {loading ? (
-             <div className="flex items-center justify-center py-12">
-               <Loader2 className="w-5 h-5 animate-spin text-muted-foreground mr-2" />
-               <span className="text-sm text-muted-foreground">Cargando egresos...</span>
-             </div>
-          ) : egresos.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-16">
-                <ArrowDownCircle className="w-10 h-10 text-muted-foreground/20 mb-3" />
-                <p className="text-sm font-medium">Sin egresos registrados</p>
-                <p className="text-xs text-muted-foreground mt-1 mb-4">
-                  Registra un gasto o pago manualmente
-                </p>
-                <Button size="sm" onClick={() => setShowManualEgreso(true)} className="gap-2 bg-rose-600">
-                  <Plus className="w-4 h-4" /> Nuevo Egreso
-                </Button>
-              </CardContent>
-            </Card>
-          ) : (
-            <Card>
-              <CardContent className="p-0">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-border/20">
-                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3">Fecha</th>
-                        <th className="text-right text-xs text-muted-foreground font-medium px-4 py-3">Monto</th>
-                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3">Categoría</th>
-                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3">Pagado a</th>
-                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3 hidden md:table-cell">Notas</th>
-                        <th className="px-4 py-3"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {egresos.map(e => (
-                        <tr key={e.id} className="border-b border-border/10 hover:bg-rose-500/5 transition-colors group">
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              <div className="w-7 h-7 rounded-lg bg-rose-500/10 flex items-center justify-center">
-                                <ArrowDownCircle className="w-3.5 h-3.5 text-rose-400" />
-                              </div>
-                              <p className="text-sm font-medium">
-                                {new Date(e.fecha + 'T12:00:00').toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })}
-                              </p>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <span className="font-bold text-rose-400">-${Number(e.total_egresos).toFixed(2)}</span>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className="px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 text-[10px] font-bold uppercase tracking-wider">
-                              {e.categoria}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 font-medium text-foreground">{e.cliente || 'Otros'}</td>
-                          <td className="px-4 py-3 text-xs text-muted-foreground hidden md:table-cell max-w-[200px] truncate">
-                            {e.notas || '—'}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
-                                onClick={() => setSelectedEgreso(e)}
-                                className="w-7 h-7 rounded-lg hover:bg-rose-500/10 text-rose-400 flex items-center justify-center"
-                                title="Ver Comprobante"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => { setEditandoEgreso(e); setShowManualEgreso(true); }}
-                                className="w-7 h-7 rounded-lg hover:bg-white/5 text-muted-foreground flex items-center justify-center"
-                                title="Editar"
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </button>
-                              {canDeleteVentas && (
-                              <button
-                                onClick={async () => { if(!canDeleteVentas) return; if(confirm('¿Eliminar egreso?')) { await withSedeFilter(supabase?.from('egresos')).delete().eq('id', e.id); loadData(); } }}
-                                className="w-7 h-7 rounded-lg hover:bg-destructive/10 text-destructive flex items-center justify-center"
-                                title="Eliminar"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t border-border/30 bg-muted/10">
-                        <td className="px-4 py-3 text-xs font-medium text-muted-foreground">Total período</td>
-                        <td className="px-4 py-3 text-right text-sm font-bold text-rose-400">
-                          -${(totalEgresos || 0).toFixed(2)}
-                        </td>
-                        <td colSpan={4} />
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-          <div className="flex justify-end">
-            <Button onClick={() => setShowManualEgreso(true)} className="gap-2 bg-rose-600 hover:bg-rose-700">
-              <Plus className="w-4 h-4" /> Registrar Egreso
-            </Button>
-          </div>
-        </div>
+        <VistaEgresos
+          egresos={egresos as unknown as EgresoFila[]}
+          cargando={loading}
+          periodo={period === '7d' ? 'Últimos 7 días' : period === '30d' ? 'Últimos 30 días' : period === '3m' ? 'Últimos 3 meses' : 'Último año'}
+          puedeEliminar={canDeleteVentas}
+          onNuevo={() => { setEditandoEgreso(null); setShowManualEgreso(true); }}
+          onEscanear={() => setScanMode('egreso')}
+          onEditar={e => { setEditandoEgreso(e as unknown as Egreso); setShowManualEgreso(true); }}
+          onVer={e => setSelectedEgreso(e as unknown as Egreso)}
+          onPdf={e => descargarEgresoPdf(e)}
+          onEliminar={async e => {
+            if (!canDeleteVentas || !supabase) return;
+            if (!confirm(`¿Eliminar el gasto «${conceptoDe(e)}» de $${Number(e.total_egresos).toFixed(2)}?`)) return;
+            await withSedeFilter(supabase.from('egresos')).delete().eq('id', e.id);
+            loadData();
+          }}
+        />
       )}
 
       {/* ── Tab: Historial y Calendario ──────────────────────── */}
@@ -4497,10 +4170,10 @@ export default function ReportesPage() {
       )}
 
       {mounted && showManualEgreso && createPortal(
-        <EgresoModal
-          onClose={() => { setShowManualEgreso(false); setEditandoEgreso(null); }}
-          onSave={handleSaveEgreso}
-          initial={editandoEgreso}
+        <DialogoEgreso
+          inicial={editandoEgreso as unknown as EgresoFila | null}
+          onCerrar={() => { setShowManualEgreso(false); setEditandoEgreso(null); }}
+          onGuardar={datos => handleSaveEgreso(datos as unknown as Partial<Egreso>)}
         />,
         document.body
       )}

@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
 
   const COLUMNAS = 'id, correlativo, tipo, cliente, vehiculo, total, total_bs, moneda, '
     + 'tasa_cambio, estado, con_iva, fecha_emision, emitido_por, modulo_origen, '
-    + 'metodos_pago, items, notas';
+    + 'metodos_pago, items, notas, referencia_id, referencia_tabla';
 
   // El listado va limitado —son 884 facturas y la tabla pagina—, pero los
   // indicadores NO pueden salir de esa ventana: si el mes anterior se queda

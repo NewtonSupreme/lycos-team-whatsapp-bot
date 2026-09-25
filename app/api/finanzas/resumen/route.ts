@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authorize } from '@/lib/auth-server';
 import { BANK_METHODS, binToUSD } from '@/lib/reporte/ventas-mapping';
+import { lineasDeMetodos, resumenCorto } from '@/lib/pagos/desglose';
 import { categoriaLabel } from '@/lib/categorias';
 import {
   colorPorIndice, etiquetaGasto, type Cobrar, type Indicador, type Pagar, type PuntoFlujo,
@@ -49,6 +50,8 @@ interface FilaEgreso {
   estado_pago: string | null; proveedor: string | null; notas: string | null;
   cliente_nombre: string | null; placa: string | null; fecha_vencimiento: string | null;
   monto_pagado: number | null;
+  /** El reparto por cuenta de lo pagado, cada cuenta en su moneda. */
+  metodos_pago?: Record<string, number> | null;
 }
 
 /** Lo cobrado en una venta, en dólares, sumando sus bins con su propia tasa. */
@@ -120,7 +123,7 @@ export async function GET(req: NextRequest) {
       })(),
       (() => {
         let q = auth.db.from('egresos')
-          .select('id, fecha, categoria, total_egresos, moneda, tasa_cambio, metodo_pago, estado_pago, proveedor, notas, cliente_nombre, placa, fecha_vencimiento, monto_pagado')
+          .select('id, fecha, categoria, total_egresos, moneda, tasa_cambio, metodo_pago, metodos_pago, estado_pago, proveedor, notas, cliente_nombre, placa, fecha_vencimiento, monto_pagado')
           .gte('fecha', desde).lte('fecha', hasta).order('fecha', { ascending: false });
         if (sede) q = q.eq('sede_id', sede);
         return q;
@@ -417,7 +420,11 @@ export async function GET(req: NextRequest) {
       tipo: 'gasto',
       descripcion: limpiaNotas(e.notas) || e.proveedor || e.placa || 'Gasto',
       categoria: etiquetaGasto(e.categoria),
-      metodo: e.metodo_pago ? etiquetaBin(e.metodo_pago) : 'Sin registrar',
+      metodo: (() => {
+        const lineas = lineasDeMetodos(e.metodos_pago || null, Number(e.tasa_cambio) || 0);
+        if (lineas.length > 1) return resumenCorto(lineas);
+        return e.metodo_pago ? etiquetaBin(e.metodo_pago) : 'Sin registrar';
+      })(),
       metodoBin: e.metodo_pago || null,
       monto: egresoUSD(e),
       estado: String(e.estado_pago || 'pagado') === 'pagado' ? 'Completado' : 'Pendiente',
@@ -448,7 +455,7 @@ export async function GET(req: NextRequest) {
     if (sede) qMov = qMov.eq('sede_id', sede);
 
     let qSal = auth.db.from('egresos')
-      .select('fecha, total_egresos, moneda, tasa_cambio, metodo_pago')
+      .select('fecha, total_egresos, moneda, tasa_cambio, metodo_pago, metodos_pago')
       .gte('fecha', arranqueMin).lte('fecha', hasta).limit(5000);
     if (sede) qSal = qSal.eq('sede_id', sede);
 
@@ -479,6 +486,14 @@ export async function GET(req: NextRequest) {
         }
         for (const e of sals) {
           if (!e.fecha || e.fecha.slice(0, 10) < c.desde) continue;
+          // Con el reparto por cuenta se descuenta exactamente lo que salió de
+          // ESTA cuenta, ya en su moneda. Un pago partido entre Banesco y la
+          // caja en dólares baja las dos, cada una por su parte.
+          const reparto = e.metodos_pago && typeof e.metodos_pago === 'object' ? e.metodos_pago : null;
+          if (reparto && Object.values(reparto).some(v => Number(v) > 0)) {
+            salidas += Number(reparto[c.bin!]) || 0;
+            continue;
+          }
           if (e.metodo_pago !== c.bin) continue;
           const monto = Number(e.total_egresos) || 0;
           const esUsd = String(e.moneda || 'USD').toUpperCase() === 'USD';

@@ -61,9 +61,9 @@ export interface ReporteDiarioData {
   fecha: string;
   fechaLabel: string;
   tasa: number;
-  ventas: Array<{ nombre: string; carro: string; total: number; contado: number; cashea: number; iva: number; inicial: number; financiado: number; porCobrar: number; bancos: BankRec; departamentos: DeptRec }>;
+  ventas: Array<{ nombre: string; carro: string; placa?: string; total: number; contado: number; cashea: number; iva: number; inicial: number; financiado: number; porCobrar: number; bancos: BankRec; departamentos: DeptRec }>;
   totalesVentas: { total: number; contado: number; cashea: number; iva: number; inicial: number; financiado: number; porCobrar: number; departamentos: DeptRec; bancos: BankRec };
-  porCobrar: Array<{ nombre: string; carro: string; monto: number; observacion: string }>;
+  porCobrar: Array<{ nombre: string; carro: string; placa?: string; monto: number; observacion: string }>;
   porCobrarTotal: number;
   sistema: Array<{ sistema: string; cantidad: number; monto: number }>;
   sistemaTotal: number;
@@ -76,9 +76,14 @@ export interface ReporteDiarioData {
   kpis: { redes: KpiPar; app: KpiPar; rcv: KpiPar; cert: KpiPar };
   clientesBD: { total: number; nuevos: number };
   articulos: Array<{ articulo: string; cantidad: number }>;
-  taller: Array<{ carro: string; mecanico: string; trabajo: string }>;
+  taller: Array<{ carro: string; placa?: string; mecanico: string; trabajo: string }>;
+  /** Cada carro que entró, se movió o salió ese día. */
+  seguimiento?: Array<{
+    id: string; cliente: string; carro: string; placa: string; trabajo: string;
+    mecanico: string; estado: string; entrada: string; ultimo: string; movimientos: number; monto: number;
+  }>;
   bancos: Array<{ banco: string; bs: number; usd: number }>;
-  gastos: Array<{ concepto: string; usd: number; bs: number }>;
+  gastos: Array<{ concepto: string; proveedor?: string; placa?: string; cuenta?: string; usd: number; bs: number }>;
   gastosTotal: { usd: number; bs: number };
   generadoEn: string;
 }
@@ -163,15 +168,15 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   section('1 · Ingresos y registro de clientes', 'Bancos en Bs · DIV/BINANCE/ZELLE en $');
   autoTable(doc, {
     startY: y,
-    head: [['Nº', 'CLIENTE', 'CARRO', 'TOTAL', 'CONT.', 'CASHEA', 'IVA', 'INIC.', 'FINAN', 'X COB', 'PM BCO', 'PM EXT', 'P.BCM', 'P.BCO', 'BNC', 'DIV', 'BINAN', 'ZELLE', 'EF.BS']],
+    head: [['Nº', 'CLIENTE', 'CARRO', 'PLACA', 'TOTAL', 'CONT.', 'CASHEA', 'IVA', 'INIC.', 'FINAN', 'X COB', 'PM BCO', 'PM EXT', 'P.BCM', 'P.BCO', 'BNC', 'DIV', 'BINAN', 'ZELLE', 'EF.BS']],
     body: data.ventas.map((v, i) => [
-      i + 1, v.nombre.substring(0, 22), carro(v.carro),
+      i + 1, v.nombre.substring(0, 22), carro(v.carro, 18), v.placa || '—',
       usd(v.total), usd(v.contado), usd(v.cashea), usd(v.iva), usd(v.inicial), usd(v.financiado), usd(v.porCobrar),
       bs(v.bancos.pago_movil_banesco), bs(v.bancos.pago_movil_exterior), bs(v.bancos.punto_bancamiga),
       bs(v.bancos.punto_banesco), bs(v.bancos.bnc), fmt(v.bancos.dolares), fmt(v.bancos.binance), fmt(v.bancos.zelle), bs(v.bancos.efectivo_bs),
     ]),
     foot: [[
-      '', 'TOTALES', '', usd(tv.total), usd(tv.contado), usd(tv.cashea), usd(tv.iva), usd(tv.inicial), usd(tv.financiado), usd(tv.porCobrar),
+      '', 'TOTALES', '', '', usd(tv.total), usd(tv.contado), usd(tv.cashea), usd(tv.iva), usd(tv.inicial), usd(tv.financiado), usd(tv.porCobrar),
       bs(tv.bancos.pago_movil_banesco), bs(tv.bancos.pago_movil_exterior), bs(tv.bancos.punto_bancamiga),
       bs(tv.bancos.punto_banesco), bs(tv.bancos.bnc), fmt(tv.bancos.dolares), fmt(tv.bancos.binance), fmt(tv.bancos.zelle), bs(tv.bancos.efectivo_bs),
     ]],
@@ -182,8 +187,10 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
     alternateRowStyles: { fillColor: C.bg },
     columnStyles: {
       0: { cellWidth: 7, halign: 'center' },
-      1: { cellWidth: 34, halign: 'left' },
-      2: { cellWidth: 28, halign: 'left' },
+      1: { cellWidth: 30, halign: 'left' },
+      2: { cellWidth: 24, halign: 'left' },
+      // La placa aparte: es lo que identifica el carro en el taller.
+      3: { cellWidth: 14, halign: 'center', fontStyle: 'bold' },
     },
     margin: { left: margin, right: margin },
     tableWidth: pageW - margin * 2,
@@ -290,15 +297,15 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
     section('2 · Cuentas por cobrar', `Total: ${usd(data.porCobrarTotal)}`);
     autoTable(doc, {
       startY: y,
-      head: [['CLIENTE', 'VEHÍCULO', 'MONTO $', 'OBSERVACIÓN']],
-      body: data.porCobrar.map(p => [p.nombre.substring(0, 26), (p.carro || '—').substring(0, 24), usd(p.monto), (p.observacion || '').substring(0, 60)]),
-      foot: [['', 'TOTAL', usd(data.porCobrarTotal), '']],
+      head: [['CLIENTE', 'VEHÍCULO', 'PLACA', 'MONTO $', 'OBSERVACIÓN']],
+      body: data.porCobrar.map(p => [p.nombre.substring(0, 26), (p.carro || '—').substring(0, 24), p.placa || '—', usd(p.monto), (p.observacion || '').substring(0, 60)]),
+      foot: [['', 'TOTAL', '', usd(data.porCobrarTotal), '']],
       theme: 'grid',
       headStyles: { fillColor: C.amber, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
       bodyStyles: { fontSize: 6.5, cellPadding: 1.4, textColor: C.dark },
       footStyles: { fillColor: C.dark, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
       alternateRowStyles: { fillColor: C.amberL },
-      columnStyles: { 0: { cellWidth: 55 }, 1: { cellWidth: 55 }, 2: { cellWidth: 28, halign: 'right' }, 3: { cellWidth: 'auto' } },
+      columnStyles: { 0: { cellWidth: 55 }, 1: { cellWidth: 50 }, 2: { cellWidth: 20, halign: 'center', fontStyle: 'bold' }, 3: { cellWidth: 26, halign: 'right' }, 4: { cellWidth: 'auto' } },
       margin: { left: margin, right: margin },
     });
     afterTable();
@@ -320,12 +327,12 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   const aEnd = doc.lastAutoTable.finalY;
   autoTable(doc, {
     startY: yIt,
-    head: [['CARRO', 'MECÁNICO', 'TRABAJO']],
-    body: (data.taller.length ? data.taller : [{ carro: 'Sin vehículos en taller', mecanico: '—', trabajo: '—' }]).map(t => [t.carro.substring(0, 26), t.mecanico.substring(0, 16), t.trabajo.substring(0, 30)]),
+    head: [['CARRO', 'PLACA', 'MECÁNICO', 'TRABAJO']],
+    body: (data.taller.length ? data.taller : [{ carro: 'Sin vehículos en taller', placa: '', mecanico: '—', trabajo: '—' }]).map(t => [t.carro.substring(0, 20), t.placa || '—', t.mecanico.substring(0, 16), t.trabajo.substring(0, 28)]),
     theme: 'grid',
     headStyles: { fillColor: C.blue, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
     bodyStyles: { fontSize: 6.5, cellPadding: 1.3, textColor: C.dark },
-    columnStyles: { 0: { cellWidth: (half - 6) * 0.36 }, 1: { cellWidth: (half - 6) * 0.28 }, 2: { cellWidth: 'auto' } },
+    columnStyles: { 0: { cellWidth: (half - 6) * 0.28 }, 1: { cellWidth: 16, halign: 'center', fontStyle: 'bold' }, 2: { cellWidth: (half - 6) * 0.24 }, 3: { cellWidth: 'auto' } },
     margin: { left: margin + half + 6, right: margin }, tableWidth: half,
   });
   y = Math.max(aEnd, doc.lastAutoTable.finalY) + 5;
@@ -358,14 +365,63 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   section('13 · Gastos del día', `Total: ${usd(data.gastosTotal.usd)}  ·  ${bs(data.gastosTotal.bs)} Bs`);
   autoTable(doc, {
     startY: y,
-    head: [['Nº', 'CONCEPTO', 'Bs', '$']],
-    body: (data.gastos.length ? data.gastos : [{ concepto: 'Sin gastos registrados', bs: 0, usd: 0 }]).map((g, i) => [i + 1, g.concepto, bs(g.bs), usd(g.usd)]),
-    foot: [['', 'TOTAL', bs(data.gastosTotal.bs), usd(data.gastosTotal.usd)]],
+    // De qué cuenta salió cada gasto, a quién y para qué carro.
+    head: [['Nº', 'CONCEPTO', 'PROVEEDOR', 'PLACA', 'PAGADO DESDE', 'Bs', '$']],
+    body: (data.gastos.length ? data.gastos : [{ concepto: 'Sin gastos registrados', bs: 0, usd: 0 }])
+      .map((g, i) => [i + 1, g.concepto, (g.proveedor || '—').substring(0, 24), g.placa || '—', g.cuenta || '—', bs(g.bs), usd(g.usd)]),
+    foot: [['', 'TOTAL', '', '', '', bs(data.gastosTotal.bs), usd(data.gastosTotal.usd)]],
     theme: 'grid',
     headStyles: { fillColor: C.red, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
     bodyStyles: { fontSize: 6.5, cellPadding: 1.4, textColor: C.dark },
     footStyles: { fillColor: C.dark, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
-    columnStyles: { 0: { cellWidth: 10, halign: 'center' }, 1: { cellWidth: 'auto' }, 2: { cellWidth: 35, halign: 'right' }, 3: { cellWidth: 30, halign: 'right' } },
+    columnStyles: {
+      0: { cellWidth: 10, halign: 'center' }, 1: { cellWidth: 'auto' }, 2: { cellWidth: 40 },
+      3: { cellWidth: 18, halign: 'center', fontStyle: 'bold' }, 4: { cellWidth: 52 },
+      5: { cellWidth: 28, halign: 'right' }, 6: { cellWidth: 24, halign: 'right' },
+    },
+    margin: { left: margin, right: margin },
+  });
+  afterTable();
+
+  // ══════════════ S14 · SEGUIMIENTO DE VEHÍCULOS ══════════════
+  // La hoja de seguimiento del cierre, ahora también en el diario: qué carros
+  // entraron, se movieron o salieron ese día y en qué quedaron.
+  const seg = data.seguimiento || [];
+  section('14 · Seguimiento de vehículos del día', `${seg.length} vehículo${seg.length === 1 ? '' : 's'}`);
+  const ESTADOS: Record<string, string> = {
+    pendiente: 'PENDIENTE', confirmada: 'CONFIRMADA', en_revision: 'EN REVISIÓN', en_proceso: 'EN PROCESO',
+    completada: 'COMPLETADA', completado: 'COMPLETADA', finalizado: 'ENTREGADO', cancelada: 'CANCELADA',
+  };
+  autoTable(doc, {
+    startY: y,
+    head: [['ID', 'ENTRADA', 'CLIENTE', 'VEHÍCULO', 'PLACA', 'TRABAJO', 'MECÁNICO', 'ESTADO', 'ÚLTIMO MOVIMIENTO']],
+    body: (seg.length ? seg : [{
+      id: '—', entrada: '', cliente: 'Sin movimientos de vehículos este día', carro: '', placa: '',
+      trabajo: '', mecanico: '', estado: '', ultimo: '', movimientos: 0, monto: 0,
+    }]).map(s => [
+      s.id, s.entrada, s.cliente.substring(0, 24), s.carro.substring(0, 22), s.placa || '—',
+      s.trabajo.substring(0, 60), s.mecanico.substring(0, 22),
+      ESTADOS[s.estado] || s.estado.toUpperCase().replace(/_/g, ' '),
+      s.ultimo.substring(0, 70),
+    ]),
+    theme: 'grid',
+    headStyles: { fillColor: C.black, textColor: C.white, fontSize: 6.3, fontStyle: 'bold', halign: 'center' },
+    bodyStyles: { fontSize: 6.2, cellPadding: 1.3, textColor: C.dark, valign: 'middle' },
+    alternateRowStyles: { fillColor: C.bg },
+    columnStyles: {
+      0: { cellWidth: 13, halign: 'center' }, 1: { cellWidth: 16, halign: 'center' },
+      2: { cellWidth: 32 }, 3: { cellWidth: 28 }, 4: { cellWidth: 16, halign: 'center', fontStyle: 'bold' },
+      5: { cellWidth: 'auto' }, 6: { cellWidth: 30 }, 7: { cellWidth: 21, halign: 'center', fontStyle: 'bold' },
+      8: { cellWidth: 55 },
+    },
+    didParseCell: (d: any) => {
+      if (d.section !== 'body' || d.column.index !== 7) return;
+      const v = String(d.cell.raw || '');
+      if (v === 'COMPLETADA' || v === 'ENTREGADO') d.cell.styles.textColor = C.green;
+      else if (v === 'EN PROCESO' || v === 'EN REVISIÓN') d.cell.styles.textColor = C.blue;
+      else if (v === 'CANCELADA') d.cell.styles.textColor = C.red;
+      else if (v) d.cell.styles.textColor = C.orange;
+    },
     margin: { left: margin, right: margin },
   });
   afterTable();

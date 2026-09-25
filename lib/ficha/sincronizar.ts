@@ -18,6 +18,8 @@
  * descuadradas y nadie se entera hasta el cierre.
  */
 
+import { binsDeFuente, cuentaPrincipal, soloConDinero } from '@/lib/pagos/desglose';
+
 /** La forma mínima del cliente de base de datos que se necesita. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = { from: (tabla: string) => any };
@@ -58,6 +60,10 @@ export interface Partida {
   enlace: string | null;
   clave_item: string | null;
   sede_id: string | null;
+  /** De qué cuentas salió lo pagado al proveedor, cada una en su moneda. */
+  metodos_pago?: Record<string, number> | null;
+  /** La tasa con la que se pagaron los bolívares. */
+  tasa_pago?: number | null;
 }
 
 const r2 = (n: unknown) => Math.round((Number(n) || 0) * 100) / 100;
@@ -214,6 +220,8 @@ export async function sincronizarEgreso(
   // «No aplica» en la ficha significa que no hay nada que deberle a nadie, que
   // en un egreso es lo mismo que estar pagado.
   const estado = p.estado_pago === 'no_aplica' ? 'pagado' : p.estado_pago;
+  // Solo lo que de verdad salió de caja lleva cuenta.
+  const pagado = estado === 'pagado' || estado === 'parcial';
 
   const fila = {
     partida_id: p.id,
@@ -229,6 +237,14 @@ export async function sincronizarEgreso(
     categoria: categoriaDeGasto(p.tipo),
     total_egresos: gasto,
     moneda: 'USD',
+    // De qué cuenta salió el dinero. `metodos_pago` lleva el reparto entero
+    // —un pago puede salir de dos cuentas— y `metodo_pago` la principal, que
+    // es lo que aún leen las pantallas de antes.
+    metodos_pago: pagado ? soloConDinero(p.metodos_pago as never) : null,
+    metodo_pago: pagado && p.metodos_pago
+      ? cuentaPrincipal(binsDeFuente({ metodos_pago: p.metodos_pago }), Number(p.tasa_pago) || 0)
+      : null,
+    tasa_cambio: pagado ? (Number(p.tasa_pago) || null) : null,
     proveedor: p.proveedor,
     proveedor_id: p.proveedor_id,
     estado_pago: estado,

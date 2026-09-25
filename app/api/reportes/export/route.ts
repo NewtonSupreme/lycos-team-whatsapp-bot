@@ -72,11 +72,13 @@ export async function GET(req: NextRequest) {
         views: [{ state: 'frozen', ySplit: 5 }],
       });
 
-      const numCols = 9;
-      const hdrs = [ 'Nº', 'FECHA', 'HORA', 'CLIENTE', 'TELÉFONO', 'VEHÍCULO (MARCA / PLACA)', 'SERVICIO', 'ESTADO', 'DESCRIPCIÓN / MOTIVO' ];
+      // La placa en su propia columna: metida entre paréntesis detrás del
+      // modelo no se podía ni ordenar ni buscar.
+      const numCols = 10;
+      const hdrs = [ 'Nº', 'FECHA', 'HORA', 'CLIENTE', 'TELÉFONO', 'VEHÍCULO', 'PLACA', 'SERVICIO', 'ESTADO', 'DESCRIPCIÓN / MOTIVO' ];
       ws.columns = [
         { width: 5 }, { width: 13 }, { width: 10 }, { width: 25 }, { width: 15 },
-        { width: 25 }, { width: 15 }, { width: 15 }, { width: 45 }
+        { width: 22 }, { width: 12 }, { width: 15 }, { width: 15 }, { width: 45 }
       ];
 
       // ─────────────────────────────────────────────────────────────
@@ -123,15 +125,15 @@ export async function GET(req: NextRequest) {
       gGeneral.alignment = { horizontal: 'center', vertical: 'middle' };
       gGeneral.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0284c7' } };
 
-      ws.mergeCells('D3:F3');
+      ws.mergeCells('D3:G3');
       const gClient = ws.getCell('D3');
       gClient.value = '▸  CLIENTE Y VEHÍCULO';
       gClient.font = { name: 'Calibri', size: 11, bold: true, color: { argb: CITAS_COLOR.white } };
       gClient.alignment = { horizontal: 'center', vertical: 'middle' };
       gClient.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0369a1' } };
 
-      ws.mergeCells('G3:I3');
-      const gServ = ws.getCell('G3');
+      ws.mergeCells('H3:J3');
+      const gServ = ws.getCell('H3');
       gServ.value = '▸  SERVICIO COMPROMETIDO';
       gServ.font = { name: 'Calibri', size: 11, bold: true, color: { argb: CITAS_COLOR.white } };
       gServ.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -172,8 +174,10 @@ export async function GET(req: NextRequest) {
         }
 
         let nVehiculo = '—';
+        let nPlaca = '—';
         if (v.vehiculos) {
-          nVehiculo = `${v.vehiculos.marca || ''} ${v.vehiculos.modelo || ''} (${v.vehiculos.placa || ''})`.trim();
+          nVehiculo = `${v.vehiculos.marca || ''} ${v.vehiculos.modelo || ''}`.trim() || '—';
+          nPlaca = String(v.vehiculos.placa || '').toUpperCase() || '—';
         }
 
         const rowValues = [
@@ -183,6 +187,7 @@ export async function GET(req: NextRequest) {
           nCliente,
           nTelf,
           nVehiculo,
+          nPlaca,
           (v.tipo_servicio || 'Mecánica').toUpperCase(),
           (v.estado || 'Pendiente').toUpperCase(),
           v.descripcion || v.notas || '—'
@@ -196,14 +201,14 @@ export async function GET(req: NextRequest) {
           cell.font = { name: 'Calibri', size: 10, color: { argb: CITAS_COLOR.black } };
           cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
 
-          if (colNumber === 4 || colNumber === 6 || colNumber === 9) {
+          if (colNumber === 4 || colNumber === 6 || colNumber === 10) {
             cell.alignment.horizontal = 'left';
           }
 
           const bgColor = isEven ? CITAS_COLOR.white : CITAS_COLOR.lightBg;
 
           // Status colors
-          if (colNumber === 8 && v.estado) {
+          if (colNumber === 9 && v.estado) {
             const estado = v.estado.toLowerCase();
             if (estado === 'confirmada') cell.font.color = { argb: 'FF16a34a' }; // Green
             if (estado === 'pendiente') cell.font.color = { argb: 'FFca8a04' }; // Yellow

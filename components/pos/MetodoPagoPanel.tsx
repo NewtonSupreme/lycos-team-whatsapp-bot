@@ -123,15 +123,42 @@ interface Props {
    * que arreglar en el resto del sistema.
    */
   desplazable?: boolean;
+  /**
+   * Una orden o un gasto YA guardado sin pago: no se marca ningún método.
+   *
+   * Sin esto el panel abría siempre con «Efectivo» señalado, y una orden
+   * reabierta sin cobro decía que se había pagado en efectivo.
+   */
+  sinPreseleccion?: boolean;
+  /** Métodos que no aplican aquí; a un proveedor no se le paga con Cashea. */
+  ocultarMetodos?: readonly string[];
+  /**
+   * El sentido del dinero. `cobro` es lo que entra (ventas); `pago`, lo que
+   * sale (egresos): cambia «Recibido» por «Pagado» y el título de la tasa.
+   */
+  sentido?: 'cobro' | 'pago';
   className?: string;
 }
 
 export default function MetodoPagoPanel({
   bins, onBinsChange, totalUSD, subtotalUSD, tasa, tasaAuto,
-  customRate = null, onCustomRate, cashea, conCabecera = true, desplazable = true, className,
+  customRate = null, onCustomRate, cashea, conCabecera = true, desplazable = true,
+  sinPreseleccion = false, ocultarMetodos = [], sentido = 'cobro', className,
 }: Props) {
   const casheaActivo = cashea?.activo ?? false;
-  const [modo, setModo] = useState<'completo' | 'mixto'>('completo');
+  const esPago = sentido === 'pago';
+  const metodosVisibles = useMemo(
+    () => METODOS.filter(m => !ocultarMetodos.includes(m.id)),
+    // La lista llega como literal en cada render; se compara por contenido.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ocultarMetodos.join(',')],
+  );
+  // Un cobro repartido entre dos métodos se reabre en «mixto»: en «completo»
+  // elegir cualquier método borra los demás, y bastaba tocar uno para perder
+  // la mitad del pago guardado.
+  const [modo, setModo] = useState<'completo' | 'mixto'>(
+    () => (metodosConDinero(bins, casheaActivo, []).length > 1 ? 'mixto' : 'completo'),
+  );
   const [moneda, setMoneda] = useState<Moneda>('Bs.');
   // Null mientras el usuario no elija: así el panel puede seguir al cobro.
   const [monedaManual, setMonedaManual] = useState<Moneda | null>(null);
@@ -139,8 +166,27 @@ export default function MetodoPagoPanel({
   // manda el usuario: recalcularlo en cada render le cerraría en la cara el
   // grupo que acaba de abrir para escribir.
   const [abiertos, setAbiertos] = useState<readonly string[]>(
-    () => metodosConDinero(bins, casheaActivo),
+    () => metodosConDinero(bins, casheaActivo, sinPreseleccion ? [] : ['efectivo']),
   );
+
+  // El pago puede llegar DESPUÉS de montar el panel —una orden que termina de
+  // cargar, la venta que se lee del servidor—. El estado inicial ya se había
+  // calculado con las cuentas vacías, así que el método con dinero quedaba sin
+  // marcar. Aquí se abre; nunca se cierra nada que el usuario haya abierto.
+  const conDinero = metodosConDinero(bins, casheaActivo, []).join(',');
+  useEffect(() => {
+    if (!conDinero) return;
+    const faltan = conDinero.split(',').filter(id => !abiertos.includes(id));
+    if (faltan.length === 0) return;
+    setAbiertos(a => {
+      // Un pago que llega con dinero manda sobre el «Efectivo» que se puso por
+      // defecto mientras no había nada.
+      const base = a.length === 1 && a[0] === 'efectivo' && !conDinero.split(',').includes('efectivo') ? [] : a;
+      return [...new Set([...base, ...faltan])];
+    });
+    if (conDinero.split(',').length > 1) setModo('mixto');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conDinero]);
   // Qué métodos tienen su logo oficial disponible. Se sabe al cargarlo, no antes.
   const [conLogo, setConLogo] = useState<Record<string, boolean>>({});
   const [tasasDia, setTasasDia] = useState({ bcv: 0, binance: 0, euro: 0, eur: 0 });
@@ -341,7 +387,7 @@ export default function MetodoPagoPanel({
             nadie sabe por qué, así que se elige aquí y queda a la vista. */}
         {onCustomRate && (
           <div className="mt-2.5 rounded-lg border border-[#e2e5ea] px-3 py-2">
-            <p className="text-[11.5px] font-medium text-[#5b616e]">Tasa Bs. de esta venta</p>
+            <p className="text-[11.5px] font-medium text-[#5b616e]">{esPago ? 'Tasa Bs. de este pago' : 'Tasa Bs. de esta venta'}</p>
             <div className="mt-1.5 grid grid-cols-3 gap-1.5">
               {TASAS.map(t => {
                 const valor = tasasDia[t.id];
@@ -398,8 +444,15 @@ export default function MetodoPagoPanel({
 
         {/* Métodos */}
         <p className="mb-1.5 mt-3 text-[11.5px] font-medium text-[#5b616e]">Método de pago</p>
+        {abiertos.length === 0 && (
+          <p className="mb-2 rounded-lg border border-dashed border-[#e2e5ea] px-2.5 py-1.5 text-[11px] leading-snug text-[#8a909c]">
+            {esPago
+              ? 'Todavía no consta cómo se pagó. Elige el método y la cuenta de la que salió el dinero.'
+              : 'Esta orden no tiene cobro registrado. Elige cómo pagó el cliente.'}
+          </p>
+        )}
         <div className="grid grid-cols-3 gap-2">
-          {METODOS.map(m => {
+          {metodosVisibles.map(m => {
             const act = activo(m.id);
             return (
               <button
@@ -451,7 +504,7 @@ export default function MetodoPagoPanel({
         {/* Montos por banco: la clasificación exacta que exige el reporte diario. */}
         {binsVisibles.length > 0 && (
           <>
-            <p className="mb-1.5 mt-3 text-[11.5px] font-medium text-[#5b616e]">Montos por banco</p>
+            <p className="mb-1.5 mt-3 text-[11.5px] font-medium text-[#5b616e]">{esPago ? '¿De qué cuenta salió?' : 'Montos por banco'}</p>
             <ul className="space-y-1.5">
               {binsVisibles.map(meta => {
                 const enBs = pareceBolivares(meta.id, bins[meta.id] || 0);
@@ -624,7 +677,7 @@ export default function MetodoPagoPanel({
                 <dd className="num font-semibold text-[#16181d]">{ver(subtotalUSD)}</dd>
               </div>
               <div className="flex items-center justify-between text-[12px]">
-                <dt className="text-[#5b616e]">Recibido</dt>
+                <dt className="text-[#5b616e]">{esPago ? 'Pagado' : 'Recibido'}</dt>
                 <dd className="num font-semibold text-[#16a34a]">{ver(pagadoUSD)}</dd>
               </div>
             </>

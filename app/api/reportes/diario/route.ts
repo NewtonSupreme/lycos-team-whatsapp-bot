@@ -5,6 +5,8 @@ import {
   BANK_METHODS, DEPT_LABELS, type Bins, type BankBin, type DeptKey,
 } from '@/lib/reporte/ventas-mapping';
 import { leerCasheaGuardado } from '@/lib/pagos/cashea';
+import { lineasDeMetodos, resumenCorto } from '@/lib/pagos/desglose';
+import { mecanicoDeOrden } from '@/lib/facturas/mecanico';
 
 // Comisión que cobra el banco por cada transacción de punto de venta (referencial, ajustable).
 const COMISION_PUNTO_PCT = 0.05;
@@ -16,6 +18,8 @@ const r2 = (x: number) => Math.round((Number(x) || 0) * 100) / 100;
 interface VentaNorm {
   nombre: string;
   carro: string;
+  /** La placa aparte: es lo que identifica al carro, y en el texto se recortaba. */
+  placa: string;
   departamentos: Record<DeptKey, number>;
   total: number;
   contado: number;
@@ -36,6 +40,21 @@ interface VentaNorm {
  * en blanco. El último recurso es la primera línea del desglose, que no es el
  * carro sino el trabajo: se deja porque en las filas viejas no hay nada mejor.
  */
+/** La placa de una fila: la columna, o la que venga escrita en el texto. */
+function extraerPlaca(placa?: string | null, ...textos: Array<string | null | undefined>): string {
+  const directa = String(placa || '').trim().toUpperCase();
+  if (directa) return directa;
+  const m = textos.join(' ').toUpperCase()
+    .match(/\b([A-Z]{2,3}\d{2,3}[A-Z]{1,3}|[A-Z]\d{2}[A-Z]\d{2}[A-Z]?)\b/);
+  return m ? m[1] : '';
+}
+
+/** El carro sin la placa, para cuando la placa va en su propia columna. */
+function sinPlaca(carro: string, placa: string): string {
+  if (!placa) return carro;
+  return carro.replace(new RegExp(`\\(?\\b${placa}\\b\\)?`, 'i'), '').replace(/\s+/g, ' ').trim();
+}
+
 function extraerVehiculo(
   notas: string | null,
   desglose: unknown,
@@ -153,9 +172,12 @@ export async function GET(req: NextRequest) {
       const financiado = !esCashea ? n(v.financiado) : cx.legado ? saldo : cx.financiado;
       const porCobrar = !esCashea ? (saldo || n(v.por_cobrar)) : n(v.por_cobrar);
 
+      const carroTxt = extraerVehiculo(v.notas, v.desglose, v.vehiculo_info, v.placa);
+      const placaV = extraerPlaca(v.placa, v.vehiculo_info, v.notas);
       return {
         nombre: v.cliente || 'Consumidor Final',
-        carro: extraerVehiculo(v.notas, v.desglose, v.vehiculo_info, v.placa),
+        carro: sinPlaca(carroTxt, placaV),
+        placa: placaV,
         departamentos: deptCols,
         total, contado, cashea, iva, inicial, financiado, porCobrar,
         bancos,
@@ -173,12 +195,14 @@ export async function GET(req: NextRequest) {
     };
 
     // ── S2 · Cuentas por cobrar (saldos abiertos) ───────────────
-    const pcQ = db.from('ventas_dia').select('cliente, notas, desglose, saldo_pendiente, total_ingresos, estado, por_cobrar_detalle')
+    const pcQ = db.from('ventas_dia').select('cliente, notas, desglose, saldo_pendiente, total_ingresos, estado, por_cobrar_detalle, placa, vehiculo_info')
       .gt('saldo_pendiente', 0).order('created_at', { ascending: false }).limit(100);
     const { data: pcRaw } = await applySede(pcQ as any);
     const porCobrar = (pcRaw || []).map((v: any) => ({
       nombre: v.cliente || 'Consumidor Final',
-      carro: extraerVehiculo(v.notas, v.desglose),
+      carro: sinPlaca(extraerVehiculo(v.notas, v.desglose, v.vehiculo_info, v.placa),
+        extraerPlaca(v.placa, v.vehiculo_info, v.notas)),
+      placa: extraerPlaca(v.placa, v.vehiculo_info, v.notas),
       monto: n(v.saldo_pendiente),
       observacion: Array.isArray(v.por_cobrar_detalle) && v.por_cobrar_detalle[0]?.observacion
         ? String(v.por_cobrar_detalle[0].observacion)
@@ -296,10 +320,68 @@ export async function GET(req: NextRequest) {
       }
     }
     const taller = (tallerRaw || []).map((s: any) => ({
-      carro: [s.vehiculo_info, s.placa ? `(${s.placa})` : ''].filter(Boolean).join(' ') || '—',
+      carro: s.vehiculo_info || '—',
+      placa: String(s.placa || '').toUpperCase(),
       mecanico: mecPorServicio.get(s.id) || s.registrado_por || '—',
       trabajo: s.descripcion || s.tipo || '—',
     }));
+
+    // ── S14 · Seguimiento de vehículos del día ──────────────────
+    //
+    // Como la hoja de seguimiento del cierre: cada carro que entró, se movió o
+    // salió ese día, con su placa, su mecánico, en qué estado quedó y qué fue
+    // lo último que se hizo. El reporte diario decía cuánto dinero entró, pero
+    // no qué pasó en el piso.
+    const diaIni = `${fecha}T04:00:00Z`;   // medianoche de Caracas (UTC-4)
+    const diaFin = new Date(new Date(`${fecha}T04:00:00Z`).getTime() + 86400000).toISOString();
+    const segQ = db.from('servicios')
+      .select('id, fecha, hora, estado, nombre_cliente, vehiculo_info, placa, descripcion, tipo, tipo_personalizado, notas, seguimiento, created_at, updated_at, fecha_inicio, fecha_fin, costo_estimado, items')
+      .or(`fecha.eq.${fecha},and(updated_at.gte.${diaIni},updated_at.lt.${diaFin})`)
+      .order('created_at', { ascending: true }).limit(150);
+    const { data: segRaw } = await applySede(segQ as any);
+    const segIds = (segRaw || []).map((s: any) => s.id);
+    const jobsPorServ = new Map<string, Array<{ empleado_nombre: string; es_taller: boolean }>>();
+    if (segIds.length) {
+      const { data: jobs } = await db.from('job_assignments')
+        .select('referencia_id, empleado_nombre, es_taller').in('referencia_id', segIds);
+      for (const j of (jobs || [])) {
+        const l = jobsPorServ.get(j.referencia_id) || [];
+        l.push(j);
+        jobsPorServ.set(j.referencia_id, l);
+      }
+    }
+    const horaVE = (iso: string) => new Date(iso).toLocaleTimeString('es-VE', {
+      timeZone: 'America/Caracas', hour: '2-digit', minute: '2-digit', hour12: true,
+    });
+    const delDia = (iso?: string) => Boolean(iso) && String(iso) >= diaIni && String(iso) < diaFin;
+    // `updated_at` solo sirve para traer candidatos: cualquier corrección de
+    // datos lo mueve. Entra al reporte lo que de verdad pasó ese día —la orden
+    // es del día, tiene una anotación de seguimiento ese día, o empezó o
+    // terminó ese día—.
+    const seMovio = (s: any) => s.fecha === fecha || delDia(s.fecha_inicio) || delDia(s.fecha_fin)
+      || (Array.isArray(s.seguimiento) && s.seguimiento.some((e: any) => delDia(e?.fecha)));
+    const seguimiento = (segRaw || []).filter(seMovio).map((s: any) => {
+      const entradas: Array<{ fecha?: string; accion?: string }> = Array.isArray(s.seguimiento) ? s.seguimiento : [];
+      const hoyMov = entradas.filter(e => delDia(e.fecha));
+      const ultimo = (hoyMov.length ? hoyMov : entradas).slice(-1)[0];
+      return {
+        id: String(s.id).slice(0, 6).toUpperCase(),
+        cliente: String(s.nombre_cliente || '').trim() || '—',
+        carro: String(s.vehiculo_info || '').trim() || '—',
+        placa: String(s.placa || '').trim().toUpperCase(),
+        trabajo: String(s.descripcion || '').trim()
+          || (s.tipo_personalizado && s.tipo_personalizado !== 'otro' ? s.tipo_personalizado : '')
+          || (s.tipo && s.tipo !== 'otro' ? s.tipo : '')
+          || (Array.isArray(s.items) ? s.items.map((i: any) => i?.descripcion).filter(Boolean).join(', ') : '')
+          || 'Sin descripción',
+        mecanico: mecanicoDeOrden({ trabajos: jobsPorServ.get(s.id), notas: s.notas, seguimiento: s.seguimiento }) || 'Sin asignar',
+        estado: String(s.estado || 'pendiente'),
+        entrada: s.fecha === fecha ? (s.hora ? String(s.hora).slice(0, 5) : horaVE(s.created_at)) : `desde ${String(s.fecha).split('-').reverse().slice(0, 2).join('/')}`,
+        ultimo: ultimo?.accion ? `${ultimo.fecha ? horaVE(ultimo.fecha) + ' · ' : ''}${ultimo.accion}` : '—',
+        movimientos: hoyMov.length,
+        monto: n(s.costo_estimado),
+      };
+    });
 
     // ── S12 · Resumen de bancos (entradas del día) ──────────────
     const bancoBs = (ids: BankBin[]) => r2(ids.reduce((acc, id) => acc + totBancos[id], 0));
@@ -319,8 +401,17 @@ export async function GET(req: NextRequest) {
         ? e.desglose.map((d: any) => d.descripcion).filter(Boolean).join(', ')
         : '';
       const usd = n(e.total_egresos);
+      // De qué cuenta salió: el reparto guardado, o la cuenta suelta de antes.
+      const reparto = e.metodos_pago && typeof e.metodos_pago === 'object'
+        ? e.metodos_pago
+        : (e.metodo_pago ? { [e.metodo_pago]: usd } : null);
+      const lineas = lineasDeMetodos(reparto, n(e.tasa_cambio) || tasa);
+      const debe = e.estado_pago === 'por_pagar' || e.estado_pago === 'parcial';
       return {
-        concepto: (e.notas || detalle || e.categoria || e.cliente || 'Gasto').toString().slice(0, 120),
+        concepto: (detalle || e.notas || e.categoria || e.cliente || 'Gasto').toString().slice(0, 120),
+        proveedor: e.proveedor || e.cliente || '',
+        placa: String(e.placa || '').toUpperCase(),
+        cuenta: lineas.length ? resumenCorto(lineas) : (debe ? 'Por pagar' : 'Sin cuenta'),
         usd,
         bs: r2(usd * tasa),
       };
@@ -349,6 +440,7 @@ export async function GET(req: NextRequest) {
       clientesBD,
       articulos,
       taller,
+      seguimiento,
       bancos,
       gastos, gastosTotal,
       // El servidor corre en UTC, asi que la hora se fija a Caracas: si no, el

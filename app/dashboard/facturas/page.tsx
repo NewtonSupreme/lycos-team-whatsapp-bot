@@ -99,6 +99,10 @@ export default function FacturacionPage() {
     try {
       generateInvoicePDF([{
         id: f.id,
+        // La orden o la venta de la que salió: de ahí se sacan el mecánico y
+        // el cobro por banco, que la factura guardada no trae.
+        referencia_id: f.referencia_id || null,
+        referencia_tabla: f.referencia_tabla || null,
         correlativo: f.correlativo || '',
         fecha: fecha(f.fecha_emision),
         cliente: f.cliente || 'Consumidor Final',

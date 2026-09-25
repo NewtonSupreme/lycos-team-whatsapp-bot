@@ -33,14 +33,27 @@ export const METODO_DE_CUENTA: Record<BankBin, string> = {
   cashea: 'cashea',
 };
 
-/** Los métodos que llevan dinero en este cobro, o «efectivo» si es nuevo. */
-export function metodosConDinero(bins: Bins, casheaActivo: boolean): string[] {
+/**
+ * Los métodos que llevan dinero en este cobro.
+ *
+ * Si no lleva ninguno se devuelve `porDefecto`: «efectivo» para un cobro nuevo,
+ * que es lo más común. Una orden YA guardada sin cobro tiene que pasar una
+ * lista vacía: marcarle «Efectivo» decía que se pagó en efectivo algo de lo que
+ * no consta ningún pago, y así se leía cada orden reabierta.
+ */
+export function metodosConDinero(
+  bins: Bins,
+  casheaActivo: boolean,
+  porDefecto: readonly string[] = ['efectivo'],
+): string[] {
   const abiertos = new Set<string>();
   for (const [cuenta, monto] of Object.entries(bins) as [BankBin, number][]) {
-    if ((Number(monto) || 0) > 0) abiertos.add(METODO_DE_CUENTA[cuenta]);
+    // Una clave que no es una de las diez cuentas —las genéricas de antes,
+    // `pago_movil`, `efectivo_usd`— no abre nada: añadía `undefined` a la lista.
+    const metodo = METODO_DE_CUENTA[cuenta];
+    if (metodo && (Number(monto) || 0) > 0) abiertos.add(metodo);
   }
   // Un plan de Cashea al 0% no deja monto, y aun así la orden va financiada.
   if (casheaActivo) abiertos.add('cashea');
-  // Un cobro nuevo empieza por lo más común.
-  return abiertos.size > 0 ? [...abiertos] : ['efectivo'];
+  return abiertos.size > 0 ? [...abiertos] : [...porDefecto];
 }

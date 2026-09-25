@@ -10,6 +10,7 @@ const CAMPOS = [
   'fecha', 'descripcion', 'tipo', 'cantidad', 'precio_venta', 'costo', 'moneda',
   'origen', 'proveedor_id', 'proveedor', 'enlace', 'comprobante_url',
   'estado_pago', 'monto_pagado', 'fecha_pago', 'fecha_vencimiento', 'nota',
+  'metodos_pago', 'tasa_pago',
 ] as const;
 
 /**
@@ -45,6 +46,11 @@ export function normalizarPartida(body: Record<string, unknown>): Record<string,
     fila.fecha_pago = new Date().toISOString().slice(0, 10);
   }
   if (fila.estado_pago !== 'parcial') fila.monto_pagado = 0;
+  // Lo que no se ha pagado no salió de ninguna cuenta.
+  if (fila.estado_pago !== 'pagado' && fila.estado_pago !== 'parcial') {
+    fila.metodos_pago = null;
+    fila.tasa_pago = null;
+  }
 
   return fila;
 }

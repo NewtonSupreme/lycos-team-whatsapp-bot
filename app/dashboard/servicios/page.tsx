@@ -24,7 +24,8 @@ import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 import { cn, getLocalISODate, parseDescripcionItems } from '@/lib/utils';
 import DesglosePagoBancos from '@/components/pos/DesglosePagoBancos';
-import { buildVentaDiaFields, emptyBins, binsTotalUSD, deptFromServicioTipo, type Bins } from '@/lib/reporte/ventas-mapping';
+import { binsDeFuente } from '@/lib/pagos/desglose';
+import { buildVentaDiaFields, emptyBins, binsTotalUSD, binsFromLegacyMetodos, deptFromServicioTipo, BANK_BIN_IDS, type Bins } from '@/lib/reporte/ventas-mapping';
 import PersonalYComisiones, { type AsignacionEmpleado } from '@/components/nomina/PersonalYComisiones';
 import SelectorRepuesto, {
   ModalCatalogoInventario, useInventario, precioEfectivoDe, type ProductoInventario,
@@ -41,7 +42,7 @@ import AvisoRepuestosSueltos, {
   detectarRepuestosSueltos, type RenglonSospechoso,
 } from '@/components/inventario/AvisoRepuestosSueltos';
 import { asignacionesValidas, buildJobsDesdeAsignacion } from '@/lib/nomina/asignaciones';
-import { CATEGORIAS_VENTA, inferirCategoria, categoriaToZona, buildCategoriaColumns, buildPagoColumnsCompletas, sumaMetodos } from '@/lib/categorias';
+import { CATEGORIAS_VENTA, inferirCategoria, categoriaToZona, buildCategoriaColumns, buildPagoColumnsCompletas } from '@/lib/categorias';
 
 // ── Types ─────────────────────────────────────────────────────
 interface ServicioItem {
@@ -78,6 +79,22 @@ interface ServicioItem {
 
 // Desglosa una descripción (incluyendo las registradas por el bot, que pueden venir
 // multilínea "Nombre: trabajo" o con " + " / comas) en ítems separados para la factura.
+/**
+ * Los campos del COBRO de una fila de `ventas_dia` ya mapeada.
+ *
+ * `buildVentaDiaFields` devuelve también los departamentos, que salen de los
+ * renglones y no del pago. Cuando solo cambia cómo se pagó, reescribirlos los
+ * pondría a cero.
+ */
+function camposDeCobro(mapped: ReturnType<typeof buildVentaDiaFields>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of [
+    ...BANK_BIN_IDS, 'contado', 'por_cobrar', 'iva', 'inicial', 'financiado',
+    'cashea_pct', 'saldo_pendiente', 'estado', 'metodos_pago',
+  ]) out[k] = (mapped as unknown as Record<string, unknown>)[k];
+  return out;
+}
+
 function parseServicioItemsFromText(descripcion: string, totalPrecio = 0): ServicioItem[] {
   const raw = (descripcion || '').trim();
   if (!raw) return [];
@@ -575,6 +592,37 @@ export default function ServiciosPage() {
             : await supabase.from('ventas_dia').insert(vdData);
 
           if (vdResult.error) throw new Error(`Error al registrar venta: ${vdResult.error.message}`);
+
+          /*
+           * El cobro se escribe TAMBIÉN en la orden.
+           *
+           * Se guardaba solo en la venta: el reporte cuadraba, pero la orden se
+           * quedaba sin cobro —o con las diez cuentas en cero— y al reabrirla
+           * el panel decía «Efectivo». De 452 órdenes completadas, 437 estaban
+           * así. Se copia lo que quedó en las columnas de la venta, que ya trae
+           * repartido Cashea (solo la inicial).
+           */
+          if (cobro) {
+            const binsCobro = BANK_BIN_IDS.reduce(
+              (acc, k) => ({ ...acc, [k]: Number((extra as Record<string, unknown>)[k]) || 0 }),
+              {} as Record<string, number>,
+            );
+            const { error: errOrden } = await withSedeFilter(supabase!.from('servicios'))
+              .update({
+                metodos_pago: binsCobro,
+                con_iva: cobro.conIva,
+                tasa_cambio: cobro.tasa || globalBcvRate || null,
+                cashea_pct: cobro.casheaPct ?? null,
+                total_pagado: binsTotalUSD(binsCobro as Bins, cobro.tasa || globalBcvRate || 0),
+              })
+              .eq('id', id);
+            if (errOrden) console.error('El cobro no se pudo copiar a la orden:', errOrden.message);
+            else {
+              setCitas(prev => prev.map(c => c.id === id
+                ? { ...c, metodos_pago: binsCobro, con_iva: cobro.conIva, tasa_cambio: cobro.tasa } as CitaServicio
+                : c));
+            }
+          }
         }
       }
 
@@ -612,10 +660,16 @@ export default function ServiciosPage() {
     const entrandoCompletado = COMPLETED_STATES.includes(nuevoEstado) && !COMPLETED_STATES.includes(cita.estado);
     const precioServicio = Number(cita.costo_final ?? cita.costo_estimado ?? 0);
     if (entrandoCompletado && precioServicio > 0 && (cita.sede_id || currentSede?.id)) {
-      setCobroBins(emptyBins());
-      setCobroConIva(false);
-      setCobroCasheaActivo(false);
-      setCobroTasa(null);
+      // Si al crear o editar la orden ya se dijo cómo pagó el cliente, el cobro
+      // arranca con eso. Empezaba siempre vacío y había que volver a escribir
+      // lo mismo; quien no lo repetía cerraba la venta con otro método.
+      const binsOrden = binsFromLegacyMetodos((cita as any).metodos_pago);
+      const ordenCobrada = Object.values(binsOrden).some(v => v > 0);
+      setCobroBins(ordenCobrada ? binsOrden : emptyBins());
+      setCobroConIva(!!(cita as any).con_iva);
+      setCobroCasheaActivo((cita as any).cashea_pct != null);
+      if ((cita as any).cashea_pct != null) setCobroCasheaPct(normalizarPct((cita as any).cashea_pct));
+      setCobroTasa(ordenCobrada ? (Number((cita as any).tasa_cambio) || null) : null);
       setCobroModal({ cita, nuevoEstado });
       return;
     }
@@ -768,6 +822,9 @@ export default function ServiciosPage() {
 
       return {
         id: cita.id,
+        servicio_id: cita.id,
+        metodos_pago: (cita as any).metodos_pago || undefined,
+        tasa_pago: Number((cita as any).tasa_cambio) || undefined,
         fecha: cita.fecha,
         cliente: clientName,
         // La cedula va en la factura: sin el documento del cliente es una nota
@@ -1550,14 +1607,26 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
   // Si el usuario la eligió a mano, deja de recalcularse sola.
   const [categoriaManual, setCategoriaManual] = useState<boolean>(!!(cita as any)?.categoria);
   // Métodos de pago de la orden → se vuelcan a las columnas de ventas_dia al completar.
-  const [metodosPago, setMetodosPago] = useState<Record<string, number>>(
-    ((cita as any)?.metodos_pago && typeof (cita as any).metodos_pago === 'object')
-      ? (cita as any).metodos_pago
-      : {}
-  );
+  // Se pasan por las diez cuentas aunque vengan con las claves genéricas de
+  // antes (`pago_movil`, `efectivo_usd`): el panel solo conoce las diez, y una
+  // clave ajena era dinero guardado que no se veía al reabrir.
+  const [metodosPago, setMetodosPago] = useState<Record<string, number>>(() => {
+    const mp = (cita as any)?.metodos_pago;
+    if (!mp || typeof mp !== 'object') return {};
+    const bins = binsFromLegacyMetodos(mp);
+    return Object.values(bins).some(v => v > 0) ? { ...bins } : {};
+  });
   const [conIva, setConIva] = useState<boolean>(!!(cita as any)?.con_iva);
   // Tasa personalizada (Bs por $) para los métodos de pago que la usen.
-  const [tasaCustom, setTasaCustom] = useState<number>(0);
+  // Una orden ya cobrada abre con la tasa de SU cobro: los bolívares se
+  // cobraron a esa tasa, y convertirlos a la de hoy le cambiaba el importe en
+  // dólares cada vez que alguien la abría.
+  const [tasaCustom, setTasaCustom] = useState<number>(() => {
+    const mp = (cita as any)?.metodos_pago;
+    const cobrada = mp && typeof mp === 'object'
+      && Object.values(mp as Record<string, unknown>).some(v => Number(v) > 0);
+    return cobrada ? Number((cita as any)?.tasa_cambio) || 0 : 0;
+  });
   // Cashea financia SOBRE el precio con IVA: de ese total salen la inicial y
   // las cuotas. Por eso el 16% deja de ser opcional en cuanto se usa, y lo
   // que no se cobre hoy queda como saldo pendiente, no como venta cerrada.
@@ -2313,8 +2382,12 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
           // queda en cero y sin esto la orden se releería como de contado,
           // apagando el IVA obligatorio y perdiendo el saldo financiado.
           cashea_pct: hayCashea ? casheaPct : null,
-          tasa_cambio: tasaDiaBcv || globalBcvRate || null,
-          total_pagado: sumaMetodos(metodosPago),
+          // La tasa con la que se convirtieron los bolívares de ESTE cobro; si
+          // se eligió otra en el panel, esa es la que vale.
+          tasa_cambio: tasaCustom || tasaDiaBcv || globalBcvRate || null,
+          // En dólares. `sumaMetodos` sumaba bolívares y dólares como si fueran
+          // la misma moneda: un pago móvil de Bs. 12.834 salía como $12.834.
+          total_pagado: binsTotalUSD(binsFromLegacyMetodos(metodosPago), tasaCustom || tasaDiaBcv || globalBcvRate || 0),
           notas: encargados.length > 0
             ? `Encargados: ${encargados.map(e => `${e.nombre} (${e.rol === 'jefe_taller' ? 'Jefe' : 'Mecánico'})`).join(', ')}`
             : (cita?.notas || ''),
@@ -2332,10 +2405,55 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
           .eq('id', cita.id);
         if (error) throw error;
 
+        /*
+         * Si la orden ya está cerrada y se corrigió CÓMO pagó el cliente, la
+         * venta tiene que decir lo mismo.
+         *
+         * La orden y el reporte leen el cobro de sitios distintos —la orden de
+         * `metodos_pago`, el reporte de las columnas de `ventas_dia`— y esta
+         * pantalla solo escribía la orden. Corregir aquí un pago móvil mal
+         * puesto dejaba el reporte con el viejo.
+         *
+         * Solo se tocan los campos del cobro: los departamentos y el desglose
+         * de la venta no dependen de esto.
+         */
+        const cerrada = ['completada', 'completado', 'finalizado', 'finalizada'].includes(String(cita.estado || ''));
+        const binsAntes = binsFromLegacyMetodos((cita as any).metodos_pago);
+        const binsAhora = binsFromLegacyMetodos(metodosPago);
+        const cobroCambio = BANK_BIN_IDS.some(k => Math.abs((binsAntes[k] || 0) - (binsAhora[k] || 0)) > 0.004)
+          || Boolean((cita as any).con_iva) !== ivaObligatorio;
+        if (cerrada && cobroCambio && Object.values(binsAhora).some(v => v > 0)) {
+          const refTag = `[ServicioID: ${cita.id}]`;
+          const { data: venta } = await supabase!.from('ventas_dia').select('id')
+            .or(`servicio_id.eq.${cita.id},notas.like.%${refTag}%`).limit(1).maybeSingle();
+          if (venta) {
+            const tasaCobro = tasaCustom || tasaDiaBcv || globalBcvRate || 0;
+            const mapped = buildVentaDiaFields({
+              bins: binsAhora,
+              subtotal: costoFinalCalc,
+              conIva: ivaObligatorio,
+              saldo: hayCashea ? 0 : Math.max(0, Math.round(
+                (costoFinalCalc * (ivaObligatorio ? 1.16 : 1) - binsTotalUSD(binsAhora, tasaCobro)) * 100) / 100),
+              tasa: tasaCobro,
+              casheaPct: hayCashea ? casheaPct : null,
+              deptItems: [],
+            });
+            const { error: errVenta } = await supabase!.from('ventas_dia').update({
+              ...camposDeCobro(mapped),
+              tasa_cambio: tasaCobro || null,
+              con_iva: ivaObligatorio,
+              updated_at: new Date().toISOString(),
+            }).eq('id', venta.id);
+            if (errVenta) {
+              avisosStock = [...avisosStock, `La orden se guardó, pero el cobro no se pudo pasar al reporte: ${errVenta.message}`];
+            }
+          }
+        }
+
         // Almacén: se ajusta contra la orden ya grabada. Si la orden se anula,
         // los repuestos que no salieron del taller vuelven a contarse.
         const anulada = ['cancelada', 'cancelado', 'anulada'].includes(String(cita.estado || ''));
-        avisosStock = await ajustarStockDeOrden(cita.id, anulada);
+        avisosStock = [...avisosStock, ...(await ajustarStockDeOrden(cita.id, anulada))];
 
         // Nómina: re-sincroniza el personal a cargo y sus comisiones.
         // Sólo se reemplazan los trabajos PENDIENTES; lo ya liquidado nunca se toca.
@@ -2457,8 +2575,12 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
           // queda en cero y sin esto la orden se releería como de contado,
           // apagando el IVA obligatorio y perdiendo el saldo financiado.
           cashea_pct: hayCashea ? casheaPct : null,
-          tasa_cambio: tasaDiaBcv || globalBcvRate || null,
-          total_pagado: sumaMetodos(metodosPago),
+          // La tasa con la que se convirtieron los bolívares de ESTE cobro; si
+          // se eligió otra en el panel, esa es la que vale.
+          tasa_cambio: tasaCustom || tasaDiaBcv || globalBcvRate || null,
+          // En dólares. `sumaMetodos` sumaba bolívares y dólares como si fueran
+          // la misma moneda: un pago móvil de Bs. 12.834 salía como $12.834.
+          total_pagado: binsTotalUSD(binsFromLegacyMetodos(metodosPago), tasaCustom || tasaDiaBcv || globalBcvRate || 0),
           notas: encargados.length > 0
             ? `Encargados: ${encargados.map(e => `${e.nombre} (${e.rol === 'jefe_taller' ? 'Jefe' : 'Mecánico'})`).join(', ')}`
             : '',
@@ -3014,8 +3136,10 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
               <DesglosePagoBancos
                 bins={{ ...emptyBins(), ...(metodosPago as Bins) }}
                 onBinsChange={b => setMetodosPago(b as unknown as Record<string, number>)}
+                // Reabrir una orden sin cobro no puede decir «Efectivo».
+                sinPreseleccion={Boolean(cita?.id)}
                 totalUSD={(parseFloat(formData.costo_estimado) || 0) * (ivaObligatorio ? 1.16 : 1)}
-                tasa={tasaCustom || globalBcvRate || 0}
+                tasa={tasaCustom || tasaDiaBcv || globalBcvRate || 0}
                 tasaAuto={globalBcvRate}
                 onTasaChange={v => setTasaCustom(v ?? 0)}
                 cashea={{
@@ -3488,23 +3612,39 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
     setItems(n);
   };
 
-  const [payments, setPayments] = useState<Record<string, number>>({
-    efectivo_usd: total
+  /*
+   * El cobro de la orden, en las diez cuentas.
+   *
+   * Arrancaba SIEMPRE como `{ efectivo_usd: total }` y esta ventana no tenía
+   * dónde cambiarlo: la factura decía «efectivo» pagara como pagara el
+   * cliente, y «Finalizar entrega» registraba la venta entera como divisa en
+   * efectivo. Ahora sale de la orden y, si la orden no lo tiene pero ya está
+   * cerrada, de su venta.
+   */
+  const [payments, setPayments] = useState<Bins>(() => binsFromLegacyMetodos((cita as any).metodos_pago));
+  const [tasaCobro, setTasaCobro] = useState<number | null>(() => {
+    const t = Number((cita as any).tasa_cambio) || 0;
+    return Object.values(binsFromLegacyMetodos((cita as any).metodos_pago)).some(v => v > 0) && t > 0 ? t : null;
   });
-
-  const togglePaymentMethod = (method: string) => {
-    const newPayments = { ...payments };
-    if (newPayments[method] !== undefined) {
-      delete newPayments[method];
-    } else {
-      newPayments[method] = 0;
-    }
-    setPayments(newPayments);
-  };
-
-  const updatePaymentAmount = (method: string, amount: number) => {
-    setPayments({ ...payments, [method]: amount });
-  };
+  useEffect(() => {
+    if (!supabase || !cita?.id) return;
+    if (Object.values(payments).some(v => v > 0)) return;
+    supabase.from('ventas_dia').select('*')
+      .or(`servicio_id.eq.${cita.id},notas.like.%[ServicioID: ${cita.id}]%`)
+      .limit(1).maybeSingle()
+      .then(({ data }) => {
+        if (!data) return;
+        const b = binsDeFuente({ columnas: data, metodos_pago: data.metodos_pago });
+        if (Object.values(b).some(v => v > 0)) {
+          setPayments(b);
+          if (Number(data.tasa_cambio) > 0) setTasaCobro(Number(data.tasa_cambio));
+        }
+      });
+    // Solo al abrir: después manda lo que se elija en el panel.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cita?.id]);
+  const tasaDelCobro = tasaCobro || rates.bcv || globalBcvRate || 0;
+  const hayCobro = Object.values(payments).some(v => v > 0);
 
   const [printMode, setPrintMode] = useState<'single' | 'dual' | 'diferente'>('dual');
   const [printSide, setPrintSide] = useState<'left' | 'right'>('left');
@@ -3535,6 +3675,8 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
       total_ves: totalVes,
       notas: cita.descripcion || undefined,
       metodos_pago: payments,
+      tasa_pago: tasaDelCobro,
+      servicio_id: cita.id,
       comprobante_url: comp?.url || comprobanteSavedUrl || cita.comprobante_url || undefined,
       comprobante_referencia: comp?.ref || comprobante.referencia.trim() || cita.comprobante_referencia || undefined
     };
@@ -3551,6 +3693,8 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
 
       dataList.push({
         id: secondCita.id,
+        servicio_id: secondCita.id,
+        metodos_pago: (secondCita as any).metodos_pago || undefined,
         fecha: secondCita.fecha,
         cliente: secondClientName,
         vehiculo: secondVehicleStr,
@@ -3568,6 +3712,12 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
 
   const handleFinalizeSale = async () => {
     if (!supabase) return;
+    // Sin decir cómo pagó el cliente no se cierra: se registraba como divisa
+    // en efectivo por defecto, y el reporte del día lo daba por bueno.
+    if (!hayCobro) {
+      alert('Indica cómo pagó el cliente antes de finalizar la entrega.');
+      return;
+    }
     try {
       setIsSaving(true);
       // ref tag enables dedup — if Kanban drag already registered this sale, update instead of insert
@@ -3604,14 +3754,22 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
         total_servicios: items.length,
         total_clientes: 1,
         desglose: items,
-        metodos_pago: payments,
-        ...buildPagoColumnsCompletas(payments),
-        tasa_cambio: rates.bcv || globalBcvRate || 518.0,
+        // El cobro repartido igual que en el tablero: las diez cuentas, lo
+        // cobrado de contado y lo que quede debiendo.
+        ...camposDeCobro(buildVentaDiaFields({
+          bins: payments,
+          subtotal,
+          conIva: withIva,
+          saldo: Math.max(0, Math.round((total - binsTotalUSD(payments, tasaDelCobro)) * 100) / 100),
+          tasa: tasaDelCobro,
+          casheaPct: null,
+          deptItems: [],
+        })),
+        tasa_cambio: tasaDelCobro || null,
         con_iva: withIva,
         notas: vdNotas,
         creado_por: 'Admin',
         sede_id: sedeIdFinal,
-        estado: 'pagado',
         updated_at: new Date().toISOString(),
         ...comprobanteFields(comprobanteUrl, comprobanteRef),
       };
@@ -3629,8 +3787,14 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
         ventaDia = ins;
       }
 
+      // La orden guarda el mismo cobro que la venta: si no, al reabrirla no
+      // consta cómo se pagó.
       const { error: citaError } = await withSedeFilter(supabase.from('servicios')).update({
         estado: 'completada',
+        metodos_pago: payments,
+        con_iva: withIva,
+        tasa_cambio: tasaDelCobro || null,
+        total_pagado: binsTotalUSD(payments, tasaDelCobro),
         ...comprobanteFields(comprobanteUrl, comprobanteRef),
       }).eq('id', cita.id);
       if (citaError) throw citaError;
@@ -3874,7 +4038,21 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
         </div>
 
         {cita.estado !== 'completada' && (
-          <div className="px-4 sm:px-8 pt-4">
+          <div className="px-4 sm:px-8 pt-4 space-y-3">
+            {/* Cómo pagó el cliente: el mismo panel del punto de venta. */}
+            <div className="rounded-2xl border border-gray-100">
+              <p className="px-4 pt-3 text-[11px] font-black uppercase tracking-widest text-slate-500">Cómo pagó el cliente</p>
+              <DesglosePagoBancos
+                bins={payments}
+                onBinsChange={setPayments}
+                totalUSD={total}
+                tasa={tasaDelCobro}
+                tasaAuto={rates.bcv || globalBcvRate}
+                onTasaChange={setTasaCobro}
+                sinPreseleccion
+                ocultarMetodos={['cashea']}
+              />
+            </div>
             <ComprobanteInput value={comprobante} onChange={setComprobante} compact />
           </div>
         )}

@@ -27,6 +27,9 @@ export interface Factura {
   metodos_pago: Record<string, number> | null;
   items: ItemFactura[] | null;
   notas: string | null;
+  /** La orden o la venta de la que salió la factura. */
+  referencia_id?: string | null;
+  referencia_tabla?: string | null;
 }
 
 export interface KpisFactura {

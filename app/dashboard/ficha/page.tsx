@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
-  AlertTriangle, ArrowLeft, Car, CheckCircle2, ChevronRight, ExternalLink,
+  AlertTriangle, ArrowLeft, Car, CheckCircle2, ChevronRight, ExternalLink, FileDown,
   Loader2, Phone, Plus, RefreshCw, Search, TrendingDown, TrendingUp, Wallet,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -487,6 +487,18 @@ export default function FichaVehiculoPage() {
                   className="flex h-[38px] w-[38px] items-center justify-center rounded-lg border border-[#e2e5ea] text-[#5b616e] hover:bg-[#f6f7f9]"
                 >
                   <RefreshCw className="h-4 w-4" aria-hidden />
+                </button>
+
+                {/* La ficha en papel, con costos: es un documento interno. */}
+                <button
+                  onClick={async () => {
+                    const { generarFichaPDF } = await import('@/lib/ficha-pdf');
+                    generarFichaPDF(ficha, { generadoPor: useAppStore.getState().user?.nombre });
+                  }}
+                  className="flex h-[38px] items-center gap-1.5 rounded-lg border border-[#e2e5ea] px-3 text-[12.5px] font-semibold text-[#3d4350] hover:bg-[#f6f7f9]"
+                >
+                  <FileDown className="h-4 w-4" aria-hidden />
+                  PDF
                 </button>
 
                 {canEdit && (
