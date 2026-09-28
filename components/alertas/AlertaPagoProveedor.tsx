@@ -1,8 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import LogoBanco from '@/components/pagos/LogoBanco';
-import { BANK_METHODS, type BankBin } from '@/lib/reporte/ventas-mapping';
+import DialogoPagoProveedor from '@/components/pagos/DialogoPagoProveedor';
 import {
   AlertTriangle, CalendarX, CheckCircle2, Clock, ExternalLink, Loader2,
   Mail, Phone, Truck, User,
@@ -67,9 +66,9 @@ export default function AlertaPagoProveedor() {
   const [aparcados, setAparcados] = useState<Set<string>>(new Set());
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
-  // De qué cuenta salió el pago. Sin esto el gasto quedaba asentado, pero
-  // ningún saldo de banco bajaba: Finanzas no sabía de dónde descontarlo.
-  const [cuenta, setCuenta] = useState<BankBin | null>(null);
+  // «Ya pagué» abre el panel de métodos: de qué cuenta —o cuentas— salió.
+  // Sin esto el gasto quedaba asentado, pero ningún saldo de banco bajaba.
+  const [pagando, setPagando] = useState(false);
 
   const cargar = useCallback(async () => {
     try {
@@ -102,28 +101,28 @@ export default function AlertaPagoProveedor() {
 
   const aparcar = () => {
     setAparcados(s => new Set(s).add(clave));
-    setCuenta(null);
+    setPagando(false);
     setError('');
   };
 
-  const yaPague = async () => {
-    if (!cuenta) { setError('Elige de qué cuenta salió el pago.'); return; }
+  const yaPague = async (p: { metodos_pago: Record<string, number>; tasa: number }) => {
     setGuardando(true);
     setError('');
     try {
       const r = await fetch('/api/alertas/pagos', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ origen: pago.origen, id: pago.id, cuenta, tasa }),
+        body: JSON.stringify({ origen: pago.origen, id: pago.id, metodos_pago: p.metodos_pago, tasa: p.tasa }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'No se pudo registrar el pago');
       // Se quita de la lista y se vuelve a consultar: si quedaban más deudas
       // vencidas, la siguiente sale sola.
       setAparcados(s => new Set(s).add(clave));
-      setCuenta(null);
+      setPagando(false);
       await cargar();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Error al registrar el pago');
+      // El error se enseña dentro del diálogo de pago, que sigue abierto.
+      throw e instanceof Error ? e : new Error('Error al registrar el pago');
     } finally {
       setGuardando(false);
     }
@@ -288,41 +287,6 @@ export default function AlertaPagoProveedor() {
             )}
           </div>
 
-          {/* De qué cuenta sale. Una sola: para repartir un pago entre dos
-              cuentas está el renglón de la ficha, con el panel completo. */}
-          {puedePagar && (
-            <div>
-              <p className="mb-1.5 text-[11.5px] font-semibold text-[#3d4350]">¿De qué cuenta salió el pago?</p>
-              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
-                {BANK_METHODS.filter(m => m.id !== 'cashea').map(m => {
-                  const monto = m.moneda === 'Bs'
-                    ? (tasa > 0 ? bs(pago.saldo * tasa) : '—')
-                    : money(pago.saldo);
-                  const elegida = cuenta === m.id;
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => { setCuenta(m.id); setError(''); }}
-                      disabled={m.moneda === 'Bs' && !(tasa > 0)}
-                      aria-pressed={elegida}
-                      className={cn(
-                        'flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors disabled:opacity-40',
-                        elegida ? 'border-[#16a34a] bg-[#e8f7ee]' : 'border-[#e2e5ea] hover:bg-[#f6f7f9]',
-                      )}
-                    >
-                      <LogoBanco id={m.id} size={20} />
-                      <span className="min-w-0 leading-tight">
-                        <span className="block truncate text-[11px] font-medium text-[#16181d]">{m.label}</span>
-                        <span className="num block text-[10.5px] text-[#8a909c]">{monto}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {error && (
             <p role="alert" className="rounded-lg border border-[#f5c2c2] bg-[#fdeaea] px-3 py-2 text-[12.5px] text-[#b91c1c]">
               {error}
@@ -334,7 +298,7 @@ export default function AlertaPagoProveedor() {
         <footer className="flex flex-wrap items-center gap-2 border-t border-[#eef0f3] bg-[#fafbfc] px-6 py-4">
           <p className="min-w-0 flex-1 text-[11px] leading-snug text-[#8a909c]">
             {puedePagar
-              ? '«Ya pagué» lo registra como gasto de hoy y deja de avisar. «Recordar más '
+              ? '«Ya pagué» pide de qué cuenta salió, lo registra como gasto de hoy y deja de avisar. «Recordar más '
                 + 'tarde» solo lo aparta: al recargar la pantalla volverá a salir.'
               : 'No tienes permiso para registrar pagos. Avísale a administración.'}
           </p>
@@ -350,9 +314,8 @@ export default function AlertaPagoProveedor() {
 
           {puedePagar && (
             <button
-              onClick={yaPague}
-              disabled={guardando || !cuenta}
-              title={cuenta ? undefined : 'Elige primero de qué cuenta salió'}
+              onClick={() => { setError(''); setPagando(true); }}
+              disabled={guardando}
               className={cn(
                 'flex h-[42px] items-center gap-2 rounded-lg bg-[#16a34a] px-5 text-[13px] font-bold text-white',
                 'hover:bg-[#15803d] disabled:opacity-50',
@@ -365,6 +328,18 @@ export default function AlertaPagoProveedor() {
             </button>
           )}
         </footer>
+        {pagando && (
+          <DialogoPagoProveedor
+            proveedor={pago.proveedor}
+            concepto={pago.descripcion || pago.concepto}
+            placa={pago.placa}
+            montoUSD={pago.saldo}
+            abonadoUSD={pago.pagado}
+            vence={pago.fecha_vencimiento}
+            onCancelar={() => setPagando(false)}
+            onConfirmar={yaPague}
+          />
+        )}
       </div>
     </div>
   );

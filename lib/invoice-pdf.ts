@@ -61,6 +61,10 @@ export interface InvoiceData {
   pagos?: LineaPago[];
   /** La tasa con la que se cobraron los bolívares. */
   tasa_pago?: number | null;
+  /** El día en que el vehículo entró al taller. */
+  fecha_entrada?: string | null;
+  /** El día en que la venta quedó pagada; puede ser posterior a la venta. */
+  fecha_pago?: string | null;
   /** Para encontrar la orden o la venta de esta factura. */
   servicio_id?: string | null;
   venta_id?: string | null;
@@ -249,6 +253,27 @@ export const generateInvoicePDF = async (
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
     doc.text(fechaVE(data.fecha), rightAlign, 33, { align: 'right' });
+
+    // Entrada del vehículo y día del pago. La fecha de arriba es la de la
+    // venta; un carro que entró el 21 y se pagó el 25 tiene que decir las dos.
+    {
+      const partes: Array<[string, string, [number, number, number]]> = [];
+      if (data.fecha_entrada) partes.push(['ENTRADA:', fechaVE(data.fecha_entrada), grayDark]);
+      if (data.fecha_pago) partes.push(['PAGADO:', fechaVE(data.fecha_pago), [22, 163, 74]]);
+      else if (data.estado === 'pendiente') partes.push(['PAGO:', 'PENDIENTE', orange]);
+      let x = margin;
+      doc.setFontSize(7);
+      for (const [etq, val, color] of partes) {
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...grayLight);
+        doc.text(etq, x, 35.5);
+        x += doc.getTextWidth(etq) + 1;
+        doc.setTextColor(...color);
+        doc.text(val, x, 35.5);
+        x += doc.getTextWidth(val) + 5;
+      }
+      doc.setFont('helvetica', 'normal');
+    }
 
     // Divider
     doc.setDrawColor(...border);

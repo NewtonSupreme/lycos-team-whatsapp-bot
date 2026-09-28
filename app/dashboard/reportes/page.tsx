@@ -32,6 +32,8 @@ import { formatearCedula } from '@/lib/clientes/identidad';
 import PanelGeneral from '@/components/reportes/PanelGeneral';
 import { generateInvoicePDF, generateEgresoPDF, type InvoicePDFItem } from '@/lib/invoice-pdf';
 import VistaEgresos from '@/components/egresos/VistaEgresos';
+import { binsDeColumnas, lineasDeMetodos, lineasDePago, montoConMoneda } from '@/lib/pagos/desglose';
+import { mecanicoDeOrden, servicioDeNotas } from '@/lib/facturas/mecanico';
 import DialogoEgreso from '@/components/egresos/DialogoEgreso';
 import {
   conceptoDe, etiquetaCategoria, lineasDeEgreso, type EgresoFila,
@@ -115,6 +117,26 @@ const placaDeVenta = (v: { placa?: string | null; vehiculo_info?: string | null;
   const texto = `${v.vehiculo_info || ''} ${v.notas || ''}`.toUpperCase();
   const m = texto.match(/\b([A-Z]{2,3}\d{2,3}[A-Z]{1,3}|[A-Z]\d{2}[A-Z]\d{2}[A-Z]?)\b/);
   return m ? m[1] : null;
+};
+
+/** Qué se le hizo, en una línea: los renglones de la venta. */
+const trabajoDeVenta = (v: { desglose?: unknown; notas?: string | null }): string => {
+  const d = Array.isArray(v.desglose) ? v.desglose as Array<{ descripcion?: string; cantidad?: number }> : [];
+  const items = d.map(i => String(i?.descripcion || '').trim()).filter(Boolean);
+  if (items.length) return items.join(' · ');
+  return String(v.notas || '')
+    .replace(/\[FACTURA_IA_START\][\s\S]*?\[FACTURA_IA_END\]/g, '')
+    .replace(/\[ServicioID:[^\]]*\]/g, '')
+    .replace(/\|\s*Cliente:.*$/i, '')
+    .trim();
+};
+
+/** Las líneas de cobro de una venta: sus cuentas exactas, o su metodos_pago. */
+const lineasDeVenta = (v: Record<string, unknown>) => {
+  const tasa = Number(v.tasa_cambio) || 0;
+  const bins = binsDeColumnas(v);
+  if (Object.values(bins).some(x => x > 0)) return lineasDePago(bins, tasa);
+  return lineasDeMetodos((v.metodos_pago as Record<string, unknown>) || null, tasa);
 };
 
 const vehiculoDeLaVenta = (v: { vehiculo_info?: string | null; placa?: string | null }): string | undefined => {
@@ -2301,6 +2323,8 @@ function MetricasDiaModal({ onClose, defaultFecha }: { onClose: () => void; defa
 // ── Main Page ──────────────────────────────────────────────────
 export default function ReportesPage() {
   const [ventas, setVentas] = useState<VentaDia[]>([]);
+  /** Quién hizo cada venta, por id de venta. Se carga aparte, en bloque. */
+  const [mecanicos, setMecanicos] = useState<Record<string, string>>({});
   const [egresos, setEgresos] = useState<Egreso[]>([]);
   const [cierresOficiales, setCierresOficiales] = useState<CierreOficial[]>([]);
   const [serviciosHistory, setServiciosHistory] = useState<any[]>([]);
@@ -2378,6 +2402,50 @@ export default function ReportesPage() {
   const totalServicios = ventas.reduce((s, v) => s + Number(v.total_servicios), 0);
   const totalClientes = ventas.reduce((s, v) => s + Number(v.total_clientes), 0);
   const ticketPromedio = totalServicios > 0 ? totalIngresos / totalServicios : 0;
+
+  /**
+   * El mecánico de cada venta: por su orden (nómina, «Encargados:» o
+   * seguimiento) y, en el punto de venta, por la propia venta. Todo en pocas
+   * consultas, no una por fila.
+   */
+  const cargarMecanicos = useCallback(async (lista: VentaDia[]) => {
+    if (!supabase) return;
+    const servDe = new Map<string, string>();
+    for (const v of lista) {
+      const sid = (v as unknown as { servicio_id?: string }).servicio_id || servicioDeNotas(v.notas);
+      if (sid) servDe.set(v.id, sid);
+    }
+    const servIds = [...new Set(servDe.values())];
+    const refs = [...servIds, ...lista.filter(v => v.source !== 'ia').map(v => v.id)];
+    const trabajos = new Map<string, Array<{ empleado_nombre: string; es_taller: boolean }>>();
+    const ordenes = new Map<string, { notas: string | null; seguimiento: unknown }>();
+    for (let i = 0; i < refs.length; i += 150) {
+      const { data } = await supabase.from('job_assignments')
+        .select('referencia_id, empleado_nombre, es_taller').in('referencia_id', refs.slice(i, i + 150));
+      for (const j of (data || [])) {
+        const l = trabajos.get(j.referencia_id) || [];
+        l.push(j);
+        trabajos.set(j.referencia_id, l);
+      }
+    }
+    for (let i = 0; i < servIds.length; i += 150) {
+      const { data } = await supabase.from('servicios')
+        .select('id, notas, seguimiento').in('id', servIds.slice(i, i + 150));
+      for (const o of (data || [])) ordenes.set(o.id, o);
+    }
+    const out: Record<string, string> = {};
+    for (const v of lista) {
+      const sid = servDe.get(v.id);
+      const o = sid ? ordenes.get(sid) : undefined;
+      const m = mecanicoDeOrden({
+        trabajos: (sid && trabajos.get(sid)) || trabajos.get(v.id) || [],
+        notas: o?.notas ?? null,
+        seguimiento: o?.seguimiento,
+      });
+      if (m) out[v.id] = m;
+    }
+    setMecanicos(out);
+  }, []);
 
   const loadData = useCallback(async () => {
     if (!supabase) return;
@@ -2533,6 +2601,7 @@ export default function ReportesPage() {
     );
 
     setVentas(allVentas);
+    cargarMecanicos(allVentas);
     if (eRes.error) {
       console.error('Error fetching egresos:', eRes.error);
     }
@@ -3315,9 +3384,9 @@ export default function ReportesPage() {
                         <th className="text-right text-xs text-muted-foreground font-medium px-4 py-3">Ingresos</th>
                         <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3">Cliente · vehículo</th>
                         <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3">Placa</th>
-                        <th className="text-center text-xs text-muted-foreground font-medium px-4 py-3">Servicios</th>
-                        <th className="text-center text-xs text-muted-foreground font-medium px-4 py-3">Clientes</th>
-                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3 hidden md:table-cell">Notas</th>
+                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3">Trabajo realizado</th>
+                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3 hidden md:table-cell">Mecánico</th>
+                        <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3">Cobro</th>
                         <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3 hidden md:table-cell">Método</th>
                         <th className="text-left text-xs text-muted-foreground font-medium px-4 py-3 hidden md:table-cell">Origen</th>
                         <th className="text-right text-xs text-muted-foreground font-medium px-4 py-3">Acciones</th>
@@ -3332,11 +3401,11 @@ export default function ReportesPage() {
                                 <Calendar className="w-3.5 h-3.5 text-primary" />
                               </div>
                               <div>
-                                <p className="text-sm font-medium">
-                                  {new Date(v.fecha + 'T12:00:00').toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                <p className="whitespace-nowrap text-sm font-medium">
+                                  {new Date(v.fecha + 'T12:00:00').toLocaleDateString('es-VE', { day: '2-digit', month: 'short' })}
                                 </p>
-                                <p className="text-[10px] text-muted-foreground">
-                                  {new Date(v.created_at).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' })}
+                                <p className="whitespace-nowrap text-[10px] text-muted-foreground">
+                                  {new Date(v.created_at).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', hour12: true })}
                                 </p>
                               </div>
                             </div>
@@ -3345,7 +3414,7 @@ export default function ReportesPage() {
                             <div className="flex flex-col items-end">
                               <span className="font-bold text-green-400">${Number(v.total_ingresos).toFixed(2)}</span>
                               <span className="text-[9px] text-muted-foreground whitespace-nowrap">
-                                {(Number(v.total_ingresos) * (v.tasa_cambio || currentTasa || 518.0)).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 3 })} Bs.
+                                {(Number(v.total_ingresos) * (v.tasa_cambio || currentTasa || 518.0)).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Bs.
                               </span>
                             </div>
                           </td>
@@ -3365,16 +3434,45 @@ export default function ReportesPage() {
                               </Link>
                             ) : <span className="text-xs text-muted-foreground">—</span>}
                           </td>
-                          <td className="px-4 py-3 text-center">
-                            <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
-                              {v.total_servicios}
-                            </span>
+                          {/* Qué se le hizo: los renglones de la venta, no un conteo. */}
+                          <td className="px-4 py-3 max-w-[240px]">
+                            <p className="text-xs leading-snug line-clamp-2" title={trabajoDeVenta(v)}>{trabajoDeVenta(v) || '—'}</p>
                           </td>
-                          <td className="px-4 py-3 text-center">
-                            <span className="text-sm">{v.total_clientes}</span>
+                          <td className="px-4 py-3 hidden md:table-cell max-w-[150px]">
+                            <p className={cn('text-xs truncate', mecanicos[v.id] ? 'text-foreground' : 'text-muted-foreground/60')}>
+                              {mecanicos[v.id] || 'Sin asignar'}
+                            </p>
                           </td>
-                          <td className="px-4 py-3 text-xs text-muted-foreground hidden md:table-cell max-w-[160px] truncate">
-                            {v.notas ? v.notas.replace(/\[FACTURA_IA_START\][\s\S]*?\[FACTURA_IA_END\]/g, '').trim() || '—' : '—'}
+                          {/* Cómo pagó: cada cuenta con su monto en su moneda, y lo que debe. */}
+                          <td className="px-4 py-3 min-w-[170px]">
+                            {(() => {
+                              const lineas = lineasDeVenta(v as unknown as Record<string, unknown>);
+                              const debe = Number(v.saldo_pendiente) || 0;
+                              return (
+                                <div className="space-y-0.5">
+                                  {lineas.length === 0 && <p className="text-[11px] text-muted-foreground/60">Sin cobro registrado</p>}
+                                  {lineas.slice(0, 3).map(l => (
+                                    <p key={`${l.cuenta}-${l.metodo}`} className="flex justify-between gap-2 text-[11px] leading-tight">
+                                      <span className="truncate text-muted-foreground">{l.banco ? `${l.metodo.split(' /')[0]} ${l.banco}` : l.metodo}</span>
+                                      <span className="num whitespace-nowrap font-semibold">{montoConMoneda(l.monto, l.moneda)}</span>
+                                    </p>
+                                  ))}
+                                  {lineas.length > 3 && <p className="text-[10px] text-muted-foreground">+{lineas.length - 3} más</p>}
+                                  {debe > 0.01 && (
+                                    <p className="text-[10.5px] font-bold text-amber-500">Debe ${debe.toFixed(2)}</p>
+                                  )}
+                                  {/* La venta es de su día; el pago puede ser de otro. */}
+                                  {(() => {
+                                    const fp = (v as unknown as { fecha_pago?: string | null }).fecha_pago;
+                                    return fp && fp !== v.fecha ? (
+                                      <p className="text-[10.5px] font-bold text-emerald-500">
+                                        Pagada el {fp.split('-').reverse().slice(0, 2).join('/')}
+                                      </p>
+                                    ) : null;
+                                  })()}
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td className="px-4 py-3 hidden md:table-cell">
                             <div className="flex flex-wrap gap-1">

@@ -50,7 +50,10 @@ export const BANK_METHODS: BankMethodMeta[] = [
   { id: 'dolares',            label: 'Divisa efectivo $',    short: 'DIVISAS',       moneda: 'USD', grupo: 'divisa',      banco: null,       factura: null,           color: 'text-green-600' },
   { id: 'zelle',              label: 'Zelle',                short: 'ZELLE',         moneda: 'USD', grupo: 'divisa',      banco: null,       factura: null,           color: 'text-violet-500' },
   { id: 'binance',            label: 'Binance',              short: 'BINANCE',       moneda: 'USD', grupo: 'cripto',      banco: null,       factura: null,           color: 'text-yellow-500' },
-  { id: 'cashea',             label: 'Cashea',               short: 'CASHEA',        moneda: 'USD', grupo: 'cashea',      banco: null,       factura: 'fiscal',       color: 'text-purple-500' },
+  // Lo cobrado por Cashea se liquida en la cuenta del BNC. Sigue siendo una
+  // cuenta aparte —se lleva en dólares y es crédito de Cashea—, pero se nombra
+  // «Cashea / BNC» y en el resumen de bancos suma al BNC.
+  { id: 'cashea',             label: 'Cashea / BNC',         short: 'CASHEA/BNC',    moneda: 'USD', grupo: 'cashea',      banco: 'bnc',      factura: 'fiscal',       color: 'text-purple-500' },
 ];
 
 export const BANK_BIN_IDS: BankBin[] = BANK_METHODS.map(m => m.id);

@@ -61,7 +61,7 @@ export interface ReporteDiarioData {
   fecha: string;
   fechaLabel: string;
   tasa: number;
-  ventas: Array<{ nombre: string; carro: string; placa?: string; total: number; contado: number; cashea: number; iva: number; inicial: number; financiado: number; porCobrar: number; bancos: BankRec; departamentos: DeptRec }>;
+  ventas: Array<{ nombre: string; carro: string; placa?: string; trabajo?: string; pago?: string; mecanico?: string; total: number; contado: number; cashea: number; iva: number; inicial: number; financiado: number; porCobrar: number; bancos: BankRec; departamentos: DeptRec }>;
   totalesVentas: { total: number; contado: number; cashea: number; iva: number; inicial: number; financiado: number; porCobrar: number; departamentos: DeptRec; bancos: BankRec };
   porCobrar: Array<{ nombre: string; carro: string; placa?: string; monto: number; observacion: string }>;
   porCobrarTotal: number;
@@ -81,7 +81,15 @@ export interface ReporteDiarioData {
   seguimiento?: Array<{
     id: string; cliente: string; carro: string; placa: string; trabajo: string;
     mecanico: string; estado: string; entrada: string; ultimo: string; movimientos: number; monto: number;
+    /** Pagado, Cashea pendiente, debe tanto… */
+    pago?: string;
   }>;
+  /** Lo cobrado ese día de ventas de otros días. */
+  cobros?: Array<{
+    cliente: string; carro: string; placa: string; fechaVenta: string; monto: number;
+    pago: string; saldoDespues: number; tipo: string;
+  }>;
+  cobrosTotal?: number;
   bancos: Array<{ banco: string; bs: number; usd: number }>;
   gastos: Array<{ concepto: string; proveedor?: string; placa?: string; cuenta?: string; usd: number; bs: number }>;
   gastosTotal: { usd: number; bs: number };
@@ -144,11 +152,12 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   const topKpis = [
     { label: 'INGRESOS DÍA', value: usd(tv.total), color: C.orange, light: C.orangeL },
     { label: 'CONTADO', value: usd(tv.contado), color: C.green, light: C.greenL },
-    { label: 'CASHEA', value: usd(tv.cashea), color: C.purple, light: [237, 233, 254] as RGB },
+    { label: 'CASHEA / BNC', value: usd(tv.cashea), color: C.purple, light: [237, 233, 254] as RGB },
     // Este NO es del dia: es todo el saldo abierto del taller. Al lado de
     // «INGRESOS DIA» y «GASTOS DIA» se leia como si fueran $5.546 pendientes
     // de ese mismo dia.
     { label: 'POR COBRAR (TOTAL)', value: usd(data.porCobrarTotal), color: C.amber, light: C.amberL },
+    { label: 'COBRADO DE DEUDAS', value: usd(data.cobrosTotal || 0), color: C.green, light: C.greenL },
     { label: 'GASTOS DÍA', value: usd(data.gastosTotal.usd), color: C.red, light: [254, 226, 226] as RGB },
     { label: 'CLIENTES BD', value: `${data.clientesBD.total} (+${data.clientesBD.nuevos})`, color: C.blue, light: C.blueL },
   ];
@@ -164,11 +173,61 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   });
   y += 20;
 
+  // ══════════════ SEGUIMIENTO DE VEHÍCULOS (arriba) ══════════════
+  // Lo primero que se lee: qué carros entraron, se movieron o salieron ese
+  // día, en qué quedaron y si ya pagaron. Iba al final, detrás de los gastos.
+  const seg = data.seguimiento || [];
+  section('Seguimiento de vehículos del día', `${seg.length} vehículo${seg.length === 1 ? '' : 's'}`);
+  const ESTADOS: Record<string, string> = {
+    pendiente: 'PENDIENTE', confirmada: 'CONFIRMADA', en_revision: 'EN REVISIÓN', en_proceso: 'EN PROCESO',
+    completada: 'COMPLETADA', completado: 'COMPLETADA', finalizado: 'ENTREGADO', cancelada: 'CANCELADA',
+  };
+  autoTable(doc, {
+    startY: y,
+    head: [['ID', 'ENTRADA', 'CLIENTE', 'VEHÍCULO', 'PLACA', 'TRABAJO', 'MECÁNICO', 'ESTADO', 'PAGO', 'ÚLTIMO MOVIMIENTO']],
+    body: (seg.length ? seg : [{
+      id: '—', entrada: '', cliente: 'Sin movimientos de vehículos este día', carro: '', placa: '',
+      trabajo: '', mecanico: '', estado: '', ultimo: '', movimientos: 0, monto: 0, pago: '',
+    }]).map(s => [
+      s.id, s.entrada, s.cliente.substring(0, 24), s.carro.substring(0, 22), s.placa || '—',
+      s.trabajo.substring(0, 60), s.mecanico.substring(0, 22),
+      ESTADOS[s.estado] || s.estado.toUpperCase().replace(/_/g, ' '),
+      s.pago || '—',
+      s.ultimo.substring(0, 60),
+    ]),
+    theme: 'grid',
+    headStyles: { fillColor: C.black, textColor: C.white, fontSize: 6.3, fontStyle: 'bold', halign: 'center' },
+    bodyStyles: { fontSize: 6.2, cellPadding: 1.3, textColor: C.dark, valign: 'middle' },
+    alternateRowStyles: { fillColor: C.bg },
+    columnStyles: {
+      0: { cellWidth: 12, halign: 'center' }, 1: { cellWidth: 15, halign: 'center' },
+      2: { cellWidth: 30 }, 3: { cellWidth: 26 }, 4: { cellWidth: 16, halign: 'center', fontStyle: 'bold' },
+      5: { cellWidth: 'auto' }, 6: { cellWidth: 28 }, 7: { cellWidth: 20, halign: 'center', fontStyle: 'bold' },
+      8: { cellWidth: 30, fontStyle: 'bold' }, 9: { cellWidth: 44 },
+    },
+    didParseCell: (d: any) => {
+      if (d.section !== 'body') return;
+      const v = String(d.cell.raw || '');
+      if (d.column.index === 8) {
+        d.cell.styles.textColor = v.startsWith('Pagado') ? C.green
+          : v.startsWith('Cashea') ? C.purple
+            : v.startsWith('Debe') || v.startsWith('Sin cobro') ? C.red : C.gray;
+      }
+      if (d.column.index !== 7) return;
+      if (v === 'COMPLETADA' || v === 'ENTREGADO') d.cell.styles.textColor = C.green;
+      else if (v === 'EN PROCESO' || v === 'EN REVISIÓN') d.cell.styles.textColor = C.blue;
+      else if (v === 'CANCELADA') d.cell.styles.textColor = C.red;
+      else if (v) d.cell.styles.textColor = C.orange;
+    },
+    margin: { left: margin, right: margin },
+  });
+  afterTable();
+
   // ══════════════ S1 · TABLA PRINCIPAL (ingresos + bancos por cliente) ══════════════
   section('1 · Ingresos y registro de clientes', 'Bancos en Bs · DIV/BINANCE/ZELLE en $');
   autoTable(doc, {
     startY: y,
-    head: [['Nº', 'CLIENTE', 'CARRO', 'PLACA', 'TOTAL', 'CONT.', 'CASHEA', 'IVA', 'INIC.', 'FINAN', 'X COB', 'PM BCO', 'PM EXT', 'P.BCM', 'P.BCO', 'BNC', 'DIV', 'BINAN', 'ZELLE', 'EF.BS']],
+    head: [['Nº', 'CLIENTE', 'CARRO', 'PLACA', 'TOTAL', 'CONT.', 'CASHEA/BNC', 'IVA', 'INIC.', 'FINAN', 'X COB', 'PM BCO', 'PM EXT', 'P.BCM', 'P.BCO', 'BNC', 'DIV', 'BINAN', 'ZELLE', 'EF.BS']],
     body: data.ventas.map((v, i) => [
       i + 1, v.nombre.substring(0, 22), carro(v.carro, 18), v.placa || '—',
       usd(v.total), usd(v.contado), usd(v.cashea), usd(v.iva), usd(v.inicial), usd(v.financiado), usd(v.porCobrar),
@@ -197,10 +256,74 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   });
   afterTable();
 
+  // ══════════════ S1b · DETALLE DE CADA VENTA ══════════════
+  // Lo que la tabla de bancos no dice: qué se le hizo, quién lo hizo y cómo
+  // pagó, cuenta por cuenta. Así no hay que ir a Servicios a buscarlo.
+  section('1b · Detalle de cada venta', `${data.ventas.length} venta${data.ventas.length === 1 ? '' : 's'}`);
+  autoTable(doc, {
+    startY: y,
+    head: [['Nº', 'CLIENTE', 'VEHÍCULO', 'PLACA', 'TRABAJO REALIZADO', 'MECÁNICO', 'CÓMO PAGÓ', 'TOTAL', 'DEBE']],
+    body: (data.ventas.length ? data.ventas : [{ nombre: 'Sin ventas este día', carro: '', total: 0, porCobrar: 0, financiado: 0 } as never])
+      .map((v: ReporteDiarioData['ventas'][number], i: number) => [
+        data.ventas.length ? i + 1 : '',
+        v.nombre.substring(0, 28),
+        v.carro || '—',
+        v.placa || '—',
+        (v.trabajo || '—').substring(0, 160),
+        v.mecanico || '—',
+        v.pago || '—',
+        data.ventas.length ? usd(v.total) : '',
+        data.ventas.length && (v.porCobrar + v.financiado) > 0.01 ? usd(v.porCobrar + v.financiado) : '',
+      ]),
+    theme: 'grid',
+    headStyles: { fillColor: C.dark, textColor: C.white, fontSize: 6, fontStyle: 'bold', halign: 'center', cellPadding: 1.2 },
+    bodyStyles: { fontSize: 6, cellPadding: 1.3, textColor: C.dark, valign: 'top' },
+    alternateRowStyles: { fillColor: C.bg },
+    columnStyles: {
+      0: { cellWidth: 7, halign: 'center' }, 1: { cellWidth: 32 }, 2: { cellWidth: 26 },
+      3: { cellWidth: 15, halign: 'center', fontStyle: 'bold' }, 4: { cellWidth: 'auto' },
+      5: { cellWidth: 30 }, 6: { cellWidth: 50 }, 7: { cellWidth: 16, halign: 'right', fontStyle: 'bold' },
+      8: { cellWidth: 16, halign: 'right', textColor: C.amber, fontStyle: 'bold' },
+    },
+    margin: { left: margin, right: margin },
+  });
+  afterTable();
+
+  // ══════════════ S1c · COBROS DE VENTAS DE OTROS DÍAS ══════════════
+  // Abonos y pagos completos que entraron hoy por ventas anteriores. Su dinero
+  // ya está sumado en el resumen de bancos de este día.
+  const cobros = data.cobros || [];
+  if (cobros.length) {
+    section('1c · Cobros de ventas de otros días', `${cobros.length} cobro${cobros.length === 1 ? '' : 's'} · ${usd(data.cobrosTotal || 0)}`);
+    autoTable(doc, {
+      startY: y,
+      head: [['CLIENTE', 'VEHÍCULO', 'PLACA', 'VENTA DEL', 'TIPO', 'CÓMO PAGÓ', 'COBRADO', 'QUEDA']],
+      body: cobros.map(c => [
+        c.cliente.substring(0, 28), c.carro || '—', c.placa || '—', c.fechaVenta, c.tipo, c.pago,
+        usd(c.monto), c.saldoDespues > 0.009 ? usd(c.saldoDespues) : 'Saldada',
+      ]),
+      foot: [['', '', '', '', '', 'TOTAL COBRADO', usd(data.cobrosTotal || 0), '']],
+      theme: 'grid',
+      headStyles: { fillColor: C.green, textColor: C.white, fontSize: 6.2, fontStyle: 'bold', halign: 'center' },
+      bodyStyles: { fontSize: 6.2, cellPadding: 1.3, textColor: C.dark, valign: 'top' },
+      footStyles: { fillColor: C.dark, textColor: C.white, fontSize: 6.2, fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: 40 }, 1: { cellWidth: 32 }, 2: { cellWidth: 16, halign: 'center', fontStyle: 'bold' },
+        3: { cellWidth: 18, halign: 'center' }, 4: { cellWidth: 22 }, 5: { cellWidth: 'auto' },
+        6: { cellWidth: 20, halign: 'right', fontStyle: 'bold' }, 7: { cellWidth: 18, halign: 'right' },
+      },
+      margin: { left: margin, right: margin },
+    });
+    afterTable();
+  }
+
   // Helper de sección con dos tablas lado a lado
   const half = (pageW - margin * 2 - 6) / 2;
 
   // ══════════════ S3 · SISTEMA  +  S4 · FORMA DE PAGO ══════════════
+  // Dos tablas lado a lado no se pueden partir entre páginas: la de la derecha
+  // se perdía. Se reserva el alto de la más larga antes de empezar.
+  ensure(12 + (Math.max(data.sistema.length, data.formaPago.length) + 2) * 7.5);
   section('3 · Resumen por sistema   ·   4 · Forma de pago');
   const yStart = y;
   autoTable(doc, {
@@ -378,49 +501,6 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
       0: { cellWidth: 10, halign: 'center' }, 1: { cellWidth: 'auto' }, 2: { cellWidth: 40 },
       3: { cellWidth: 18, halign: 'center', fontStyle: 'bold' }, 4: { cellWidth: 52 },
       5: { cellWidth: 28, halign: 'right' }, 6: { cellWidth: 24, halign: 'right' },
-    },
-    margin: { left: margin, right: margin },
-  });
-  afterTable();
-
-  // ══════════════ S14 · SEGUIMIENTO DE VEHÍCULOS ══════════════
-  // La hoja de seguimiento del cierre, ahora también en el diario: qué carros
-  // entraron, se movieron o salieron ese día y en qué quedaron.
-  const seg = data.seguimiento || [];
-  section('14 · Seguimiento de vehículos del día', `${seg.length} vehículo${seg.length === 1 ? '' : 's'}`);
-  const ESTADOS: Record<string, string> = {
-    pendiente: 'PENDIENTE', confirmada: 'CONFIRMADA', en_revision: 'EN REVISIÓN', en_proceso: 'EN PROCESO',
-    completada: 'COMPLETADA', completado: 'COMPLETADA', finalizado: 'ENTREGADO', cancelada: 'CANCELADA',
-  };
-  autoTable(doc, {
-    startY: y,
-    head: [['ID', 'ENTRADA', 'CLIENTE', 'VEHÍCULO', 'PLACA', 'TRABAJO', 'MECÁNICO', 'ESTADO', 'ÚLTIMO MOVIMIENTO']],
-    body: (seg.length ? seg : [{
-      id: '—', entrada: '', cliente: 'Sin movimientos de vehículos este día', carro: '', placa: '',
-      trabajo: '', mecanico: '', estado: '', ultimo: '', movimientos: 0, monto: 0,
-    }]).map(s => [
-      s.id, s.entrada, s.cliente.substring(0, 24), s.carro.substring(0, 22), s.placa || '—',
-      s.trabajo.substring(0, 60), s.mecanico.substring(0, 22),
-      ESTADOS[s.estado] || s.estado.toUpperCase().replace(/_/g, ' '),
-      s.ultimo.substring(0, 70),
-    ]),
-    theme: 'grid',
-    headStyles: { fillColor: C.black, textColor: C.white, fontSize: 6.3, fontStyle: 'bold', halign: 'center' },
-    bodyStyles: { fontSize: 6.2, cellPadding: 1.3, textColor: C.dark, valign: 'middle' },
-    alternateRowStyles: { fillColor: C.bg },
-    columnStyles: {
-      0: { cellWidth: 13, halign: 'center' }, 1: { cellWidth: 16, halign: 'center' },
-      2: { cellWidth: 32 }, 3: { cellWidth: 28 }, 4: { cellWidth: 16, halign: 'center', fontStyle: 'bold' },
-      5: { cellWidth: 'auto' }, 6: { cellWidth: 30 }, 7: { cellWidth: 21, halign: 'center', fontStyle: 'bold' },
-      8: { cellWidth: 55 },
-    },
-    didParseCell: (d: any) => {
-      if (d.section !== 'body' || d.column.index !== 7) return;
-      const v = String(d.cell.raw || '');
-      if (v === 'COMPLETADA' || v === 'ENTREGADO') d.cell.styles.textColor = C.green;
-      else if (v === 'EN PROCESO' || v === 'EN REVISIÓN') d.cell.styles.textColor = C.blue;
-      else if (v === 'CANCELADA') d.cell.styles.textColor = C.red;
-      else if (v) d.cell.styles.textColor = C.orange;
     },
     margin: { left: margin, right: margin },
   });

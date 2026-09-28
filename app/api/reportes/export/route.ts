@@ -258,7 +258,7 @@ export async function GET(req: NextRequest) {
         'Nº', 'FECHA', 'CLIENTE', 'PLACA', 'VEHÍCULO', 'CLASIFICACIÓN',
         'SILENCIADOR', 'CAUCHERA', 'ALINEACION', 'ELECTRONICA', 'MECANICA', 'FRENOS', 'LAVADO', 'REPUESTOS', 'TOTAL (SERVICIOS)',
         '', // GAP column (P)
-        'CONTADO', 'X COBRAR', 'CASHEA', 'IVA', 'INICIAL', 'FINAN.',
+        'CONTADO', 'X COBRAR', 'CASHEA / BNC', 'IVA', 'INICIAL', 'FINAN.',
         'PM BANESCO', 'PM EXT.', 'P. BANCAMIGA', 'P. BANESCO', 'BNC',
         'DIVISAS ($)', 'BINANCE', 'ZELLE', 'EFECT. BS',
         'TASA', 'NOTAS' // AG

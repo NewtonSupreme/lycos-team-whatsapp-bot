@@ -5,8 +5,9 @@ import {
   BANK_METHODS, DEPT_LABELS, type Bins, type BankBin, type DeptKey,
 } from '@/lib/reporte/ventas-mapping';
 import { leerCasheaGuardado } from '@/lib/pagos/cashea';
-import { lineasDeMetodos, resumenCorto } from '@/lib/pagos/desglose';
-import { mecanicoDeOrden } from '@/lib/facturas/mecanico';
+import { getCategoria, inferirCategoria } from '@/lib/categorias';
+import { lineasDeMetodos, lineasDePago, montoConMoneda, resumenCorto } from '@/lib/pagos/desglose';
+import { mecanicoDeOrden, servicioDeNotas } from '@/lib/facturas/mecanico';
 
 // Comisión que cobra el banco por cada transacción de punto de venta (referencial, ajustable).
 const COMISION_PUNTO_PCT = 0.05;
@@ -20,6 +21,16 @@ interface VentaNorm {
   carro: string;
   /** La placa aparte: es lo que identifica al carro, y en el texto se recortaba. */
   placa: string;
+  /** Qué se le hizo: los renglones de la venta. */
+  trabajo: string;
+  /** Cómo pagó, cuenta por cuenta y en su moneda. */
+  pago: string;
+  /** Quién lo hizo; se completa después, en bloque. */
+  mecanico: string;
+  /** Para buscar el mecánico. */
+  refs: string[];
+  /** Lo que no es de ningún departamento: latonería y otros. */
+  otros: number;
   departamentos: Record<DeptKey, number>;
   total: number;
   contado: number;
@@ -136,6 +147,25 @@ export async function GET(req: NextRequest) {
         electronica: n(v.electronica), mecanica: n(v.mecanica), frenos: n(v.frenos),
         lavado: n(v.lavado), repuestos: n(v.repuestos),
       };
+      /*
+       * La venta sin departamento se clasifica aquí, con la misma regla que el
+       * resto del sistema. Tres de cada cuatro ventas no traen departamento, y
+       * así el «Resumen por sistema» decía $0 en silenciadores un día de
+       * silenciadores. Lo que no es de ningún departamento —latonería, otros—
+       * va aparte, para que la suma cuadre con los ingresos.
+       */
+      let otros = 0;
+      const sinDept = DEPT_KEYS.every(k => deptCols[k] <= 0);
+      if (sinDept && n(v.total_ingresos) > 0) {
+        const texto = [
+          ...(Array.isArray(v.desglose) ? v.desglose.map((d: any) => d?.descripcion) : []),
+          v.notas,
+        ].filter(Boolean).join(' ');
+        const cat = getCategoria(v.categoria) || getCategoria(inferirCategoria(texto));
+        const col = cat?.columna as DeptKey | null | undefined;
+        if (col && DEPT_KEYS.includes(col)) deptCols[col] = n(v.total_ingresos);
+        else otros = n(v.total_ingresos);
+      }
 
       const bankCols: Bins = {
         pago_movil_banesco: n(v.pago_movil_banesco), bnc: n(v.bnc), punto_banesco: n(v.punto_banesco),
@@ -174,15 +204,58 @@ export async function GET(req: NextRequest) {
 
       const carroTxt = extraerVehiculo(v.notas, v.desglose, v.vehiculo_info, v.placa);
       const placaV = extraerPlaca(v.placa, v.vehiculo_info, v.notas);
+      const renglones = Array.isArray(v.desglose)
+        ? v.desglose.map((d: any) => {
+          const c = n(d?.cantidad) || 1;
+          const t = String(d?.descripcion || '').trim();
+          return t ? `${c > 1 ? `${c} × ` : ''}${t}` : '';
+        }).filter(Boolean)
+        : [];
+      const lineasPago = bankSum > 0
+        ? lineasDePago(bancos, tasa)
+        : lineasDeMetodos(v.metodos_pago, tasa);
+      const sid = v.servicio_id || servicioDeNotas(v.notas);
       return {
         nombre: v.cliente || 'Consumidor Final',
         carro: sinPlaca(carroTxt, placaV),
         placa: placaV,
+        trabajo: renglones.join(' · ') || String(v.notas || '').replace(/\[ServicioID:[^\]]*\]/g, '').replace(/\|\s*Cliente:.*$/i, '').trim() || '—',
+        pago: lineasPago.length
+          ? lineasPago.map(l => `${l.banco ? `${l.metodo.split(' /')[0]} ${l.banco}` : l.metodo}: ${montoConMoneda(l.monto, l.moneda)}`).join('\n')
+          : 'Sin cobro registrado',
+        mecanico: '',
+        refs: [sid, v.id].filter(Boolean),
         departamentos: deptCols,
+        otros,
         total, contado, cashea, iva, inicial, financiado, porCobrar,
         bancos,
       };
     });
+
+    // ── Quién hizo cada venta ───────────────────────────────────
+    {
+      const refs = [...new Set(ventas.flatMap(v => v.refs))];
+      const servIds = [...new Set(ventas.map(v => v.refs[0]).filter(r => r && r !== ''))];
+      const [{ data: jobs }, { data: ords }] = await Promise.all([
+        refs.length ? db.from('job_assignments').select('referencia_id, empleado_nombre, es_taller').in('referencia_id', refs) : Promise.resolve({ data: [] }),
+        servIds.length ? db.from('servicios').select('id, notas, seguimiento').in('id', servIds) : Promise.resolve({ data: [] }),
+      ]);
+      const porRef = new Map<string, any[]>();
+      for (const j of (jobs || []) as any[]) {
+        const l = porRef.get(j.referencia_id) || [];
+        l.push(j);
+        porRef.set(j.referencia_id, l);
+      }
+      const ordPor = new Map<string, any>(((ords || []) as any[]).map(o => [o.id, o]));
+      for (const v of ventas) {
+        const o = ordPor.get(v.refs[0]);
+        v.mecanico = mecanicoDeOrden({
+          trabajos: v.refs.flatMap(r => porRef.get(r) || []),
+          notas: o?.notas ?? null,
+          seguimiento: o?.seguimiento,
+        }) || 'Sin asignar';
+      }
+    }
 
     // ── Totales de la tabla principal ───────────────────────────
     const totDept = DEPT_KEYS.reduce((acc, k) => { acc[k] = r2(ventas.reduce((s, v) => s + v.departamentos[k], 0)); return acc; }, {} as Record<DeptKey, number>);
@@ -217,12 +290,15 @@ export async function GET(req: NextRequest) {
     const sistema = [
       { sistema: 'CUENTAS X COBRAR', cantidad: countIf(v => v.porCobrar > 0), monto: totalesVentas.porCobrar },
       { sistema: 'SILENCIADORES', cantidad: countIf(v => v.departamentos.silenciador > 0), monto: totDept.silenciador },
-      { sistema: 'CASHEA', cantidad: countIf(v => v.cashea > 0), monto: totalesVentas.cashea },
+      { sistema: 'CASHEA / BNC', cantidad: countIf(v => v.cashea > 0), monto: totalesVentas.cashea },
       { sistema: 'ALINEACIÓN', cantidad: countIf(v => v.departamentos.alineacion > 0), monto: totDept.alineacion },
       { sistema: 'ELECTRÓNICA', cantidad: countIf(v => v.departamentos.electronica > 0), monto: totDept.electronica },
       { sistema: 'MECÁNICA', cantidad: countIf(v => v.departamentos.mecanica > 0), monto: totDept.mecanica },
       { sistema: 'FRENOS', cantidad: countIf(v => v.departamentos.frenos > 0), monto: totDept.frenos },
       { sistema: 'LAVADO', cantidad: countIf(v => v.departamentos.lavado > 0), monto: totDept.lavado },
+      { sistema: 'REPUESTOS', cantidad: countIf(v => v.departamentos.repuestos > 0), monto: totDept.repuestos },
+      { sistema: 'CAUCHERA', cantidad: countIf(v => v.departamentos.cauchera > 0), monto: totDept.cauchera },
+      { sistema: 'LATONERÍA / OTROS', cantidad: countIf(v => v.otros > 0), monto: sum(v => v.otros) },
       { sistema: 'COMISIÓN PUNTO', cantidad: countIf(v => v.bancos.punto_banesco > 0 || v.bancos.punto_bancamiga > 0), monto: comisionPunto },
       { sistema: 'IMPUESTO', cantidad: countIf(v => v.iva > 0), monto: totalesVentas.iva },
     ];
@@ -231,7 +307,7 @@ export async function GET(req: NextRequest) {
     // ── S4 · Forma de pago ──────────────────────────────────────
     const creditoTotal = r2(totalesVentas.porCobrar + totalesVentas.financiado);
     const formaPago = [
-      { forma: 'CASHEA', cantidad: countIf(v => v.cashea > 0), monto: totalesVentas.cashea },
+      { forma: 'CASHEA / BNC', cantidad: countIf(v => v.cashea > 0), monto: totalesVentas.cashea },
       { forma: 'CONTADO', cantidad: countIf(v => v.contado > 0), monto: totalesVentas.contado },
       { forma: 'CRÉDITO', cantidad: countIf(v => v.porCobrar > 0 || v.financiado > 0), monto: creditoTotal },
     ];
@@ -360,6 +436,31 @@ export async function GET(req: NextRequest) {
     // terminó ese día—.
     const seMovio = (s: any) => s.fecha === fecha || delDia(s.fecha_inicio) || delDia(s.fecha_fin)
       || (Array.isArray(s.seguimiento) && s.seguimiento.some((e: any) => delDia(e?.fecha)));
+    // El pago de cada carro: su venta (sea del día que sea) dice si ya pagó,
+    // si Cashea lo financia o cuánto debe todavía.
+    const ventaDeOrden = new Map<string, any>();
+    if (segIds.length) {
+      const { data: vs } = await db.from('ventas_dia')
+        .select('servicio_id, saldo_pendiente, estado, cashea, cashea_pct, financiado, fecha, fecha_pago')
+        .in('servicio_id', segIds);
+      for (const v of (vs || [])) ventaDeOrden.set(v.servicio_id, v);
+    }
+    const pagoDe = (s: any): string => {
+      const v = ventaDeOrden.get(s.id);
+      const cerrada = ['completada', 'completado', 'finalizado', 'finalizada'].includes(String(s.estado));
+      if (!v) {
+        if (String(s.estado).startsWith('cancel')) return '—';
+        return cerrada ? 'Sin cobro registrado' : 'Cobra al entregar';
+      }
+      const saldo = n(v.saldo_pendiente);
+      if (saldo <= 0.009) {
+        const f = v.fecha_pago && v.fecha_pago !== v.fecha
+          ? ` el ${String(v.fecha_pago).split('-').reverse().slice(0, 2).join('/')}` : '';
+        return `Pagado${f}`;
+      }
+      const cashea = n(v.cashea) > 0 || v.cashea_pct != null;
+      return cashea ? `Cashea/BNC: pendiente $${saldo.toFixed(2)}` : `Debe $${saldo.toFixed(2)}`;
+    };
     const seguimiento = (segRaw || []).filter(seMovio).map((s: any) => {
       const entradas: Array<{ fecha?: string; accion?: string }> = Array.isArray(s.seguimiento) ? s.seguimiento : [];
       const hoyMov = entradas.filter(e => delDia(e.fecha));
@@ -380,17 +481,64 @@ export async function GET(req: NextRequest) {
         ultimo: ultimo?.accion ? `${ultimo.fecha ? horaVE(ultimo.fecha) + ' · ' : ''}${ultimo.accion}` : '—',
         movimientos: hoyMov.length,
         monto: n(s.costo_estimado),
+        pago: pagoDe(s),
       };
     });
 
+    // ── Cobros de ventas de otros días (abonos) ─────────────────
+    //
+    // Una venta del 21 cobrada el 25 es dinero que entró el 25. La venta
+    // conserva su día; el cobro cuenta en el suyo, en sus cuentas.
+    // La inicial se cobró el día de la venta y ya está en sus cuentas: no es un cobro de otro día.
+    const abQ = db.from('abonos').select('*').eq('fecha', fecha).neq('metodo_pago', 'inicial')
+      .order('created_at', { ascending: true });
+    const { data: abRaw } = await applySede(abQ as any);
+    const ventasDeAbonos = new Map<string, any>();
+    const idsAb = [...new Set((abRaw || []).map((a: any) => a.venta_id).filter(Boolean))] as string[];
+    if (idsAb.length) {
+      const { data: vs } = await db.from('ventas_dia')
+        .select('id, fecha, cliente, placa, vehiculo_info, notas, desglose, total_ingresos').in('id', idsAb);
+      for (const v of (vs || [])) ventasDeAbonos.set(v.id, v);
+    }
+    const totCobros = Object.fromEntries(BANK_METHODS.map(m => [m.id, 0])) as unknown as Bins;
+    const cobros = (abRaw || []).map((a: any) => {
+      const v = ventasDeAbonos.get(a.venta_id) || {};
+      const t = n(a.tasa_cambio) || tasa;
+      const cuentas = a.metodos_pago && typeof a.metodos_pago === 'object' ? a.metodos_pago : null;
+      const lineas = cuentas ? lineasDeMetodos(cuentas, t) : [];
+      if (cuentas) for (const m of BANK_METHODS) totCobros[m.id] = r2(totCobros[m.id] + n(cuentas[m.id]));
+      const placaV = extraerPlaca(v.placa, v.vehiculo_info, v.notas);
+      return {
+        cliente: v.cliente || 'Cliente',
+        carro: sinPlaca(extraerVehiculo(v.notas, v.desglose, v.vehiculo_info, v.placa), placaV),
+        placa: placaV,
+        fechaVenta: v.fecha ? String(v.fecha).split('-').reverse().join('/') : '—',
+        monto: n(a.monto),
+        pago: lineas.length
+          ? lineas.map(l => `${l.banco ? `${l.metodo.split(' /')[0]} ${l.banco}` : l.metodo}: ${montoConMoneda(l.monto, l.moneda)}`).join('\n')
+          : (a.metodo_pago || 'Sin cuenta registrada'),
+        saldoDespues: n(a.saldo_despues),
+        tipo: n(a.saldo_despues) <= 0.009 ? 'Pago completo' : 'Abono',
+      };
+    });
+    const cobrosTotal = r2(cobros.reduce((s2: number, c: any) => s2 + c.monto, 0));
+
     // ── S12 · Resumen de bancos (entradas del día) ──────────────
-    const bancoBs = (ids: BankBin[]) => r2(ids.reduce((acc, id) => acc + totBancos[id], 0));
+    // Todo lo que entró a cada banco ese día: lo de las ventas del día más lo
+    // cobrado de ventas anteriores. Lo de Cashea se liquida en el BNC.
+    const entro = (id: BankBin) => r2(totBancos[id] + totCobros[id]);
+    const usdDe = (ids: BankBin[]) => r2(ids.reduce((acc, id) => acc + binToUSD(id, entro(id), tasa), 0));
+    const bsDe = (ids: BankBin[]) => r2(ids.reduce((acc, id) => {
+      const meta = BANK_METHODS.find(m => m.id === id);
+      return acc + (meta?.moneda === 'Bs' ? entro(id) : entro(id) * tasa);
+    }, 0));
     const bancos = [
-      { banco: 'BANESCO', bs: bancoBs(['pago_movil_banesco', 'punto_banesco']), usd: r2(binToUSD('pago_movil_banesco', totBancos.pago_movil_banesco, tasa) + binToUSD('punto_banesco', totBancos.punto_banesco, tasa)) },
-      { banco: 'BNC', bs: totBancos.bnc, usd: binToUSD('bnc', totBancos.bnc, tasa) },
-      { banco: 'BANCA AMIGA', bs: totBancos.punto_bancamiga, usd: binToUSD('punto_bancamiga', totBancos.punto_bancamiga, tasa) },
-      { banco: 'EXTERIOR', bs: totBancos.pago_movil_exterior, usd: binToUSD('pago_movil_exterior', totBancos.pago_movil_exterior, tasa) },
-      { banco: 'DIVISAS / CRIPTO', bs: r2((totBancos.dolares + totBancos.zelle + totBancos.binance) * tasa), usd: r2(totBancos.dolares + totBancos.zelle + totBancos.binance) },
+      { banco: 'BANESCO', bs: bsDe(['pago_movil_banesco', 'punto_banesco']), usd: usdDe(['pago_movil_banesco', 'punto_banesco']) },
+      { banco: 'BNC (incluye Cashea)', bs: bsDe(['bnc', 'cashea']), usd: usdDe(['bnc', 'cashea']) },
+      { banco: 'BANCA AMIGA', bs: bsDe(['punto_bancamiga']), usd: usdDe(['punto_bancamiga']) },
+      { banco: 'EXTERIOR', bs: bsDe(['pago_movil_exterior']), usd: usdDe(['pago_movil_exterior']) },
+      { banco: 'EFECTIVO BS', bs: bsDe(['efectivo_bs']), usd: usdDe(['efectivo_bs']) },
+      { banco: 'DIVISAS / CRIPTO', bs: bsDe(['dolares', 'zelle', 'binance']), usd: usdDe(['dolares', 'zelle', 'binance']) },
     ];
 
     // ── S13 · Gastos del día ────────────────────────────────────
@@ -441,6 +589,7 @@ export async function GET(req: NextRequest) {
       articulos,
       taller,
       seguimiento,
+      cobros, cobrosTotal,
       bancos,
       gastos, gastosTotal,
       // El servidor corre en UTC, asi que la hora se fija a Caracas: si no, el

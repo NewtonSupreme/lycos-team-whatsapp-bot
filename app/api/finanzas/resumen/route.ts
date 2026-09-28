@@ -449,8 +449,11 @@ export async function GET(req: NextRequest) {
       (min, c) => (c.desde < min ? c.desde : min), cuentasRaw[0].desde,
     );
 
+    // Cashea se liquida en el BNC: si hay cuenta BNC, se trae también la
+    // columna de Cashea para sumársela.
+    const colsMov = [...new Set([...binsUsados, ...(binsUsados.includes('bnc') ? ['cashea'] : [])])];
     let qMov = auth.db.from('ventas_dia')
-      .select(`fecha, tasa, tasa_cambio, ${binsUsados.join(', ')}`)
+      .select(`fecha, tasa, tasa_cambio, ${colsMov.join(', ')}`)
       .gte('fecha', arranqueMin).lte('fecha', hasta).limit(5000);
     if (sede) qMov = qMov.eq('sede_id', sede);
 
@@ -459,9 +462,16 @@ export async function GET(req: NextRequest) {
       .gte('fecha', arranqueMin).lte('fecha', hasta).limit(5000);
     if (sede) qSal = qSal.eq('sede_id', sede);
 
-    const [rMov, rSal] = await Promise.all([qMov, qSal]);
+    // Lo cobrado de ventas anteriores entra a su cuenta el día del cobro.
+    let qAb = auth.db.from('abonos')
+      .select('fecha, created_at, tasa_cambio, metodos_pago')
+      .gte('fecha', arranqueMin).lte('fecha', hasta).limit(5000);
+    if (sede) qAb = qAb.eq('sede_id', sede);
+
+    const [rMov, rSal, rAb] = await Promise.all([qMov, qSal, qAb]);
     const movs = (rMov.data as unknown as FilaVenta[]) || [];
     const sals = (rSal.data as unknown as FilaEgreso[]) || [];
+    const abonosCuenta = ((rAb.data || []) as Array<{ fecha: string | null; tasa_cambio: number | null; metodos_pago: Record<string, number> | null }>);
 
     cuentas = cuentasRaw.map(c => {
       let entradas = 0;
@@ -482,6 +492,16 @@ export async function GET(req: NextRequest) {
             if (!m.fecha || m.fecha.slice(0, 10) < c.desde) continue;
             // El bin ya viene en la moneda de la cuenta; no se convierte nada.
             entradas += Number(m[c.bin!] as number) || 0;
+            // Lo de Cashea cae en el BNC: se pasa a bolívares con la tasa de la venta.
+            if (c.bin === 'bnc') {
+              const t = Number(m.tasa_cambio) || Number(m.tasa) || 0;
+              entradas += (Number((m as Record<string, unknown>).cashea) || 0) * t;
+            }
+          }
+          for (const a of abonosCuenta) {
+            if (!a.fecha || a.fecha < c.desde || !a.metodos_pago) continue;
+            entradas += Number(a.metodos_pago[c.bin!]) || 0;
+            if (c.bin === 'bnc') entradas += (Number(a.metodos_pago.cashea) || 0) * (Number(a.tasa_cambio) || 0);
           }
         }
         for (const e of sals) {

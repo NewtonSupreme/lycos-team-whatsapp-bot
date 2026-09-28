@@ -47,7 +47,8 @@ const NOMBRES: Record<BankBin, { metodo: string; banco: string | null; moneda: '
   dolares: { metodo: 'Efectivo en divisa', banco: null, moneda: 'USD' },
   zelle: { metodo: 'Zelle', banco: null, moneda: 'USD' },
   binance: { metodo: 'Binance', banco: null, moneda: 'USD' },
-  cashea: { metodo: 'Cashea (inicial)', banco: null, moneda: 'USD' },
+  // Lo de Cashea se liquida en el BNC: se dice así en facturas y reportes.
+  cashea: { metodo: 'Cashea', banco: 'BNC', moneda: 'USD' },
 };
 
 const r2 = (n: unknown) => Math.round((Number(n) || 0) * 100) / 100;
@@ -178,7 +179,7 @@ const GENERICAS: Record<string, { metodo: string; moneda: MonedaPago }> = {
   efectivo: { metodo: 'Efectivo en divisa', moneda: 'USD' },
   efectivo_ves: { metodo: 'Efectivo en bolívares', moneda: 'Bs' },
   bolivares: { metodo: 'Efectivo en bolívares', moneda: 'Bs' },
-  cashea_usd: { metodo: 'Cashea (inicial)', moneda: 'USD' },
+  cashea_usd: { metodo: 'Cashea / BNC', moneda: 'USD' },
   euros: { metodo: 'Efectivo en euros', moneda: 'EUR' },
   otro: { metodo: 'Otro', moneda: 'USD' },
 };

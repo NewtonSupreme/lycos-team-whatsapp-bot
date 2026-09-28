@@ -9,6 +9,7 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis, Cell,
 } from 'recharts';
 import LogoBanco from '@/components/pagos/LogoBanco';
+import PanelCuadre from '@/components/finanzas/PanelCuadre';
 import {
   Avisos, Chip, EnlacePanel, Panel, Pestanas, SelectorPanel, TarjetaKpi, Vacio,
 } from '@/components/panel/Piezas';
@@ -325,18 +326,9 @@ export default function FinanzasPage() {
 
           {pestana === 'cuentas' && <TabCuentas datos={datos} />}
 
-          {pestana === 'conciliacion' && (
-            <Panel titulo="Conciliación" subtitulo="Cuadrar lo registrado con lo que dice el banco">
-              <Vacio
-                icono={<Landmark className="h-8 w-8" aria-hidden />}
-                titulo="Todavía no construida"
-                detalle={
-                  'La conciliación necesita el extracto del banco para cruzarlo con lo registrado. '
-                  + 'Aún no hay forma de subirlo, así que este panel no se inventa nada.'
-                }
-              />
-            </Panel>
-          )}
+          {/* Conciliación: que cada venta diga lo mismo en su total, en sus
+              cuentas y en lo que queda por cobrar. */}
+          {pestana === 'conciliacion' && <PanelCuadre sede={sedeId} />}
 
           {pestana === 'reportes' && (
             <Panel

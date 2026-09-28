@@ -25,6 +25,11 @@ export interface Completable {
   tasa_pago?: number | null;
   tasa_bcv?: number | null;
   tasa_cambio?: number | null;
+  /** El día en que el vehículo entró al taller. */
+  fecha_entrada?: string | null;
+  /** El día en que la venta quedó pagada, si ya lo está. */
+  fecha_pago?: string | null;
+  abonos?: unknown;
   [k: string]: unknown;
 }
 
@@ -68,14 +73,15 @@ export async function completarFactura<T extends Completable>(d: T): Promise<T> 
   try {
     const [orden, trabajos, venta] = await Promise.all([
       servicioId
-        ? supabase.from('servicios').select('notas, seguimiento, metodos_pago, tasa_cambio')
+        ? supabase.from('servicios').select('notas, seguimiento, metodos_pago, tasa_cambio, fecha, hora, fecha_inicio, created_at')
           .eq('id', servicioId).maybeSingle()
         : Promise.resolve({ data: null }),
       servicioId || ventaId
         ? supabase.from('job_assignments').select('empleado_nombre, es_taller')
           .in('referencia_id', [servicioId, ventaId].filter(Boolean) as string[])
         : Promise.resolve({ data: [] }),
-      !conDinero(pagos) && (ventaId || servicioId)
+      // La venta siempre: además del cobro dice cuándo quedó pagada.
+      ventaId || servicioId
         ? (ventaId
           ? supabase.from('ventas_dia').select('*').eq('id', ventaId).maybeSingle()
           : supabase.from('ventas_dia').select('*')
@@ -83,6 +89,28 @@ export async function completarFactura<T extends Completable>(d: T): Promise<T> 
             .limit(1).maybeSingle())
         : Promise.resolve({ data: null }),
     ]);
+
+    // ── Las fechas que el cliente pregunta ──────────────────────────────
+    // Cuándo entró el carro y cuándo se pagó. Una venta del 21 cobrada el 25
+    // imprimía solo el 21, y no había forma de ver en la factura el día del pago.
+    const o = orden.data as { fecha?: string; created_at?: string } | null;
+    if (!out.fecha_entrada && o) out.fecha_entrada = o.fecha || String(o.created_at || '').slice(0, 10) || null;
+    const vFila = venta.data as Record<string, unknown> | null;
+    if (vFila?.id) {
+      const { data: abs } = await supabase.from('abonos')
+        .select('monto, metodo_pago, created_at, fecha, saldo_despues')
+        .eq('venta_id', vFila.id as string).order('created_at', { ascending: true });
+      const lista = (abs || []) as Array<{ monto: number; metodo_pago: string | null; created_at: string; fecha: string | null; saldo_despues: number | null }>;
+      if (!Array.isArray(out.abonos) || !(out.abonos as unknown[]).length) {
+        if (lista.length) (out as Record<string, unknown>).abonos = lista.map(a => ({ ...a, created_at: a.fecha || a.created_at }));
+      }
+      const saldo = Number(vFila.saldo_pendiente) || 0;
+      if (!out.fecha_pago && saldo <= 0.009) {
+        out.fecha_pago = (vFila.fecha_pago as string)
+          || (lista.length ? (lista[lista.length - 1].fecha || String(lista[lista.length - 1].created_at).slice(0, 10)) : null)
+          || (vFila.fecha as string) || null;
+      }
+    }
 
     if (!out.mecanico) {
       out.mecanico = mecanicoDeOrden({

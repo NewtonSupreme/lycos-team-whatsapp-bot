@@ -15,6 +15,7 @@ import { useModales } from '@/components/ui/modales';
 import ErpShell from '@/components/erp/ErpShell';
 import TablaPartidas from '@/components/ficha/TablaPartidas';
 import DialogoPartida from '@/components/ficha/DialogoPartida';
+import DialogoPagoProveedor from '@/components/pagos/DialogoPagoProveedor';
 import OrdenDeTrabajo from '@/components/ficha/OrdenDeTrabajo';
 import SelectorServicio from '@/components/ficha/SelectorServicio';
 import type {
@@ -232,20 +233,29 @@ export default function FichaVehiculoPage() {
     recargar();
   };
 
-  const marcarPagado = async (p: PartidaCalculada) => {
-    const ok = await confirmar({
-      titulo: '¿Marcar como pagado?',
-      mensaje: `Se registrará que ya se le pagó a ${p.proveedor || 'el proveedor'} por «${p.descripcion}».`,
-      detalle: `Son ${money(p.saldo_proveedor)} que dejarán de aparecer en cuentas por pagar.`,
-      confirmar: 'Sí, ya se pagó',
-    });
-    if (!ok) return;
-
+  /**
+   * Pagarle al proveedor lo que se le debe de este renglón.
+   *
+   * Antes solo preguntaba «¿marcar como pagado?» y el gasto quedaba sin cuenta:
+   * ningún banco bajaba. Ahora abre el panel de métodos y lo pagado hoy se suma
+   * a lo que ya se hubiera abonado antes, cada cosa en su cuenta.
+   */
+  const [pagando, setPagando] = useState<PartidaCalculada | null>(null);
+  const marcarPagado = (p: PartidaCalculada) => setPagando(p);
+  const registrarPago = async (pago: { metodos_pago: Record<string, number>; tasa: number }) => {
+    const p = pagando;
+    if (!p) return;
+    const previo = (p.metodos_pago || {}) as Record<string, number>;
+    const metodos: Record<string, number> = { ...previo };
+    for (const [k, v] of Object.entries(pago.metodos_pago)) {
+      metodos[k] = Math.round(((Number(metodos[k]) || 0) + (Number(v) || 0)) * 100) / 100;
+    }
     const r = await fetch(`/api/partidas/${p.id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ estado_pago: 'pagado', monto_pagado: 0 }),
+      body: JSON.stringify({ estado_pago: 'pagado', monto_pagado: 0, metodos_pago: metodos, tasa_pago: pago.tasa }),
     });
-    if (!r.ok) { await avisarError((await r.json()).error || 'No se pudo actualizar'); return; }
+    if (!r.ok) throw new Error((await r.json()).error || 'No se pudo registrar el pago');
+    setPagando(null);
     recargar();
   };
 
@@ -757,6 +767,19 @@ export default function FichaVehiculoPage() {
             </div>
           )}
         </>
+      )}
+
+      {pagando && (
+        <DialogoPagoProveedor
+          proveedor={pagando.proveedor || 'el proveedor'}
+          concepto={pagando.descripcion}
+          placa={pagando.placa}
+          montoUSD={pagando.saldo_proveedor}
+          abonadoUSD={Math.max(0, pagando.total_costo - pagando.saldo_proveedor)}
+          vence={pagando.fecha_vencimiento}
+          onCancelar={() => setPagando(null)}
+          onConfirmar={registrarPago}
+        />
       )}
 
       {dialogo?.abierto && ficha && (

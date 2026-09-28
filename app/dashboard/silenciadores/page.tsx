@@ -20,13 +20,12 @@ import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { generateInvoicePDF } from '@/lib/invoice-pdf';
 import MetodoPagoPanel from '@/components/pos/MetodoPagoPanel';
 import { planCashea, type PorcentajeCashea } from '@/lib/pagos/cashea';
 import { binsDeColumnas, lineasDePago } from '@/lib/pagos/desglose';
+import DialogoCobroVenta from '@/components/pagos/DialogoCobroVenta';
 import { buildVentaDiaFields, emptyBins, binsTotalUSD, deptFromInventario, type Bins } from '@/lib/reporte/ventas-mapping';
 import { ComprobanteInput, emptyComprobante, type ComprobanteValue } from '@/components/ventas/ComprobanteInput';
 import { uploadComprobante, comprobanteFields } from '@/lib/comprobante';
@@ -34,8 +33,6 @@ import ErpShell from '@/components/erp/ErpShell';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
-  DialogHeader,
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
@@ -86,9 +83,10 @@ export default function VentasPage() {
   const [selectedSale, setSelectedSale] = useState<any>(null);
   const [showSaleDetail, setShowSaleDetail] = useState(false);
   const [saleCorrelativo, setSaleCorrelativo] = useState<string>('');
-  const [showAbonoDialog, setShowAbonoDialog] = useState(false);
-  const [selectedPendiente, setSelectedPendiente] = useState<any>(null);
-  const [abonoExtra, setAbonoExtra] = useState(0);
+  // La venta pendiente que se está cobrando (abono o pago completo).
+  const [cobrando, setCobrando] = useState<any>(null);
+  /** El último cobro de cada venta pendiente: cuándo, cuánto y por dónde. */
+  const [ultimoCobro, setUltimoCobro] = useState<Record<string, { fecha: string; monto: number; metodo: string | null }>>({});
 
   const symbol = (selectedSale?.metodos_pago?.euros > 0 || /euro/i.test(selectedSale?.notes || '') || /euro/i.test(selectedSale?.notas || '')) ? '€' : '$';
 
@@ -307,6 +305,20 @@ export default function VentasPage() {
         .order('created_at', { ascending: false })
         .limit(50);
       setVentasPendientes(pData || []);
+      // El último cobro de cada una, para ver sin abrirla cuándo pagó por última vez.
+      const idsPend = (pData || []).map((v: any) => v.id);
+      if (idsPend.length) {
+        const { data: abs } = await supabase.from('abonos')
+          .select('venta_id, fecha, created_at, monto, metodo_pago')
+          .in('venta_id', idsPend).order('created_at', { ascending: true });
+        const ult: Record<string, { fecha: string; monto: number; metodo: string | null }> = {};
+        for (const a of (abs || [])) {
+          ult[a.venta_id] = { fecha: a.fecha || String(a.created_at).slice(0, 10), monto: Number(a.monto) || 0, metodo: a.metodo_pago };
+        }
+        setUltimoCobro(ult);
+      } else {
+        setUltimoCobro({});
+      }
     } catch (err) {
       console.error('Error fetching inventory:', err);
     } finally {
@@ -817,69 +829,10 @@ export default function VentasPage() {
   };
 
   // ─── Acciones para Ventas Pendientes ──────────────────────────────────
-  const handleMarcarPagado = async (venta: any) => {
-    if (!supabase) return;
-    if (!confirm(`¿Marcar como PAGADA la venta de ${venta.cliente} por $${Number(venta.total_ingresos || 0).toFixed(2)}?`)) return;
-    try {
-      const { error } = await withSedeFilter(supabase.from('ventas_dia'))
-        .update({
-          estado: 'pagado',
-          saldo_pendiente: 0,
-          notas: `${venta.notas || ''} | Pagado completo el ${new Date().toLocaleDateString('es-VE')}`,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', venta.id);
-      if (error) throw error;
-      await logActivity({
-        usuario: useAppStore.getState().user?.nombre || 'Admin',
-        modulo: 'Ventas',
-        accion: 'Marcó venta pendiente como pagada',
-        detalles: `Cliente: ${venta.cliente}, Total: $${Number(venta.total_ingresos || 0).toFixed(2)}`,
-        referencia_id: venta.id,
-        referencia_tabla: 'ventas_dia'
-      });
-      alert('✅ Venta marcada como PAGADA');
-      fetchData();
-    } catch (err: any) {
-      alert('Error: ' + err.message);
-    }
-  };
-
-  const handleRegistrarAbono = async () => {
-    if (!supabase || !selectedPendiente) return;
-    if (abonoExtra <= 0) return alert('Ingresa un monto de abono válido');
-    const nuevoAbono = (Number(selectedPendiente.abono) || 0) + abonoExtra;
-    const nuevoSaldo = Math.max(0, (Number(selectedPendiente.saldo_pendiente) || 0) - abonoExtra);
-    const nuevoEstado = nuevoSaldo <= 0 ? 'pagado' : 'pendiente';
-
-    try {
-      const { error } = await withSedeFilter(supabase.from('ventas_dia'))
-        .update({
-          abono: nuevoAbono,
-          saldo_pendiente: nuevoSaldo,
-          estado: nuevoEstado,
-          notas: `${selectedPendiente.notas || ''} | Abono extra: $${abonoExtra.toFixed(2)} el ${new Date().toLocaleDateString('es-VE')}`,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', selectedPendiente.id);
-      if (error) throw error;
-      await logActivity({
-        usuario: useAppStore.getState().user?.nombre || 'Admin',
-        modulo: 'Ventas',
-        accion: `Registró abono extra a venta pendiente`,
-        detalles: `Cliente: ${selectedPendiente.cliente}, Abono: $${abonoExtra.toFixed(2)}, Saldo restante: $${nuevoSaldo.toFixed(2)}`,
-        referencia_id: selectedPendiente.id,
-        referencia_tabla: 'ventas_dia'
-      });
-      setShowAbonoDialog(false);
-      setSelectedPendiente(null);
-      setAbonoExtra(0);
-      alert(nuevoEstado === 'pagado' ? '✅ Abono registrado. Venta liquidada completamente.' : `✅ Abono registrado. Saldo pendiente: $${nuevoSaldo.toFixed(2)}`);
-      fetchData();
-    } catch (err: any) {
-      alert('Error: ' + err.message);
-    }
-  };
+  // Cobrar —abono o pago completo— se hace en DialogoCobroVenta: registra el
+  // cobro con su día y sus cuentas en `abonos`. Los dos botones de antes solo
+  // restaban el saldo, y el dinero no aparecía en el reporte del día en que
+  // entró.
 
   const handleReabrirVenta = async (venta: any) => {
     if (!supabase) return;
@@ -1113,10 +1066,10 @@ export default function VentasPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] border-collapse">
+              <table className="w-full min-w-[960px] border-collapse">
                 <thead>
                   <tr className="border-y border-[#eef0f3] bg-[#fafbfc]">
-                    {['Cliente', 'Fecha', 'Total', 'Abonado', 'Saldo', 'Acciones'].map(h => (
+                    {['Cliente', 'Vehículo', 'Venta del', 'Total', 'Abonado', 'Último cobro', 'Debe', 'Acciones'].map(h => (
                       <th key={h} scope="col" className="px-4 py-2.5 text-left text-[11.5px] font-semibold text-[#5b616e]">{h}</th>
                     ))}
                   </tr>
@@ -1135,25 +1088,49 @@ export default function VentasPage() {
                             )}
                           </div>
                         </td>
+                        <td className="px-4 py-2.5">
+                          {v.placa || v.vehiculo_info ? (
+                            <div className="leading-tight">
+                              {v.placa && <span className="num block text-[12px] font-bold text-[#2563eb]">{String(v.placa).toUpperCase()}</span>}
+                              <span className="block max-w-[150px] truncate text-[11px] text-[#8a909c]">{v.vehiculo_info || ''}</span>
+                            </div>
+                          ) : <span className="text-[12px] text-[#c4c8cf]">—</span>}
+                        </td>
                         <td className="num px-4 py-2.5 text-[12px] text-[#5b616e]">
                           {vFecha ? new Date(vFecha.includes('T') ? vFecha : vFecha + 'T12:00:00').toLocaleDateString('es-VE') : new Date(v.created_at).toLocaleDateString('es-VE')}
+                          {(Number(v.cashea) > 0 || v.cashea_pct != null) && (
+                            <span className="ml-1.5 rounded bg-[#f0eafc] px-1 py-px text-[9.5px] font-bold text-[#7c3aed]">CASHEA</span>
+                          )}
                         </td>
                         <td className="num px-4 py-2.5 text-[12px] text-[#16181d]">${Number(v.total_ingresos || 0).toFixed(2)}</td>
                         <td className="num px-4 py-2.5 text-[12px] text-[#16a34a]">{Number(v.abono) > 0 ? `$${Number(v.abono).toFixed(2)}` : '—'}</td>
+                        {/* Cuándo pagó por última vez, cuánto y por dónde. */}
+                        <td className="px-4 py-2.5">
+                          {ultimoCobro[v.id] ? (
+                            <div className="num leading-tight">
+                              <span className="block text-[12px] font-semibold text-[#16181d]">
+                                ${ultimoCobro[v.id].monto.toFixed(2)} · {ultimoCobro[v.id].fecha.split('-').reverse().join('/')}
+                              </span>
+                              <span className="block max-w-[170px] truncate text-[10.5px] text-[#8a909c]">{ultimoCobro[v.id].metodo || '—'}</span>
+                            </div>
+                          ) : Number(v.abono) > 0 ? (
+                            // Lo único que pagó fue la inicial, el día de la venta.
+                            <div className="num leading-tight">
+                              <span className="block text-[12px] font-semibold text-[#16181d]">
+                                ${Number(v.abono).toFixed(2)} · {vFecha ? vFecha.slice(0, 10).split('-').reverse().join('/') : '—'}
+                              </span>
+                              <span className="block text-[10.5px] text-[#8a909c]">Inicial, al vender</span>
+                            </div>
+                          ) : <span className="text-[11.5px] text-[#9ba1ab]">Sin cobros</span>}
+                        </td>
                         <td className="num px-4 py-2.5 text-[12px] font-bold text-[#c2410c]">${Number(v.saldo_pendiente || 0).toFixed(2)}</td>
                         <td className="px-4 py-2.5">
                           <div className="flex items-center gap-1.5">
                             <button
-                              onClick={() => handleMarcarPagado(v)}
-                              className="h-[28px] rounded-lg border border-[#bbf7d0] bg-[#e8f7ee] px-2.5 text-[11px] font-semibold text-[#15803d] hover:bg-[#d6f0e0]"
+                              onClick={() => setCobrando(v)}
+                              className="h-[28px] rounded-lg bg-[#16a34a] px-3 text-[11.5px] font-bold text-white hover:bg-[#15803d]"
                             >
-                              Pagado
-                            </button>
-                            <button
-                              onClick={() => { setSelectedPendiente(v); setAbonoExtra(0); setShowAbonoDialog(true); }}
-                              className="h-[28px] rounded-lg border border-[#cfe0fb] bg-[#eef4fe] px-2.5 text-[11px] font-semibold text-[#1d4ed8] hover:bg-[#e2edfd]"
-                            >
-                              Abonar
+                              Cobrar
                             </button>
                             <button
                               onClick={() => handleReimprimirFactura(v)}
@@ -1172,67 +1149,18 @@ export default function VentasPage() {
             </div>
           )}
 
-          {/* Modal de abono */}
-          <Dialog open={showAbonoDialog} onOpenChange={setShowAbonoDialog}>
-            <DialogContent className="max-w-md rounded-2xl border-border/50 bg-card p-6">
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2 text-lg font-black">
-                  <DollarSign className="h-5 w-5 text-amber-400" />
-                  Registrar abono
-                </DialogTitle>
-                <DialogDescription className="text-xs">
-                  Cliente: <strong>{selectedPendiente?.cliente || 'N/A'}</strong>
-                  {selectedPendiente && (
-                    <span className="mt-1 block">
-                      Saldo pendiente: <strong className="text-amber-500">${Number(selectedPendiente.saldo_pendiente || 0).toFixed(2)}</strong>
-                      {Number(selectedPendiente.abono) > 0 && (
-                        <> | Abonado: <strong className="text-green-500">${Number(selectedPendiente.abono).toFixed(2)}</strong></>
-                      )}
-                    </span>
-                  )}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase text-muted-foreground">Monto del abono ($)</Label>
-                  <Input
-                    type="number" step="0.01" min="0"
-                    max={selectedPendiente?.saldo_pendiente || 0}
-                    placeholder="0.00"
-                    className="h-12 text-lg font-black"
-                    value={abonoExtra || ''}
-                    onChange={e => setAbonoExtra(Math.max(0, parseFloat(e.target.value) || 0))}
-                  />
-                </div>
-                {selectedPendiente && abonoExtra > 0 && (
-                  <div className="space-y-1 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3">
-                    <div className="flex justify-between text-xs">
-                      <span className="font-bold text-muted-foreground">Abono ahora:</span>
-                      <span className="font-black text-green-500">- ${abonoExtra.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="font-bold text-muted-foreground">Nuevo saldo:</span>
-                      <span className="font-black text-amber-500">${Math.max(0, (Number(selectedPendiente.saldo_pendiente) || 0) - abonoExtra).toFixed(2)}</span>
-                    </div>
-                    {abonoExtra >= (Number(selectedPendiente.saldo_pendiente) || 0) && (
-                      <div className="flex items-center gap-2 pt-1 text-green-500">
-                        <CheckCircle className="h-3.5 w-3.5" />
-                        <span className="text-[10px] font-bold">¡La venta quedará liquidada!</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-              <DialogFooter className="flex gap-2">
-                <Button variant="outline" className="flex-1 rounded-xl" onClick={() => { setShowAbonoDialog(false); setSelectedPendiente(null); setAbonoExtra(0); }}>
-                  Cancelar
-                </Button>
-                <Button className="flex-1 rounded-xl bg-primary font-black text-white" onClick={handleRegistrarAbono} disabled={abonoExtra <= 0}>
-                  Registrar abono
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+          {/* Cobrar: abono o pago completo, con su método y su día. */}
+          {cobrando && (
+            <DialogoCobroVenta
+              venta={cobrando}
+              onCerrar={() => setCobrando(null)}
+              onCobrado={({ liquida, saldo }) => {
+                setCobrando(null);
+                fetchData();
+                alert(liquida ? 'Cobro registrado. La venta quedó saldada.' : `Abono registrado. Quedan $${saldo.toFixed(2)} por cobrar.`);
+              }}
+            />
+          )}
         </section>
       ) : (
         <>

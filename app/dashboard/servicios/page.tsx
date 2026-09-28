@@ -574,7 +574,6 @@ export default function ServiciosPage() {
             // reporte suma el pago viejo y el nuevo.
             ...buildPagoColumnsCompletas(metodos),
             tasa_cambio: cobro?.tasa || svcAny.tasa_cambio || globalBcvRate || 0,
-            con_iva: !!svcAny.con_iva,
             notas: notesFinal,
             creado_por: user?.nombre || 'Admin',
             sede_id: sedeId,
@@ -585,6 +584,12 @@ export default function ServiciosPage() {
             // ni fechar.
             updated_at: new Date().toISOString(),
             ...extra,
+            // Si la venta lleva IVA, está marcada con IVA. Con Cashea el 16%
+            // se calculaba pero `con_iva` quedaba en falso, y la venta decía
+            // a la vez que tenía y que no tenía impuesto.
+            con_iva: Number((extra as Record<string, unknown>).iva) > 0
+              || Boolean((extra as Record<string, unknown>).con_iva)
+              || Boolean(svcAny.con_iva),
           };
 
           const vdResult = existingVD

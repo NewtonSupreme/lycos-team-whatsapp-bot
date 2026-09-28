@@ -3,7 +3,8 @@ import { authorize } from '@/lib/auth-server';
 import { logActivityServer } from '@/lib/activity-server';
 import { getTasaDia } from '@/lib/tasas';
 import { sincronizarDesdePartida, type Partida } from '@/lib/ficha/sincronizar';
-import { BANK_METHODS } from '@/lib/reporte/ventas-mapping';
+import { BANK_BIN_IDS, BANK_METHODS } from '@/lib/reporte/ventas-mapping';
+import { binsDeFuente, cuentaPrincipal } from '@/lib/pagos/desglose';
 import type { PagoVencido } from '@/lib/alertas/pagos';
 
 export const dynamic = 'force-dynamic';
@@ -169,7 +170,11 @@ export async function POST(req: NextRequest) {
   const auth = await authorize('reportes', 'editar');
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
-  let body: { origen?: string; id?: string; monto?: number; cuenta?: string; tasa?: number };
+  let body: {
+    origen?: string; id?: string; monto?: number; cuenta?: string; tasa?: number;
+    /** El reparto completo: varias cuentas, cada una en su moneda. */
+    metodos_pago?: Record<string, unknown>;
+  };
   try { body = await req.json(); } catch {
     return NextResponse.json({ error: 'Cuerpo de la petición inválido.' }, { status: 400 });
   }
@@ -193,9 +198,28 @@ export async function POST(req: NextRequest) {
   if (meta?.moneda === 'Bs' && !(tasaPago > 0)) {
     return NextResponse.json({ error: 'Falta la tasa del día para un pago en bolívares.' }, { status: 400 });
   }
-  const enCuenta = (usd: number) => (meta
-    ? { [meta.id]: n2(meta.moneda === 'Bs' ? usd * tasaPago : usd) }
-    : null);
+  // El reparto que manda el diálogo de pago: solo las diez cuentas, sin
+  // Cashea (a un proveedor no se le paga con un crédito de cliente).
+  const reparto: Record<string, number> = {};
+  if (body.metodos_pago && typeof body.metodos_pago === 'object') {
+    for (const [k, v] of Object.entries(body.metodos_pago)) {
+      if (k === 'cashea' || !(BANK_BIN_IDS as string[]).includes(k)) {
+        return NextResponse.json({ error: `«${k}» no es una cuenta del taller.` }, { status: 400 });
+      }
+      if (Number(v) > 0) reparto[k] = n2(v);
+    }
+  }
+  const hayReparto = Object.keys(reparto).length > 0;
+  if (!hayReparto && !meta) {
+    return NextResponse.json({ error: 'Indica de qué cuenta salió el pago.' }, { status: 400 });
+  }
+  const conBs = Object.keys(reparto).some(k => BANK_METHODS.find(m => m.id === k)?.moneda === 'Bs');
+  if (conBs && !(tasaPago > 0)) {
+    return NextResponse.json({ error: 'Falta la tasa del día para un pago en bolívares.' }, { status: 400 });
+  }
+  const enCuenta = (usd: number): Record<string, number> | null => (hayReparto
+    ? reparto
+    : meta ? { [meta.id]: n2(meta.moneda === 'Bs' ? usd * tasaPago : usd) } : null);
 
   if (origen === 'partida') {
     const { data: previa } = await auth.db.from('vehiculo_partidas')
@@ -266,7 +290,7 @@ export async function POST(req: NextRequest) {
     fecha_pago: hoy,
     ...(metodosEgreso ? {
       metodos_pago: metodosEgreso,
-      metodo_pago: meta!.id,
+      metodo_pago: cuentaPrincipal(binsDeFuente({ metodos_pago: metodosEgreso }), tasaPago),
       tasa_cambio: tasaPago || null,
     } : {}),
     updated_at: new Date().toISOString(),

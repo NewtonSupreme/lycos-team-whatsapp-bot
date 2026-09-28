@@ -74,7 +74,9 @@ const METODOS: readonly MetodoTile[] = [
   { id: 'credito', label: 'Tarjeta Crédito', icono: <CreditCard className="h-[18px] w-[18px]" aria-hidden />, tinte: 'bg-[#fdeaea] text-[#dc2626]', bins: ['punto_banesco', 'punto_bancamiga'] },
   { id: 'zelle', label: 'Zelle', icono: <ZelleGlyph />, tinte: 'bg-[#f0eafc] text-[#7c3aed]', logo: 'zelle', bins: ['zelle'] },
   { id: 'binance', label: 'Binance Pay', icono: <BinanceGlyph />, tinte: 'bg-[#fdf5e2] text-[#eab308]', logo: 'binance', bins: ['binance'] },
-  { id: 'cashea', label: 'Cashea', icono: <CasheaGlyph />, tinte: 'bg-[#fdf5e2] text-[#eab308]', logo: 'cashea', bins: ['cashea'] },
+  // Lo que se cobra por Cashea cae en la cuenta del BNC: se nombra así en todas
+  // partes para que nadie lo busque en un banco que no existe.
+  { id: 'cashea', label: 'Cashea / BNC', icono: <CasheaGlyph />, tinte: 'bg-[#fdf5e2] text-[#eab308]', logo: 'cashea', bins: ['cashea'] },
   { id: 'pdv', label: 'Punto de Venta', icono: <Store className="h-[18px] w-[18px]" aria-hidden />, tinte: 'bg-[#e4f6f6] text-[#0d9488]', bins: ['punto_banesco', 'punto_bancamiga'] },
 ];
 
@@ -312,14 +314,21 @@ export default function MetodoPagoPanel({
     setAbiertos(a => a.filter(x => x !== m.id));
   };
 
+  // Con el simulador de cuotas, Cashea tiene su propio recuadro. Sin él —al
+  // cobrar una deuda, por ejemplo— es una cuenta más y tiene que verse aquí:
+  // si no, el monto cobrado por Cashea quedaba cargado pero invisible.
+  const casheaAparte = Boolean(cashea);
   const binsVisibles = useMemo(() => {
     const ids = new Set<BankBin>();
-    METODOS.filter(m => abiertos.includes(m.id) && m.id !== 'cashea').forEach(m => m.bins.forEach(b => ids.add(b)));
+    METODOS.filter(m => abiertos.includes(m.id) && (m.id !== 'cashea' || !casheaAparte))
+      .forEach(m => m.bins.forEach(b => ids.add(b)));
     // Todo bin con monto se muestra aunque su método esté cerrado: el dinero
     // cargado nunca puede quedar invisible.
-    (Object.keys(bins) as BankBin[]).forEach(b => { if (bins[b] > 0 && b !== 'cashea') ids.add(b); });
+    (Object.keys(bins) as BankBin[]).forEach(b => {
+      if (bins[b] > 0 && (b !== 'cashea' || !casheaAparte)) ids.add(b);
+    });
     return BANK_METHODS.filter(m => ids.has(m.id));
-  }, [abiertos, bins]);
+  }, [abiertos, bins, casheaAparte]);
 
   const cuadra = Math.abs(restanteUSD) < 0.01;
 
