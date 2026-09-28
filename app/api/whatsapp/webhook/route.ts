@@ -8,6 +8,9 @@ import {
 } from '@/lib/bot/action-guard';
 import { getPayrollService } from '@/lib/payroll/service';
 import { buildUtilidad } from '@/lib/utilidad';
+import { registrarCobro } from '@/lib/pagos/registrar-cobro';
+import { BANK_METHODS as BANK_METHODS_COBRO, binsFromLegacyMetodos } from '@/lib/reporte/ventas-mapping';
+import { normalizeMetodo } from '@/lib/categorias';
 import {
   enlazarPersonal, nombresDePersonal, renglonesDeTexto, totalRenglones,
   limpiarDescripcionTrabajo, type RenglonServicio,
@@ -849,7 +852,7 @@ REGLA DE TAGS (Imprimir SIEMPRE al final de tu respuesta):
    - [PRESUPUESTO_UPSERT: cliente_nombre | vehiculo_info | placa | moneda | items(desc:cant:precio:tipo,...) | total | sede_id | notas]
    - [ASK_SEDE: motivo] -> Úsalo SOLO si el admin no especificó la sede en su mensaje actual.
      - [ACTION: registrar_venta_completa | titulo=X | items=Prod1:Pre1,Prod2:Pre2 | total=TOTAL | iva=MONTO | inicial=INICIAL_CASHEA | metodo_pago=cashea_bcv/divisas/bcv/binance/zelle/pago_movil/efectivo_ves/punto_venta/transferencia/otro | pago_mixto=DESC | cliente=NOMBRE | vehiculo=MARCA_PLACA | inv_ids=ID1:qty1,ID2:qty2 | fecha=AAAA-MM-DD] -> Úsalo para registrar una venta. Parámetro fecha es OPCIONAL: si la venta fue de un día anterior, usa fecha= para la fecha real de la venta. El sistema marcará automáticamente "⚠️ REGISTRO ATRASADO".
-     - [ACTION: modificar_venta_pendiente | id=ID | accion=pagar|abonar|reabrir | monto=X] -> Gestionar ventas pendientes. accion=pagar la marca como pagada. accion=abonar registra un abono (requiere monto=X). accion=reabrir la vuelve a pendiente. Si no sabes el ID usa cliente=NOMBRE.
+     - [ACTION: modificar_venta_pendiente | id=ID | accion=pagar|abonar|reabrir | monto=X | metodo=M] -> Gestionar ventas pendientes. accion=pagar cobra todo el saldo. accion=abonar registra un abono (requiere monto=X en dólares). metodo=cashea (entra al BNC), pago_movil_banesco, pago_movil_exterior, bnc, punto_banesco, punto_bancamiga, dolares, zelle, binance o efectivo_bs; si no te dicen por dónde pagó, NO lo inventes: omite metodo. accion=reabrir la vuelve a pendiente. Si no sabes el ID usa cliente=NOMBRE.
 
 DATOS DISPONIBLES Y KPIs:
 Se te proporcionan ESTADÍSTICAS REALES por sede (Ingresos, Citas, Cantidad de productos en stock). Úsalas para dar reportes precisos y profesionales.
@@ -5637,24 +5640,39 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
             const updateObj: any = { updated_at: new Date().toISOString() };
             let actionDesc = '';
 
-            if (p.accion === 'pagar' || p.estado === 'pagado') {
-              updateObj.estado = 'pagado';
-              updateObj.saldo_pendiente = 0;
-              const abonoPrev = Number(targetVenta.abono || 0);
-              const totalVenta = Number(targetVenta.total_ingresos || 0);
-              if (abonoPrev < totalVenta) updateObj.abono = totalVenta;
-              updateObj.notas = `${targetVenta.notas || ''} | Pagado por IA el ${new Date().toLocaleDateString('es-VE')}`;
-              actionDesc = `marcada como PAGADA`;
-            } else if (p.accion === 'abonar' && p.monto) {
-              const montoAbono = parseFloat(p.monto);
-              if (montoAbono <= 0) continue;
-              const nuevoAbono = (Number(targetVenta.abono) || 0) + montoAbono;
-              const nuevoSaldo = Math.max(0, (Number(targetVenta.total_ingresos) || 0) - nuevoAbono);
-              updateObj.abono = nuevoAbono;
-              updateObj.saldo_pendiente = nuevoSaldo;
-              updateObj.estado = nuevoSaldo <= 0 ? 'pagado' : 'pendiente';
-              updateObj.notas = `${targetVenta.notas || ''} | Abono $${montoAbono.toFixed(2)} por IA el ${new Date().toLocaleDateString('es-VE')}`;
-              actionDesc = `abono de $${montoAbono.toFixed(2)} registrado. Saldo: $${nuevoSaldo.toFixed(2)}`;
+            // Pagar o abonar se registra como un cobro, con su día —igual que
+            // en el punto de venta—. Antes solo se restaba el saldo (sin contar
+            // el IVA ni lo financiado por Cashea) y el dinero no aparecía en
+            // el reporte del día en que entró. El método, si lo dicen, va a su
+            // cuenta; si no, queda como cobro sin cuenta, no se inventa uno.
+            if (p.accion === 'pagar' || p.estado === 'pagado' || (p.accion === 'abonar' && p.monto)) {
+              const saldo = Number(targetVenta.saldo_pendiente) || 0;
+              const monto = p.accion === 'abonar' ? parseFloat(p.monto) : saldo;
+              if (!(monto > 0)) continue;
+              const cuentas = p.metodo ? binsFromLegacyMetodos({ [normalizeMetodo(p.metodo)]: monto }) : null;
+              const conCuenta = cuentas && Object.values(cuentas).some((x: number) => x > 0);
+              const tasaCobro = Number(rates?.bcv) || Number(targetVenta.tasa_cambio) || 0;
+              // Las cuentas en bolívares se guardan en bolívares.
+              if (conCuenta) {
+                for (const m of BANK_METHODS_COBRO) {
+                  if (m.moneda === 'Bs' && cuentas![m.id] > 0) cuentas![m.id] = Math.round(cuentas![m.id] * tasaCobro * 100) / 100;
+                }
+              }
+              const r = await registrarCobro(db, targetVenta.id, {
+                cuentas: conCuenta ? cuentas : null,
+                tasa: tasaCobro,
+                sinCuentaUSD: conCuenta ? 0 : monto,
+                nota: 'Registrado por el bot de WhatsApp',
+                usuario: ctx.memoria?.nombre || ctx.adminName || 'Bot IA',
+              });
+              if (!r.ok) {
+                cleanedAi = cleanedAi + `\n⚠️ No se pudo registrar el cobro de ${targetVenta.cliente}: ${r.error}`;
+                continue;
+              }
+              cleanedAi = cleanedAi + (r.cobro.liquida
+                ? `\n✅ Venta de ${targetVenta.cliente} PAGADA: $${r.cobro.montoUSD.toFixed(2)} por ${r.abono.metodo_pago}.`
+                : `\n✅ Abono de $${r.cobro.montoUSD.toFixed(2)} a ${targetVenta.cliente} por ${r.abono.metodo_pago}. Saldo: $${r.cobro.saldoDespues.toFixed(2)}.`);
+              continue;
             } else if (p.accion === 'reabrir') {
               if (targetVenta.estado === 'pendiente') continue;
               const saldo = Number(targetVenta.total_ingresos || 0) - (Number(targetVenta.abono) || 0);

@@ -63,6 +63,12 @@ export function calcularCobro(
   venta: VentaPendiente,
   cuentas: Bins,
   tasa: number,
+  /**
+   * Dinero cobrado del que no se sabe la cuenta, en dólares. Lo usa el bot
+   * cuando le dicen «abonó 20» sin decir por dónde: se registra el cobro sin
+   * inventarle un banco.
+   */
+  sinCuentaUSD = 0,
 ): ResultadoCobro | { error: ErrorCobro; detalle: string } {
   const saldo = r2(venta.saldo_pendiente);
   if (saldo <= 0.009) return { error: 'sin_saldo', detalle: 'Esta venta ya no debe nada.' };
@@ -70,7 +76,7 @@ export function calcularCobro(
   const hayBs = CUENTAS_BS.some(id => cuentas[id] > 0);
   if (hayBs && !(tasa > 0)) return { error: 'sin_tasa', detalle: 'Falta la tasa para convertir los bolívares.' };
 
-  const monto = binsTotalUSD(cuentas, tasa);
+  const monto = Math.round((binsTotalUSD(cuentas, tasa) + (Number(sinCuentaUSD) || 0)) * 100) / 100;
   if (monto <= 0) return { error: 'sin_monto', detalle: 'Indica cuánto se cobró y por dónde.' };
   if (monto > saldo + margenCobro(saldo)) {
     return {

@@ -101,7 +101,7 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   const doc = new jsPDF('l', 'mm', 'a4') as any; // landscape
   const pageW = doc.internal.pageSize.getWidth();  // 297
   const pageH = doc.internal.pageSize.getHeight(); // 210
-  const margin = 10;
+  const margin = 12;
   let y = margin;
 
   const ensure = (needed: number) => {
@@ -177,7 +177,7 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   // Lo primero que se lee: qué carros entraron, se movieron o salieron ese
   // día, en qué quedaron y si ya pagaron. Iba al final, detrás de los gastos.
   const seg = data.seguimiento || [];
-  section('Seguimiento de vehículos del día', `${seg.length} vehículo${seg.length === 1 ? '' : 's'}`);
+  section('1 · Seguimiento de vehículos del día', `${seg.length} vehículo${seg.length === 1 ? '' : 's'}`);
   const ESTADOS: Record<string, string> = {
     pendiente: 'PENDIENTE', confirmada: 'CONFIRMADA', en_revision: 'EN REVISIÓN', en_proceso: 'EN PROCESO',
     completada: 'COMPLETADA', completado: 'COMPLETADA', finalizado: 'ENTREGADO', cancelada: 'CANCELADA',
@@ -224,7 +224,7 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   afterTable();
 
   // ══════════════ S1 · TABLA PRINCIPAL (ingresos + bancos por cliente) ══════════════
-  section('1 · Ingresos y registro de clientes', 'Bancos en Bs · DIV/BINANCE/ZELLE en $');
+  section('2 · Ingresos y registro de clientes', 'Bancos en Bs · DIV/BINANCE/ZELLE en $');
   autoTable(doc, {
     startY: y,
     head: [['Nº', 'CLIENTE', 'CARRO', 'PLACA', 'TOTAL', 'CONT.', 'CASHEA/BNC', 'IVA', 'INIC.', 'FINAN', 'X COB', 'PM BCO', 'PM EXT', 'P.BCM', 'P.BCO', 'BNC', 'DIV', 'BINAN', 'ZELLE', 'EF.BS']],
@@ -259,7 +259,7 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   // ══════════════ S1b · DETALLE DE CADA VENTA ══════════════
   // Lo que la tabla de bancos no dice: qué se le hizo, quién lo hizo y cómo
   // pagó, cuenta por cuenta. Así no hay que ir a Servicios a buscarlo.
-  section('1b · Detalle de cada venta', `${data.ventas.length} venta${data.ventas.length === 1 ? '' : 's'}`);
+  section('3 · Detalle de cada venta', `${data.ventas.length} venta${data.ventas.length === 1 ? '' : 's'}`);
   autoTable(doc, {
     startY: y,
     head: [['Nº', 'CLIENTE', 'VEHÍCULO', 'PLACA', 'TRABAJO REALIZADO', 'MECÁNICO', 'CÓMO PAGÓ', 'TOTAL', 'DEBE']],
@@ -294,7 +294,7 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   // ya está sumado en el resumen de bancos de este día.
   const cobros = data.cobros || [];
   if (cobros.length) {
-    section('1c · Cobros de ventas de otros días', `${cobros.length} cobro${cobros.length === 1 ? '' : 's'} · ${usd(data.cobrosTotal || 0)}`);
+    section('4 · Cobros de ventas de otros días', `${cobros.length} cobro${cobros.length === 1 ? '' : 's'} · ${usd(data.cobrosTotal || 0)}`);
     autoTable(doc, {
       startY: y,
       head: [['CLIENTE', 'VEHÍCULO', 'PLACA', 'VENTA DEL', 'TIPO', 'CÓMO PAGÓ', 'COBRADO', 'QUEDA']],
@@ -324,7 +324,7 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   // Dos tablas lado a lado no se pueden partir entre páginas: la de la derecha
   // se perdía. Se reserva el alto de la más larga antes de empezar.
   ensure(12 + (Math.max(data.sistema.length, data.formaPago.length) + 2) * 7.5);
-  section('3 · Resumen por sistema   ·   4 · Forma de pago');
+  section('5 · Resumen por sistema   ·   6 · Forma de pago');
   const yStart = y;
   autoTable(doc, {
     startY: yStart,
@@ -356,7 +356,7 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   y = Math.max(leftEnd, doc.lastAutoTable.finalY) + 5;
 
   // ══════════════ S7 · DETALLE POR MÉTODO DE PAGO ══════════════
-  section('7 · Detalle de método de pago (a qué banco/cuenta cayó)');
+  section('7 · Detalle de método de pago (a qué banco o cuenta cayó)');
   autoTable(doc, {
     startY: y,
     head: [['MÉTODO / BANCO', 'CANT', 'MONTO (Bs)', 'TASA', 'EQUIV. $']],
@@ -376,7 +376,7 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   afterTable();
 
   // ══════════════ S5 Facturas · S6 Caja · S12 Bancos (3 mini tablas) ══════════════
-  section('5 · Facturas   ·   6 · Caja   ·   12 · Resumen de bancos');
+  section('8 · Facturas   ·   9 · Caja   ·   10 · Todo lo que entró a cada banco hoy');
   const yS = y;
   const third = (pageW - margin * 2 - 12) / 3;
   autoTable(doc, {
@@ -415,53 +415,79 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   });
   y = Math.max(e1, e2, doc.lastAutoTable.finalY) + 5;
 
-  // ══════════════ S2 · CUENTAS POR COBRAR ══════════════
-  if (data.porCobrar.length) {
-    section('2 · Cuentas por cobrar', `Total: ${usd(data.porCobrarTotal)}`);
+  // ══════════════ 11 · CUENTAS POR COBRAR ══════════════
+  // La lista completa de deudores tiene su propio reporte («Pendientes»):
+  // metida aquí ocupaba tres páginas del diario, igual todos los días. Aquí va
+  // el total y lo que se quedó debiendo HOY.
+  {
+    const nuevas = data.ventas.filter(v => (v.porCobrar + v.financiado) > 0.009);
+    section('11 · Cuentas por cobrar', `Total abierto: ${usd(data.porCobrarTotal)} · ${data.porCobrar.length} ventas`);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(...C.gray);
+    doc.text('El detalle de todos los clientes que deben está en el «Reporte de pendientes». Aquí, lo que quedó por cobrar de las ventas de hoy:', margin, y);
+    y += 3;
     autoTable(doc, {
       startY: y,
-      head: [['CLIENTE', 'VEHÍCULO', 'PLACA', 'MONTO $', 'OBSERVACIÓN']],
-      body: data.porCobrar.map(p => [p.nombre.substring(0, 26), (p.carro || '—').substring(0, 24), p.placa || '—', usd(p.monto), (p.observacion || '').substring(0, 60)]),
-      foot: [['', 'TOTAL', '', usd(data.porCobrarTotal), '']],
+      head: [['CLIENTE', 'VEHÍCULO', 'PLACA', 'TOTAL', 'LO FINANCIA CASHEA', 'LO DEBE EL CLIENTE']],
+      body: nuevas.length
+        ? nuevas.map(v => [v.nombre.substring(0, 30), (v.carro || '—').substring(0, 28), v.placa || '—', usd(v.total), usd(v.financiado), usd(v.porCobrar)])
+        : [['Todas las ventas de hoy quedaron pagadas', '', '', '', '', '']],
       theme: 'grid',
       headStyles: { fillColor: C.amber, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
-      bodyStyles: { fontSize: 6.5, cellPadding: 1.4, textColor: C.dark },
-      footStyles: { fillColor: C.dark, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
+      bodyStyles: { fontSize: 6.8, cellPadding: 1.5, textColor: C.dark },
       alternateRowStyles: { fillColor: C.amberL },
-      columnStyles: { 0: { cellWidth: 55 }, 1: { cellWidth: 50 }, 2: { cellWidth: 20, halign: 'center', fontStyle: 'bold' }, 3: { cellWidth: 26, halign: 'right' }, 4: { cellWidth: 'auto' } },
+      columnStyles: {
+        0: { cellWidth: 60 }, 1: { cellWidth: 55 }, 2: { cellWidth: 20, halign: 'center', fontStyle: 'bold' },
+        3: { cellWidth: 'auto', halign: 'right' }, 4: { cellWidth: 38, halign: 'right', textColor: C.purple },
+        5: { cellWidth: 38, halign: 'right', fontStyle: 'bold', textColor: C.amber },
+      },
       margin: { left: margin, right: margin },
     });
     afterTable();
   }
 
-  // ══════════════ S10 Artículos  +  S11 Carros en taller ══════════════
-  section('10 · Control de inventario / artículos   ·   11 · Carros en taller');
-  const yIt = y;
+  // ══════════════ 12 · ARTÍCULOS  ·  13 · CARROS EN TALLER ══════════════
+  // Iban lado a lado: al partirse entre páginas, la tabla de la derecha dejaba
+  // páginas casi en blanco. Ahora van una debajo de otra, a lo ancho.
+  section('12 · Control de inventario: artículos que salieron hoy', `${data.articulos.length} artículo(s)`);
   autoTable(doc, {
-    startY: yIt,
-    head: [['ARTÍCULO', 'CANT']],
-    body: (data.articulos.length ? data.articulos : [{ articulo: 'Sin salidas registradas', cantidad: 0 }]).map(a => [a.articulo.substring(0, 40), a.cantidad]),
+    startY: y,
+    head: [['ARTÍCULO', 'CANT', 'ARTÍCULO', 'CANT']],
+    // A dos columnas: la lista es larga y cada renglón es corto.
+    body: (() => {
+      const a = data.articulos.length ? data.articulos : [{ articulo: 'Sin salidas registradas', cantidad: 0 }];
+      const mitad = Math.ceil(a.length / 2);
+      return Array.from({ length: mitad }, (_, i) => [
+        a[i].articulo.substring(0, 60), String(a[i].cantidad || ''),
+        a[i + mitad] ? a[i + mitad].articulo.substring(0, 60) : '', a[i + mitad] ? String(a[i + mitad].cantidad) : '',
+      ]);
+    })(),
     theme: 'grid',
     headStyles: { fillColor: C.dark, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
-    bodyStyles: { fontSize: 6.5, cellPadding: 1.3, textColor: C.dark },
-    columnStyles: { 0: { cellWidth: half - 18 }, 1: { cellWidth: 18, halign: 'center' } },
-    margin: { left: margin, right: pageW - margin - half }, tableWidth: half,
+    bodyStyles: { fontSize: 6.6, cellPadding: 1.3, textColor: C.dark },
+    columnStyles: { 0: { cellWidth: 'auto' }, 1: { cellWidth: 14, halign: 'center' }, 2: { cellWidth: 'auto' }, 3: { cellWidth: 14, halign: 'center' } },
+    margin: { left: margin, right: margin },
   });
-  const aEnd = doc.lastAutoTable.finalY;
+  afterTable();
+
+  const taller = data.taller.slice(0, 20);
+  section('13 · Carros abiertos en el taller', data.taller.length > taller.length
+    ? `${taller.length} más recientes de ${data.taller.length}` : `${taller.length} carro(s)`);
   autoTable(doc, {
-    startY: yIt,
+    startY: y,
     head: [['CARRO', 'PLACA', 'MECÁNICO', 'TRABAJO']],
-    body: (data.taller.length ? data.taller : [{ carro: 'Sin vehículos en taller', placa: '', mecanico: '—', trabajo: '—' }]).map(t => [t.carro.substring(0, 20), t.placa || '—', t.mecanico.substring(0, 16), t.trabajo.substring(0, 28)]),
+    body: (taller.length ? taller : [{ carro: 'Sin vehículos en taller', placa: '', mecanico: '—', trabajo: '—' }])
+      .map(t => [t.carro.substring(0, 40), t.placa || '—', t.mecanico.substring(0, 30), t.trabajo.substring(0, 110)]),
     theme: 'grid',
     headStyles: { fillColor: C.blue, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
-    bodyStyles: { fontSize: 6.5, cellPadding: 1.3, textColor: C.dark },
-    columnStyles: { 0: { cellWidth: (half - 6) * 0.28 }, 1: { cellWidth: 16, halign: 'center', fontStyle: 'bold' }, 2: { cellWidth: (half - 6) * 0.24 }, 3: { cellWidth: 'auto' } },
-    margin: { left: margin + half + 6, right: margin }, tableWidth: half,
+    bodyStyles: { fontSize: 6.6, cellPadding: 1.3, textColor: C.dark },
+    alternateRowStyles: { fillColor: C.bg },
+    columnStyles: { 0: { cellWidth: 55 }, 1: { cellWidth: 20, halign: 'center', fontStyle: 'bold' }, 2: { cellWidth: 45 }, 3: { cellWidth: 'auto' } },
+    margin: { left: margin, right: margin },
   });
-  y = Math.max(aEnd, doc.lastAutoTable.finalY) + 5;
+  afterTable();
 
   // ══════════════ S8 · KPIs REDES / APP / RCV / CERT ══════════════
-  section('8 · KPIs: Redes, App y Trámites   ·   9 · Clientes en base de datos');
+  section('14 · KPIs: redes, app y trámites   ·   clientes en base de datos');
   const kpiDefs: Array<[string, KpiPar, RGB]> = [
     ['REDES / INSTAGRAM', data.kpis.redes, C.purple],
     ['REGISTRO EN LA APP', data.kpis.app, C.blue],
@@ -485,7 +511,7 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   y += 22;
 
   // ══════════════ S13 · GASTOS ══════════════
-  section('13 · Gastos del día', `Total: ${usd(data.gastosTotal.usd)}  ·  ${bs(data.gastosTotal.bs)} Bs`);
+  section('15 · Gastos del día', `Total: ${usd(data.gastosTotal.usd)}  ·  ${bs(data.gastosTotal.bs)} Bs`);
   autoTable(doc, {
     startY: y,
     // De qué cuenta salió cada gasto, a quién y para qué carro.

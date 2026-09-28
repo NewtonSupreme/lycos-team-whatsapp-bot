@@ -304,8 +304,35 @@ export class PayrollCalculationService {
     if (!opts.includeLiquidated) jq = jq.eq('estado', 'pendiente');
     if (periodo.sedeId) jq = jq.eq('sede_id', periodo.sedeId);
     const { data: jobsData } = await jq;
-    const rawJobs = (jobsData as JobAssignment[]) || [];
+    const todos = (jobsData as JobAssignment[]) || [];
+
+    /*
+     * Solo se paga lo terminado.
+     *
+     * Los trabajos se registran al abrir o editar la orden, y la nómina los
+     * sumaba aunque el carro siguiera en el taller: se podía liquidar una
+     * comisión de un trabajo que después se cancelaba o cambiaba de precio.
+     * Los de órdenes abiertas quedan aparte, «en curso»; los de órdenes
+     * canceladas no cuentan.
+     */
+    const servIdsJobs = Array.from(new Set(todos
+      .filter(j => j.referencia_tabla === 'servicios' && j.referencia_id)
+      .map(j => String(j.referencia_id))));
+    const estadoServ = new Map<string, string>();
+    for (let i = 0; i < servIdsJobs.length; i += 200) {
+      const { data: ss } = await this.db.from('servicios').select('id, estado').in('id', servIdsJobs.slice(i, i + 200));
+      (ss || []).forEach((s: any) => estadoServ.set(String(s.id), String(s.estado || '')));
+    }
+    const CERRADAS = ['completada', 'completado', 'finalizado', 'finalizada'];
+    const estadoDe = (j: JobAssignment) => (j.referencia_tabla === 'servicios' && j.referencia_id
+      ? estadoServ.get(String(j.referencia_id)) ?? 'desconocido' : 'cerrada');
+    // Lo ya liquidado se enseña siempre: el histórico es el que es.
+    const pagable = (j: JobAssignment) => j.estado !== 'pendiente'
+      || estadoDe(j) === 'cerrada' || CERRADAS.includes(estadoDe(j)) || estadoDe(j) === 'desconocido';
+    const cancelado = (j: JobAssignment) => /^cancel|anulad/.test(estadoDe(j));
+    const rawJobs = todos.filter(j => pagable(j) && !cancelado(j));
     const jobs = await this.enrichJobsWithClientInfo(rawJobs);
+    const jobsEnCurso = await this.enrichJobsWithClientInfo(todos.filter(j => !pagable(j) && !cancelado(j)));
 
     let aq = this.db.from('payroll_advances').select('*')
       .eq('empleado_id', employeeId).eq('estado', 'pendiente')
@@ -341,6 +368,8 @@ export class PayrollCalculationService {
       total_pagar: agg.total_pagar,
       desglose_monedas: agg.desglose_monedas,
       jobs, adelantos,
+      jobs_en_curso: jobsEnCurso,
+      en_curso_usd: round2(jobsEnCurso.reduce((s, j) => s + (Number(j.comision_usd) || 0), 0)),
       liquidado: false,
     };
   }

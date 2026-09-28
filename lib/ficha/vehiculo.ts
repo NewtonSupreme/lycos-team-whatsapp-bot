@@ -118,6 +118,27 @@ export interface ServicioFicha {
   nPartidas: number;
   /** Lo que costó al taller según la ficha, solo de este trabajo. */
   costoFicha: number;
+  /**
+   * La nómina de esta orden: quién hizo cada trabajo, sobre qué mano de obra,
+   * cuánto le quedó y si ya se le pagó. Así la ficha dice también lo que se
+   * llevó el mecánico, no solo lo que costaron las piezas.
+   */
+  nomina: TrabajoNomina[];
+  /** Lo que se llevan los mecánicos (comisiones directas y en cascada). */
+  comisiones: number;
+}
+
+export interface TrabajoNomina {
+  empleado: string;
+  descripcion: string;
+  manoObra: number;
+  comision: number;
+  /** Comisión del jefe sobre el trabajo de otro (Jim 7%). */
+  esOverride: boolean;
+  /** pendiente · liquidado */
+  estado: string;
+  fecha: string | null;
+  regla: string | null;
 }
 
 export interface FichaVehiculo {
@@ -367,6 +388,20 @@ export async function buildFichaVehiculo(db: SupabaseClient, p: Params): Promise
   // El orden importa: lo cobrado de verdad manda sobre lo presupuestado. Se
   // guarda de dónde salió porque no significan lo mismo —«$105 estimado» y
   // «$105 cobrado» son cosas distintas— y la pantalla lo distingue.
+  // La nómina de todas las órdenes del carro, en una sola consulta.
+  const trabajosPorServicio = new Map<string, Array<Record<string, any>>>();
+  const idsOrdenes = servicios.map(x => x.id).filter(Boolean);
+  if (idsOrdenes.length) {
+    const { data: trabajos } = await db.from('job_assignments')
+      .select('referencia_id, empleado_nombre, es_taller, descripcion, mano_obra_usd, comision_usd, es_override, estado, fecha, desglose')
+      .in('referencia_id', idsOrdenes).neq('estado', 'anulado');
+    for (const j of (trabajos || []) as Array<Record<string, any>>) {
+      const l = trabajosPorServicio.get(j.referencia_id) || [];
+      l.push(j);
+      trabajosPorServicio.set(j.referencia_id, l);
+    }
+  }
+
   const serviciosCalc: ServicioFicha[] = servicios.map(x => {
     const final = Number(x.costo_final) || 0;
     const pagado = Number(x.total_pagado) || 0;
@@ -389,8 +424,20 @@ export async function buildFichaVehiculo(db: SupabaseClient, p: Params): Promise
       });
 
     const mias = partidas.filter(pt => pt.servicio_id === x.id);
+    const nomina = (trabajosPorServicio.get(x.id) || []).map(j => ({
+      empleado: String(j.empleado_nombre || (j.es_taller ? 'Taller' : 'Sin asignar')),
+      descripcion: String(j.descripcion || ''),
+      manoObra: n2(j.mano_obra_usd),
+      comision: n2(j.comision_usd),
+      esOverride: Boolean(j.es_override),
+      estado: String(j.estado || 'pendiente'),
+      fecha: (j.fecha as string) || null,
+      regla: (j.desglose?.regla as string) || null,
+    }));
 
     return {
+      nomina,
+      comisiones: n2(nomina.reduce((s, t) => s + t.comision, 0)),
       ...x,
       items,
       totalItems: n2(items.reduce((s, it) =>

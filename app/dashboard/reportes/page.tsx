@@ -7,7 +7,8 @@ import {
   Trash2, CheckCircle, AlertCircle, Loader2, X, Camera, Eye,
   Calendar, FileText, BarChart2, Activity, RefreshCw, Package, ChevronDown, Clock,
   ArrowDownCircle, TrendingDown, Receipt, ShoppingCart, Bot, ChevronRight,
-  Truck, MapPin, Boxes, CheckCircle2
+  Truck, MapPin, Boxes, CheckCircle2,
+  Wallet,
 } from 'lucide-react';
 import {
   Card, CardContent, CardHeader, CardTitle, CardDescription
@@ -32,6 +33,7 @@ import { formatearCedula } from '@/lib/clientes/identidad';
 import PanelGeneral from '@/components/reportes/PanelGeneral';
 import { generateInvoicePDF, generateEgresoPDF, type InvoicePDFItem } from '@/lib/invoice-pdf';
 import VistaEgresos from '@/components/egresos/VistaEgresos';
+import CuentasPorCobrar from '@/components/reportes/CuentasPorCobrar';
 import { binsDeColumnas, lineasDeMetodos, lineasDePago, montoConMoneda } from '@/lib/pagos/desglose';
 import { mecanicoDeOrden, servicioDeNotas } from '@/lib/facturas/mecanico';
 import DialogoEgreso from '@/components/egresos/DialogoEgreso';
@@ -2333,7 +2335,23 @@ export default function ReportesPage() {
   // «general» es el panel de rendimiento del rediseño y es la pestaña de
   // entrada. Las demás son las de siempre, intactas: el asistente de cierre,
   // el escaneo de tickets y los egresos siguen exactamente donde estaban.
-  const [tab, setTab] = useState<'general' | 'graficos' | 'ventas' | 'cierres' | 'egresos' | 'historial' | 'papelera' | 'distribuciones'>('general');
+  const [tab, setTab] = useState<'general' | 'graficos' | 'ventas' | 'cierres' | 'egresos' | 'cobrar' | 'historial' | 'papelera' | 'distribuciones'>('general');
+  const [generandoPendientes, setGenerandoPendientes] = useState(false);
+  /** El reporte de todas las cuentas por cobrar, para salir a cobrar. */
+  const descargarPendientes = async () => {
+    setGenerandoPendientes(true);
+    try {
+      const r = await fetch(`/api/reportes/cuentas-por-cobrar${currentSede?.id ? `?sede=${currentSede.id}` : ''}`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'No se pudo generar');
+      const { generarReportePendientesPDF } = await import('@/lib/cobranza-pdf');
+      generarReportePendientesPDF(d);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'No se pudo generar el reporte de pendientes');
+    } finally {
+      setGenerandoPendientes(false);
+    }
+  };
   const [papeleraVentas, setPapeleraVentas] = useState<any[]>([]);
   const [loadingPapelera, setLoadingPapelera] = useState(false);
   const [distribuciones, setDistribuciones] = useState<Distribucion[]>([]);
@@ -3069,6 +3087,12 @@ export default function ReportesPage() {
             <Button onClick={() => { setReporteModo('hoy'); setReporteFecha(getLocalISODate()); setShowReporteFecha(true); }} disabled={generandoReporte} className="gap-2 flex-1 sm:flex-none bg-green-600 hover:bg-green-700 text-white font-bold">
               {generandoReporte ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Reporte Diario
             </Button>
+            {/* El reporte de pendientes por cobrar, aparte del diario. */}
+            <Button onClick={descargarPendientes} disabled={generandoPendientes} variant="outline"
+              className="gap-2 flex-1 sm:flex-none border-green-600/50 text-green-600 hover:bg-green-600/10 font-bold"
+              title="Todas las cuentas por cobrar, cliente por cliente">
+              {generandoPendientes ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wallet className="w-4 h-4" />} Pendientes
+            </Button>
             <Button onClick={() => setShowCierreWizard(true)} className="gap-2 flex-1 sm:flex-none bg-orange-600 hover:bg-orange-700 text-white font-bold">
               <FileText className="w-4 h-4" /> Cierre PDF
             </Button>
@@ -3179,6 +3203,14 @@ export default function ReportesPage() {
               {egresos.length}
             </span>
           )}
+        </button>
+        <button
+          onClick={() => setTab('cobrar')}
+          className={cn('flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all flex-shrink-0',
+            tab === 'cobrar' ? 'bg-card shadow-sm text-amber-500 font-bold' : 'text-muted-foreground hover:text-foreground'
+          )}
+        >
+          <Wallet className="w-4 h-4 text-amber-500" /> Por cobrar
         </button>
         <button
           onClick={() => setTab('historial')}
@@ -3790,6 +3822,9 @@ export default function ReportesPage() {
       )}
 
       {/* ── Tab: Historial y Calendario ──────────────────────── */}
+      {/* ── Tab: Cuentas por cobrar ─────────────────────────────── */}
+      {tab === 'cobrar' && <CuentasPorCobrar sedeId={currentSede?.id} />}
+
       {tab === 'historial' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <Card className="lg:col-span-2">

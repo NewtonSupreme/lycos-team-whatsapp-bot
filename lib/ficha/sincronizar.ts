@@ -19,6 +19,7 @@
  */
 
 import { binsDeFuente, cuentaPrincipal, soloConDinero } from '@/lib/pagos/desglose';
+import { categoriaSugerida } from '@/lib/egresos/categoria';
 
 /** La forma mínima del cliente de base de datos que se necesita. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -234,7 +235,7 @@ export async function sincronizarEgreso(
     placa: p.placa,
     vehiculo_info: p.vehiculo_info,
     cliente: p.cliente_nombre,
-    categoria: categoriaDeGasto(p.tipo),
+    categoria: categoriaDeGasto(p.tipo, p.descripcion),
     total_egresos: gasto,
     moneda: 'USD',
     // De qué cuenta salió el dinero. `metodos_pago` lleva el reparto entero
@@ -281,10 +282,22 @@ export async function sincronizarEgreso(
 }
 
 /** La categoría de gasto que le toca a cada tipo de renglón. */
-function categoriaDeGasto(tipo: string): string {
-  if (tipo === 'insumo') return 'insumos';
-  if (tipo === 'servicio') return 'servicios';
-  return 'repuestos';
+/**
+ * La categoría del gasto de un renglón de la ficha.
+ *
+ * Un «servicio» de la ficha es un trabajo que se manda a hacer fuera para ese
+ * carro —un lavado, una rectificación—, no la luz ni el agua. Caía en
+ * «Servicios», la categoría de los servicios públicos, y el reporte de egresos
+ * los sumaba juntos. Además se lee el texto: un «LAVADO COMPLETO» anotado como
+ * repuesto sigue siendo un trabajo de terceros.
+ */
+function categoriaDeGasto(tipo: string, descripcion = ''): string {
+  if (tipo === 'servicio' || tipo === 'mano_obra') return 'trabajos_terceros';
+  const sugerida = categoriaSugerida(descripcion, tipo === 'insumo' ? 'insumos' : 'repuestos');
+  // En la ficha todo es costo de ese carro: nunca luz, alquiler ni nómina.
+  return ['repuestos', 'insumos', 'trabajos_terceros'].includes(sugerida)
+    ? sugerida
+    : (tipo === 'insumo' ? 'insumos' : 'repuestos');
 }
 
 // ── 3. Todo junto ───────────────────────────────────────────────────────────

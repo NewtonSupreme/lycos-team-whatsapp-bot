@@ -2,7 +2,7 @@
 
 import {
   AlertTriangle, CheckCircle2, ClipboardList, DollarSign, Lock,
-  Pencil, Plus, Trash2,
+  Pencil, Plus, Trash2, Wrench,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ItemOrden, PartidaCalculada, ServicioFicha } from '@/lib/ficha/vehiculo';
@@ -258,6 +258,55 @@ export default function OrdenDeTrabajo({
           </table>
         </div>
       )}
+
+      {/* Mano de obra y nómina: quién hizo el trabajo y cuánto le quedó. */}
+      <div className="border-t border-[#e8eaed] px-4 py-3">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <Wrench className="h-4 w-4 text-[#f97316]" aria-hidden />
+          <h3 className="text-[12.5px] font-bold text-[#16181d]">Mano de obra y nómina</h3>
+          {servicio.nomina.length > 0 && (
+            <span className="num ml-auto text-[11.5px] text-[#5b616e]">
+              Mecánicos <strong className="text-[#16181d]">{money(servicio.comisiones)}</strong>
+              {' · '}le queda al taller{' '}
+              <strong className="text-[#15803d]">
+                {money(Math.max(0, servicio.totalItems - servicio.costoFicha - servicio.comisiones))}
+              </strong>
+            </span>
+          )}
+        </div>
+        {servicio.nomina.length === 0 ? (
+          <p className="flex items-center gap-1.5 rounded-lg bg-[#fff4ec] px-3 py-2 text-[11.5px] text-[#c2410c]">
+            <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
+            Esta orden no tiene mecánico asignado en la nómina: nadie cobra comisión por ella.
+            Asígnalo en la orden de servicio.
+          </p>
+        ) : (
+          <ul className="divide-y divide-[#f2f3f5] rounded-lg border border-[#eef0f3]">
+            {servicio.nomina.map((t, i) => (
+              <li key={i} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-2 text-[12px]">
+                <span className="min-w-0 flex-1">
+                  <span className="font-semibold text-[#16181d]">{t.empleado}</span>
+                  {t.esOverride && <span className="ml-1.5 rounded bg-[#f0eafc] px-1 text-[10px] font-bold text-[#7c3aed]">SUPERVISIÓN</span>}
+                  <span className="block truncate text-[11px] text-[#8a909c]" title={t.regla || undefined}>
+                    {t.descripcion || 'Trabajo de la orden'}{t.regla ? ` · ${t.regla}` : ''}
+                  </span>
+                </span>
+                <span className="num text-[11.5px] text-[#5b616e]">mano de obra {money(t.manoObra)}</span>
+                <span className={cn('num font-bold', t.comision > 0 ? 'text-[#16181d]' : 'text-[#c2410c]')}>
+                  {t.comision > 0 ? `le quedó ${money(t.comision)}` : 'comisión sin definir'}
+                </span>
+                <span className={cn(
+                  'rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold',
+                  t.estado === 'liquidado' ? 'bg-[#e8f7ee] text-[#15803d]'
+                    : servicio.abierto ? 'bg-[#f2f3f5] text-[#5b616e]' : 'bg-[#fdf5e2] text-[#a16207]',
+                )}>
+                  {t.estado === 'liquidado' ? 'Pagado' : servicio.abierto ? 'Al entregar' : 'Por pagar'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </section>
   );
 }

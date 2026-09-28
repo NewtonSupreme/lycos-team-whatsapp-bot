@@ -32,6 +32,7 @@ import DetalleEmpleado from '@/components/nomina/DetalleEmpleado';
 import ReconciliarEncargados from '@/components/nomina/ReconciliarEncargados';
 import NominaRail, { type AccionRapida, type NominaCerrada } from '@/components/nomina/v2/NominaRail';
 import ProcesarNominaModal from '@/components/nomina/v2/ProcesarNominaModal';
+import RevisionNomina from '@/components/nomina/RevisionNomina';
 import { formatoMonto, iniciales, type FilaEmpleado, type Moneda } from '@/components/nomina/v2/tipos';
 
 type Tab = 'resumen' | 'empleados' | 'trabajos' | 'conceptos' | 'deducciones' | 'reportes' | 'ia' | 'configuracion';
@@ -583,6 +584,10 @@ export default function NominaPage() {
           <div className="flex justify-center py-16"><Loader2 className="h-7 w-7 animate-spin text-[#f97316]" /></div>
         ) : (
           <>
+            {/* Lo que haría pagar de más o de menos, antes de liquidar. */}
+            {canEdit && (
+              <RevisionNomina range={range} sedeId={sedeId} onReconciliar={() => setTab('configuracion')} />
+            )}
             <NominaKpis
               empleados={filas.length}
               bruto={totales.bruto}

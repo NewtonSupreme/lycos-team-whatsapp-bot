@@ -42,7 +42,7 @@ import AvisoRepuestosSueltos, {
   detectarRepuestosSueltos, type RenglonSospechoso,
 } from '@/components/inventario/AvisoRepuestosSueltos';
 import { asignacionesValidas, buildJobsDesdeAsignacion } from '@/lib/nomina/asignaciones';
-import { CATEGORIAS_VENTA, inferirCategoria, categoriaToZona, buildCategoriaColumns, buildPagoColumnsCompletas } from '@/lib/categorias';
+import { CATEGORIAS_VENTA, inferirCategoria, categoriaToZona, buildCategoriaColumns, buildPagoColumnsCompletas, deptItemsDeCategoria } from '@/lib/categorias';
 
 // ── Types ─────────────────────────────────────────────────────
 interface ServicioItem {
@@ -511,7 +511,7 @@ export default function ServiciosPage() {
               saldo: cobro.saldo,
               tasa: cobro.tasa || globalBcvRate || 0,
               casheaPct: cobro.casheaPct ?? null,
-              deptItems: [{ dept: deptFromServicioTipo(cita.tipo), monto: precio }],
+              deptItems: deptItemsDeCategoria(cat, precio),
             });
             // El saldo y el estado salen del mapeo, no de la pantalla: con Cashea
             // el resto financiado lo calcula el plan, y tenerlo en dos sitios era
@@ -541,7 +541,7 @@ export default function ServiciosPage() {
                 saldo: 0,
                 tasa: svcAny.tasa_cambio || globalBcvRate || 0,
                 casheaPct: plan.pct,
-                deptItems: [{ dept: deptFromServicioTipo(cita.tipo), monto: precio }],
+                deptItems: deptItemsDeCategoria(cat, precio),
               }),
               con_iva: true,
               clientes_atendidos: 1,
@@ -629,6 +629,15 @@ export default function ServiciosPage() {
             }
           }
         }
+      }
+
+      // Las comisiones de la orden pasan al día de la entrega, con la mano de
+      // obra al día. No bloquea: la nómina se puede revisar después.
+      if (COMPLETED_STATES.includes(nuevoEstado)) {
+        fetch('/api/nomina/jobs/cerrar', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ referencia_id: id }),
+        }).catch(() => {});
       }
 
       logActivity({
@@ -3836,6 +3845,10 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
         console.error('Error registering centralized factura:', e);
       }
 
+      fetch('/api/nomina/jobs/cerrar', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ referencia_id: cita.id }),
+      }).catch(() => {});
       logActivity({ usuario: useAppStore.getState().user?.nombre || 'Admin', modulo: 'Servicios', accion: 'Venta Finalizada', detalles: `Venta para ${clientName} por $${total.toFixed(2)}` });
       handleDownload(finalCorrelativo, { url: comprobanteUrl, ref: comprobanteRef });
       alert('¡Entrega procesada con éxito!');

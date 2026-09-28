@@ -150,7 +150,7 @@ export function generarFichaPDF(ficha: FichaVehiculo, opciones?: { generadoPor?:
   titulo('Historial de trabajos', `${ficha.servicios.length} orden(es)`);
   autoTable(doc, {
     startY: y,
-    head: [['FECHA', 'TRABAJO', 'ESTADO', 'RENGLONES DE LA ORDEN', 'COBRADO', 'COSTO']],
+    head: [['FECHA', 'TRABAJO', 'ESTADO', 'RENGLONES DE LA ORDEN', 'MECÁNICO · LE QUEDÓ', 'COBRADO', 'COSTO']],
     body: (ficha.servicios.length ? ficha.servicios : [null]).map(s => s ? [
       fecha(s.fecha),
       (s.tipo_personalizado || s.descripcion || s.tipo || 'Servicio').slice(0, 60),
@@ -158,16 +158,19 @@ export function generarFichaPDF(ficha: FichaVehiculo, opciones?: { generadoPor?:
       s.items.length
         ? s.items.map(i => `${i.cantidad || 1} × ${i.descripcion || ''} (${usd(Number(i.total) || 0)})`).join('\n')
         : '—',
+      s.nomina.length
+        ? s.nomina.map(t => `${t.empleado}${t.esOverride ? ' (superv.)' : ''}: ${t.comision > 0 ? usd(t.comision) : 'sin definir'}`).join('\n')
+        : 'Sin mecánico en nómina',
       usd(s.monto),
       s.costoFicha > 0 ? usd(s.costoFicha) : '—',
-    ] : ['', 'Este vehículo no tiene órdenes registradas', '', '', '', '']),
+    ] : ['', 'Este vehículo no tiene órdenes registradas', '', '', '', '', '']),
     theme: 'grid',
     headStyles: { fillColor: C.fondo, textColor: C.negro, fontSize: 6.8, fontStyle: 'bold', lineColor: C.borde },
     bodyStyles: { fontSize: 7, cellPadding: 1.6, textColor: C.negro, lineColor: C.borde, valign: 'top' },
     columnStyles: {
-      0: { cellWidth: 18 }, 1: { cellWidth: 42 }, 2: { cellWidth: 20 },
-      3: { cellWidth: 'auto', textColor: C.gris }, 4: { cellWidth: 20, halign: 'right', fontStyle: 'bold' },
-      5: { cellWidth: 18, halign: 'right' },
+      0: { cellWidth: 17 }, 1: { cellWidth: 34 }, 2: { cellWidth: 18 },
+      3: { cellWidth: 'auto', textColor: C.gris }, 4: { cellWidth: 36 },
+      5: { cellWidth: 18, halign: 'right', fontStyle: 'bold' }, 6: { cellWidth: 16, halign: 'right' },
     },
     margin: { left: M, right: M },
   });

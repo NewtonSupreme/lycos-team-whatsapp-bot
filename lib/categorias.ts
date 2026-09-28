@@ -221,3 +221,23 @@ export function sumaMetodos(metodos: Record<string, number> | null | undefined):
   if (!metodos) return 0;
   return Object.values(metodos).reduce((s, v) => s + (Number(v) || 0), 0);
 }
+
+/**
+ * El departamento de una venta, a partir de su categoría: uno solo.
+ *
+ * Al cerrar una orden desde el tablero, la venta recibía dos: el de su
+ * categoría y otro deducido del «tipo» de la orden —casi siempre «repuestos»—.
+ * El resumen por sistema del reporte diario sumaba así casi el doble de lo
+ * vendido: 52 ventas y $5.417 contados dos veces. Lo que no tiene columna
+ * propia (latonería, otros) no va a ningún departamento.
+ */
+export function deptItemsDeCategoria(
+  categoria: string | null | undefined,
+  monto: number,
+): { dept: 'silenciador' | 'cauchera' | 'alineacion' | 'electronica' | 'mecanica' | 'frenos' | 'lavado' | 'repuestos'; monto: number }[] {
+  const col = getCategoria(categoria)?.columna;
+  const validas = ['silenciador', 'cauchera', 'alineacion', 'electronica', 'mecanica', 'frenos', 'lavado', 'repuestos'] as const;
+  return col && (validas as readonly string[]).includes(col)
+    ? [{ dept: col as (typeof validas)[number], monto: Number(monto) || 0 }]
+    : [];
+}

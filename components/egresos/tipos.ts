@@ -36,18 +36,47 @@ export interface EgresoFila {
   orden_compra_id?: string | null;
 }
 
-export const CATEGORIAS_EGRESO: { id: string; label: string }[] = [
-  { id: 'repuestos', label: 'Repuestos' },
-  { id: 'insumos', label: 'Insumos' },
-  { id: 'servicios', label: 'Servicios (luz, agua…)' },
-  { id: 'nomina', label: 'Nómina / personal' },
-  { id: 'herramientas', label: 'Herramientas' },
-  { id: 'local', label: 'Alquiler / local' },
-  { id: 'otro', label: 'Otro gasto' },
+/**
+ * Las categorías de gasto, en dos grupos que no se pueden mezclar.
+ *
+ *   · Costos de los carros: lo que se gasta en un trabajo concreto —la pieza,
+ *     el insumo, el lavado o la rectificación que se manda a hacer fuera—. Se
+ *     descuenta de lo que se ganó con ESE carro.
+ *   · Gastos del taller: lo que cuesta tener el taller abierto —luz, agua,
+ *     alquiler, nómina, herramientas—. No es de ningún carro.
+ *
+ * Antes un lavado mandado a hacer para un carro caía en «Servicios (luz,
+ * agua…)», y el reporte sumaba la luz del mes con los trabajos de terceros.
+ */
+export type GrupoEgreso = 'carros' | 'taller';
+
+export const CATEGORIAS_EGRESO: { id: string; label: string; grupo: GrupoEgreso }[] = [
+  { id: 'repuestos', label: 'Repuestos', grupo: 'carros' },
+  { id: 'insumos', label: 'Insumos (aceites, grasas, silicón…)', grupo: 'carros' },
+  { id: 'trabajos_terceros', label: 'Trabajos de terceros (lavado, torno, rectificación…)', grupo: 'carros' },
+  { id: 'servicios', label: 'Servicios públicos (luz, agua, internet, teléfono)', grupo: 'taller' },
+  { id: 'local', label: 'Alquiler y mantenimiento del local', grupo: 'taller' },
+  { id: 'nomina', label: 'Nómina / personal', grupo: 'taller' },
+  { id: 'herramientas', label: 'Herramientas y equipos', grupo: 'taller' },
+  { id: 'transporte', label: 'Transporte (gasolina, fletes, motorizado)', grupo: 'taller' },
+  { id: 'impuestos', label: 'Impuestos y permisos', grupo: 'taller' },
+  { id: 'otro', label: 'Otro gasto', grupo: 'taller' },
 ];
 
+/** El grupo de un gasto: si va contra un carro o es del taller. */
+export function grupoDe(e: { categoria?: string | null; placa?: string | null; vehiculo_id?: string | null }): GrupoEgreso {
+  const cat = CATEGORIAS_EGRESO.find(c => c.id === e.categoria);
+  // Manda la categoría. Solo un gasto «otro» (o sin categoría) con placa se
+  // entiende como costo de ese carro.
+  if (cat && cat.id !== 'otro') return cat.grupo;
+  return e.placa || e.vehiculo_id ? 'carros' : 'taller';
+}
+
+export { categoriaSugerida } from '@/lib/egresos/categoria';
+
 export const etiquetaCategoria = (id?: string | null) =>
-  CATEGORIAS_EGRESO.find(c => c.id === id)?.label || (id ? id.charAt(0).toUpperCase() + id.slice(1) : 'Sin categoría');
+  CATEGORIAS_EGRESO.find(c => c.id === id)?.label.replace(/\s*\(.*\)$/, '')
+  || (id ? id.charAt(0).toUpperCase() + id.slice(1).replace(/_/g, ' ') : 'Sin categoría');
 
 export const ORIGENES: Record<string, string> = {
   ficha_vehiculo: 'Ficha del vehículo',

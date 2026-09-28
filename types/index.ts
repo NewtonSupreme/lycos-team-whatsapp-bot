@@ -884,6 +884,9 @@ export interface EmployeeEarnings {
   desglose_monedas: Record<string, number>;
   jobs: JobAssignment[];
   adelantos: PayrollAdvance[];
+  /** Trabajos de órdenes que siguen abiertas: se pagan al entregarse el carro. */
+  jobs_en_curso?: JobAssignment[];
+  en_curso_usd?: number;
   liquidado: boolean;
 }
 

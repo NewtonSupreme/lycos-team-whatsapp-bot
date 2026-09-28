@@ -3,6 +3,7 @@ import { authorize } from '@/lib/auth-server';
 import { getPayrollService } from '@/lib/payroll/service';
 import { resolveRol, getRoleMeta } from '@/types';
 import { logActivityServer } from '@/lib/activity-server';
+import { contextoDeServicio, manoObraDeTrabajo, type ContextoServicio } from '@/lib/nomina/servicio-nomina';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,6 +70,29 @@ export async function POST(req: NextRequest) {
     if (it.ingreso_total == null) {
       return NextResponse.json({ error: 'Falta el ingreso_total del trabajo.' }, { status: 400 });
     }
+  }
+
+  // Los trabajos de una orden se ajustan a la orden: la mano de obra sin el
+  // costo de las piezas del taller, el día en que se entrega el carro, y un
+  // tope —nada puede valer más que la orden entera—.
+  const contextos = new Map<string, ContextoServicio>();
+  for (const it of items) {
+    if ((it.referencia_tabla ?? 'manual') !== 'servicios' || !it.referencia_id) continue;
+    let ctx = contextos.get(it.referencia_id);
+    if (!ctx) { ctx = await contextoDeServicio(auth.db, it.referencia_id); contextos.set(it.referencia_id, ctx); }
+    if (!ctx.existe) continue;
+    if (ctx.cancelada) {
+      return NextResponse.json({ error: 'La orden está cancelada: no genera comisiones.' }, { status: 400 });
+    }
+    const ingreso = Number(it.ingreso_total) || 0;
+    if (ingreso > ctx.topeUSD) {
+      return NextResponse.json({
+        error: `El trabajo «${it.descripcion || 'sin descripción'}» vale $${ingreso.toFixed(2)} y la orden entera `
+          + `$${(ctx.topeUSD - 1).toFixed(2)}. Revisa el monto: puede ser un teléfono o una cédula leída como precio.`,
+      }, { status: 400 });
+    }
+    it.mano_obra = manoObraDeTrabajo(ctx, { descripcion: it.descripcion, ingreso_total: ingreso, mano_obra: it.mano_obra });
+    if (ctx.fechaTrabajo) it.fecha = ctx.fechaTrabajo;
   }
 
   const svc = getPayrollService(auth.db);

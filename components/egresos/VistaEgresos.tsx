@@ -10,8 +10,8 @@ import LogoBanco from '@/components/pagos/LogoBanco';
 import { BANK_METHODS, binToUSD, emptyBins, type BankBin } from '@/lib/reporte/ventas-mapping';
 import { montoConMoneda, nombreDeLinea, resumenCorto } from '@/lib/pagos/desglose';
 import {
-  CATEGORIAS_EGRESO, ORIGENES, conceptoDe, cuentasDe, debeDe, etiquetaCategoria, lineasDeEgreso,
-  pagadoDe, type EgresoFila,
+  CATEGORIAS_EGRESO, ORIGENES, conceptoDe, cuentasDe, debeDe, etiquetaCategoria, grupoDe, lineasDeEgreso,
+  pagadoDe, type EgresoFila, type GrupoEgreso,
 } from '@/components/egresos/tipos';
 
 /**
@@ -58,6 +58,8 @@ export default function VistaEgresos({
   const [texto, setTexto] = useState('');
   const [categoria, setCategoria] = useState<string>('todas');
   const [estado, setEstado] = useState<FiltroEstado>('todos');
+  // Costos de los carros o gastos del taller: no se leen igual y no se suman juntos.
+  const [grupo, setGrupo] = useState<GrupoEgreso | 'todos'>('todos');
 
   const resumen = useMemo(() => {
     const total = egresos.reduce((s, e) => s + (Number(e.total_egresos) || 0), 0);
@@ -88,13 +90,27 @@ export default function VistaEgresos({
       porCategoria.set(e.categoria || 'otro', (porCategoria.get(e.categoria || 'otro') || 0) + (Number(e.total_egresos) || 0));
     }
     const categorias = [...porCategoria.entries()].sort((a, b) => b[1] - a[1]);
+    const enGrupo = (g: GrupoEgreso) => egresos.filter(e => grupoDe(e) === g)
+      .reduce((s, e) => s + (Number(e.total_egresos) || 0), 0);
+    const carros = enGrupo('carros');
+    const taller = enGrupo('taller');
+    // Las categorías de cada grupo, con lo que suman.
+    const catGrupo = (g: GrupoEgreso) => {
+      const m = new Map<string, number>();
+      for (const e of egresos.filter(x => grupoDe(x) === g)) {
+        const k = e.categoria || 'otro';
+        m.set(k, (m.get(k) || 0) + (Number(e.total_egresos) || 0));
+      }
+      return [...m.entries()].sort((a, b) => b[1] - a[1]);
+    };
 
-    return { total, pagado, debe, huecos, cuentas, categorias };
+    return { total, pagado, debe, huecos, cuentas, categorias, carros, taller, catCarros: catGrupo('carros'), catTaller: catGrupo('taller') };
   }, [egresos]);
 
   const filtrados = useMemo(() => {
     const q = texto.trim().toLowerCase();
     return egresos.filter(e => {
+      if (grupo !== 'todos' && grupoDe(e) !== grupo) return false;
       if (categoria !== 'todas' && (e.categoria || 'otro') !== categoria) return false;
       if (estado === 'pagados' && debeDe(e) > 0) return false;
       if (estado === 'deuda' && debeDe(e) <= 0) return false;
@@ -103,7 +119,7 @@ export default function VistaEgresos({
       return [conceptoDe(e), e.proveedor, e.cliente, e.placa, e.vehiculo_info, e.cliente_nombre, e.notas]
         .some(v => String(v || '').toLowerCase().includes(q));
     });
-  }, [egresos, texto, categoria, estado]);
+  }, [egresos, texto, categoria, estado, grupo]);
 
   const totalFiltrado = filtrados.reduce((s, e) => s + (Number(e.total_egresos) || 0), 0);
   const maxCuenta = Math.max(1, ...resumen.cuentas.map(c => c.usd));
@@ -123,8 +139,8 @@ export default function VistaEgresos({
       {/* Cabecera */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-[17px] font-extrabold text-[#16181d]">Egresos</h2>
-          <p className="text-[12px] text-[#8a909c]">{periodo} · {egresos.length} gastos registrados</p>
+          <h2 className="text-[17px] font-extrabold text-foreground">Egresos</h2>
+          <p className="text-[12px] text-muted-foreground">{periodo} · {egresos.length} gastos registrados</p>
         </div>
         <div className="flex gap-2">
           <button onClick={onEscanear} className="flex h-[38px] items-center gap-1.5 rounded-lg border border-[#e2e5ea] bg-white px-3 text-[12.5px] font-medium text-[#3d4350] hover:bg-[#f6f7f9]">
@@ -139,7 +155,7 @@ export default function VistaEgresos({
       {/* Cifras del período */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Cifra titulo="Gastado en el período" valor={usd(resumen.total)} tono="rojo"
-          nota={`${egresos.length} ${egresos.length === 1 ? 'gasto' : 'gastos'}`} />
+          nota={`Carros ${usd(resumen.carros)} · Taller ${usd(resumen.taller)}`} />
         <Cifra titulo="Salió de caja" valor={usd(resumen.pagado)} tono="verde"
           nota="Lo pagado de verdad" />
         <Cifra titulo="Se les debe a proveedores" valor={usd(resumen.debe)} tono="ambar"
@@ -190,31 +206,56 @@ export default function VistaEgresos({
           {resumen.categorias.length === 0 ? (
             <p className="rounded-lg bg-[#fafbfc] px-3 py-4 text-center text-[12px] text-[#8a909c]">Sin gastos en el período.</p>
           ) : (
-            <ul className="space-y-1.5">
-              {resumen.categorias.map(([cat, monto]) => (
-                <li key={cat}>
+            <div className="space-y-3">
+              {([
+                ['carros', 'Costos de los carros', 'Piezas, insumos y trabajos de terceros de cada vehículo', resumen.carros, resumen.catCarros],
+                ['taller', 'Gastos del taller', 'Luz, agua, alquiler, nómina, herramientas, transporte', resumen.taller, resumen.catTaller],
+              ] as const).map(([g, titulo, ayuda, suma, cats]) => (
+                <div key={g}>
                   <button
-                    onClick={() => setCategoria(categoria === cat ? 'todas' : cat)}
-                    aria-pressed={categoria === cat}
-                    className={cn(
-                      'w-full rounded-lg px-2 py-1.5 text-left transition-colors',
-                      categoria === cat ? 'bg-[#fff4ec]' : 'hover:bg-[#fafbfc]',
-                    )}
+                    type="button"
+                    onClick={() => { setGrupo(grupo === g ? 'todos' : g); setCategoria('todas'); }}
+                    aria-pressed={grupo === g}
+                    className={cn('mb-1 flex w-full items-baseline justify-between rounded-md px-2 py-1 text-left',
+                      grupo === g ? 'bg-[#fff4ec]' : 'hover:bg-[#fafbfc]')}
                   >
-                    <span className="flex items-center justify-between text-[12.5px]">
-                      <span className="font-medium text-[#16181d]">{etiquetaCategoria(cat)}</span>
-                      <span className="num font-bold text-[#16181d]">
-                        {usd(monto)}
-                        <span className="ml-1.5 font-normal text-[#8a909c]">{Math.round((monto / (resumen.total || 1)) * 100)}%</span>
-                      </span>
+                    <span>
+                      <span className="text-[12px] font-bold text-[#16181d]">{titulo}</span>
+                      <span className="ml-1.5 text-[10.5px] text-[#9ba1ab]">{ayuda}</span>
                     </span>
-                    <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-[#f2f3f5]">
-                      <span className="block h-full rounded-full bg-[#dc2626]/70" style={{ width: `${Math.max(3, (monto / maxCategoria) * 100)}%` }} />
-                    </span>
+                    <span className="num text-[12.5px] font-extrabold text-[#16181d]">{usd(suma)}</span>
                   </button>
-                </li>
+                  {cats.length === 0 ? (
+                    <p className="px-2 text-[11px] text-[#9ba1ab]">Nada en el período.</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {cats.map(([cat, monto]) => (
+                        <li key={cat}>
+                          <button
+                            onClick={() => setCategoria(categoria === cat ? 'todas' : cat)}
+                            aria-pressed={categoria === cat}
+                            className={cn('w-full rounded-lg px-2 py-1 text-left transition-colors',
+                              categoria === cat ? 'bg-[#fff4ec]' : 'hover:bg-[#fafbfc]')}
+                          >
+                            <span className="flex items-center justify-between text-[12px]">
+                              <span className="text-[#3d4350]">{etiquetaCategoria(cat)}</span>
+                              <span className="num font-semibold text-[#16181d]">
+                                {usd(monto)}
+                                <span className="ml-1.5 font-normal text-[#8a909c]">{Math.round((monto / (resumen.total || 1)) * 100)}%</span>
+                              </span>
+                            </span>
+                            <span className="mt-0.5 block h-1.5 overflow-hidden rounded-full bg-[#f2f3f5]">
+                              <span className={cn('block h-full rounded-full', g === 'carros' ? 'bg-[#f97316]/70' : 'bg-[#2563eb]/60')}
+                                style={{ width: `${Math.max(3, (monto / maxCategoria) * 100)}%` }} />
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               ))}
-            </ul>
+            </div>
           )}
         </section>
       </div>
@@ -231,13 +272,24 @@ export default function VistaEgresos({
           />
         </label>
         <select
+          value={grupo}
+          onChange={e => { setGrupo(e.target.value as GrupoEgreso | 'todos'); setCategoria('todas'); }}
+          aria-label="Grupo"
+          className="h-[36px] rounded-lg border border-[#e2e5ea] bg-white px-2 text-[12.5px] text-[#3d4350]"
+        >
+          <option value="todos">Carros y taller</option>
+          <option value="carros">Costos de los carros</option>
+          <option value="taller">Gastos del taller</option>
+        </select>
+        <select
           value={categoria}
           onChange={e => setCategoria(e.target.value)}
           aria-label="Categoría"
           className="h-[36px] rounded-lg border border-[#e2e5ea] bg-white px-2 text-[12.5px] text-[#3d4350]"
         >
           <option value="todas">Todas las categorías</option>
-          {CATEGORIAS_EGRESO.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+          {CATEGORIAS_EGRESO.filter(c => grupo === 'todos' || c.grupo === grupo)
+            .map(c => <option key={c.id} value={c.id}>{etiquetaCategoria(c.id)}</option>)}
         </select>
         <div className="flex rounded-lg bg-[#f2f3f5] p-0.5" role="tablist">
           {([['todos', 'Todos'], ['pagados', 'Pagados'], ['deuda', 'Se deben'], ['sin_cuenta', 'Sin cuenta']] as const).map(([id, label]) => (

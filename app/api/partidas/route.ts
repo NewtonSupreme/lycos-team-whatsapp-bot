@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authorize } from '@/lib/auth-server';
 import { logActivityServer } from '@/lib/activity-server';
+import { recalcularTrabajosDeServicio } from '@/lib/nomina/servicio-nomina';
 import { claveRenglon, sincronizarDesdePartida, type Partida } from '@/lib/ficha/sincronizar';
 
 export const dynamic = 'force-dynamic';
@@ -109,6 +110,13 @@ export async function POST(req: NextRequest) {
   // la orden y el gasto de la empresa. Nunca tumba el alta: lo que falle sale
   // como aviso, porque el renglón ya está y callarlo es peor.
   const sinc = await sincronizarDesdePartida(auth.db, data as Partida, auth.user!.nombre);
+
+  // La mano de obra de la orden depende del costo de sus piezas: si cambió, las
+  // comisiones pendientes se recalculan. Un fallo aquí nunca tumba el renglón.
+  if (data?.servicio_id) {
+    try { await recalcularTrabajosDeServicio(auth.db, data.servicio_id, auth.user!.nombre); }
+    catch (e) { console.error('No se pudo recalcular la nómina de la orden:', e); }
+  }
 
   await logActivityServer(auth.db, {
     usuario: auth.user!.nombre, modulo: 'vehiculos', accion: 'Ficha · renglón',

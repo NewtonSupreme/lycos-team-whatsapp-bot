@@ -29,6 +29,7 @@ export type TipoHallazgo =
   | 'estado_incoherente'
   | 'deuda_fuera_de_cobranza'
   | 'pagada_sin_registro'
+  | 'saldo_mayor_que_total'
   | 'iva_sin_marcar'
   | 'orden_distinta'
   | 'egreso_no_cuadra'
@@ -171,6 +172,25 @@ export function revisarVenta(v: Record<string, unknown>, tasaDelDia = 0): Hallaz
   }
 
   const saldoV = r2(v.saldo_pendiente);
+
+  // ── 0. Debe más de lo que costó ────────────────────────────────────────
+  // Pasa cuando un abono se registró como si fuera el total de la venta: el
+  // trabajo de $1.400 con abono del 50% quedó como venta de $700 debiendo
+  // $1.400. No hay forma segura de saber cuál de los dos números es el bueno.
+  {
+    const totalCI = r2(r2(v.total_ingresos) * (v.con_iva ? 1.16 : 1));
+    if (saldoV > totalCI + margen(totalCI)) {
+      const mNota = /Total:\s*\$\s*([\d.,]+)/i.exec(String(v.notas || ''));
+      out.push({
+        tipo: 'saldo_mayor_que_total', gravedad: 'alta',
+        detalle: `La venta es de ${usd(totalCI)} y debe ${usd(saldoV)}.`
+          + (mNota ? ` La nota dice que el trabajo era de $${mNota[1]}: probablemente se registró el abono como si fuera el total.` : '')
+          + ' Corrígela desde la venta: el total, lo abonado y lo que queda.',
+        diferenciaUSD: r2(saldoV - totalCI),
+      });
+      return out;
+    }
+  }
   const porCobrar = r2(v.por_cobrar);
   const totalSinIva = r2(v.total_ingresos);
   const totalConIva = r2(totalSinIva * (v.con_iva ? 1.16 : 1));
@@ -356,6 +376,7 @@ export const TITULOS: Record<TipoHallazgo, string> = {
   estado_incoherente: 'Estado que no cuadra',
   deuda_fuera_de_cobranza: 'Deuda que nadie está cobrando',
   pagada_sin_registro: 'Dada por pagada sin registrar el cobro',
+  saldo_mayor_que_total: 'Debe más de lo que costó',
   iva_sin_marcar: 'IVA cobrado sin marcar',
   orden_distinta: 'La orden dice otro pago',
   egreso_no_cuadra: 'Gasto que no cuadra',

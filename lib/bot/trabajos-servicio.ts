@@ -91,7 +91,15 @@ export function limpiarDescripcionTrabajo(texto: string): string {
  * palabra de dinero o de mano de obra.
  */
 const ANTES_DE_PRECIO =
-  /(?:mano\s+de\s+(?:obra|trabajo)|mano\s+de\s+obra\s+de|costo|precio|monto|cobr(?:o|a|ar)|vale|sale\s+en|queda\s+en|son)\b[^0-9]{0,24}?(\d{1,7}(?:[.,]\d{1,2})?)/i;
+  // La palabra tiene que ser una palabra entera: «son» se encontraba dentro de
+  // «NELSON» y el teléfono que venía detrás («TELÉFONO 4123295511») acabó como
+  // un renglón de $4.123.295. Entre la palabra y el número no puede haber otro
+  // dato con número propio (teléfono, cédula, año), y el número no puede seguir
+  // con más cifras: eso es un teléfono cortado, no un precio.
+  /(?:^|[^a-záéíóúñ])(?:mano\s+de\s+(?:obra|trabajo)|mano\s+de\s+obra\s+de|costo|precio|monto|cobr(?:o|a|ar)|vale|sale\s+en|queda\s+en|son)\b(?:(?!tel|c[eé]dula|\bci\b|\bid\b|a[nñ]o)[^0-9]){0,24}?(\d{1,6}(?:[.,]\d{1,2})?)(?!\d)/i;
+
+/** Ningún trabajo del taller se dicta por más de esto: lo demás es otro número. */
+const PRECIO_MAXIMO = 20000;
 
 /**
  * Precio dictado dentro de la frase.
@@ -105,7 +113,7 @@ export function precioDeTexto(texto: string): number | null {
   const aNumero = (bruto: string | undefined): number | null => {
     if (bruto == null) return null;
     const n = parseFloat(String(bruto).replace(',', '.'));
-    return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
+    return Number.isFinite(n) && n > 0 && n <= PRECIO_MAXIMO ? Math.round(n * 100) / 100 : null;
   };
 
   // Primero lo que lleva símbolo o moneda: es inequívoco.

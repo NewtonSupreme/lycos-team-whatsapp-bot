@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authorize } from '@/lib/auth-server';
 import { logActivityServer } from '@/lib/activity-server';
+import { recalcularTrabajosDeServicio } from '@/lib/nomina/servicio-nomina';
 import { normalizarPartida } from '../route';
 import {
   claveRenglon, quitarRenglonDeOrden, sincronizarDesdePartida, type Partida,
@@ -39,6 +40,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const sinc = await sincronizarDesdePartida(auth.db, data as Partida, auth.user!.nombre, {
     claveAnterior,
   });
+
+  // La mano de obra de la orden depende del costo de sus piezas: si cambió, las
+  // comisiones pendientes se recalculan. Un fallo aquí nunca tumba el renglón.
+  if (data?.servicio_id) {
+    try { await recalcularTrabajosDeServicio(auth.db, data.servicio_id, auth.user!.nombre); }
+    catch (e) { console.error('No se pudo recalcular la nómina de la orden:', e); }
+  }
 
   // La clave queda guardada para poder reencontrar el renglón la próxima vez
   // aunque alguien corrija el texto.
@@ -81,6 +89,11 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     );
     totalOrden = r.total;
     if (r.aviso) avisos.push(r.aviso);
+  }
+
+  if (previa?.servicio_id) {
+    try { await recalcularTrabajosDeServicio(auth.db, previa.servicio_id, auth.user!.nombre); }
+    catch (e) { console.error('No se pudo recalcular la nómina de la orden:', e); }
   }
 
   await logActivityServer(auth.db, {
