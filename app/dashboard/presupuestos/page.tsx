@@ -8,7 +8,7 @@ import {
   Check, RefreshCw, Save, FileText, Calendar, Wallet,
   Package, Wrench, MoreHorizontal, Download, ShoppingCart
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { supabase, todasLasFilas } from '@/lib/supabase';
 import { registrarFactura } from '@/lib/supabase';
 import {
   fetchPresupuestos, fetchPresupuesto, createPresupuesto,
@@ -114,8 +114,9 @@ export default function PresupuestosPage() {
     setLoading(true);
     try {
       const [cliRes, vehRes, invRes] = await Promise.all([
-        withSedeFilter(supabase.from('clientes')).select('*').order('nombre'),
-        withSedeFilter(supabase.from('vehiculos')).select('*, clientes(nombre, apellido)').order('created_at', { ascending: false }),
+        // Todos: clientes pasa de 1.000 y la base corta ahí sin avisar.
+        todasLasFilas(() => withSedeFilter(supabase!.from('clientes')).select('*').order('nombre').order('id')).then(data => ({ data })),
+        todasLasFilas(() => withSedeFilter(supabase!.from('vehiculos')).select('*, clientes(nombre, apellido)').order('created_at', { ascending: false }).order('id')).then(data => ({ data })),
         withSedeFilter(supabase.from('inventario')).select('*').eq('activo', true).order('nombre'),
       ]);
       const presData = await fetchPresupuestos(100);

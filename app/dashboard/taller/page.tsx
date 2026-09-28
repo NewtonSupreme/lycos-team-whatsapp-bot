@@ -273,14 +273,19 @@ export default function TallerPage() {
   const fetchTrabajos = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
-    const { data, error } = await withSedeFilter(supabase.from('servicios'))
-      .select('id, descripcion, tipo, tipo_personalizado, estado, costo_estimado, nombre_cliente, vehiculo_info, placa, telefono, cliente_id, vehiculo_id, seguimiento, created_at, registrado_por, sede_id')
-      .order('created_at', { ascending: false })
-      .limit(100);
-
-    if (!error && data) {
-      setServicios(data as unknown as ServicioRow[]);
+    // Todas, por tandas: con un tope de 100 los trabajos de meses anteriores
+    // no aparecían y parecía que se habían perdido.
+    const todas: ServicioRow[] = [];
+    for (let desde = 0; ; desde += 1000) {
+      const { data, error } = await withSedeFilter(supabase.from('servicios'))
+        .select('id, descripcion, tipo, tipo_personalizado, estado, costo_estimado, nombre_cliente, vehiculo_info, placa, telefono, cliente_id, vehiculo_id, seguimiento, created_at, registrado_por, sede_id')
+        .order('created_at', { ascending: false })
+        .range(desde, desde + 999);
+      if (error || !data) break;
+      todas.push(...(data as unknown as ServicioRow[]));
+      if (data.length < 1000) break;
     }
+    setServicios(todas);
     setLoading(false);
   }, []);
 

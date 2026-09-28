@@ -1,5 +1,24 @@
 import { createClient } from '@supabase/supabase-js'; // test
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
+
+/**
+ * Todas las filas de una consulta, por tandas de 1.000.
+ *
+ * La base devuelve como mucho 1.000 filas por consulta y lo demás lo calla:
+ * con 1.400 clientes, los 400 más viejos no aparecían en ninguna lista.
+ * `construir` arma la consulta de nuevo en cada tanda (con su orden).
+ */
+export async function todasLasFilas(construir: () => any): Promise<any[]> {
+  const TANDA = 1000;
+  const filas: any[] = [];
+  for (let desde = 0; ; desde += TANDA) {
+    const { data, error } = await construir().range(desde, desde + TANDA - 1);
+    if (error) throw error;
+    filas.push(...(data || []));
+    if (!data || data.length < TANDA) break;
+  }
+  return filas;
+}
 import { Vehiculo, InventarioItem } from '@/types';
 import { getLocalISODate } from '@/lib/utils';
 
@@ -16,11 +35,10 @@ export const isSupabaseConfigured = () => !!supabaseUrl && !!supabaseAnonKey;
 // ─── Clientes ──────────────────────────────────────────────────────────────
 export async function fetchClientes() {
   if (!supabase) return null;
-  const { data, error } = await withSedeFilter(supabase.from('clientes'))
+  return todasLasFilas(() => withSedeFilter(supabase!.from('clientes'))
     .select('*, vehiculos(*)')
-    .order('created_at', { ascending: false });
-  if (error) throw error;
-  return data;
+    .order('created_at', { ascending: false })
+    .order('id'));
 }
 
 export async function createCliente(cliente: {
@@ -68,11 +86,10 @@ export async function syncClientData(clientId: string, nombre: string, apellido:
 // ─── Vehículos ─────────────────────────────────────────────────────────────
 export async function fetchVehiculos() {
   if (!supabase) return null;
-  const { data, error } = await withSedeFilter(supabase.from('vehiculos'))
+  return todasLasFilas(() => withSedeFilter(supabase!.from('vehiculos'))
     .select('*, clientes(nombre, apellido, telefono)')
-    .order('created_at', { ascending: false });
-  if (error) throw error;
-  return data;
+    .order('created_at', { ascending: false })
+    .order('id'));
 }
 
 export async function createVehiculo(vehiculo: Partial<Vehiculo>) {
@@ -213,11 +230,10 @@ export async function transferVehiculo(
 // ─── Servicios ─────────────────────────────────────────────────────────────
 export async function fetchServicios() {
   if (!supabase) return null;
-  const { data, error } = await withSedeFilter(supabase.from('servicios'))
+  return todasLasFilas(() => withSedeFilter(supabase!.from('servicios'))
     .select('*, registrado_por, vehiculos(marca, modelo, placa, clientes(nombre, apellido))')
-    .order('created_at', { ascending: false });
-  if (error) throw error;
-  return data;
+    .order('created_at', { ascending: false })
+    .order('id'));
 }
 
 export async function updateServicioEstado(id: string, estado: string) {

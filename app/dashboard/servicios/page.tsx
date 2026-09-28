@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import GastosVehiculoModal from '@/components/egresos/GastosVehiculoModal';
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase, registrarFactura, createPresupuesto, generateNumeroPresupuesto, syncClientData, transferVehiculo, autoRegisterSaleFromService } from '@/lib/supabase';
+import { supabase, todasLasFilas, registrarFactura, createPresupuesto, generateNumeroPresupuesto, syncClientData, transferVehiculo, autoRegisterSaleFromService } from '@/lib/supabase';
 import { logActivity } from '@/lib/activity';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from "@/lib/store/useSedeStore";
@@ -262,6 +262,8 @@ export default function ServiciosPage() {
   const [viewMode, setViewMode] = useState<'kanban' | 'list'>('kanban');
   const [dateFilter, setDateFilter] = useState<'hoy' | 'semana' | 'mes' | 'todos'>('hoy');
   const [specificDateFilter, setSpecificDateFilter] = useState('');
+  /** Un mes concreto (AAAA-MM): para ver lo de meses anteriores sin recorrer «Todo». */
+  const [mesFilter, setMesFilter] = useState('');
   
   // Modals
   const [showNewModal, setShowNewModal] = useState(false);
@@ -309,20 +311,37 @@ export default function ServiciosPage() {
         .eq('activo', true);
       setInventory(invData || []);
 
-      const { data, error } = await withSedeFilter(supabase.from('servicios'))
-        .select(`
+      /*
+       * TODAS las órdenes, por tandas de 1.000.
+       *
+       * Se cargaban solo las 200 más recientes. Con 639 órdenes, todo lo
+       * anterior a agosto no llegaba nunca a la pantalla: ni con «Todo», ni
+       * buscando, ni eligiendo una fecha. Parecía que la migración de la base
+       * se hubiera comido los meses anteriores, pero los datos estaban; era
+       * este tope. La base devuelve como mucho 1.000 filas por consulta, así
+       * que se pide por páginas hasta que no quede nada.
+       */
+      const COLUMNAS = `
           id, fecha, hora, tipo, tipo_personalizado, descripcion, estado,
           nombre_cliente, vehiculo_info, placa, telefono, created_at,
           cliente_id, vehiculo_id, sede_id, seguimiento, notas, items,
           costo_estimado, costo_final, registrado_por, fecha_inicio, fecha_fin,
           categoria, metodos_pago, con_iva, tasa_cambio, total_pagado, cashea_pct,
           vehiculos (marca, modelo, placa, anio, clientes (nombre, apellido, telefono, cedula))
-        `)
-        .order('fecha', { ascending: false })
-        .limit(200);
-
-      if (error) console.error('Error:', error.message);
-      setCitas((data as unknown as CitaServicio[]) || []);
+        `;
+      const TANDA = 1000;
+      const todas: CitaServicio[] = [];
+      for (let desde = 0; ; desde += TANDA) {
+        const { data, error } = await withSedeFilter(supabase.from('servicios'))
+          .select(COLUMNAS)
+          .order('fecha', { ascending: false })
+          .order('created_at', { ascending: false })
+          .range(desde, desde + TANDA - 1);
+        if (error) { console.error('Error:', error.message); break; }
+        todas.push(...((data as unknown as CitaServicio[]) || []));
+        if (!data || data.length < TANDA) break;
+      }
+      setCitas(todas);
     } catch (e) { console.error(e); }
     setLoading(false);
   }, []);
@@ -763,6 +782,18 @@ export default function ServiciosPage() {
     ESTADOS_ACTIVOS.includes(String(c.estado || '').toLowerCase())
   ).length;
 
+  const mesesDisponibles = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of citas) {
+      const k = String(c.fecha || c.created_at || '').slice(0, 7);
+      if (k) m.set(k, (m.get(k) || 0) + 1);
+    }
+    return [...m.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([valor, n]) => ({
+      valor, n,
+      label: new Date(`${valor}-15T12:00:00`).toLocaleDateString('es-VE', { month: 'long', year: 'numeric' }),
+    }));
+  }, [citas]);
+
   const filtered = citas.filter(c => {
     // 1. Filtro de Texto
     const cliente = getDisplayName(c);
@@ -787,6 +818,9 @@ export default function ServiciosPage() {
 
     if (specificDateFilter) {
       return citaIsoDate === specificDateFilter;
+    }
+    if (mesFilter) {
+      return citaIsoDate.slice(0, 7) === mesFilter;
     }
 
     if (dateFilter === 'todos') return true;
@@ -931,10 +965,11 @@ export default function ServiciosPage() {
                   onClick={() => {
                     setDateFilter(f.id as any);
                     setSpecificDateFilter('');
+                    setMesFilter('');
                   }}
                   className={cn(
                     "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
-                    dateFilter === f.id && !specificDateFilter ? "bg-primary/20 text-primary shadow-inner" : "text-muted-foreground hover:text-foreground"
+                    dateFilter === f.id && !specificDateFilter && !mesFilter ? "bg-primary/20 text-primary shadow-inner" : "text-muted-foreground hover:text-foreground"
                   )}
                 >
                   {f.label}
@@ -942,13 +977,32 @@ export default function ServiciosPage() {
               ))}
             </div>
 
+            {/* Un mes entero: mayo, junio, julio… */}
+            <select
+              value={mesFilter}
+              onChange={e => {
+                setMesFilter(e.target.value);
+                if (e.target.value) { setSpecificDateFilter(''); setDateFilter('todos'); }
+              }}
+              title="Ver un mes completo"
+              className={cn(
+                "px-3 py-2 rounded-xl border text-xs font-bold transition-all focus:outline-none focus:ring-2 focus:ring-primary/40",
+                mesFilter ? "bg-primary/10 border-primary/30 text-primary" : "bg-white/5 border-white/10 text-muted-foreground hover:bg-white/10"
+              )}
+            >
+              <option value="">Mes…</option>
+              {mesesDisponibles.map(m => (
+                <option key={m.valor} value={m.valor}>{m.label} ({m.n})</option>
+              ))}
+            </select>
+
             <div className="relative flex items-center">
               <input
                 type="date"
                 value={specificDateFilter}
                 onChange={(e) => {
                   setSpecificDateFilter(e.target.value);
-                  if (e.target.value) setDateFilter('todos');
+                  if (e.target.value) { setDateFilter('todos'); setMesFilter(''); }
                 }}
                 className={cn(
                   "pl-3 pr-8 py-2 rounded-xl border text-xs font-bold transition-all focus:outline-none focus:ring-2 focus:ring-primary/40",
@@ -1811,8 +1865,10 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
     const fetchData = async () => {
       if (!supabase) return;
       // Fetch Clients
-      const { data: clients } = await withSedeFilter(supabase.from('clientes'))
-        .select('id, nombre, apellido, telefono, cedula, vehiculos(id, marca, modelo, placa, anio)');
+      // Todos: son más de 1.000 y la base corta ahí sin avisar.
+      const clients = await todasLasFilas(() => withSedeFilter(supabase!.from('clientes'))
+        .select('id, nombre, apellido, telefono, cedula, vehiculos(id, marca, modelo, placa, anio)')
+        .order('id')).catch(() => null);
       if (clients) setAllClientes(clients);
 
       // Fetch Staff from Users (Filtered by Sede automatically by withSedeFilter)

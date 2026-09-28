@@ -303,7 +303,8 @@ export default function VentasPage() {
         .select('*')
         .eq('estado', 'pendiente')
         .order('created_at', { ascending: false })
-        .limit(50);
+        // Con 50 se cortaba la lista: ya hay 47 ventas pendientes.
+        .limit(1000);
       setVentasPendientes(pData || []);
       // El último cobro de cada una, para ver sin abrirla cuándo pagó por última vez.
       const idsPend = (pData || []).map((v: any) => v.id);
