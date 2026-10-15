@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { leerSesion } from '@/lib/session-token';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 
@@ -18,7 +19,7 @@ export async function POST(request: NextRequest) {
     if (!operatorName) {
       try {
         const cookieStore = await cookies();
-        const username = cookieStore.get('lycos_session')?.value;
+        const username = leerSesion(cookieStore.get('lycos_session')?.value);
         if (username) {
           const dbUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
           const dbKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';

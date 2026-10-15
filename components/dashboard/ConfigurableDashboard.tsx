@@ -35,7 +35,7 @@ export default function ConfigurableDashboard({ refreshKey = 0 }: { refreshKey?:
   const sedeId = currentSede?.id ?? null;
 
   const disponibles = useMemo(
-    () => WIDGETS.filter(w => !w.permKey || can(w.permKey)),
+    () => WIDGETS.filter(w => !w.permKey || can(w.permKey, w.permAccion ?? 'leer')),
     [can],
   );
 

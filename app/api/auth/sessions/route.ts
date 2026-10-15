@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { leerSesion } from '@/lib/session-token';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 
@@ -13,7 +14,7 @@ function getDb() {
 export async function GET() {
   try {
     const cookieStore = await cookies();
-    const username = cookieStore.get('lycos_session')?.value;
+    const username = leerSesion(cookieStore.get('lycos_session')?.value);
     if (!username) return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
 
     const db = getDb();
@@ -41,7 +42,7 @@ export async function GET() {
 export async function DELETE(request: Request) {
   try {
     const cookieStore = await cookies();
-    const username = cookieStore.get('lycos_session')?.value;
+    const username = leerSesion(cookieStore.get('lycos_session')?.value);
     if (username !== 'administrador') {
       return NextResponse.json({ error: 'Solo el administrador puede eliminar sesiones' }, { status: 403 });
     }

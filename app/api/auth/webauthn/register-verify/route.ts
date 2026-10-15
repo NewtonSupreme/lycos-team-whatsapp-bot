@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { leerSesion } from '@/lib/session-token';
 import { cookies } from 'next/headers';
 import { verifyRegistrationResponse, AuthenticatorTransportFuture } from '@simplewebauthn/server';
 import { createClient } from '@supabase/supabase-js';
@@ -17,7 +18,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const cookieStore = await cookies();
-    const username = cookieStore.get('lycos_session')?.value;
+    const username = leerSesion(cookieStore.get('lycos_session')?.value);
 
     if (!username) {
       return NextResponse.json({ error: 'No autorizado. Sesión no encontrada.' }, { status: 401 });

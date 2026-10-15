@@ -1,3 +1,4 @@
+import { authorize } from '@/lib/auth-server';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import {
@@ -5,6 +6,7 @@ import {
   BANK_METHODS, DEPT_LABELS, type Bins, type BankBin, type DeptKey,
 } from '@/lib/reporte/ventas-mapping';
 import { leerCasheaGuardado } from '@/lib/pagos/cashea';
+import { resumirEntradas } from '@/lib/reporte/entradas';
 import { getCategoria, inferirCategoria } from '@/lib/categorias';
 import { lineasDeMetodos, lineasDePago, montoConMoneda, resumenCorto } from '@/lib/pagos/desglose';
 import { mecanicoDeOrden, servicioDeNotas } from '@/lib/facturas/mecanico';
@@ -119,9 +121,12 @@ async function resolveTasaDelDia(db: any, fecha: string, ventasRows: any[]): Pro
 }
 
 export async function GET(req: NextRequest) {
+  const auth = await authorize('reportes', 'leer');
+  if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
   const { searchParams } = new URL(req.url);
   const fecha = searchParams.get('fecha') || new Date().toISOString().split('T')[0];
-  const sede = searchParams.get('sede') || '';
+  // Fuera de admin y dueño, cada quien ve solo su sede aunque pida otra.
+  const sede = auth.effectiveSede(searchParams.get('sede') || null) || '';
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -302,7 +307,10 @@ export async function GET(req: NextRequest) {
       { sistema: 'COMISIÓN PUNTO', cantidad: countIf(v => v.bancos.punto_banesco > 0 || v.bancos.punto_bancamiga > 0), monto: comisionPunto },
       { sistema: 'IMPUESTO', cantidad: countIf(v => v.iva > 0), monto: totalesVentas.iva },
     ];
-    const sistemaTotal = r2(sistema.reduce((s, x) => s + x.monto, 0));
+    // Cashea/BNC y cuentas por cobrar dicen CÓMO se pagó lo de los departamentos,
+    // no son venta aparte: se muestran, pero sumarlas contaba el dinero dos veces.
+    const NO_SUMAN = new Set(['CUENTAS X COBRAR', 'CASHEA / BNC']);
+    const sistemaTotal = r2(sistema.filter(x => !NO_SUMAN.has(x.sistema)).reduce((s, x) => s + x.monto, 0));
 
     // ── S4 · Forma de pago ──────────────────────────────────────
     const creditoTotal = r2(totalesVentas.porCobrar + totalesVentas.financiado);
@@ -322,8 +330,9 @@ export async function GET(req: NextRequest) {
     const caja = { inicial: totalesVentas.inicial, financiado: totalesVentas.financiado, total: r2(totalesVentas.inicial + totalesVentas.financiado) };
 
     // ── S7 · Detalle de método de pago (por banco) ──────────────
+    // Cada cuenta en SU moneda: «recibido» es lo que entró tal cual (Bs o $);
+    // los equivalentes van aparte. Antes los dólares salían en la columna «Bs».
     const metodoPago = BANK_METHODS
-      .filter(m => m.id !== 'cashea')
       .map(m => {
         const nativo = totBancos[m.id];
         const usd = binToUSD(m.id, nativo, tasa);
@@ -331,11 +340,13 @@ export async function GET(req: NextRequest) {
           metodo: m.short,
           moneda: m.moneda,
           cantidad: countIf(v => v.bancos[m.id] > 0),
+          recibido: nativo,
           montoBs: m.moneda === 'Bs' ? nativo : r2(usd * tasa),
           tasa,
           montoUsd: usd,
         };
-      });
+      })
+      .filter(m => m.cantidad > 0 || m.recibido > 0);
     const metodoPagoTotalUsd = r2(metodoPago.reduce((s, x) => s + x.montoUsd, 0));
 
     // ── S8 · KPIs (métricas manuales del día) ───────────────────
@@ -526,19 +537,36 @@ export async function GET(req: NextRequest) {
     // ── S12 · Resumen de bancos (entradas del día) ──────────────
     // Todo lo que entró a cada banco ese día: lo de las ventas del día más lo
     // cobrado de ventas anteriores. Lo de Cashea se liquida en el BNC.
-    const entro = (id: BankBin) => r2(totBancos[id] + totCobros[id]);
-    const usdDe = (ids: BankBin[]) => r2(ids.reduce((acc, id) => acc + binToUSD(id, entro(id), tasa), 0));
-    const bsDe = (ids: BankBin[]) => r2(ids.reduce((acc, id) => {
-      const meta = BANK_METHODS.find(m => m.id === id);
-      return acc + (meta?.moneda === 'Bs' ? entro(id) : entro(id) * tasa);
-    }, 0));
+    // Cada cobro con la tasa de su propio día; las ventas con la del reporte.
+    const entradas = resumirEntradas([
+      ...ventas.map(v => ({ bins: v.bancos, tasa })),
+      ...(abRaw || []).map((a: any) => ({
+        bins: Object.fromEntries(BANK_METHODS.map(m => [m.id, n(a.metodos_pago?.[m.id])])) as unknown as Bins,
+        tasa: n(a.tasa_cambio) || tasa,
+      })),
+    ], tasa);
+    const cta = (id: BankBin) => entradas.cuentas.find(c => c.id === id)!;
+    const fila = (banco: string, ids: BankBin[]) => {
+      const cs = ids.map(cta);
+      return {
+        banco, moneda: cs[0].moneda,
+        recibido: r2(cs.reduce((s2, c) => s2 + c.recibido, 0)),
+        bs: r2(cs.reduce((s2, c) => s2 + c.bs, 0)),
+        usd: r2(cs.reduce((s2, c) => s2 + c.usd, 0)),
+      };
+    };
+    // Bolívares y dólares nunca en la misma fila: el BNC va partido en lo que
+    // entró en Bs (pago móvil / transferencia) y lo de Cashea (en $).
     const bancos = [
-      { banco: 'BANESCO', bs: bsDe(['pago_movil_banesco', 'punto_banesco']), usd: usdDe(['pago_movil_banesco', 'punto_banesco']) },
-      { banco: 'BNC (incluye Cashea)', bs: bsDe(['bnc', 'cashea']), usd: usdDe(['bnc', 'cashea']) },
-      { banco: 'BANCA AMIGA', bs: bsDe(['punto_bancamiga']), usd: usdDe(['punto_bancamiga']) },
-      { banco: 'EXTERIOR', bs: bsDe(['pago_movil_exterior']), usd: usdDe(['pago_movil_exterior']) },
-      { banco: 'EFECTIVO BS', bs: bsDe(['efectivo_bs']), usd: usdDe(['efectivo_bs']) },
-      { banco: 'DIVISAS / CRIPTO', bs: bsDe(['dolares', 'zelle', 'binance']), usd: usdDe(['dolares', 'zelle', 'binance']) },
+      fila('BANESCO (PM / transf. / punto)', ['pago_movil_banesco', 'punto_banesco']),
+      fila('BNC (PM / transferencia)', ['bnc']),
+      fila('BNC · Cashea', ['cashea']),
+      fila('BANCA AMIGA', ['punto_bancamiga']),
+      fila('EXTERIOR', ['pago_movil_exterior']),
+      fila('EFECTIVO BS', ['efectivo_bs']),
+      fila('DIVISAS EFECTIVO', ['dolares']),
+      fila('ZELLE', ['zelle']),
+      fila('BINANCE', ['binance']),
     ];
 
     // ── S13 · Gastos del día ────────────────────────────────────
@@ -590,7 +618,7 @@ export async function GET(req: NextRequest) {
       taller,
       seguimiento,
       cobros, cobrosTotal,
-      bancos,
+      bancos, entradas,
       gastos, gastosTotal,
       // El servidor corre en UTC, asi que la hora se fija a Caracas: si no, el
       // pie de un reporte sacado a las 9 de la noche dice el dia siguiente.

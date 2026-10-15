@@ -58,7 +58,7 @@ const navItemsConfig: NavItem[] = [
 
   { href: '/dashboard/inventario', icon: Package, label: 'Inventario', badge: null, permKey: 'inventario', group: 'Inventario' },
   { href: '/dashboard/distribuidor', icon: Truck, label: 'Distribución', badge: null, permKey: 'distribuidor', group: 'Inventario' },
-  { href: '/dashboard/proveedores', icon: Truck, label: 'Proveedores', badge: null, permKey: 'vehiculos', group: 'Inventario' },
+  { href: '/dashboard/proveedores', icon: Truck, label: 'Proveedores', badge: null, permKey: 'reportes', group: 'Inventario' },
   { href: '/dashboard/inventario/papelera', icon: Trash2, label: 'Papelera', badge: null, permKey: 'papelera', group: 'Inventario' },
 
   { href: '/dashboard/nomina', icon: Banknote, label: 'Nómina', badge: null, permKey: 'nomina', group: 'Finanzas' },

@@ -537,14 +537,26 @@ function ResumenTab({
           ) : (
             <ul className="divide-y divide-border/40">
               {datos.cuentas.map(c => (
-                <li key={c.id} className="flex items-center gap-2 px-3.5 py-[9px]">
+                <li key={c.id} className={cn('flex items-center gap-2 px-3.5 py-[9px]', c.incluidaEn && 'pl-8 opacity-80')}>
                   {c.bin
                     ? <LogoBanco id={c.bin as BankBin} size={20} />
                     : <span className="flex h-5 w-5 items-center justify-center rounded bg-[#f1f5f9] text-[#64748b]">
                       <Wallet className="h-3 w-3" aria-hidden />
                     </span>}
-                  <span className="min-w-0 flex-1 truncate text-[12px] text-foreground/80">{c.nombre}</span>
-                  <span className="shrink-0 text-[12px] font-bold tabular-nums text-foreground">
+                  <span className="min-w-0 flex-1 text-[12px] text-foreground/80">
+                    <span className="block truncate">{c.nombre}</span>
+                    {/* BNC y Cashea son el mismo dinero: se desglosa, no se suma dos veces. */}
+                    {c.desglose && (c.desglose.casheaUsd > 0 || c.desglose.pmBs > 0) && (
+                      <span className="block truncate text-[10.5px] text-muted-foreground">
+                        PM/transf. Bs. {c.desglose.pmBs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {' + '}Cashea $ {c.desglose.casheaUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    )}
+                    {c.incluidaEn && (
+                      <span className="block truncate text-[10.5px] text-muted-foreground">Ya incluido en {c.incluidaEn}</span>
+                    )}
+                  </span>
+                  <span className={cn('shrink-0 text-[12px] tabular-nums', c.incluidaEn ? 'font-medium text-muted-foreground' : 'font-bold text-foreground')}>
                     {c.moneda === 'USD'
                       ? `$ ${c.saldo.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                       : `Bs. ${c.saldo.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
@@ -874,6 +886,15 @@ function TabCuentas({ datos }: { datos: ResumenFinanzas }) {
                             : <Wallet className="h-3.5 w-3.5 text-[#64748b]" aria-hidden />}
                           <span className="font-medium text-foreground">{c.nombre}</span>
                         </span>
+                        {c.desglose && c.desglose.casheaUsd > 0 && (
+                          <span className="mt-0.5 block text-[10.5px] text-muted-foreground">
+                            Incluye Cashea: $ {c.desglose.casheaUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {' '}(Bs. {c.desglose.casheaBs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                          </span>
+                        )}
+                        {c.incluidaEn && (
+                          <span className="mt-0.5 block text-[10.5px] text-muted-foreground">Ya incluido en {c.incluidaEn}: no se suma aparte</span>
+                        )}
                       </td>
                       <td className="px-2 py-[7px] capitalize text-muted-foreground">
                         {c.tipo.replace('_', ' ')}

@@ -69,6 +69,13 @@ export interface SaldoCuenta {
   salidas: number;
   /** saldoInicial + entradas − salidas, en la moneda de la cuenta. */
   saldo: number;
+  /**
+   * BNC y Cashea son el mismo dinero: lo de Cashea se liquida en el BNC. El BNC
+   * trae aquí su desglose (Bs por PM/transferencia + lo de Cashea) y la cuenta
+   * de Cashea queda marcada como «incluida en» el BNC para no contarla dos veces.
+   */
+  desglose?: { pmBs: number; casheaUsd: number; casheaBs: number };
+  incluidaEn?: string;
 }
 
 export interface Cobrar {

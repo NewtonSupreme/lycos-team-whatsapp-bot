@@ -1,3 +1,4 @@
+import { authorize } from '@/lib/auth-server';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import ExcelJS from 'exceljs';
@@ -41,6 +42,8 @@ function colLetter(n: number): string {
 }
 
 export async function GET(req: NextRequest) {
+  const auth = await authorize('reportes', 'leer');
+  if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
   const { searchParams } = new URL(req.url);
   const from = searchParams.get('from') || new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
   const to = searchParams.get('to') || new Date().toISOString().split('T')[0];

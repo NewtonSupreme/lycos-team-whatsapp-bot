@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import type { ResumenEntradas } from './reporte/entradas';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reporte Diario Completo (13 secciones) en PDF. Consume el JSON de
@@ -71,7 +72,7 @@ export interface ReporteDiarioData {
   formaPagoTotal: number;
   facturasMontos: { base: number; iva: number; total: number };
   caja: { inicial: number; financiado: number; total: number };
-  metodoPago: Array<{ metodo: string; moneda: string; cantidad: number; montoBs: number; tasa: number; montoUsd: number }>;
+  metodoPago: Array<{ metodo: string; moneda: string; cantidad: number; recibido?: number; montoBs: number; tasa: number; montoUsd: number }>;
   metodoPagoTotalUsd: number;
   kpis: { redes: KpiPar; app: KpiPar; rcv: KpiPar; cert: KpiPar };
   clientesBD: { total: number; nuevos: number };
@@ -90,7 +91,9 @@ export interface ReporteDiarioData {
     pago: string; saldoDespues: number; tipo: string;
   }>;
   cobrosTotal?: number;
-  bancos: Array<{ banco: string; bs: number; usd: number }>;
+  bancos: Array<{ banco: string; moneda?: string; recibido?: number; bs: number; usd: number }>;
+  /** Lo que entró hoy (ventas + cobros), cada moneda por su lado. */
+  entradas?: ResumenEntradas;
   gastos: Array<{ concepto: string; proveedor?: string; placa?: string; cuenta?: string; usd: number; bs: number }>;
   gastosTotal: { usd: number; bs: number };
   generadoEn: string;
@@ -172,6 +175,34 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
     doc.text(k.value, x + kW / 2, y + 12, { align: 'center' });
   });
   y += 20;
+
+  // ══════════════ LO QUE ENTRÓ HOY, CADA MONEDA POR SU LADO ══════════════
+  // Los bolívares en bolívares y los dólares en dólares; el equivalente debajo,
+  // más pequeño. Incluye lo cobrado hoy de ventas de otros días.
+  const en = data.entradas;
+  if (en) {
+    const bsTxt = (x: number) => `Bs ${fmt(x)}`;
+    const cajas = [
+      { t: 'ENTRÓ EN BOLÍVARES', v: bsTxt(en.bsExactos), eq: `equiv. ${usd(en.bsExactosEnUsd)}`, color: C.blue, light: C.blueL },
+      { t: 'ENTRÓ EN DÓLARES', v: usd(en.usdExactos), eq: `equiv. ${bsTxt(en.usdExactosEnBs)}`, color: C.green, light: C.greenL },
+      { t: 'CASHEA (SE LIQUIDA EN BNC)', v: usd(en.casheaUsd), eq: `equiv. ${bsTxt(en.casheaEnBs)}`, color: C.purple, light: [237, 233, 254] as RGB },
+      { t: 'BNC (DESGLOSE, YA SUMADO)', v: bsTxt(en.bnc.totalBs), eq: `PM ${bsTxt(en.bnc.bs)} + Cashea ${usd(en.bnc.casheaUsd)}`, color: C.orange, light: C.orangeL },
+      { t: 'TOTAL DEL DÍA', v: usd(en.totalUsd), eq: `equiv. ${bsTxt(en.totalBs)}`, color: C.dark, light: C.bg },
+    ];
+    const w = (pageW - margin * 2 - (cajas.length - 1) * 2.4) / cajas.length;
+    cajas.forEach((k, i) => {
+      const x = margin + i * (w + 2.4);
+      doc.setFillColor(...k.light); doc.roundedRect(x, y, w, 16, 2, 2, 'F');
+      doc.setDrawColor(...k.color); doc.setLineWidth(0.4); doc.roundedRect(x, y, w, 16, 2, 2, 'S');
+      doc.setTextColor(...k.color); doc.setFontSize(5.5); doc.setFont('helvetica', 'bold');
+      doc.text(k.t, x + w / 2, y + 4.5, { align: 'center' });
+      doc.setTextColor(...C.dark); doc.setFontSize(k.v.length > 16 ? 8.5 : 10.5);
+      doc.text(k.v, x + w / 2, y + 10, { align: 'center' });
+      doc.setTextColor(...C.gray); doc.setFontSize(5.8); doc.setFont('helvetica', 'normal');
+      doc.text(k.eq, x + w / 2, y + 14, { align: 'center' });
+    });
+    y += 21;
+  }
 
   // ══════════════ SEGUIMIENTO DE VEHÍCULOS (arriba) ══════════════
   // Lo primero que se lee: qué carros entraron, se movieron o salieron ese
@@ -329,7 +360,10 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   autoTable(doc, {
     startY: yStart,
     head: [['SISTEMA', 'CANT', 'MONTO $']],
-    body: data.sistema.map(s => [s.sistema, s.cantidad, usd(s.monto)]),
+    // Cashea/BNC y por cobrar son forma de pago de lo de arriba: van entre paréntesis y no entran al total.
+    body: data.sistema.map(s => ['CUENTAS X COBRAR', 'CASHEA / BNC'].includes(s.sistema)
+      ? [`${s.sistema} (ya incluido)`, s.cantidad, `(${usd(s.monto)})`]
+      : [s.sistema, s.cantidad, usd(s.monto)]),
     foot: [['TOTAL', '', usd(data.sistemaTotal)]],
     theme: 'grid',
     headStyles: { fillColor: C.blue, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
@@ -359,9 +393,22 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   section('7 · Detalle de método de pago (a qué banco o cuenta cayó)');
   autoTable(doc, {
     startY: y,
-    head: [['MÉTODO / BANCO', 'CANT', 'MONTO (Bs)', 'TASA', 'EQUIV. $']],
-    body: data.metodoPago.map(m => [m.metodo, m.cantidad, bs(m.montoBs), fmt(m.tasa), usd(m.montoUsd)]),
-    foot: [['TOTAL', '', '', '', usd(data.metodoPagoTotalUsd)]],
+    // «Recibido» va en la moneda de la cuenta: Bs para los bancos, $ para
+    // divisas, Zelle, Binance y Cashea. El dólar ya no se disfraza de bolívar.
+    head: [['MÉTODO / BANCO', 'CANT', 'RECIBIDO (SU MONEDA)', 'TASA', 'EQUIV. $', 'EQUIV. Bs']],
+    body: (data.metodoPago.length ? data.metodoPago : [{ metodo: 'Sin pagos registrados', cantidad: 0, moneda: 'Bs', montoBs: 0, tasa: data.tasa, montoUsd: 0 }])
+      .map(m => {
+        const rec = m.recibido ?? (m.moneda === 'Bs' ? m.montoBs : m.montoUsd);
+        return [m.metodo, m.cantidad, m.moneda === 'Bs' ? `Bs ${fmt(rec)}` : usd(rec), fmt(m.tasa), usd(m.montoUsd), `Bs ${fmt(m.montoBs)}`];
+      }),
+    foot: [[
+      'TOTAL',
+      '',
+      `Bs ${fmt(data.metodoPago.filter(m => m.moneda === 'Bs').reduce((s, m) => s + (m.recibido ?? m.montoBs), 0))}  +  ${usd(data.metodoPago.filter(m => m.moneda !== 'Bs').reduce((s, m) => s + (m.recibido ?? m.montoUsd), 0))}`,
+      '',
+      usd(data.metodoPagoTotalUsd),
+      `Bs ${fmt(data.metodoPago.reduce((s, m) => s + m.montoBs, 0))}`,
+    ]],
     theme: 'grid',
     headStyles: { fillColor: C.dark, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
     bodyStyles: { fontSize: 6.5, cellPadding: 1.4, textColor: C.dark },
@@ -370,7 +417,7 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
     // 173 mm dentro de los 277 disponibles: dejaba 104 mm en blanco a la
     // derecha mientras el resto del reporte ocupa la página entera, y autoTable
     // avisaba de esos 104 en cada generación.
-    columnStyles: { 0: { cellWidth: 'auto' }, 1: { cellWidth: 18, halign: 'center' }, 2: { cellWidth: 40, halign: 'right' }, 3: { cellWidth: 25, halign: 'right' }, 4: { cellWidth: 30, halign: 'right' } },
+    columnStyles: { 0: { cellWidth: 'auto' }, 1: { cellWidth: 14, halign: 'center' }, 2: { cellWidth: 62, halign: 'right', fontStyle: 'bold' }, 3: { cellWidth: 20, halign: 'right' }, 4: { cellWidth: 26, halign: 'right' }, 5: { cellWidth: 34, halign: 'right' } },
     margin: { left: margin, right: margin },
   });
   afterTable();
@@ -405,12 +452,20 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   const e2 = doc.lastAutoTable.finalY;
   autoTable(doc, {
     startY: yS,
-    head: [['BANCO', 'Bs', '$']],
-    body: data.bancos.map(b => [b.banco, bs(b.bs), usd(b.usd)]),
+    // Cada fila en su moneda: «Recibido» es lo que entró tal cual; «Equiv. $»
+    // sirve para sumar. El BNC sale en dos filas: lo que entró en Bs y Cashea.
+    head: [['BANCO / CUENTA', 'RECIBIDO', 'EQUIV. $']],
+    body: data.bancos.map(b => {
+      const enBs = (b.moneda ?? 'Bs') === 'Bs';
+      const rec = b.recibido ?? (enBs ? b.bs : b.usd);
+      return [b.banco, enBs ? `Bs ${bs(rec)}` : usd(rec), usd(b.usd)];
+    }),
+    foot: [['TOTAL', '', usd(data.bancos.reduce((s, b) => s + b.usd, 0))]],
     theme: 'grid',
     headStyles: { fillColor: C.green, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
-    bodyStyles: { fontSize: 6.5, cellPadding: 1.4 },
-    columnStyles: { 0: { cellWidth: third - 44 }, 1: { cellWidth: 26, halign: 'right' }, 2: { cellWidth: 18, halign: 'right' } },
+    bodyStyles: { fontSize: 6.3, cellPadding: 1.3 },
+    footStyles: { fillColor: C.dark, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
+    columnStyles: { 0: { cellWidth: third - 46 }, 1: { cellWidth: 28, halign: 'right', fontStyle: 'bold' }, 2: { cellWidth: 18, halign: 'right' } },
     margin: { left: margin + (third + 6) * 2, right: margin }, tableWidth: third,
   });
   y = Math.max(e1, e2, doc.lastAutoTable.finalY) + 5;

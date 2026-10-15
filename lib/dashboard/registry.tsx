@@ -5,6 +5,7 @@ import {
   PieChart, Receipt, TrendingUp, Users, Wrench,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { getCategoria, inferirCategoria } from '@/lib/categorias';
 import { GraficoDona, GraficoSerie, Kpi, Lista, Medidor, SinDatos, type ItemLista, type Punto } from './renders';
 import type { WidgetDefinition, WidgetVisual } from './types';
 
@@ -86,8 +87,10 @@ export const WIDGETS: readonly WidgetDefinition<any>[] = [
     load: async ({ sedeId }) => {
       if (!supabase) return { total: 0, serie: [] as number[] };
       const q = conSede(
+        // Abierta es todo lo que no se entregó ni se canceló: confirmadas y en
+        // revisión también están en el taller (antes no se contaban).
         supabase.from('servicios').select('id', { count: 'exact', head: true })
-          .in('estado', ['pendiente', 'en_proceso']),
+          .in('estado', ['pendiente', 'confirmada', 'en_revision', 'en_proceso']),
         sedeId,
       );
       const { count } = await q;
@@ -114,12 +117,16 @@ export const WIDGETS: readonly WidgetDefinition<any>[] = [
     load: async ({ sedeId }) => {
       if (!supabase) return [] as Punto[];
       const { data } = await conSede(
-        supabase.from('servicios').select('tipo').gte('fecha', inicioDeMes()),
+        supabase.from('servicios').select('tipo, categoria, descripcion').gte('fecha', inicioDeMes()),
         sedeId,
       );
+      // `tipo` casi siempre dice «otro»: se usa la categoría, y si falta se
+      // deduce del trabajo descrito, igual que en Reportes.
       const cuenta = new Map<string, number>();
       for (const r of data ?? []) {
-        const k = (r.tipo as string) || 'Sin clasificar';
+        const cat = getCategoria(r.categoria as string)
+          ?? getCategoria(inferirCategoria(`${r.descripcion ?? ''} ${r.tipo ?? ''}`));
+        const k = cat?.label || 'Otro servicio';
         cuenta.set(k, (cuenta.get(k) ?? 0) + 1);
       }
       return [...cuenta.entries()]
@@ -179,27 +186,29 @@ export const WIDGETS: readonly WidgetDefinition<any>[] = [
 
   {
     id: 'facturacion-mes',
-    title: 'Facturación del mes',
-    description: 'Total facturado desde el día 1',
+    title: 'Ventas del mes',
+    description: 'Total vendido desde el día 1',
     module: 'Ventas',
     icon: Receipt,
     permKey: 'ventas',
     defaultSpan: 3, defaultHeight: 'sm', visuals: ['kpi'],
     load: async ({ sedeId }) => {
       if (!supabase) return { total: 0, serie: [] as number[] };
+      // Se lee de las ventas del día (lo que suma el reporte diario). La tabla
+      // `facturas` casi no se usa y el bloque decía $0 con el mes lleno de ventas.
       const { data } = await conSede(
-        supabase.from('facturas').select('total, fecha_emision').gte('fecha_emision', inicioDeMes()),
+        supabase.from('ventas_dia').select('total_ingresos, fecha').gte('fecha', inicioDeMes()),
         sedeId,
       );
       const filas = (data ?? []).map(r => ({
-        fecha: String(r.fecha_emision ?? '').slice(0, 10),
-        valor: Number(r.total ?? 0),
+        fecha: String(r.fecha ?? '').slice(0, 10),
+        valor: Number(r.total_ingresos ?? 0),
       }));
       const total = filas.reduce((s, f) => s + f.valor, 0);
       return { total, serie: serieDiaria(filas, 14).map(p => p.valor) };
     },
     render: (d: { total: number; serie: number[] }) => (
-      <Kpi valor={money(d.total)} detalle="facturado este mes" serie={d.serie} tono="success" />
+      <Kpi valor={money(d.total)} detalle="vendido este mes" serie={d.serie} tono="success" />
     ),
   },
 
@@ -399,7 +408,8 @@ export const WIDGETS: readonly WidgetDefinition<any>[] = [
     description: 'Stock por precio de venta',
     module: 'Inventario',
     icon: Banknote,
-    permKey: 'inventario',
+    // Es capital de la empresa: no lo ve quien solo consulta el inventario.
+    permKey: 'reportes',
     defaultSpan: 3, defaultHeight: 'sm', visuals: ['kpi'],
     load: async ({ sedeId }) => {
       if (!supabase) return { total: 0, articulos: 0 };
@@ -470,7 +480,8 @@ export const WIDGETS: readonly WidgetDefinition<any>[] = [
     description: 'Trabajos asignados a técnicos',
     module: 'Nómina',
     icon: Banknote,
-    permKey: 'nomina',
+    // Lo que gana cada técnico: no para el mecánico, que solo ve lo suyo.
+    permKey: 'nomina', permAccion: 'editar',
     defaultSpan: 4, defaultHeight: 'md', visuals: ['lista'],
     load: async ({ sedeId }) => {
       if (!supabase) return [] as ItemLista[];

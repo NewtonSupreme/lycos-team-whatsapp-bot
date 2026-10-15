@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { leerSesion, firmarSesion } from '@/lib/session-token';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 
@@ -12,7 +13,7 @@ function getDb() {
 export async function GET() {
   try {
     const cookieStore = await cookies();
-    const username = cookieStore.get('lycos_session')?.value;
+    const username = leerSesion(cookieStore.get('lycos_session')?.value);
     if (!username) return NextResponse.json({ user: null });
 
     const db = getDb();
@@ -34,7 +35,7 @@ export async function GET() {
     }
 
     // Refresh cookie maxAge on every request (keepalive)
-    cookieStore.set('lycos_session', username, {
+    cookieStore.set('lycos_session', firmarSesion(username), {
       httpOnly: true, secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax', maxAge: 60 * 60 * 24 * 7, path: '/',
     });
@@ -47,7 +48,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const cookieStore = await cookies();
-    const username = cookieStore.get('lycos_session')?.value;
+    const username = leerSesion(cookieStore.get('lycos_session')?.value);
     if (!username) return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
 
     const { currentPassword, newPassword } = await request.json();

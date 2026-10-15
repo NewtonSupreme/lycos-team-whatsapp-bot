@@ -34,7 +34,7 @@ const MORE_NAV: NavItem[] = [
   { href: '/dashboard/facturas', icon: Receipt, label: 'Facturas', permKey: 'ventas' },
   { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente', permKey: 'ia_asistente' },
   { href: '/dashboard/nomina', icon: Banknote, label: 'Nómina', permKey: 'nomina' },
-  { href: '/dashboard/proveedores', icon: Truck, label: 'Proveedores', permKey: 'vehiculos' },
+  { href: '/dashboard/proveedores', icon: Truck, label: 'Proveedores', permKey: 'reportes' },
   { href: '/dashboard/finanzas', icon: Landmark, label: 'Finanzas', permKey: 'reportes' },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', permKey: 'reportes' },
   { href: '/dashboard/actividad', icon: Activity, label: 'Actividad', permKey: 'actividad' },
@@ -89,7 +89,8 @@ export default function MobileBottomNav() {
 
       <div className={cn(
         'fixed bottom-0 left-0 right-0 z-50 lg:hidden transition-transform duration-300 ease-out',
-        showMore ? 'translate-y-0' : 'translate-y-full'
+        // Cerrada queda invisible: si no, sus enlaces seguían recibiendo foco y asomaba bajo la barra.
+        showMore ? 'visible translate-y-0' : 'invisible translate-y-full'
       )}>
         <div className="bg-card/95 backdrop-blur-2xl border-t border-border/50 rounded-t-3xl shadow-2xl">
           <div className="flex items-center justify-between px-6 pt-4 pb-2">

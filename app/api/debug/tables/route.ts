@@ -1,3 +1,4 @@
+import { authorize } from '@/lib/auth-server';
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
@@ -6,6 +7,8 @@ const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUP
 const db = createClient(url!, key!);
 
 export async function GET() {
+  const auth = await authorize('configuracion', 'editar');
+  if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
   try {
     const { data: columns, error: colErr } = await db
       .from('information_schema.columns')

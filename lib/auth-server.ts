@@ -5,6 +5,7 @@
  * admin hace en /ajustes/permisos) y evalúa permisos CRUD por módulo.
  */
 import { cookies } from 'next/headers';
+import { leerSesion } from '@/lib/session-token';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { getPermisos, hasPermiso, resolveRol, type Permisos, type CrudPermiso } from '@/types';
 
@@ -43,7 +44,7 @@ async function loadRoleDefaults(db: SupabaseClient): Promise<Record<string, Perm
 
 export async function getSessionUser(db: SupabaseClient): Promise<SessionUser | null> {
   try {
-    const username = (await cookies()).get('lycos_session')?.value;
+    const username = leerSesion((await cookies()).get('lycos_session')?.value);
     if (!username) return null;
     const { data } = await db.from('usuarios')
       .select('id, username, nombre, email, rol, sede_id, permisos, activo')

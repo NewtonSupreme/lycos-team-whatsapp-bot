@@ -228,6 +228,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     ['/dashboard/configuracion', 'configuracion'],
     ['/dashboard/distribuidor', 'distribuidor'],
     ['/dashboard/nomina', 'nomina'],
+    // Dinero de la empresa: sin ellas, quien escribía la dirección entraba.
+    ['/dashboard/finanzas', 'reportes'],
+    ['/dashboard/proveedores', 'reportes'],
   ], []);
 
   // El acceso denegado se DERIVA de la ruta y los permisos: no es un estado que
@@ -274,7 +277,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       )}>
         <Header />
         {/* pb-20 en móvil para que el bottom nav no tape el contenido */}
-        <main className="flex-1 p-4 md:p-6 pb-24 lg:pb-6">
+        <main className="flex-1 min-w-0 p-4 md:p-6 pb-40 lg:pb-6">
           <div className="page-enter">
             {accessDenied ? (
               <div className="flex flex-col items-center justify-center min-h-[60vh] text-center space-y-4">

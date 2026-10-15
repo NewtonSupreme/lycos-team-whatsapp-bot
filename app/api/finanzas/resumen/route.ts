@@ -476,6 +476,8 @@ export async function GET(req: NextRequest) {
     cuentas = cuentasRaw.map(c => {
       let entradas = 0;
       let salidas = 0;
+      // Desglose del BNC: lo que entró en Bs y lo que vino de Cashea.
+      let pmBs = 0, casheaUsd = 0, casheaBs = 0;
       if (c.bin) {
         const meta = BANK_METHODS.find(m => m.id === c.bin);
         // El bin y la cuenta tienen que llevarse en la misma moneda; si no, se
@@ -495,13 +497,21 @@ export async function GET(req: NextRequest) {
             // Lo de Cashea cae en el BNC: se pasa a bolívares con la tasa de la venta.
             if (c.bin === 'bnc') {
               const t = Number(m.tasa_cambio) || Number(m.tasa) || 0;
-              entradas += (Number((m as Record<string, unknown>).cashea) || 0) * t;
+              const cu = Number((m as Record<string, unknown>).cashea) || 0;
+              pmBs += Number(m.bnc as number) || 0;
+              casheaUsd += cu; casheaBs += cu * t;
+              entradas += cu * t;
             }
           }
           for (const a of abonosCuenta) {
             if (!a.fecha || a.fecha < c.desde || !a.metodos_pago) continue;
             entradas += Number(a.metodos_pago[c.bin!]) || 0;
-            if (c.bin === 'bnc') entradas += (Number(a.metodos_pago.cashea) || 0) * (Number(a.tasa_cambio) || 0);
+            if (c.bin === 'bnc') {
+              const cu = Number(a.metodos_pago.cashea) || 0;
+              pmBs += Number(a.metodos_pago.bnc) || 0;
+              casheaUsd += cu; casheaBs += cu * (Number(a.tasa_cambio) || 0);
+              entradas += cu * (Number(a.tasa_cambio) || 0);
+            }
           }
         }
         for (const e of sals) {
@@ -531,8 +541,13 @@ export async function GET(req: NextRequest) {
         entradas: r2(entradas),
         salidas: r2(salidas),
         saldo: r2(inicial + entradas - salidas),
+        ...(c.bin === 'bnc' ? { desglose: { pmBs: r2(pmBs), casheaUsd: r2(casheaUsd), casheaBs: r2(casheaBs) } } : {}),
       };
     });
+    // La cuenta de Cashea es el mismo dinero que ya está dentro del BNC: se
+    // muestra como desglose y nunca se suma aparte.
+    const bnc = cuentas.find(c => c.bin === 'bnc');
+    if (bnc) cuentas = cuentas.map(c => (c.bin === 'cashea' ? { ...c, incluidaEn: bnc.nombre } : c));
 
     if (cuentas.every(c => c.saldoInicial === 0)) {
       avisos.push(

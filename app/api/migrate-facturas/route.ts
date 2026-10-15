@@ -1,3 +1,4 @@
+import { authorize } from '@/lib/auth-server';
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 
@@ -13,6 +14,8 @@ import { supabase } from '@/lib/supabase';
 // veces no crea duplicados; solo agrega las facturas que falten.
 // ──────────────────────────────────────────────────────────────────────────────
 export async function GET() {
+  const auth = await authorize('configuracion', 'editar');
+  if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
   if (!supabase) {
     return NextResponse.json({ success: false, error: 'Supabase no configurado' }, { status: 500 });
   }

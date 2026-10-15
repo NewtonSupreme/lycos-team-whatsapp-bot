@@ -1,7 +1,10 @@
+import { authorize } from '@/lib/auth-server';
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 
 export async function GET() {
+  const auth = await authorize('configuracion', 'editar');
+  if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const sb = createClient(url!, serviceKey!);

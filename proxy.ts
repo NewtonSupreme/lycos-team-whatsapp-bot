@@ -1,14 +1,35 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { leerSesion } from "@/lib/session-token";
+
+/*
+ * API que se llama sin sesión: el login, lo que llega de Meta (webhook), el
+ * cron externo y las tasas (el bot las pide de servidor a servidor). Todo lo
+ * demás de /api exige sesión. Antes /api quedaba fuera del proxy y, por
+ * ejemplo, el reporte diario o el borrado de usuarios respondían a cualquiera.
+ */
+const API_PUBLICA = [
+  "/api/auth",
+  "/api/whatsapp/webhook",
+  "/api/whatsapp/cron",
+  "/api/rates",
+  "/api/tasas",
+];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const session = request.cookies.get("lycos_session");
+  // La cookie vale solo si su firma cuadra (ver lib/session-token.ts).
+  const session = leerSesion(request.cookies.get("lycos_session")?.value);
+
+  if (pathname.startsWith("/api/")) {
+    if (API_PUBLICA.some(p => pathname === p || pathname.startsWith(p + "/"))) return NextResponse.next();
+    if (!session) return NextResponse.json({ error: "No autenticado." }, { status: 401 });
+    return NextResponse.next();
+  }
 
   // Public paths
   if (
     pathname.startsWith("/_next") ||
-    pathname.includes("/api/auth") ||
     pathname === "/login" ||
     pathname.includes("/Icono") ||
     pathname.includes("/Logo") ||
@@ -43,14 +64,8 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
+  // /api ya entra: se protege arriba con su lista de rutas públicas.
   matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - api (API routes)
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     */
-    "/((?!api|_next/static|_next/image|Silenciadores|favicon.ico|manifest.json|sw.js).*)",
+    "/((?!_next/static|_next/image|Silenciadores|favicon.ico|manifest.json|sw.js).*)",
   ],
 };

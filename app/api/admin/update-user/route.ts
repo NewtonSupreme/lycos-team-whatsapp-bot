@@ -1,11 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
+import { leerSesion } from '@/lib/session-token';
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { resolveRol, MASTER_ADMIN_USERNAME } from '@/types';
 
 async function getRequester(db: any) {
   try {
-    const username = (await cookies()).get('lycos_session')?.value;
+    const username = leerSesion((await cookies()).get('lycos_session')?.value);
     if (!username) return null;
     const { data } = await db.from('usuarios').select('username, rol').eq('username', username).maybeSingle();
     return data;

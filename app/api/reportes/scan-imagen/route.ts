@@ -1,8 +1,11 @@
+import { authorize } from '@/lib/auth-server';
 import { NextRequest, NextResponse } from 'next/server';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
 export async function POST(req: NextRequest) {
+  const auth = await authorize('reportes', 'leer');
+  if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
   if (!GEMINI_API_KEY) {
     return NextResponse.json({ error: 'GEMINI_API_KEY no configurada' }, { status: 500 });
   }

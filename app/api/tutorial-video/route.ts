@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { leerSesion } from '@/lib/session-token';
 import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
@@ -15,7 +16,7 @@ async function getDb() {
 
 export async function GET(request: NextRequest) {
   try {
-    const cookie = request.cookies.get('lycos_session')?.value;
+    const cookie = leerSesion(request.cookies.get('lycos_session')?.value);
     if (!cookie) {
       return new NextResponse('No autorizado', { status: 401 });
     }

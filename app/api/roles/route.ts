@@ -1,3 +1,4 @@
+import { authorize } from '@/lib/auth-server';
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 
@@ -65,6 +66,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const auth = await authorize('configuracion', 'editar');
+  if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
   try {
     const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,

@@ -41,6 +41,7 @@ import {
   conceptoDe, etiquetaCategoria, lineasDeEgreso, type EgresoFila,
 } from '@/components/egresos/tipos';
 import { generateCierrePDF, type CierreData } from '@/lib/cierre-pdf';
+import { binsDeFila, montoEnSuMoneda, resumirEntradas } from '@/lib/reporte/entradas';
 import { generateNotaEntregaPDF } from '@/lib/distribucion-pdf';
 import { generateReporteDiarioPDF } from '@/lib/reporte-diario-pdf';
 import { withSedeFilter, withSedeInsert } from '@/lib/db-filters';
@@ -347,32 +348,21 @@ function CierreWizard({ ventas, onClose, onSaved }: {
   }, [servicios, periodo, fechaDia, fechaInicio, fechaFin]);
 
   const totalUSD = ventasFiltradas.reduce((s, v) => s + Number(v.total_ingresos), 0);
-  const totalBS = totalUSD * (tasaBCV || 1);
   const totalClientes = ventasFiltradas.reduce((s, v) => s + Number(v.total_clientes || 0), 0);
 
-  const desglosePagos = React.useMemo(() => {
-    const agg: Record<string, number> = {};
-    ventasFiltradas.forEach(v => {
-      const mp = (v as any).metodos_pago || {};
-      Object.entries(mp).forEach(([k, val]) => {
-        if (typeof val === 'number' && val > 0) agg[k] = (agg[k] || 0) + val;
-      });
-    });
-    return {
-      efectivo_usd: agg.efectivo_usd,
-      zelle: agg.zelle,
-      pago_movil_bs: agg.pago_movil,
-      efectivo_bs: agg.efectivo_ves,
-      transferencia_bs: agg.transferencia,
-      cashea_usd: agg.cashea_usd || agg.cashea,
-      cashea_bs: agg.cashea_ves,
-      binance_usdt: agg.binance,
-      punto_venta_usd: agg.punto_de_venta_usd,
-      punto_venta_bs: agg.punto_de_venta_ves || agg.punto_de_venta,
-      euros: agg.euros,
-      otro: agg.otro,
-    };
-  }, [ventasFiltradas]);
+  // Lo que entró por cuenta, leído de las columnas reales de banco (BNC,
+  // Banesco, Exterior…), cada venta con la tasa de SU día. Antes se leían
+  // llaves viejas de metodos_pago y el BNC salía siempre en 0.
+  const entradas = React.useMemo(() => resumirEntradas(
+    ventasFiltradas.map(v => ({ bins: binsDeFila(v as unknown as Record<string, unknown>), tasa: Number((v as any).tasa_cambio) || Number((v as any).tasa) || tasaBCV })),
+    tasaBCV,
+  ), [ventasFiltradas, tasaBCV]);
+  const totalBS = entradas.totalBs || totalUSD * (tasaBCV || 1);
+  // Se guarda por cuenta y en su moneda (Bs o $), con las llaves de BANK_METHODS.
+  const desglosePagos = React.useMemo(
+    () => Object.fromEntries(entradas.cuentas.filter(c => c.recibido > 0).map(c => [c.id, c.recibido])) as Record<string, number>,
+    [entradas],
+  );
 
   const handleGenerate = async () => {
     if (!supabase) return;
@@ -398,7 +388,8 @@ function CierreWizard({ ventas, onClose, onSaved }: {
           descripcion: (v.desglose || []).map((d: any) => d.descripcion).join(', ') || (v.notas || '').slice(0, 40) || 'Servicio',
           metodo_pago: (v as any).metodo_pago || 'Varios',
           total_usd: Number(v.total_ingresos),
-          total_bs: Number(v.total_ingresos) * (tasaBCV || 1),
+          // Con la tasa del día de la venta, no con la de hoy.
+          total_bs: Number(v.total_ingresos) * (Number((v as any).tasa_cambio) || Number((v as any).tasa) || tasaBCV || 1),
           fuente: (v.creado_por || '').toLowerCase().includes('ia') ? 'ia' as const : 'pos' as const,
         })),
         inventario: inventario.map(p => ({
@@ -582,8 +573,10 @@ function CierreWizard({ ventas, onClose, onSaved }: {
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 {[
-                  { label: 'Total USD', value: '$' + Number(totalUSD).toFixed(2), color: 'text-green-400', bg: 'bg-green-500/10' },
-                  { label: 'Total Bs.', value: Number(totalBS).toLocaleString('es-VE', {maximumFractionDigits: 0}) + ' Bs', color: 'text-blue-400', bg: 'bg-blue-500/10' },
+                  { label: 'Total vendido', value: '$' + Number(totalUSD).toFixed(2), color: 'text-green-400', bg: 'bg-green-500/10' },
+                  { label: 'Entró en bolívares', value: montoEnSuMoneda(entradas.bsExactos, 'Bs'), color: 'text-blue-400', bg: 'bg-blue-500/10' },
+                  { label: 'Entró en dólares', value: montoEnSuMoneda(entradas.usdExactos, 'USD'), color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+                  { label: 'Cashea (BNC)', value: montoEnSuMoneda(entradas.casheaUsd, 'USD'), color: 'text-violet-400', bg: 'bg-violet-500/10' },
                   { label: 'Clientes', value: String(totalClientes), color: 'text-purple-400', bg: 'bg-purple-500/10' },
                   { label: 'Ventas', value: String(ventasFiltradas.length), color: 'text-orange-400', bg: 'bg-orange-500/10' },
                 ].map(k => (
@@ -596,15 +589,14 @@ function CierreWizard({ ventas, onClose, onSaved }: {
 
               <div className="p-4 rounded-2xl bg-background/50 border border-border/30 space-y-2">
                 <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-2">Métodos de pago detectados</p>
-                {Object.entries(desglosePagos).filter(([, v]) => v && Number(v) > 0).map(([k, v]) => (
-                  <div key={k} className="flex justify-between text-xs">
-                    <span className="text-muted-foreground capitalize">{k.replace(/_/g, ' ')}</span>
-                    <span className="font-black">
-                      {k === 'euros'
-                        ? '€' + Number(v).toFixed(2)
-                        : (k.includes('bs') || k === 'pago_movil_bs')
-                          ? Number(v).toLocaleString('es-VE', {maximumFractionDigits: 0}) + ' Bs'
-                          : '$' + Number(v).toFixed(2)}
+                {entradas.cuentas.filter(c => c.recibido > 0).map(c => (
+                  <div key={c.id} className="flex items-baseline justify-between gap-3 text-xs">
+                    <span className="min-w-0 truncate text-muted-foreground">{c.label}</span>
+                    <span className="shrink-0 text-right">
+                      <span className="font-black">{montoEnSuMoneda(c.recibido, c.moneda)}</span>
+                      <span className="ml-1.5 text-[10px] text-muted-foreground">
+                        ≈ {c.moneda === 'Bs' ? montoEnSuMoneda(c.usd, 'USD') : montoEnSuMoneda(c.bs, 'Bs')}
+                      </span>
                     </span>
                   </div>
                 ))}

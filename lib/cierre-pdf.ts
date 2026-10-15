@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { BANK_METHODS } from './reporte/ventas-mapping';
 
 export interface CierreData {
   id?: string;
@@ -215,8 +216,16 @@ export function generateCierrePDF(data: CierreData) {
     ['Punto de Venta Bs', data.desglose_pagos.punto_venta_bs || 0, 'Bs'],
   ].filter(([, v]) => (v as number) > 0) as Array<[string, number, string]>;
 
-  const allPagos = [...pagosUSD.map(([l, v, c]) => [l, v > 0 ? `${c}${formatNum(v)}` : '—'] as [string, string]),
-                   ...pagosBS.map(([l, v, c]) => [l, v > 0 ? `${formatNum(v)} ${c}` : '—'] as [string, string])];
+  // Cierres nuevos: el desglose viene por cuenta real (BNC, Banesco…), cada una
+  // en su moneda. Los viejos traen llaves genéricas y se pintan como antes.
+  const porCuenta = BANK_METHODS.filter(m => Number(data.desglose_pagos[m.id]) > 0);
+  const allPagos: [string, string][] = porCuenta.length
+    ? porCuenta.map(m => {
+        const v = Number(data.desglose_pagos[m.id]);
+        return [m.label, m.moneda === 'Bs' ? `Bs ${formatNum(v)}` : `$${formatNum(v)}`];
+      })
+    : [...pagosUSD.map(([l, v, c]) => [l, v > 0 ? `${c}${formatNum(v)}` : '—'] as [string, string]),
+       ...pagosBS.map(([l, v, c]) => [l, v > 0 ? `${formatNum(v)} ${c}` : '—'] as [string, string])];
 
   if (allPagos.length === 0) {
     allPagos.push(['Sin desglose registrado', '—']);

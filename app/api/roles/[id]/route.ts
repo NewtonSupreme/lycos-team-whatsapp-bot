@@ -1,7 +1,10 @@
+import { authorize } from '@/lib/auth-server';
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await authorize('configuracion', 'editar');
+  if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
   try {
     const { id } = await params;
     const supabaseAdmin = createClient(
@@ -25,6 +28,8 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 }
 
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await authorize('configuracion', 'eliminar');
+  if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
   try {
     const { id } = await params;
     const supabaseAdmin = createClient(

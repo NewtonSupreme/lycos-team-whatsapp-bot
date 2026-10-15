@@ -70,6 +70,8 @@ export interface WidgetDefinition<T = unknown> {
   module: string;
   icon: LucideIcon;
   permKey?: keyof Permisos;
+  /** Acción mínima sobre `permKey`. Por defecto 'leer'; los bloques con dinero de la empresa piden más. */
+  permAccion?: 'leer' | 'crear' | 'editar' | 'eliminar';
   defaultSpan: WidgetSpan;
   defaultHeight: WidgetHeight;
   /** Formas de dibujo que tienen sentido para este dato. */

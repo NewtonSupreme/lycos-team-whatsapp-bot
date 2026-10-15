@@ -77,8 +77,9 @@ export default function WidgetCard({
       className={cn(
         'flex flex-col rounded-xl border bg-card shadow-sm transition-colors',
         editing ? 'border-primary/40' : 'border-border',
-        SPAN_CLASS[instance.span],
-        HEIGHT_CLASS[instance.height],
+        SPAN_CLASS[instance.span] ?? SPAN_CLASS[6],
+        // Un alto guardado que ya no existe dejaba la tarjeta sin alto y la gráfica en cero.
+        HEIGHT_CLASS[instance.height] ?? HEIGHT_CLASS.md,
       )}
     >
       <header className="flex items-start justify-between gap-2 border-b border-border px-4 py-2.5">

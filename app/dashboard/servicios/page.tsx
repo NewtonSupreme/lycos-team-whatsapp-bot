@@ -952,7 +952,7 @@ export default function ServiciosPage() {
             />
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center bg-white/5 border border-white/10 rounded-2xl p-1 gap-1">
               {[
                 { id: 'hoy', label: 'Hoy' },
@@ -1325,7 +1325,7 @@ function KanbanColumn({ estado, items, onEdit, onDelete, onTracking, onInvoice, 
   return (
     <div 
       id={`kanban-col-${estado}`}
-      className="flex flex-col gap-4 min-h-[500px] rounded-[32px] p-2 transition-colors duration-300"
+      className="flex flex-col gap-4 min-h-[120px] md:min-h-[500px] rounded-[32px] p-2 transition-colors duration-300"
     >
       <div className={cn("flex items-center justify-between p-3 rounded-2xl border bg-black/20", cfg.bg)}>
         <div className="flex items-center gap-2">

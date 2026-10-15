@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { leerSesion } from '@/lib/session-token';
 import { cookies } from 'next/headers';
 import { generateRegistrationOptions } from '@simplewebauthn/server';
 import { createClient } from '@supabase/supabase-js';
@@ -16,7 +17,7 @@ const rpID = process.env.NODE_ENV === 'production' ? 'lycos-team-whatsapp-bot.ve
 export async function POST() {
   try {
     const cookieStore = await cookies();
-    const username = cookieStore.get('lycos_session')?.value;
+    const username = leerSesion(cookieStore.get('lycos_session')?.value);
 
     if (!username) {
       return NextResponse.json({ error: 'No autorizado. Sesión no encontrada.' }, { status: 401 });

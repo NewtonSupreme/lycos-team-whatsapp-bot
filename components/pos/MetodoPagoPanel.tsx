@@ -68,8 +68,8 @@ function LogoMarca({
  */
 const METODOS: readonly MetodoTile[] = [
   { id: 'efectivo', label: 'Efectivo', icono: <Banknote className="h-[18px] w-[18px]" aria-hidden />, tinte: 'bg-[#e8f7ee] text-[#16a34a]', bins: ['dolares', 'efectivo_bs'] },
-  { id: 'pago_movil', label: 'Pago Móvil', icono: <Smartphone className="h-[18px] w-[18px]" aria-hidden />, tinte: 'bg-[#e7f0fe] text-[#2563eb]', bins: ['pago_movil_banesco', 'pago_movil_exterior'] },
-  { id: 'transferencia', label: 'Transferencia', icono: <ArrowLeftRight className="h-[18px] w-[18px]" aria-hidden />, tinte: 'bg-[#f0eafc] text-[#7c3aed]', bins: ['pago_movil_banesco', 'bnc'] },
+  { id: 'pago_movil', label: 'Pago Móvil', icono: <Smartphone className="h-[18px] w-[18px]" aria-hidden />, tinte: 'bg-[#e7f0fe] text-[#2563eb]', bins: ['pago_movil_banesco', 'bnc', 'pago_movil_exterior', 'punto_bancamiga'] },
+  { id: 'transferencia', label: 'Transferencia', icono: <ArrowLeftRight className="h-[18px] w-[18px]" aria-hidden />, tinte: 'bg-[#f0eafc] text-[#7c3aed]', bins: ['pago_movil_banesco', 'bnc', 'pago_movil_exterior'] },
   { id: 'debito', label: 'Tarjeta Débito', icono: <CreditCard className="h-[18px] w-[18px]" aria-hidden />, tinte: 'bg-[#e7f0fe] text-[#2563eb]', bins: ['punto_banesco', 'punto_bancamiga'] },
   { id: 'credito', label: 'Tarjeta Crédito', icono: <CreditCard className="h-[18px] w-[18px]" aria-hidden />, tinte: 'bg-[#fdeaea] text-[#dc2626]', bins: ['punto_banesco', 'punto_bancamiga'] },
   { id: 'zelle', label: 'Zelle', icono: <ZelleGlyph />, tinte: 'bg-[#f0eafc] text-[#7c3aed]', logo: 'zelle', bins: ['zelle'] },

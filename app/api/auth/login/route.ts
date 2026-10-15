@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { firmarSesion } from '@/lib/session-token';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 
@@ -80,7 +81,7 @@ export async function POST(request: NextRequest) {
     };
     if (ACCOUNTS[username] && password === 'lycos2026') {
       const cookieStore = await cookies();
-      cookieStore.set('lycos_session', username, {
+      cookieStore.set('lycos_session', firmarSesion(username), {
         httpOnly: true, secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax', maxAge: 60 * 60 * 24 * 7, path: '/',
       });
@@ -110,7 +111,7 @@ export async function POST(request: NextRequest) {
 
     // Set session cookie
     const cookieStore = await cookies();
-    cookieStore.set('lycos_session', username, {
+    cookieStore.set('lycos_session', firmarSesion(username), {
       httpOnly: true, secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax', maxAge: 60 * 60 * 24 * 7, path: '/',
     });

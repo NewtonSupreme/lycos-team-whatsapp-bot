@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { firmarSesion } from '@/lib/session-token';
 import { cookies } from 'next/headers';
 import { verifyAuthenticationResponse } from '@simplewebauthn/server';
 import { createClient } from '@supabase/supabase-js';
@@ -107,7 +108,7 @@ export async function POST(req: NextRequest) {
         .eq('id', cred.id);
 
       const cookieStore = await cookies();
-      cookieStore.set('lycos_session', username, {
+      cookieStore.set('lycos_session', firmarSesion(username), {
         httpOnly: true, secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax', maxAge: 60 * 60 * 24 * 7, path: '/',
       });
