@@ -54,3 +54,6 @@ lint*.json
 
 # Permisos locales de Claude Code: son de esta máquina, no del proyecto.
 .claude/settings.local.json
+
+# Estados de cuenta reales del banco: datos financieros, nunca al repositorio.
+estado de cuenta a conciliar/

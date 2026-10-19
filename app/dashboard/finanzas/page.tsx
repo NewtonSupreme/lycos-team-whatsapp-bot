@@ -10,6 +10,7 @@ import {
 } from 'recharts';
 import LogoBanco from '@/components/pagos/LogoBanco';
 import PanelCuadre from '@/components/finanzas/PanelCuadre';
+import ConciliacionBancaria from '@/components/finanzas/ConciliacionBancaria';
 import {
   Avisos, Chip, EnlacePanel, Panel, Pestanas, SelectorPanel, TarjetaKpi, Vacio,
 } from '@/components/panel/Piezas';
@@ -34,14 +35,15 @@ import { cn } from '@/lib/utils';
  * nunca el dato.
  */
 
-type Pestana = 'resumen' | 'ingresos' | 'gastos' | 'cuentas' | 'conciliacion' | 'reportes';
+type Pestana = 'resumen' | 'ingresos' | 'gastos' | 'cuentas' | 'banco' | 'conciliacion' | 'reportes';
 
 const PESTANAS = [
   { valor: 'resumen' as const, label: 'Resumen' },
   { valor: 'ingresos' as const, label: 'Ingresos' },
   { valor: 'gastos' as const, label: 'Gastos' },
   { valor: 'cuentas' as const, label: 'Cuentas y Bancos' },
-  { valor: 'conciliacion' as const, label: 'Conciliación' },
+  { valor: 'banco' as const, label: 'Conciliación bancaria' },
+  { valor: 'conciliacion' as const, label: 'Cuadre interno' },
   { valor: 'reportes' as const, label: 'Reportes' },
 ] as const;
 
@@ -329,6 +331,10 @@ export default function FinanzasPage() {
           {/* Conciliación: que cada venta diga lo mismo en su total, en sus
               cuentas y en lo que queda por cobrar. */}
           {pestana === 'conciliacion' && <PanelCuadre sede={sedeId} />}
+
+          {/* Conciliación bancaria: el estado de cuenta del banco contra lo
+              que el sistema registró para esa cuenta. */}
+          {pestana === 'banco' && <ConciliacionBancaria sede={sedeId} />}
 
           {pestana === 'reportes' && (
             <Panel
