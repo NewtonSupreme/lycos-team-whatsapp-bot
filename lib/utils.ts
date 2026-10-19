@@ -67,7 +67,7 @@ export const tipoServicioLabel: Record<string, string> = {
 
 export const estadoServicioLabel: Record<string, string> = {
   pendiente: 'Pendiente',
-  en_proceso: 'En Proceso',
+  en_proceso: 'En taller',
   finalizado: 'Finalizado',
   cancelado: 'Cancelado',
 };

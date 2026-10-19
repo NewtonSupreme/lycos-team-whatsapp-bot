@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import { RIF_TEXTO } from '@/lib/empresa';
 import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -61,7 +62,7 @@ export function generatePresupuestoPDF(data: PresupuestoPDFData) {
   doc.setTextColor(...orange);
   doc.setFontSize(7);
   doc.setFont('helvetica', 'bold');
-  doc.text('MECÁNICA INTEGRAL', margin + 5, 32);
+  doc.text(`MECÁNICA INTEGRAL · ${RIF_TEXTO}`, margin + 5, 32);
 
   // Presupuesto badge
   doc.setFillColor(249, 115, 22, 0.1);

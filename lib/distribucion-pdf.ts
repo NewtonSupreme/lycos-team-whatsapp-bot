@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import { RIF_TEXTO } from '@/lib/empresa';
 import autoTable from 'jspdf-autotable';
 import { Distribucion } from '@/types';
 
@@ -42,7 +43,7 @@ export function generateNotaEntregaPDF(distribucion: Distribucion, tasaBCV: numb
   doc.setFontSize(8);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(...textMuted);
-  doc.text('RIF: J-50558970-9', margin, y + 15);
+  doc.text(RIF_TEXTO, margin, y + 15);
   doc.text('Ctra. Panamericana Km. 14, Local Los Llaneros', margin, y + 19);
   doc.text('San Antonio de Los Altos, Edo. Miranda, Z.P. 1204', margin, y + 23);
   doc.text('Teléfonos: (0212) 3727331 / (0412) 3343519', margin, y + 27);

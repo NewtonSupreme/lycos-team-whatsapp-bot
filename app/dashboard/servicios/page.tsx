@@ -42,6 +42,7 @@ import AvisoRepuestosSueltos, {
   detectarRepuestosSueltos, type RenglonSospechoso,
 } from '@/components/inventario/AvisoRepuestosSueltos';
 import { asignacionesValidas, buildJobsDesdeAsignacion } from '@/lib/nomina/asignaciones';
+import { COLUMNAS_TABLERO, columnaDeEstado, etiquetaEstado, type ColumnaTablero } from '@/lib/servicios/columnas';
 import { CATEGORIAS_VENTA, inferirCategoria, categoriaToZona, buildCategoriaColumns, buildPagoColumnsCompletas, deptItemsDeCategoria } from '@/lib/categorias';
 
 // ── Types ─────────────────────────────────────────────────────
@@ -192,12 +193,13 @@ const ESTADOS = ['pendiente', 'confirmada', 'en_revision', 'en_proceso', 'comple
 const ESTADOS_ACTIVOS = ['pendiente', 'confirmada', 'en_revision', 'en_proceso', 'en_progreso'];
 
 const ESTADO_CONFIG: Record<string, { label: string; color: string; bg: string; icon: React.ElementType; glow: string }> = {
-  pendiente:   { label: 'Pendiente',   color: 'text-amber-400',  bg: 'bg-amber-400/10 border-amber-400/20',  glow: 'shadow-amber-500/20', icon: AlertCircle },
+  pendiente:   { label: 'Entrada',     color: 'text-amber-400',  bg: 'bg-amber-400/10 border-amber-400/20',  glow: 'shadow-amber-500/20', icon: AlertCircle },
   confirmada:  { label: 'Confirmada',  color: 'text-blue-400',   bg: 'bg-blue-400/10 border-blue-400/20',    glow: 'shadow-blue-500/20',  icon: Calendar },
   en_revision: { label: 'Revisión',    color: 'text-fuchsia-400',bg: 'bg-fuchsia-400/10 border-fuchsia-400/20',glow: 'shadow-fuchsia-500/20', icon: Search },
-  en_proceso:  { label: 'En Proceso',  color: 'text-violet-400', bg: 'bg-violet-400/10 border-violet-400/20', glow: 'shadow-violet-500/20', icon: RefreshCw },
-  completada:  { label: 'Completada',  color: 'text-green-400',  bg: 'bg-green-400/10 border-green-400/20',  glow: 'shadow-green-500/20', icon: CheckCircle },
-  cancelada:   { label: 'Cancelada',   color: 'text-red-400',    bg: 'bg-red-400/10 border-red-400/20',      glow: 'shadow-red-500/20',   icon: X },
+  en_proceso:  { label: 'En taller',   color: 'text-violet-400', bg: 'bg-violet-400/10 border-violet-400/20', glow: 'shadow-violet-500/20', icon: RefreshCw },
+  completada:  { label: 'Pagada',      color: 'text-green-400',  bg: 'bg-green-400/10 border-green-400/20',  glow: 'shadow-green-500/20', icon: CheckCircle },
+  // «Por confirmar» no es un error: es un cliente que preguntó y no se quedó.
+  cancelada:   { label: 'Por confirmar', color: 'text-sky-400', bg: 'bg-sky-400/10 border-sky-400/20', glow: 'shadow-sky-500/20', icon: Clock },
 };
 
 const SERVICIO_LABELS: Record<string, string> = {
@@ -372,6 +374,15 @@ export default function ServiciosPage() {
     setMounted(true);
   }, [loadCitas]);
 
+  // Lo que lleva 24 h en Entrada sin moverse pasa solo a «Por confirmar». Lo
+  // hace el servidor (como mucho cada 10 min); si movió algo, se recarga.
+  useEffect(() => {
+    fetch('/api/servicios/vencer-entradas', { method: 'POST' })
+      .then(r => r.json())
+      .then(d => { if (d?.movidas > 0) void loadCitas(); })
+      .catch(() => { /* no bloquea la pantalla */ });
+  }, [loadCitas]);
+
   const handleDelete = async (id: string) => {
     if (!can('servicios', 'eliminar')) return alert('No tienes permisos para eliminar servicios.');
     if (!confirm('¿Estás seguro de eliminar este ticket de servicio? Esta acción no se puede deshacer.')) return;
@@ -388,26 +399,20 @@ export default function ServiciosPage() {
     } catch (err: any) { alert('Error: ' + err.message); }
   };
 
-  const getEstadoLabel = (estado: string) => {
-    const labels: Record<string, string> = {
-      pendiente: 'Pendiente', confirmada: 'Confirmada', en_revision: 'En Revisión',
-      en_proceso: 'En Proceso', completada: 'Completada',
-      finalizado: 'Finalizado', cancelada: 'Cancelada', cancelado: 'Cancelado'
-    };
-    return labels[estado] || estado;
-  };
+  // Los nombres de las cuatro columnas del tablero (lib/servicios/columnas).
+  const getEstadoLabel = (estado: string) => etiquetaEstado(estado);
 
   const getTransicionInfo = (viejo: string, nuevo: string) => {
     const trans: Record<string, { accion: string; fmt: string }> = {
       'pendiente->confirmada': { accion: 'Confirmó servicio', fmt: 'Servicio confirmado' },
-      'pendiente->en_proceso': { accion: 'Inició servicio', fmt: 'Servicio iniciado' },
+      'pendiente->en_proceso': { accion: 'Pasó a En taller', fmt: 'Entró al taller' },
       'pendiente->completada': { accion: 'Completó servicio', fmt: 'Servicio completado' },
-      'pendiente->cancelada': { accion: 'Canceló servicio', fmt: 'Servicio cancelado' },
-      'confirmada->en_proceso': { accion: 'Inició trabajo', fmt: 'Trabajo iniciado' },
+      'pendiente->cancelada': { accion: 'Pasó a Por confirmar', fmt: 'Pasó a Por confirmar' },
+      'confirmada->en_proceso': { accion: 'Pasó a En taller', fmt: 'Entró al taller' },
       'confirmada->completada': { accion: 'Completó servicio', fmt: 'Servicio completado' },
-      'confirmada->cancelada': { accion: 'Canceló servicio', fmt: 'Servicio cancelado' },
+      'confirmada->cancelada': { accion: 'Pasó a Por confirmar', fmt: 'Pasó a Por confirmar' },
       'en_proceso->completada': { accion: 'Finalizó servicio', fmt: 'Servicio finalizado' },
-      'en_proceso->cancelada': { accion: 'Canceló servicio', fmt: 'Servicio cancelado' },
+      'en_proceso->cancelada': { accion: 'Pasó a Por confirmar', fmt: 'Pasó a Por confirmar' },
     };
     const key = `${viejo}->${nuevo}`;
     if (trans[key]) return trans[key];
@@ -467,6 +472,16 @@ export default function ServiciosPage() {
       if (error) throw error;
 
       setCitas(prev => prev.map(c => c.id === id ? { ...c, estado: nuevoEstado, seguimiento: newSeguimiento } : c));
+
+      // Pasar a «Por confirmar» devuelve los repuestos al almacén; sacarla de
+      // ahí los vuelve a descontar. Antes solo lo hacía el formulario de edición.
+      const ANULADAS = ['cancelada', 'cancelado', 'anulada'];
+      const entraAnulada = ANULADAS.includes(nuevoEstado) && !ANULADAS.includes(cita.estado);
+      const saleAnulada = !ANULADAS.includes(nuevoEstado) && ANULADAS.includes(cita.estado);
+      if (entraAnulada || saleAnulada) {
+        const avisosStock = await ajustarStockDeOrden(id, entraAnulada);
+        if (avisosStock.length) console.warn('Inventario:', avisosStock.join(' · '));
+      }
 
       const clienteNombre = getDisplayName(cita) || 'Consumidor Final';
       const vehiculoStr = getDisplayVehicle(cita);
@@ -1061,13 +1076,13 @@ export default function ServiciosPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 xl:gap-6"
+            className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 xl:gap-6"
           >
-            {ESTADOS.map(estado => (
+            {COLUMNAS_TABLERO.map(columna => (
               <KanbanColumn 
-                key={estado}
-                estado={estado}
-                items={filtered.filter(c => c.estado === estado)}
+                key={columna.id}
+                columna={columna}
+                items={filtered.filter(c => columna.estados.includes(String(c.estado || '').toLowerCase()))}
                 onEdit={setEditCita}
                 onDelete={handleDelete}
                 onTracking={setTrackingCita}
@@ -1318,19 +1333,21 @@ export default function ServiciosPage() {
 }
 
 // ── Kanban Components ──────────────────────────────────────────
-function KanbanColumn({ estado, items, onEdit, onDelete, onTracking, onInvoice, onBudget, onGastos, onMove, selectedForDual, setSelectedForDual }: any) {
-  const cfg = ESTADO_CONFIG[estado];
+function KanbanColumn({ columna, items, onEdit, onDelete, onTracking, onInvoice, onBudget, onGastos, onMove, selectedForDual, setSelectedForDual }: any) {
+  const col = columna as ColumnaTablero;
+  const cfg = { ...ESTADO_CONFIG[col.destino], label: col.label };
   const Icon = cfg.icon;
 
   return (
     <div 
-      id={`kanban-col-${estado}`}
+      id={`kanban-col-${col.id}`}
       className="flex flex-col gap-4 min-h-[120px] md:min-h-[500px] rounded-[32px] p-2 transition-colors duration-300"
     >
       <div className={cn("flex items-center justify-between p-3 rounded-2xl border bg-black/20", cfg.bg)}>
         <div className="flex items-center gap-2">
           <Icon className={cn("w-4 h-4", cfg.color)} />
           <span className={cn("text-xs font-black uppercase tracking-widest", cfg.color)}>{cfg.label}</span>
+          <span className="hidden text-[9px] font-medium normal-case text-muted-foreground 2xl:inline">· {col.ayuda}</span>
         </div>
         <span className="text-[10px] font-bold bg-white/5 px-2 py-0.5 rounded-full text-muted-foreground">{items.length}</span>
       </div>
@@ -1365,7 +1382,7 @@ function KanbanColumn({ estado, items, onEdit, onDelete, onTracking, onInvoice, 
         </AnimatePresence>
         {items.length === 0 && (
           <div className="h-24 border border-dashed border-white/5 rounded-3xl flex items-center justify-center text-[10px] text-muted-foreground font-medium uppercase tracking-widest">
-            Sin {cfg.label}
+            Nada en {cfg.label}
           </div>
         )}
       </div>
@@ -1377,9 +1394,14 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onBudget, 
   const { can } = useRolePermissions();
   const lastUpdate = cita.seguimiento?.[cita.seguimiento.length - 1];
 
-  const currentIndex = ESTADOS.indexOf(cita.estado);
-  const prevEstado = currentIndex > 0 ? ESTADOS[currentIndex - 1] : null;
-  const nextEstado = currentIndex < ESTADOS.length - 1 ? ESTADOS[currentIndex + 1] : null;
+  // Las flechas mueven de columna en columna (Entrada → En taller → Pagada →
+  // Por confirmar); al soltar se guarda el estado «destino» de la columna.
+  const columnaActual = columnaDeEstado(cita.estado);
+  const currentIndex = COLUMNAS_TABLERO.findIndex(c => c.id === columnaActual.id);
+  const prevEstado = currentIndex > 0 ? COLUMNAS_TABLERO[currentIndex - 1].destino : null;
+  const nextEstado = currentIndex < COLUMNAS_TABLERO.length - 1 ? COLUMNAS_TABLERO[currentIndex + 1].destino : null;
+  // «Por confirmar» es una ficha de solo datos: no se cobra ni se factura ahí.
+  const soloDatos = columnaActual.id === 'por_confirmar';
 
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
@@ -1390,13 +1412,14 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onBudget, 
     const x = info.point.x;
     const y = info.point.y;
     
-    for (const estado of ESTADOS) {
-      const col = document.getElementById(`kanban-col-${estado}`);
+    for (const columna of COLUMNAS_TABLERO) {
+      const col = document.getElementById(`kanban-col-${columna.id}`);
       if (col) {
         const rect = col.getBoundingClientRect();
         if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-          if (estado !== cita.estado) {
-            onMove(cita.id, estado);
+          // Soltar en su misma columna no cambia nada (p. ej. confirmada sigue confirmada).
+          if (columna.id !== columnaActual.id) {
+            onMove(cita.id, columna.destino);
           }
           break;
         }
@@ -1523,6 +1546,23 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onBudget, 
         )}
       </div>
 
+      {soloDatos ? (
+        /* Ficha simplificada: solo datos de contacto y volver a Entrada. */
+        <div className="mt-4 space-y-2 border-t border-white/5 pt-3">
+          {cita.telefono && (
+            <a href={`tel:${cita.telefono}`} className="block text-[11px] font-bold text-foreground/80 hover:text-primary">
+              Tel.: {cita.telefono}
+            </a>
+          )}
+          <p className="text-[10px] text-muted-foreground">Sin cobro ni servicio registrado. Si el cliente confirma, pásalo a Entrada.</p>
+          <button
+            onClick={(e) => { e.stopPropagation(); onMove(cita.id, 'pendiente'); }}
+            className="w-full rounded-xl border border-amber-400/30 bg-amber-400/10 py-2 text-[10px] font-black uppercase tracking-widest text-amber-400 transition-all hover:bg-amber-400 hover:text-black"
+          >
+            Confirmó: pasar a Entrada
+          </button>
+        </div>
+      ) : (<>
       {/* Footer Actions */}
       <div className="mt-5 pt-4 border-t border-white/5 flex items-center justify-between">
         <button 
@@ -1558,6 +1598,7 @@ function ServiceCard({ cita, onEdit, onDelete, onTracking, onInvoice, onBudget, 
           Convertir en Presupuesto
         </button>
       </div>
+      </>)}
     </motion.div>
   );
 }

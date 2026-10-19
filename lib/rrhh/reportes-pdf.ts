@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import { RIF_TEXTO } from '@/lib/empresa';
 import autoTable from 'jspdf-autotable';
 
 /**
@@ -58,7 +59,7 @@ function cabecera(doc: jsPDF, r: ReporteRRHH, ancho: number): number {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
   doc.setTextColor(...GRIS);
-  doc.text('Recursos Humanos', 14, 19);
+  doc.text(`Recursos Humanos · ${RIF_TEXTO}`, 14, 19);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(12);

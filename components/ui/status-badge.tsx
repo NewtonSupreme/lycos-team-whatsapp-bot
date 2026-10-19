@@ -9,7 +9,7 @@ interface StatusBadgeProps {
 
 const labelMap: Record<string, Record<string, string>> = {
   estado: {
-    pendiente: 'Pendiente', en_proceso: 'En Proceso', finalizado: 'Finalizado',
+    pendiente: 'Pendiente', en_proceso: 'En taller', finalizado: 'Finalizado',
     cancelado: 'Cancelado', confirmada: 'Confirmada', completada: 'Completada',
   },
   tipo: tipoServicioLabel,

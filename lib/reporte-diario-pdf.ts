@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import { RIF_TEXTO } from '@/lib/empresa';
 import autoTable from 'jspdf-autotable';
 import type { ResumenEntradas } from './reporte/entradas';
 
@@ -133,7 +134,7 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   doc.text('LYCOS', margin + 4, y + 9);
   doc.setTextColor(...C.white); doc.text(' TEAM', margin + 23, y + 9);
   doc.setFontSize(5.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(150, 150, 150);
-  doc.text('MECÁNICA INTEGRAL · San Antonio de los Altos', margin + 4, y + 14.5);
+  doc.text(`MECÁNICA INTEGRAL · ${RIF_TEXTO}`, margin + 4, y + 14.5);
 
   doc.setTextColor(...C.dark); doc.setFontSize(18); doc.setFont('helvetica', 'bold');
   doc.text('REPORTE DIARIO', pageW / 2, y + 8, { align: 'center' });
@@ -210,8 +211,8 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   const seg = data.seguimiento || [];
   section('1 · Seguimiento de vehículos del día', `${seg.length} vehículo${seg.length === 1 ? '' : 's'}`);
   const ESTADOS: Record<string, string> = {
-    pendiente: 'PENDIENTE', confirmada: 'CONFIRMADA', en_revision: 'EN REVISIÓN', en_proceso: 'EN PROCESO',
-    completada: 'COMPLETADA', completado: 'COMPLETADA', finalizado: 'ENTREGADO', cancelada: 'CANCELADA',
+    pendiente: 'ENTRADA', confirmada: 'ENTRADA', en_revision: 'EN TALLER', en_proceso: 'EN TALLER',
+    completada: 'PAGADA', completado: 'PAGADA', finalizado: 'PAGADA', cancelada: 'POR CONFIRMAR',
   };
   autoTable(doc, {
     startY: y,
@@ -245,9 +246,9 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
             : v.startsWith('Debe') || v.startsWith('Sin cobro') ? C.red : C.gray;
       }
       if (d.column.index !== 7) return;
-      if (v === 'COMPLETADA' || v === 'ENTREGADO') d.cell.styles.textColor = C.green;
-      else if (v === 'EN PROCESO' || v === 'EN REVISIÓN') d.cell.styles.textColor = C.blue;
-      else if (v === 'CANCELADA') d.cell.styles.textColor = C.red;
+      if (v === 'PAGADA') d.cell.styles.textColor = C.green;
+      else if (v === 'EN TALLER') d.cell.styles.textColor = C.blue;
+      else if (v === 'POR CONFIRMAR') d.cell.styles.textColor = C.red;
       else if (v) d.cell.styles.textColor = C.orange;
     },
     margin: { left: margin, right: margin },

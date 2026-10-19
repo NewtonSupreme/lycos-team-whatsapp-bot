@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import { RIF_TEXTO } from '@/lib/empresa';
 import autoTable from 'jspdf-autotable';
 import { BANK_METHODS } from './reporte/ventas-mapping';
 
@@ -123,7 +124,7 @@ export function generateCierrePDF(data: CierreData) {
   doc.setFontSize(6);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(150, 150, 150);
-  doc.text('MECÁNICA INTEGRAL', margin + 4, y + 16);
+  doc.text(`MECÁNICA INTEGRAL · ${RIF_TEXTO}`, margin + 4, y + 16);
   doc.text('San Antonio de los Altos, Miranda', margin + 4, y + 19.5);
 
   // Cierre title block (right)
@@ -400,7 +401,7 @@ export function generateCierrePDF(data: CierreData) {
     const statusMap: Record<string, string> = {
       'pendiente': 'PENDIENTE',
       'confirmado': 'CONFIRMADO',
-      'en_proceso': 'EN PROCESO',
+      'en_proceso': 'EN TALLER',
       'esperando_repuestos': 'ESP. REPUESTOS',
       'terminado': 'TERMINADO',
       'entregado': 'ENTREGADO'
@@ -440,7 +441,7 @@ export function generateCierrePDF(data: CierreData) {
         if (data.section === 'body' && data.column.index === 3) {
           const val = data.cell.raw;
           if (val === 'TERMINADO' || val === 'ENTREGADO') doc.setTextColor(...C.green);
-          else if (val === 'EN PROCESO') doc.setTextColor(...C.blue);
+          else if (val === 'EN TALLER') doc.setTextColor(...C.blue);
           else if (val === 'PENDIENTE') doc.setTextColor(...C.orange);
         }
       },

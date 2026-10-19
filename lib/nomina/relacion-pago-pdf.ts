@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import { RIF_TEXTO } from '@/lib/empresa';
 import autoTable from 'jspdf-autotable';
 
 /**
@@ -118,7 +119,7 @@ function cabecera(doc: jsPDF, titulo: string, subtitulo: string, ancho: number, 
   doc.text('LYCOS TEAM', margen + 5, 21);
   doc.setTextColor(...NARANJA);
   doc.setFontSize(6.5);
-  doc.text('TALLER AUTOMOTRIZ', margen + 5, 25.5);
+  doc.text(`TALLER AUTOMOTRIZ · ${RIF_TEXTO}`, margen + 5, 25.5);
 
   doc.setTextColor(...NEGRO);
   doc.setFont('helvetica', 'bold');

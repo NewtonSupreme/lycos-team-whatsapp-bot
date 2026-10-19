@@ -503,7 +503,8 @@ export default function FichaVehiculoPage() {
                 <button
                   onClick={async () => {
                     const { generarFichaPDF } = await import('@/lib/ficha-pdf');
-                    generarFichaPDF(ficha, { generadoPor: useAppStore.getState().user?.nombre });
+                    // Solo el trabajo elegido (o el activo); sin trabajo elegido, el historial completo.
+                    generarFichaPDF(ficha, { generadoPor: useAppStore.getState().user?.nombre, servicioId });
                   }}
                   className="flex h-[38px] items-center gap-1.5 rounded-lg border border-[#e2e5ea] px-3 text-[12.5px] font-semibold text-[#3d4350] hover:bg-[#f6f7f9]"
                 >

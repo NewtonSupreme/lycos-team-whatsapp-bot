@@ -31,7 +31,7 @@ const QUICK_REPLIES: { label: string; texto: string }[] = [
   { label: 'Enviar presupuesto', texto: 'Le preparo el presupuesto y se lo envío en un momento. 💰' },
   { label: 'Horarios', texto: 'Atendemos de lunes a viernes de 8:00 a. m. a 5:00 p. m., y sábados de 8:00 a. m. a 1:00 p. m.' },
   { label: 'Datos del vehículo', texto: '¿Podría indicarnos la marca, el modelo y el año del vehículo?' },
-  { label: 'En proceso', texto: 'Le informamos que su servicio está en proceso. Le avisamos en cuanto esté listo.' },
+  { label: 'En taller', texto: 'Le informamos que su vehículo ya está en el taller. Le avisamos en cuanto esté listo.' },
   { label: 'Listo para retirar', texto: 'Su vehículo está listo para retirar. 🔧' },
   { label: 'Gracias', texto: '¡Gracias por confiar en Lycos Team! 🙌' },
 ];

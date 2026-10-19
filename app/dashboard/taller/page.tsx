@@ -57,7 +57,7 @@ const ESTADO_CONFIG: Record<string, { label: string; color: string; bg: string }
   pendiente:   { label: 'Pendiente',  color: 'text-amber-400',  bg: 'bg-amber-400/10 border-amber-400/20' },
   confirmada:  { label: 'Confirmada', color: 'text-blue-400',   bg: 'bg-blue-400/10 border-blue-400/20' },
   en_revision: { label: 'Revisión',   color: 'text-fuchsia-400',bg: 'bg-fuchsia-400/10 border-fuchsia-400/20' },
-  en_proceso:  { label: 'En Proceso', color: 'text-violet-400', bg: 'bg-violet-400/10 border-violet-400/20' },
+  en_proceso:  { label: 'En taller' , color: 'text-violet-400', bg: 'bg-violet-400/10 border-violet-400/20' },
   completada:  { label: 'Completada', color: 'text-green-400',  bg: 'bg-green-400/10 border-green-400/20' },
   cancelada:   { label: 'Cancelada',  color: 'text-red-400',    bg: 'bg-red-400/10 border-red-400/20' },
 };
@@ -307,7 +307,7 @@ export default function TallerPage() {
   const getEstadoLabel = (estado: string) => {
     const labels: Record<string, string> = {
       pendiente: 'Pendiente', confirmada: 'Confirmada', en_revision: 'En Revisión',
-      en_proceso: 'En Proceso', completada: 'Completada',
+      en_proceso: 'En taller', completada: 'Completada',
       finalizado: 'Finalizado', cancelada: 'Cancelada', cancelado: 'Cancelado'
     };
     return labels[estado] || estado;

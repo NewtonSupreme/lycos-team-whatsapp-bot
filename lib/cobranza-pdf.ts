@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import { RIF_TEXTO } from '@/lib/empresa';
 import autoTable from 'jspdf-autotable';
 import type { ClienteDeudor, Cobranza } from '@/lib/cobranza/tipos';
 
@@ -29,7 +30,7 @@ function cabecera(doc: any, titulo: string, sub: string, M: number, W: number) {
   doc.setTextColor(...C.negro); doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(19);
   doc.text('LYCOS TEAM', M, 20);
   doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(...C.claro);
-  doc.text('MECÁNICA INTEGRAL · SAN ANTONIO DE LOS ALTOS', M, 25);
+  doc.text(`MECÁNICA INTEGRAL · SAN ANTONIO DE LOS ALTOS · ${RIF_TEXTO}`, M, 25);
   doc.setTextColor(...C.negro); doc.setFontSize(12);
   doc.text(titulo, W - M, 18, { align: 'right' });
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...C.gris);

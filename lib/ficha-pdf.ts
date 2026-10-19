@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import { RIF_TEXTO } from '@/lib/empresa';
 import autoTable from 'jspdf-autotable';
 import type { FichaVehiculo } from '@/lib/ficha/vehiculo';
 import { lineasDeMetodos, resumenCorto } from '@/lib/pagos/desglose';
@@ -34,8 +35,8 @@ const fecha = (f?: string | null) => {
 };
 
 const ESTADOS: Record<string, string> = {
-  pendiente: 'Pendiente', confirmada: 'Confirmada', en_revision: 'En revisión', en_proceso: 'En proceso',
-  completada: 'Completada', completado: 'Completada', finalizado: 'Entregado', cancelada: 'Cancelada',
+  pendiente: 'Entrada', confirmada: 'Entrada', en_revision: 'En taller (revisión)', en_proceso: 'En taller',
+  completada: 'Pagada', completado: 'Pagada', finalizado: 'Pagada', cancelada: 'Por confirmar',
 };
 const PAGO: Record<string, string> = {
   pagado: 'Pagado', por_pagar: 'Se debe', parcial: 'Abonado', no_aplica: '—',
@@ -44,7 +45,34 @@ const TIPOS: Record<string, string> = {
   repuesto: 'Repuesto', mano_obra: 'Mano de obra', servicio: 'Servicio', insumo: 'Insumo',
 };
 
-export function generarFichaPDF(ficha: FichaVehiculo, opciones?: { generadoPor?: string }) {
+/**
+ * La ficha de UN trabajo: su orden y sus renglones, con los totales de ese
+ * trabajo. Antes el PDF salía siempre con todas las órdenes del carro aunque
+ * en pantalla hubiera una elegida.
+ */
+function soloDelServicio(ficha: FichaVehiculo, servicioId: string): FichaVehiculo {
+  const partidas = ficha.partidas.filter(p => p.servicio_id === servicioId);
+  const venta = partidas.reduce((a, p) => a + p.total_venta, 0);
+  const costo = partidas.reduce((a, p) => a + p.total_costo, 0);
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  return {
+    ...ficha,
+    servicios: ficha.servicios.filter(x => x.id === servicioId),
+    partidas,
+    totales: {
+      ...ficha.totales,
+      venta: r2(venta), costo: r2(costo), utilidad: r2(venta - costo),
+      margen: venta > 0 ? Number((((venta - costo) / venta) * 100).toFixed(1)) : 0,
+      porPagar: r2(partidas.reduce((a, p) => a + p.saldo_proveedor, 0)),
+      aportadoPorCliente: partidas.filter(p => p.origen === 'cliente').length,
+      partidas: partidas.length,
+    },
+  };
+}
+
+export function generarFichaPDF(fichaCompleta: FichaVehiculo, opciones?: { generadoPor?: string; servicioId?: string | null }) {
+  const unServicio = Boolean(opciones?.servicioId && fichaCompleta.servicios.some(x => x.id === opciones.servicioId));
+  const ficha = unServicio ? soloDelServicio(fichaCompleta, opciones!.servicioId!) : fichaCompleta;
   const doc = new jsPDF('p', 'mm', 'a4') as any;
   const W = doc.internal.pageSize.getWidth();   // 210
   const H = doc.internal.pageSize.getHeight();  // 297
@@ -74,7 +102,7 @@ export function generarFichaPDF(ficha: FichaVehiculo, opciones?: { generadoPor?:
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7);
   doc.setTextColor(...C.claro);
-  doc.text('MECÁNICA INTEGRAL · FICHA DEL VEHÍCULO · DOCUMENTO INTERNO', M, y + 13);
+  doc.text(`MECÁNICA INTEGRAL · ${RIF_TEXTO} · FICHA DEL VEHÍCULO · DOCUMENTO INTERNO`, M, y + 13);
   const ahora = new Date().toLocaleString('es-VE', {
     timeZone: 'America/Caracas', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
   });
@@ -139,7 +167,7 @@ export function generarFichaPDF(ficha: FichaVehiculo, opciones?: { generadoPor?:
   doc.setFontSize(7.2);
   doc.setTextColor(...C.gris);
   doc.text(
-    `En reportes: ${usd(ficha.registrado.ingresos)} cobrados en ${ficha.registrado.nVentas} venta(s) · `
+    `${unServicio ? 'Todo el vehículo en reportes' : 'En reportes'}: ${usd(ficha.registrado.ingresos)} cobrados en ${ficha.registrado.nVentas} venta(s) · `
     + `${usd(ficha.registrado.egresos)} gastados en ${ficha.registrado.nEgresos} egreso(s) · `
     + `utilidad registrada ${usd(ficha.registrado.utilidad)}`,
     M, y,
@@ -147,7 +175,7 @@ export function generarFichaPDF(ficha: FichaVehiculo, opciones?: { generadoPor?:
   y += 6;
 
   // ── Trabajos ───────────────────────────────────────────────────────────
-  titulo('Historial de trabajos', `${ficha.servicios.length} orden(es)`);
+  titulo(unServicio ? 'Trabajo seleccionado' : 'Historial de trabajos', `${ficha.servicios.length} orden(es)`);
   autoTable(doc, {
     startY: y,
     head: [['FECHA', 'TRABAJO', 'ESTADO', 'RENGLONES DE LA ORDEN', 'MECÁNICO · LE QUEDÓ', 'COBRADO', 'COSTO']],

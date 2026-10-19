@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import { RIF_TEXTO } from '@/lib/empresa';
 import autoTable from 'jspdf-autotable';
 import { completarFactura } from '@/lib/facturas/completar';
 import {
@@ -136,7 +137,7 @@ async function drawComprobantePage(doc: any, data: any) {
   doc.setTextColor(...orange);
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
-  doc.text('COMPROBANTE DE PAGO', 20, 31);
+  doc.text(`COMPROBANTE DE PAGO · ${RIF_TEXTO}`, 20, 31);
 
   doc.setDrawColor(226, 232, 240);
   doc.line(20, 36, pageW - 20, 36);
@@ -235,7 +236,7 @@ export const generateInvoicePDF = async (
     doc.setTextColor(...grayLight);
     doc.setFontSize(8);
     doc.setFont('helvetica', 'bold');
-    doc.text('MECÁNICA INTEGRAL', margin, 31);
+    doc.text(`MECÁNICA INTEGRAL · ${RIF_TEXTO}`, margin, 31);
 
     // Correlativo / Nota de Entrega (Top Right)
     const correlativoLabel = data.correlativo ? 'FACTURA' : 'NOTA DE ENTREGA #';
@@ -253,6 +254,20 @@ export const generateInvoicePDF = async (
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
     doc.text(fechaVE(data.fecha), rightAlign, 33, { align: 'right' });
+
+    // Sello «INCLUYE IVA» arriba, a la vista: cuando el cobro lleva IVA (pago
+    // en bolívares con factura fiscal, Cashea…) el cliente lo ve sin buscarlo.
+    if (data.iva_aplicado) {
+      const sello = 'INCLUYE IVA (16%)';
+      doc.setFontSize(7.5);
+      doc.setFont('helvetica', 'bold');
+      const anchoSello = doc.getTextWidth(sello) + 8;
+      const xSello = rightAlign - anchoSello;
+      doc.setFillColor(22, 163, 74);
+      doc.roundedRect(xSello, 8, anchoSello, 6.5, 3.2, 3.2, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.text(sello, xSello + anchoSello / 2, 12.4, { align: 'center' });
+    }
 
     // Entrada del vehículo y día del pago. La fecha de arriba es la de la
     // venta; un carro que entró el 21 y se pagó el 25 tiene que decir las dos.
@@ -594,7 +609,7 @@ export const generateInvoicePDF = async (
     doc.setTextColor(...grayLight);
     doc.setFontSize(6);
     doc.setFont('helvetica', 'normal');
-    doc.text('San Antonio de los Altos, Edo. Miranda - Lycos Team CRM 2026', startX + 74.25, 202, { align: 'center' });
+    doc.text(`San Antonio de los Altos, Edo. Miranda · Lycos Team · ${RIF_TEXTO}`, startX + 74.25, 202, { align: 'center' });
   };
 
   // «Diferente» son dos facturas distintas en la misma hoja: se dibuja igual
@@ -703,7 +718,7 @@ export const generateEgresoPDF = (data: EgresoPDF) => {
   doc.setTextColor(...slate400);
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
-  doc.text('COMPROBANTE DE EGRESO / PAGO', izq, 34);
+  doc.text(`COMPROBANTE DE EGRESO / PAGO · ${RIF_TEXTO}`, izq, 34);
 
   doc.setFontSize(7);
   doc.text('Nº', der, 22, { align: 'right' });

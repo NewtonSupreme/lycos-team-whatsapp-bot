@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import { RIF_TEXTO } from '@/lib/empresa';
 import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -50,7 +51,7 @@ export function generateReciboNominaPDF(data: ReciboNominaData) {
   doc.setTextColor(...orange);
   doc.setFontSize(7);
   doc.setFont('helvetica', 'bold');
-  doc.text('NÓMINA · RECIBO DE PAGO', margin + 5, 32);
+  doc.text(`NÓMINA · RECIBO DE PAGO · ${RIF_TEXTO}`, margin + 5, 32);
 
   doc.setDrawColor(...orange);
   doc.setFillColor(255, 247, 237);

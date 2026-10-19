@@ -762,7 +762,7 @@ export default function VehiculosPage() {
                       };
                       const estadoLabel: Record<string, string> = {
                         pendiente: 'Pendiente', confirmada: 'Confirmada', en_revision: 'Revisión',
-                        en_proceso: 'En Proceso', completada: 'Completada',
+                        en_proceso: 'En taller', completada: 'Completada',
                         finalizado: 'Finalizado', cancelada: 'Cancelada',
                       };
                       const tipoLabel: Record<string, string> = {
