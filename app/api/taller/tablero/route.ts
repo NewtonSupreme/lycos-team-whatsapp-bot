@@ -2,14 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authorize } from '@/lib/auth-server';
 import { getRoleMeta } from '@/types';
 import {
-  ESTADOS_ENTRADA, ESTADOS_PANTALLA, nombreCorto, normalizar,
+  ESTADOS_ENTRADA, ESTADOS_PANTALLA, nombreCorto, normalizar, sinMontos,
   type ArticuloPantalla, type OrdenPantalla, type PersonaPantalla, type TableroTaller,
 } from '@/lib/taller/pantalla';
 
 export const dynamic = 'force-dynamic';
 
 const n = (x: unknown) => Number(x) || 0;
-const r2 = (x: number) => Math.round(x * 100) / 100;
 
 /**
  * Lo que muestra la pantalla del taller: vehículos en curso, el personal que
@@ -51,20 +50,19 @@ export async function GET(req: NextRequest) {
       placa: String(s.placa || '').toUpperCase() || 'SIN PLACA',
       vehiculo: String(s.vehiculo_info || '').replace(new RegExp(String(s.placa || '@@'), 'i'), '').trim() || 'Vehículo',
       cliente: nombreCorto(String(s.nombre_cliente || '')),
-      trabajo: String(s.tipo_personalizado || s.descripcion || s.tipo || 'Servicio'),
+      trabajo: sinMontos(String(s.tipo_personalizado || s.descripcion || s.tipo || 'Servicio')) || 'Servicio',
       estado: s.estado,
       columna: ESTADOS_ENTRADA.includes(s.estado) ? 'entrada' : 'taller',
       desde: s.created_at,
       movida: s.updated_at,
+      // Sin precios ni total, ni el precio que a veces se escribe en el texto: la TV está a la vista de todos.
       renglones: items.map(i => ({
-        descripcion: String(i.descripcion || ''),
+        descripcion: sinMontos(String(i.descripcion || '')),
         cantidad: n(i.cantidad) || 1,
-        total: r2(n(i.total) || n(i.precio_unitario) * (n(i.cantidad) || 1)),
         esManoObra: !!i.es_mano_obra || /mano de obra|m\.?o\.?\b/i.test(String(i.descripcion || '')),
       })).filter(i => i.descripcion),
-      total: r2(n(s.costo_estimado)),
       encargados: enc.filter(e => e?.nombre).map(e => ({ id: e.empleado_id || null, nombre: String(e.nombre) })),
-      ultimo: seg.length ? String(seg[seg.length - 1]?.accion || '') || null : null,
+      ultimo: seg.length ? sinMontos(String(seg[seg.length - 1]?.accion || '')) || null : null,
       puesto: (s.puesto as string) || null,
     };
   });

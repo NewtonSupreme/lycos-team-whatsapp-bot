@@ -12,11 +12,25 @@ export const ESTADOS_ENTRADA = ['pendiente', 'confirmada'];
 
 export type TipoCarga = 'mano_obra' | 'repuesto' | 'otro';
 
+/*
+ * La pantalla del taller está en una TV a la vista de todos: no lleva montos.
+ * Los renglones van sin precio y la orden sin total; los precios solo se ven
+ * mientras alguien carga su trabajo.
+ */
 export interface RenglonPantalla {
   descripcion: string;
   cantidad: number;
-  total: number;
   esManoObra: boolean;
+}
+
+/** Quita los montos de un texto de la bitácora («… — $15.00», «Bs 1.200», «15$»). */
+export function sinMontos(texto: string): string {
+  return texto
+    .replace(/\s*[—–-]?\s*(\$|Bs\.?|USD)\s*\d[\d.,]*/gi, '')
+    .replace(/\s*[—–-]?\s*\d[\d.,]*\s*(\$|Bs\b\.?|USD\b)/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/[\s:,]+(y|e|por)?$/i, '')
+    .trim();
 }
 
 export interface OrdenPantalla {
@@ -30,7 +44,6 @@ export interface OrdenPantalla {
   desde: string;          // created_at
   movida: string;         // updated_at
   renglones: RenglonPantalla[];
-  total: number;
   encargados: Array<{ id: string | null; nombre: string }>;
   ultimo: string | null;  // último movimiento de la bitácora
   puesto: string | null;

@@ -378,20 +378,13 @@ function Tarjeta({ o, i, quieta, onAccion }: { o: OrdenPantalla; i: number; quie
             <ul className="space-y-1.5">
               {o.renglones.length > ultimos.length && <li className="text-sm text-[var(--apagado)]">+ {o.renglones.length - ultimos.length} más</li>}
               {ultimos.map((r, k) => (
-                <li key={k} className="flex items-center justify-between gap-3 text-base">
-                  <span className="flex min-w-0 items-center gap-2 text-[var(--tenue)]">
-                    {r.esManoObra ? <Hammer className="h-4 w-4 shrink-0 text-[var(--naranja)]" strokeWidth={1.75} aria-hidden /> : React.createElement(iconoPieza(r.descripcion), { className: 'h-4 w-4 shrink-0 text-[var(--cian)]', strokeWidth: 1.75, 'aria-hidden': true })}
-                    <span className="truncate">{r.descripcion}{r.cantidad > 1 ? ` × ${r.cantidad}` : ''}</span>
-                  </span>
-                  <span className="shrink-0 font-semibold tabular-nums">{usd(r.total)}</span>
+                <li key={k} className="flex min-w-0 items-center gap-2 text-base text-[var(--tenue)]">
+                  {r.esManoObra ? <Hammer className="h-4 w-4 shrink-0 text-[var(--naranja)]" strokeWidth={1.75} aria-hidden /> : React.createElement(iconoPieza(r.descripcion), { className: 'h-4 w-4 shrink-0 text-[var(--cian)]', strokeWidth: 1.75, 'aria-hidden': true })}
+                  <span className="truncate">{r.descripcion}{r.cantidad > 1 ? ` × ${r.cantidad}` : ''}</span>
                 </li>
               ))}
             </ul>
           )}
-          <div className="mt-3 flex items-baseline justify-between border-t border-[var(--linea)] pt-3">
-            <span className="text-sm font-bold uppercase tracking-[0.15em] text-[var(--tenue)]">Total</span>
-            <span className="display text-[34px] font-black leading-none tabular-nums">{usd(o.total)}</span>
-          </div>
         </div>
 
         {quieta ? (
@@ -477,7 +470,7 @@ function Asistente({ accion, orden, datos, onCerrar, onListo }: {
   const todoBien = resultados.length > 0 && resultados.every(r => r.ok);
   useEffect(() => {
     if (paso !== 'listo' || !todoBien) return;
-    const t = setTimeout(() => onListo(`${orden.placa}: ${resultados.length} cargado${resultados.length > 1 ? 's' : ''} por ${persona?.corto} · ${usd(total)}`), 3500);
+    const t = setTimeout(() => onListo(`${orden.placa}: ${resultados.length} cargado${resultados.length > 1 ? 's' : ''} por ${persona?.corto}`), 3500);
     return () => clearTimeout(t);
   }, [paso, todoBien, resultados.length, onListo, orden.placa, persona?.corto, total]);
 
