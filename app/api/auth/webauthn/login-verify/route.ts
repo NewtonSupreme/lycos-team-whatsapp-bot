@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { firmarSesion } from '@/lib/session-token';
+import { rolConAcceso } from '@/types';
 import { cookies } from 'next/headers';
 import { verifyAuthenticationResponse } from '@simplewebauthn/server';
 import { createClient } from '@supabase/supabase-js';
@@ -107,17 +108,22 @@ export async function POST(req: NextRequest) {
         .update({ counter: newCounter })
         .eq('id', cred.id);
 
+      const { data: user } = await db
+        .from('usuarios')
+        .select('id, nombre, username, rol, activo')
+        .eq('username', username)
+        .single();
+      // La huella no abre lo que la clave tampoco abriría: cuenta inactiva o
+      // personal de nómina sin acceso.
+      if (!user || user.activo === false || !rolConAcceso(user.rol)) {
+        return NextResponse.json({ error: 'Esta cuenta no tiene acceso al sistema.' }, { status: 403 });
+      }
+
       const cookieStore = await cookies();
       cookieStore.set('lycos_session', firmarSesion(username), {
         httpOnly: true, secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax', maxAge: 60 * 60 * 24 * 7, path: '/',
       });
-
-      const { data: user } = await db
-        .from('usuarios')
-        .select('id, nombre, username, rol')
-        .eq('username', username)
-        .single();
 
       return NextResponse.json({
         success: true,

@@ -25,7 +25,7 @@ interface ItemEntrante {
 
 /** Alta de una orden de compra, con su desglose. */
 export async function POST(req: NextRequest) {
-  const auth = await authorize('vehiculos', 'crear');
+  const auth = await authorize('distribuidor', 'crear');
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   let body: {
@@ -130,7 +130,7 @@ export async function POST(req: NextRequest) {
 
 /** Los renglones de una orden. Query: ?orden=<id> */
 export async function GET(req: NextRequest) {
-  const auth = await authorize('vehiculos', 'leer');
+  const auth = await authorize('distribuidor', 'leer');
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const orden = new URL(req.url).searchParams.get('orden');

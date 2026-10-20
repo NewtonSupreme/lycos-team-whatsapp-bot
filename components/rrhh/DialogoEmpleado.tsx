@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { AlertCircle, Camera, Loader2, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { ZONAS_TRABAJO, type RoleMeta } from '@/types';
+import { ZONAS_TRABAJO, rolConAcceso, type RoleMeta } from '@/types';
 import { AREAS, CONTRATOS, mensajeError, type EmpleadoRRHH } from './tipos';
 import Avatar from './Avatar';
 
@@ -50,6 +50,8 @@ export default function DialogoEmpleado({
     activo: empleado?.activo !== false,
     password: '',
   });
+  // Personal de nómina (rol sin acceso): ni usuario ni clave.
+  const sinAcceso = !rolConAcceso(f.rol);
 
   const [subiendo, setSubiendo] = useState(false);
   const [guardando, setGuardando] = useState(false);
@@ -110,7 +112,7 @@ export default function DialogoEmpleado({
         if (f.password.trim()) cuerpo.password = f.password.trim();
       } else {
         cuerpo.username = f.username.trim() || undefined;
-        cuerpo.password_hash = (f.password.trim() || CLAVE_POR_DEFECTO);
+        if (!sinAcceso) cuerpo.password_hash = (f.password.trim() || CLAVE_POR_DEFECTO);
       }
 
       const res = await fetch(editando ? '/api/admin/update-user' : '/api/admin/create-user', {
@@ -206,7 +208,7 @@ export default function DialogoEmpleado({
               <input type="email" value={f.email} onChange={e => set('email', e.target.value)} className={INPUT} />
             </Campo>
 
-            <Campo label="Rol del sistema" requerido ayuda="Define qué puede ver y hacer en el panel.">
+            <Campo label="Rol" requerido ayuda={sinAcceso ? 'Personal de nómina: cobra por sus trabajos pero no entra al sistema.' : 'Define qué puede ver y hacer en el sistema.'}>
               <select value={f.rol} onChange={e => set('rol', e.target.value)} className={INPUT}>
                 {rolesAsignables.map(r => <option key={r.nombre} value={r.nombre}>{r.label}</option>)}
               </select>
@@ -217,12 +219,17 @@ export default function DialogoEmpleado({
               </select>
             </Campo>
 
-            <Campo label="Usuario" ayuda={editando ? 'Con el que inicia sesión.' : 'Si lo dejas vacío se genera solo.'}>
-              <input value={f.username} onChange={e => set('username', e.target.value)} className={INPUT} />
-            </Campo>
-            <Campo label={editando ? 'Nueva contraseña' : 'Contraseña'} ayuda={editando ? 'Déjala vacía para no cambiarla.' : `Por defecto: ${CLAVE_POR_DEFECTO}`}>
-              <input type="text" value={f.password} onChange={e => set('password', e.target.value)} className={INPUT} />
-            </Campo>
+            {/* El personal de nómina no inicia sesión: no lleva usuario ni clave. */}
+            {!sinAcceso && (
+              <>
+                <Campo label="Usuario" ayuda={editando ? 'Con el que inicia sesión.' : 'Si lo dejas vacío se genera solo.'}>
+                  <input value={f.username} onChange={e => set('username', e.target.value)} className={INPUT} />
+                </Campo>
+                <Campo label={editando ? 'Nueva contraseña' : 'Contraseña'} ayuda={editando ? 'Déjala vacía para no cambiarla. Se guarda cifrada: nadie puede verla después.' : `Por defecto: ${CLAVE_POR_DEFECTO}. Se guarda cifrada.`}>
+                  <input type="text" value={f.password} onChange={e => set('password', e.target.value)} className={INPUT} />
+                </Campo>
+              </>
+            )}
           </div>
 
           <label className="mt-3 flex cursor-pointer items-center gap-2 text-[12.5px] text-[#3d4350]">

@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from '@/lib/store/useSedeStore';
-import { MASTER_ADMIN_USERNAME, ROLE_CATALOG, resolveRol, type RoleMeta } from '@/types';
+import { ROLE_CATALOG, resolveRol, type RoleMeta } from '@/types';
 import ErpShell from '@/components/erp/ErpShell';
 import RrhhKpis from '@/components/rrhh/RrhhKpis';
 import ListadoEmpleados from '@/components/rrhh/ListadoEmpleados';
@@ -70,9 +70,10 @@ export default function RecursosHumanosPage() {
 
   const rol = resolveRol(user?.rol);
   const isAdmin = rol === 'admin';
-  const canEdit = isAdmin || rol === 'supervisor';
+  const canEdit = isAdmin || rol === 'supervisor' || rol === 'administracion';
   const canDelete = isAdmin;
-  const esMaestro = user?.username === MASTER_ADMIN_USERNAME;
+  // Cualquier Usuario Maestro puede asignar el rol de Maestro.
+  const esMaestro = isAdmin;
 
   // Quién puede asignar qué rol: la regla existente se mantiene intacta.
   const rolesAsignables: RoleMeta[] = useMemo(() => ROLE_CATALOG.filter(r => {

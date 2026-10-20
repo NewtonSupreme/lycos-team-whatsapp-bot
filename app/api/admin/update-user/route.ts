@@ -2,7 +2,8 @@ import { createClient } from '@supabase/supabase-js';
 import { leerSesion } from '@/lib/session-token';
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { resolveRol, MASTER_ADMIN_USERNAME } from '@/types';
+import { resolveRol, rolConAcceso } from '@/types';
+import { hashClave } from '@/lib/password';
 
 async function getRequester(db: any) {
   try {
@@ -43,9 +44,9 @@ export async function POST(req: Request) {
       const yaEraAdmin = target && resolveRol(target.rol) === 'admin';
       if (!yaEraAdmin) {
         const requester = await getRequester(supabaseAdmin);
-        if (!requester || requester.username !== MASTER_ADMIN_USERNAME) {
+        if (!requester || resolveRol(requester.rol) !== 'admin') {
           return NextResponse.json(
-            { error: `Solo el usuario "${MASTER_ADMIN_USERNAME}" puede asignar el rol de Administrador.` },
+            { error: 'Solo un Usuario Maestro puede asignar el rol de Usuario Maestro.' },
             { status: 403 }
           );
         }
@@ -82,8 +83,10 @@ export async function POST(req: Request) {
 
     // Reseteo opcional de contraseña (solo si el admin escribió una nueva)
     if (typeof password === 'string' && password.trim().length > 0) {
-      updates.password_hash = password.trim();
+      updates.password_hash = await hashClave(password.trim());
     }
+    // Pasar a personal de nómina quita la clave: ya no inicia sesión.
+    if (rol !== undefined && !rolConAcceso(rol)) updates.password_hash = null;
 
     const { data: updatedUser, error } = await supabaseAdmin
       .from('usuarios')
@@ -110,7 +113,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ message: 'Usuario actualizado exitosamente', user: updatedUser });
+    const sinClave = Array.isArray(updatedUser)
+      ? updatedUser.map(({ password_hash: _c, ...u }) => { void _c; return u; })
+      : updatedUser;
+    return NextResponse.json({ message: 'Usuario actualizado exitosamente', user: sinClave });
   } catch (error: any) {
     console.error('Error in update-user:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });

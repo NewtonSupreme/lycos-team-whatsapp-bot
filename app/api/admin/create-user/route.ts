@@ -2,7 +2,8 @@ import { createClient } from '@supabase/supabase-js';
 import { leerSesion } from '@/lib/session-token';
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { resolveRol, MASTER_ADMIN_USERNAME } from '@/types';
+import { resolveRol, rolConAcceso } from '@/types';
+import { hashClave } from '@/lib/password';
 
 // Devuelve el usuario que hace la petición (según la cookie de sesión).
 async function getRequester(db: any) {
@@ -38,12 +39,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Faltan datos requeridos (nombre, rol)' }, { status: 400 });
     }
 
-    // REGLA: solo el usuario maestro 'administrador' puede crear/asignar el rol admin.
+    // REGLA: solo un Usuario Maestro puede crear o asignar el rol de Usuario Maestro.
     if (resolveRol(rol) === 'admin') {
       const requester = await getRequester(supabaseAdmin);
-      if (!requester || requester.username !== MASTER_ADMIN_USERNAME) {
+      if (!requester || resolveRol(requester.rol) !== 'admin') {
         return NextResponse.json(
-          { error: `Solo el usuario "${MASTER_ADMIN_USERNAME}" puede crear o asignar el rol de Administrador.` },
+          { error: 'Solo un Usuario Maestro puede crear o asignar el rol de Usuario Maestro.' },
           { status: 403 }
         );
       }
@@ -81,7 +82,8 @@ export async function POST(req: Request) {
       username: username,
       nombre: apellido ? `${nombre} ${apellido}`.trim() : nombre,
       email: finalEmail,
-      password_hash: password_hash || 'lycos2026',
+      // El personal de nómina no inicia sesión: no lleva clave. El resto, con hash.
+      password_hash: rolConAcceso(rol) ? await hashClave(String(password_hash || 'lycos2026')) : null,
       rol: rol,
       // Todos los roles tienen acceso al panel; nuevos usuarios heredan los
       // permisos de su rol (permisos por-usuario quedan en NULL).
@@ -104,7 +106,9 @@ export async function POST(req: Request) {
     }
 
     console.log(`✅ [CreateUser] User created successfully: ${newUser.id}`);
-    return NextResponse.json({ message: 'Usuario creado exitosamente', user: newUser });
+    const { password_hash: _clave, ...sinClave } = newUser;
+    void _clave;
+    return NextResponse.json({ message: 'Usuario creado exitosamente', user: sinClave });
   } catch (error: any) {
     console.error('Error in create-user:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });

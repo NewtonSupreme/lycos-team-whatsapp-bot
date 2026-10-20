@@ -11,6 +11,7 @@ import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { Loader2, ShieldAlert } from 'lucide-react';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
+import { resolveRol } from '@/types';
 import { RUTAS_ARMAZON_PROPIO } from '@/lib/ui/armazon';
 import { Permisos } from '@/types';
 
@@ -230,13 +231,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     ['/dashboard/nomina', 'nomina'],
     // Dinero de la empresa: sin ellas, quien escribía la dirección entraba.
     ['/dashboard/finanzas', 'reportes'],
-    ['/dashboard/proveedores', 'reportes'],
+    ['/dashboard/proveedores', 'distribuidor'],
   ], []);
 
   // El acceso denegado se DERIVA de la ruta y los permisos: no es un estado que
   // haya que sincronizar. Guardarlo obligaba a un efecto que se disparaba con
   // su propio valor en las dependencias, que es justo la forma de encadenar
   // renders sin querer.
+  // La cuenta «Taller» (TV/PC del piso) vive en su pantalla: el panel no es para ella.
+  const rolActual = useAppStore(st => st.user?.rol);
+  React.useEffect(() => {
+    if (!authLoading && resolveRol(rolActual) === 'taller') router.replace('/pantalla-taller');
+  }, [authLoading, rolActual, router]);
+
   const accessDenied = React.useMemo(() => {
     if (authLoading) return false;
     const entrada = RUTA_PERMISO.find(([ruta]) => pathname.includes(ruta));

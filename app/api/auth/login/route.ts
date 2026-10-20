@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { firmarSesion } from '@/lib/session-token';
+import { hashClave, verificarClave } from '@/lib/password';
+import { rolConAcceso } from '@/types';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 
@@ -74,22 +76,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Base de datos no disponible' }, { status: 500 });
     }
 
-    // Fallback without DB credentials check
-    const ACCOUNTS: Record<string, string> = {
-      administrador: 'administrador', daniela: 'daniela',
-      alejandra: 'alejandra', andrea: 'andrea',
-    };
-    if (ACCOUNTS[username] && password === 'lycos2026') {
-      const cookieStore = await cookies();
-      cookieStore.set('lycos_session', firmarSesion(username), {
-        httpOnly: true, secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax', maxAge: 60 * 60 * 24 * 7, path: '/',
-      });
-      // Get user ID from DB
-      const { data: dbUser } = await db.from('usuarios').select('id, sede_id').eq('username', username).single();
-      await registrarIntento(db, request, username, true, 'cuenta de respaldo');
-      return NextResponse.json({ success: true, id: dbUser?.id, nombre: username, username, rol: username === 'administrador' ? 'admin' : 'usuario', sede_id: dbUser?.sede_id });
-    }
+    // (Aquí había cuentas «de respaldo» con una clave fija escrita en el código
+    // que entraban sin mirar la base, una de ellas como admin. Se quitaron el
+    // 2026-10-20: toda cuenta se valida contra la base.)
 
     // Look up user in DB
     const { data: user, error } = await db
@@ -104,9 +93,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Credenciales inválidas o cuenta no autorizada' }, { status: 401 });
     }
 
-    if (user.password_hash !== password) {
+    const clave = await verificarClave(String(password || ''), user.password_hash);
+    if (!clave.ok) {
       await registrarIntento(db, request, username, false, 'contraseña incorrecta');
       return NextResponse.json({ error: 'Contraseña incorrecta' }, { status: 401 });
+    }
+    // El personal de nómina (mecánicos) no es usuario del sistema: carga su
+    // trabajo desde la pantalla del taller.
+    if (!rolConAcceso(user.rol)) {
+      await registrarIntento(db, request, username, false, 'personal sin acceso');
+      return NextResponse.json({ error: 'Esta ficha es de personal de nómina y no tiene acceso al sistema. Usa la pantalla del taller.' }, { status: 403 });
+    }
+    // Clave guardada en el formato viejo (texto plano): se cambia por su hash ya.
+    if (clave.migrar) {
+      await db.from('usuarios').update({ password_hash: await hashClave(String(password)) }).eq('id', user.id);
     }
 
     // Set session cookie

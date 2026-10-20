@@ -61,7 +61,7 @@ const META: Record<string, TemplateMeta> = {
              rol: 'jefe_taller', cargo: 'Jefe de taller', area: 'Taller', tipo_contrato: 'Tiempo completo',
              alterno: ['JIM'] },
   acevedo: { cedula: 'V-3.882.980', especialidad: 'general', nombreCompleto: 'Antonio Jose Acevedo Colmenares',
-             rol: 'registrador', cargo: 'Almacén e inventario', area: 'Almacén', tipo_contrato: 'Tiempo completo',
+             rol: 'almacen', cargo: 'Almacén e inventario', area: 'Almacén', tipo_contrato: 'Tiempo completo',
              alterno: ['ACEVEDO'] },
   freddy:  { cedula: 'V-11.098.823', especialidad: 'escape', nombreCompleto: 'Freddy Ramón Rodriguez Cordova',
              rol: 'mecanico', cargo: 'Técnico en silenciadores', area: 'Taller', tipo_contrato: 'Por comisión',

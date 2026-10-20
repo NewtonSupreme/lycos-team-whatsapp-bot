@@ -13,7 +13,7 @@ const CAMPOS = [
 
 /** Catálogo de proveedores. */
 export async function GET(req: NextRequest) {
-  const auth = await authorize('vehiculos', 'leer');
+  const auth = await authorize('distribuidor', 'leer');
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const url = new URL(req.url);
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
 
 /** Alta de proveedor. Si ya existe con ese nombre, devuelve el que hay. */
 export async function POST(req: NextRequest) {
-  const auth = await authorize('vehiculos', 'crear');
+  const auth = await authorize('distribuidor', 'crear');
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   let body: Record<string, unknown>;

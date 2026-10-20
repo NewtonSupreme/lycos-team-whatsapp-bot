@@ -7,7 +7,7 @@
 import { cookies } from 'next/headers';
 import { leerSesion } from '@/lib/session-token';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { getPermisos, hasPermiso, resolveRol, type Permisos, type CrudPermiso } from '@/types';
+import { getPermisos, hasPermiso, resolveRol, rolConAcceso, type Permisos, type CrudPermiso } from '@/types';
 
 export interface SessionUser {
   id: string;
@@ -49,8 +49,9 @@ export async function getSessionUser(db: SupabaseClient): Promise<SessionUser | 
     const { data } = await db.from('usuarios')
       .select('id, username, nombre, email, rol, sede_id, permisos, activo')
       .eq('username', username).maybeSingle();
-    if (!data || data.activo === false) return null;
-    const multiSede = ['admin', 'dueno'].includes(resolveRol(data.rol));
+    if (!data || data.activo === false || !rolConAcceso(data.rol)) return null;
+    // Solo el Usuario Maestro ve y cambia entre todas las sedes.
+    const multiSede = resolveRol(data.rol) === 'admin';
     return {
       id: data.id, username: data.username, nombre: data.nombre, email: data.email,
       rol: data.rol, sede_id: data.sede_id ?? null,

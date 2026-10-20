@@ -18,7 +18,7 @@ const nota = (v: unknown): number | null => {
  * prisa y a quién cuando lo que importa es el costo.
  */
 export async function POST(req: NextRequest) {
-  const auth = await authorize('vehiculos', 'crear');
+  const auth = await authorize('distribuidor', 'crear');
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   let body: {
@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
 
 /** Borra una evaluación. Query: ?id=<uuid> */
 export async function DELETE(req: NextRequest) {
-  const auth = await authorize('vehiculos', 'eliminar');
+  const auth = await authorize('distribuidor', 'eliminar');
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const id = new URL(req.url).searchParams.get('id');

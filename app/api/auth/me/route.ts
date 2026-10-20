@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { hashClave, verificarClave } from '@/lib/password';
+import { rolConAcceso } from '@/types';
 import { leerSesion, firmarSesion } from '@/lib/session-token';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
@@ -17,19 +19,15 @@ export async function GET() {
     if (!username) return NextResponse.json({ user: null });
 
     const db = getDb();
-    if (!db) {
-      // Fallback: derive from cookie
-      const nombre = username.charAt(0).toUpperCase() + username.slice(1);
-      return NextResponse.json({ user: { username, nombre, rol: username === 'administrador' ? 'admin' : 'empleado' } });
-    }
+    if (!db) return NextResponse.json({ user: null });
 
     const { data: user } = await db
       .from('usuarios')
-      .select('id, username, nombre, email, rol, avatar_url, sede_id, permisos')
+      .select('id, username, nombre, email, rol, avatar_url, sede_id, permisos, activo')
       .eq('username', username)
       .single();
 
-    if (!user) {
+    if (!user || user.activo === false || !rolConAcceso(user.rol)) {
       cookieStore.delete('lycos_session');
       return NextResponse.json({ user: null });
     }
@@ -69,14 +67,17 @@ export async function POST(request: NextRequest) {
       .eq('username', username)
       .single();
 
-    if (!user || user.password_hash !== currentPassword) {
+    if (!user || !(await verificarClave(String(currentPassword || ''), user.password_hash)).ok) {
       return NextResponse.json({ error: 'Contraseña actual incorrecta' }, { status: 401 });
+    }
+    if (String(newPassword || '').trim().length < 6) {
+      return NextResponse.json({ error: 'La nueva contraseña debe tener al menos 6 caracteres.' }, { status: 400 });
     }
 
     // Update password
     const { error } = await db
       .from('usuarios')
-      .update({ password_hash: newPassword, updated_at: new Date().toISOString() })
+      .update({ password_hash: await hashClave(String(newPassword).trim()), updated_at: new Date().toISOString() })
       .eq('username', username);
 
     if (error) return NextResponse.json({ error: 'Error al actualizar contraseña' }, { status: 500 });

@@ -26,7 +26,6 @@ import {
   type RolConfig, type TabConfig, type UsuarioConfig,
 } from '@/components/config/tipos';
 
-const MASTER_ADMIN_USERNAME = 'administrador';
 
 const KPIS_VACIOS: Kpis = {
   total: 0, activos: 0, rolesCreados: 0, rolesDefinidos: 0, altasEsteMes: 0,
@@ -68,9 +67,10 @@ export default function ConfiguracionPage() {
 
   const rol = resolveRol(user?.rol);
   const isAdmin = rol === 'admin';
-  const canEdit = isAdmin || rol === 'supervisor';
+  const canEdit = isAdmin || rol === 'supervisor' || rol === 'administracion';
   const canDelete = isAdmin;
-  const esMaestro = user?.username === MASTER_ADMIN_USERNAME;
+  // Cualquier Usuario Maestro puede asignar el rol de Maestro.
+  const esMaestro = isAdmin;
 
   const rolesAsignables: RoleMeta[] = useMemo(() => ROLE_CATALOG.filter(r => {
     if (r.nombre === 'admin') return esMaestro;

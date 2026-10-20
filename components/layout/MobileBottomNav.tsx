@@ -34,7 +34,7 @@ const MORE_NAV: NavItem[] = [
   { href: '/dashboard/facturas', icon: Receipt, label: 'Facturas', permKey: 'ventas' },
   { href: '/dashboard/ia', icon: Bot, label: 'IA Asistente', permKey: 'ia_asistente' },
   { href: '/dashboard/nomina', icon: Banknote, label: 'Nómina', permKey: 'nomina' },
-  { href: '/dashboard/proveedores', icon: Truck, label: 'Proveedores', permKey: 'reportes' },
+  { href: '/dashboard/proveedores', icon: Truck, label: 'Proveedores', permKey: 'distribuidor' },
   { href: '/dashboard/finanzas', icon: Landmark, label: 'Finanzas', permKey: 'reportes' },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', permKey: 'reportes' },
   { href: '/dashboard/actividad', icon: Activity, label: 'Actividad', permKey: 'actividad' },

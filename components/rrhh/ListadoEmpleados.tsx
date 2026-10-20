@@ -6,7 +6,7 @@ import {
   MoreVertical, Pencil, Search, SlidersHorizontal, Trash2, UserCheck, UserX, X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { ROLE_CATALOG, ZONAS_TRABAJO, getRoleMeta } from '@/types';
+import { ROLE_CATALOG, ZONAS_TRABAJO, getRoleMeta, rolConAcceso } from '@/types';
 import {
   AREAS, ESTADO_LABEL, ESTADO_TINTE, fechaCorta, normaliza,
   type EmpleadoRRHH,
@@ -55,6 +55,8 @@ export default function ListadoEmpleados({
   const [area, setArea] = useState('Todas');
   const [rolFiltro, setRolFiltro] = useState('Todos');
   const [estado, setEstado] = useState('Todos');
+  // Usuarios del sistema (inician sesión) y personal de nómina (no): dos cosas distintas.
+  const [tipo, setTipo] = useState<'todos' | 'usuarios' | 'personal'>('todos');
   const [verFiltros, setVerFiltros] = useState(false);
   const [porPagina, setPorPagina] = useState(8);
   const [paginaPedida, setPaginaPedida] = useState(1);
@@ -99,9 +101,11 @@ export default function ListadoEmpleados({
       (!q || normaliza(`${e.nombre} ${cargoDe(e)} ${areaDe(e)} ${e.cedula || ''}`).includes(q)) &&
       (area === 'Todas' || areaDe(e) === area) &&
       (rolFiltro === 'Todos' || (getRoleMeta(e.rol)?.label || e.rol) === rolFiltro) &&
-      (estado === 'Todos' || ESTADO_LABEL[e.estado] === estado),
+      (estado === 'Todos' || ESTADO_LABEL[e.estado] === estado) &&
+      (tipo === 'todos' || (tipo === 'usuarios') === rolConAcceso(e.rol)),
     );
-  }, [empleados, busqueda, area, rolFiltro, estado]);
+  }, [empleados, busqueda, area, rolFiltro, estado, tipo]);
+  const nUsuarios = empleados.filter(e => rolConAcceso(e.rol)).length;
 
   const totalPaginas = Math.max(1, Math.ceil(filtrados.length / porPagina));
   // La página se acota al calcular, no con un efecto: sincronizar estado desde
@@ -121,6 +125,19 @@ export default function ListadoEmpleados({
           Listado de empleados ({filtrados.length})
         </h2>
       </header>
+
+      <div className="flex flex-wrap gap-1.5 px-4 pt-3" role="tablist" aria-label="Tipo de persona">
+        {([
+          ['todos', `Todos (${empleados.length})`],
+          ['usuarios', `Usuarios del sistema (${nUsuarios})`],
+          ['personal', `Personal de nómina (${empleados.length - nUsuarios})`],
+        ] as const).map(([k, t]) => (
+          <button key={k} type="button" role="tab" aria-selected={tipo === k} onClick={() => { setTipo(k); setPaginaPedida(1); }}
+            className={`rounded-lg border px-2.5 py-1 text-[12px] font-semibold ${tipo === k ? 'border-[#f97316] bg-[#fff4ec] text-[#c2410c]' : 'border-[#e8eaed] text-[#5b616e] hover:border-[#f97316]/50'}`}>
+            {t}
+          </button>
+        ))}
+      </div>
 
       <div className="flex flex-wrap items-center gap-2 px-4 py-3">
         <div className="relative min-w-[200px] flex-1">
@@ -283,6 +300,7 @@ export default function ListadoEmpleados({
                       <span className="block truncate text-[12.5px] font-semibold text-[#16181d]">{e.nombre}</span>
                       <span className="block truncate text-[10.5px] text-[#f97316]">
                         {getRoleMeta(e.rol)?.label || e.rol}
+                        {!rolConAcceso(e.rol) && <span className="ml-1 text-[#8a909c]">· sin acceso</span>}
                       </span>
                     </span>
                   </div>

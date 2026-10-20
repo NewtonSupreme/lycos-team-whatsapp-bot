@@ -3,7 +3,7 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-  LayoutDashboard, Users, Car, Wrench, Calendar, MessageSquare,
+  LayoutDashboard, Users, Car, Wrench, Calendar, MessageSquare, Monitor,
   Bot, FileText, Settings, ChevronLeft, ChevronRight,
   Activity, LogOut, TrendingUp, UserCircle, Package, Calculator, ShoppingCart, Trash2, Truck, Shield,
   FileSpreadsheet, Receipt, Info, Banknote, ClipboardList, Landmark
@@ -44,6 +44,7 @@ const navItemsConfig: NavItem[] = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Panel', badge: null, permKey: 'dashboard', group: 'Operacion' },
   { href: '/dashboard/agenda', icon: Calendar, label: 'Agenda', badge: null, permKey: 'agenda', group: 'Operacion' },
   { href: '/dashboard/taller', icon: Wrench, label: 'Taller', badge: null, permKey: 'taller', group: 'Operacion' },
+  { href: '/pantalla-taller', icon: Monitor, label: 'Pantalla del taller', badge: null, permKey: 'taller', group: 'Operacion' },
   { href: '/dashboard/servicios', icon: Wrench, label: 'Servicios', badge: null, permKey: 'servicios', group: 'Operacion' },
   { href: '/dashboard/ficha', icon: ClipboardList, label: 'Ficha del vehículo', badge: null, permKey: 'servicios', group: 'Operacion' },
 
@@ -58,7 +59,7 @@ const navItemsConfig: NavItem[] = [
 
   { href: '/dashboard/inventario', icon: Package, label: 'Inventario', badge: null, permKey: 'inventario', group: 'Inventario' },
   { href: '/dashboard/distribuidor', icon: Truck, label: 'Distribución', badge: null, permKey: 'distribuidor', group: 'Inventario' },
-  { href: '/dashboard/proveedores', icon: Truck, label: 'Proveedores', badge: null, permKey: 'reportes', group: 'Inventario' },
+  { href: '/dashboard/proveedores', icon: Truck, label: 'Proveedores', badge: null, permKey: 'distribuidor', group: 'Inventario' },
   { href: '/dashboard/inventario/papelera', icon: Trash2, label: 'Papelera', badge: null, permKey: 'papelera', group: 'Inventario' },
 
   { href: '/dashboard/nomina', icon: Banknote, label: 'Nómina', badge: null, permKey: 'nomina', group: 'Finanzas' },

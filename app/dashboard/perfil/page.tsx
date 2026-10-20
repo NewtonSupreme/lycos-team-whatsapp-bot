@@ -156,11 +156,11 @@ export default function PerfilPage() {
       if (!supabase || !user?.id) return;
       const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id);
       
-      const { data } = await supabase
-        .from('usuarios')
-        .select('*')
-        .eq(isUUID ? 'id' : 'username', user.id)
-        .maybeSingle();
+      // El perfil se lee por el servidor: la tabla de usuarios ya no se abre
+      // desde el navegador (guardaba las claves).
+      void isUUID;
+      const r = await fetch('/api/auth/perfil');
+      const data = r.ok ? (await r.json()).perfil : null;
         
       if (data) {
         setProfile({
@@ -185,14 +185,11 @@ export default function PerfilPage() {
     setProfileStatus('saving');
     setProfileError('');
     try {
-      const { error } = await supabase.from('usuarios').update({
-        nombre: profile.nombre,
-        telefono: profile.telefono,
-        bio: profile.bio,
-        updated_at: new Date().toISOString()
-      }).eq(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id) ? 'id' : 'username', user.id);
-
-      if (error) throw error;
+      const r = await fetch('/api/auth/perfil', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nombre: profile.nombre, telefono: profile.telefono, bio: profile.bio }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => null))?.error || 'No se pudo guardar el perfil.');
       setUser({ ...user, nombre: profile.nombre });
 
       await withSedeFilter(supabase.from('logs_actividad')).insert(withSedeInsert({
@@ -256,7 +253,10 @@ export default function PerfilPage() {
       const { error: uploadErr } = await supabase.storage.from('avatars').upload(path, file, { upsert: true });
       if (uploadErr) throw uploadErr;
       const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
-      await supabase.from('usuarios').update({ avatar_url: urlData.publicUrl }).eq('id', user.id);
+      await fetch('/api/auth/perfil', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ avatar_url: urlData.publicUrl }),
+      });
       setAvatarUrl(urlData.publicUrl);
       setUser({ ...user, avatar_url: urlData.publicUrl });
     } catch (err) {

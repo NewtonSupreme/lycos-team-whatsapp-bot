@@ -19,7 +19,7 @@ const hoyISO = () => new Date().toISOString().slice(0, 10);
  */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const auth = await authorize('vehiculos', 'editar');
+  const auth = await authorize('distribuidor', 'editar');
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   let body: {
@@ -129,7 +129,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 /** Borra una orden y su desglose. El gasto, si lo generó, se va con ella. */
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const auth = await authorize('vehiculos', 'eliminar');
+  const auth = await authorize('distribuidor', 'eliminar');
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const { data: orden } = await auth.db.from('ordenes_compra')

@@ -127,52 +127,66 @@ export interface RoleMeta {
 
 export const ROLE_CATALOG: RoleMeta[] = [
   {
-    nombre: 'admin', label: 'Administración',
-    descripcion: 'Control total del sistema y de todas las sedes.',
+    nombre: 'admin', label: 'Usuario Maestro',
+    descripcion: 'Control total del sistema y de todas las sedes. Único que configura, elimina y asigna Maestros.',
     icon: 'crown', color: 'bg-red-500/10 text-red-500 border-red-500/20',
     conAcceso: true, esTecnico: false, asignablePorSupervisor: false, multiSede: true,
   },
   {
-    nombre: 'dueno', label: 'Dueño',
-    descripcion: 'Visualiza absolutamente todo en todas las sedes. Solo lectura: no crea, edita ni elimina.',
-    icon: 'eye', color: 'bg-indigo-500/10 text-indigo-500 border-indigo-500/20',
-    conAcceso: true, esTecnico: false, asignablePorSupervisor: false, multiSede: true,
-  },
-  {
-    nombre: 'supervisor', label: 'Supervisor de Sede',
-    descripcion: 'Gestiona su sede asignada: operaciones, personal y ventas.',
+    nombre: 'supervisor', label: 'Supervisor',
+    descripcion: 'Dirige la operación de su sede: órdenes, taller, agenda, personal y la nómina del día a día. No ve finanzas.',
     icon: 'shield', color: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
     conAcceso: true, esTecnico: false, asignablePorSupervisor: false, multiSede: false,
   },
   {
+    nombre: 'administracion', label: 'Administración',
+    descripcion: 'Finanzas de la empresa: reportes, conciliación bancaria, gastos, cuentas por pagar y cobrar, pago de nómina y proveedores. No configura el sistema.',
+    icon: 'eye', color: 'bg-indigo-500/10 text-indigo-500 border-indigo-500/20',
+    conAcceso: true, esTecnico: false, asignablePorSupervisor: false, multiSede: false,
+  },
+  {
     nombre: 'cobranza', label: 'Cobranza',
-    descripcion: 'Facturación, ventas, presupuestos y reportes financieros.',
+    descripcion: 'Caja: punto de venta, cobros y abonos, facturas, cierre del día y cuentas por cobrar.',
     icon: 'dollar', color: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
     conAcceso: true, esTecnico: false, asignablePorSupervisor: true, multiSede: false,
   },
   {
-    nombre: 'atencion_cliente', label: 'Atención al Cliente',
-    descripcion: 'Recepción: clientes, vehículos, citas y mensajería.',
-    icon: 'headset', color: 'bg-pink-500/10 text-pink-500 border-pink-500/20',
-    conAcceso: true, esTecnico: false, asignablePorSupervisor: true, multiSede: false,
-  },
-  {
-    nombre: 'registrador', label: 'Registrador',
-    descripcion: 'Logística de registro: ingresa vehículos al taller, define el servicio y coloca los precios.',
+    nombre: 'almacen', label: 'Almacén',
+    descripcion: 'Inventario y repuestos: entradas, salidas, stock, proveedores y órdenes de compra.',
     icon: 'clipboard', color: 'bg-teal-500/10 text-teal-500 border-teal-500/20',
     conAcceso: true, esTecnico: false, asignablePorSupervisor: true, multiSede: false,
   },
   {
+    nombre: 'atencion_cliente', label: 'Atención al Cliente',
+    descripcion: 'Recepción: clientes, vehículos, citas, WhatsApp, ingreso de órdenes y presupuestos. No maneja dinero.',
+    icon: 'headset', color: 'bg-pink-500/10 text-pink-500 border-pink-500/20',
+    conAcceso: true, esTecnico: false, asignablePorSupervisor: true, multiSede: false,
+  },
+  {
     nombre: 'jefe_taller', label: 'Jefe de Taller',
-    descripcion: 'Lidera el taller: servicios, vehículos e inventario.',
+    descripcion: 'Manda en el piso: órdenes, mecánicos asignados, vehículos y su ficha (gastos de repuestos) e inventario. No ve la ganancia de la empresa.',
     icon: 'hardhat', color: 'bg-violet-500/10 text-violet-500 border-violet-500/20',
     conAcceso: true, esTecnico: true, asignablePorSupervisor: true, multiSede: false,
   },
   {
-    nombre: 'mecanico', label: 'Mecánico',
-    descripcion: 'Ejecuta y actualiza los servicios del taller.',
+    nombre: 'presupuesto', label: 'Presupuesto',
+    descripcion: 'Cotiza: presupuestos, ingreso del vehículo con su trabajo y su precio, clientes y vehículos.',
+    icon: 'clipboard', color: 'bg-cyan-500/10 text-cyan-500 border-cyan-500/20',
+    conAcceso: true, esTecnico: false, asignablePorSupervisor: true, multiSede: false,
+  },
+  {
+    nombre: 'taller', label: 'Taller (pantalla)',
+    descripcion: 'Cuenta de la TV o PC del taller: muestra los vehículos en curso y deja a los mecánicos cargar trabajos, mano de obra y precios. Nada más.',
+    icon: 'wrench', color: 'bg-orange-500/10 text-orange-500 border-orange-500/20',
+    conAcceso: true, esTecnico: false, asignablePorSupervisor: true, multiSede: false,
+  },
+  {
+    // No es un usuario del sistema: es personal que cobra por nómina. Vive en
+    // la misma tabla para que sus trabajos, reglas y pagos sigan enlazados.
+    nombre: 'mecanico', label: 'Personal de nómina',
+    descripcion: 'Mecánicos y demás personal que cobra por nómina. No inicia sesión: carga su trabajo desde la pantalla del taller.',
     icon: 'wrench', color: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
-    conAcceso: true, esTecnico: true, asignablePorSupervisor: true, multiSede: false,
+    conAcceso: false, esTecnico: true, asignablePorSupervisor: true, multiSede: false,
   },
 ];
 
@@ -183,23 +197,31 @@ export function getRoleMeta(rol: string): RoleMeta | undefined {
   return ROLE_CATALOG.find(r => r.nombre === resolveRol(rol));
 }
 
+/** ¿Este rol puede iniciar sesión? Los roles creados a mano desde Permisos sí. */
+export function rolConAcceso(rol?: string | null): boolean {
+  const meta = getRoleMeta(String(rol || ''));
+  return meta ? meta.conAcceso : true;
+}
+
 // Roles heredados → rol canónico. Permite que la app funcione correctamente
 // incluso antes de migrar la base de datos.
 export const ROLE_ALIASES: Record<string, string> = {
   gerente: 'supervisor',
   empleado: 'atencion_cliente',
   mecanico_acceso: 'mecanico',
+  personal: 'mecanico',
   jefe_taller_acceso: 'jefe_taller',
   // Rótulos en español que quedaron guardados en `usuarios.rol` antes de canonizar.
-  // Sin estos, un usuario con rol "Administrador" no era reconocido como admin y el
-  // chatbot lo trataba como cliente.
   administrador: 'admin',
-  administracion: 'admin',
-  'administración': 'admin',
-  'dueño': 'dueno',
-  dueno: 'dueno',
-  owner: 'dueno',
-  propietario: 'dueno',
+  maestro: 'admin',
+  'administración': 'administracion',
+  // Roles retirados el 2026-10-20: si quedara alguno, cae en el más parecido.
+  'dueño': 'administracion',
+  dueno: 'administracion',
+  owner: 'administracion',
+  propietario: 'administracion',
+  registrador: 'presupuesto',
+  'almacén': 'almacen',
 };
 
 /** Normaliza el rol crudo de la BD (recorta y baja a minúsculas) y resuelve aliases. */
@@ -210,7 +232,7 @@ export function resolveRol(rol?: string | null): string {
   return ROLE_ALIASES[limpio] || limpio;
 }
 
-// REGLA DEL SISTEMA: la eliminación definitiva (eliminar) es exclusiva del admin.
+// REGLA DEL SISTEMA: la eliminación definitiva (eliminar) es exclusiva del Maestro.
 // Por eso ningún rol por defecto (excepto admin) trae eliminar=true.
 // manage = crear/leer/editar sin eliminar · ver = solo lectura · none = sin acceso.
 function manage(crear: boolean, leer: boolean, editar: boolean): CrudPermiso {
@@ -218,87 +240,94 @@ function manage(crear: boolean, leer: boolean, editar: boolean): CrudPermiso {
 }
 const ver = (): CrudPermiso => ({ crear: false, leer: true, editar: false, eliminar: false });
 const none = (): CrudPermiso => ({ crear: false, leer: false, editar: false, eliminar: false });
+const todo = () => manage(true, true, true);
 
+/*
+ * Qué abre cada módulo (para leer la tabla):
+ *   reportes     → Reportes, Finanzas, Conciliación bancaria y gastos generales: la ganancia de la empresa.
+ *   vehiculos    → Vehículos y su ficha, con los gastos de repuestos por carro.
+ *   distribuidor → Distribución, Proveedores y órdenes de compra (también el proveedor de un gasto en la ficha).
+ *   taller       → La pantalla del taller (TV/PC) y el mapa del taller.
+ *   nomina       → Trabajos de los mecánicos, reglas de comisión y pagos.
+ */
 export const PERMISOS_DEFAULT: Record<string, Permisos> = {
-  // Administración — acceso total (único rol que puede eliminar).
+  // Usuario Maestro — acceso total (único rol que puede eliminar).
   admin: {
     dashboard: full(true), clientes: full(true), vehiculos: full(true), servicios: full(true), taller: full(true),
     agenda: full(true), whatsapp: full(true), leads: full(true), inventario: full(true), papelera: full(true),
     ventas: full(true), ia_asistente: full(true), reportes: full(true), actividad: full(true),
     calculadora: full(true), configuracion: full(true), empleados: full(true), distribuidor: full(true), presupuestos: full(true), nomina: full(true)
   },
-  // Dueño — ve absolutamente todo en todas las sedes. Solo lectura (no crea, edita ni elimina).
-  dueno: {
-    dashboard: ver(), clientes: ver(), vehiculos: ver(), servicios: ver(), taller: ver(),
-    agenda: ver(), whatsapp: ver(), leads: ver(), inventario: ver(), papelera: ver(),
-    ventas: ver(), ia_asistente: ver(), reportes: ver(), actividad: ver(),
-    calculadora: full(true), configuracion: ver(), empleados: ver(), distribuidor: ver(), presupuestos: ver(), nomina: ver()
-  },
-  // Supervisor de Sede — amplio en su sede; sin configuración del sistema; gestiona personal. Sin eliminar.
+  // Supervisor — la operación de su sede, sin finanzas ni configuración.
   supervisor: {
-    dashboard: manage(true, true, true), clientes: manage(true, true, true), vehiculos: manage(true, true, true),
-    servicios: manage(true, true, true), taller: manage(true, true, true), agenda: manage(true, true, true), whatsapp: manage(true, true, true),
-    leads: manage(true, true, true), inventario: manage(true, true, true), papelera: manage(false, true, true),
-    ventas: manage(true, true, true), ia_asistente: manage(true, true, true), reportes: ver(), actividad: ver(),
-    calculadora: full(true), configuracion: none(), empleados: manage(true, true, true), distribuidor: manage(true, true, true), presupuestos: manage(true, true, true), nomina: manage(true, true, true)
+    dashboard: ver(), clientes: todo(), vehiculos: todo(), servicios: todo(), taller: todo(),
+    agenda: todo(), whatsapp: todo(), leads: todo(), inventario: ver(), papelera: none(),
+    ventas: ver(), ia_asistente: todo(), reportes: none(), actividad: ver(),
+    calculadora: full(true), configuracion: none(), empleados: todo(), distribuidor: todo(), presupuestos: todo(), nomina: todo()
   },
-  // Cobranza — facturación, ventas y presupuestos; lectura de clientes/servicios/inventario para facturar.
+  // Administración — las finanzas de la empresa. Ve todo lo operativo, no configura.
+  administracion: {
+    dashboard: ver(), clientes: todo(), vehiculos: todo(), servicios: ver(), taller: ver(),
+    agenda: ver(), whatsapp: ver(), leads: ver(), inventario: ver(), papelera: ver(),
+    ventas: todo(), ia_asistente: todo(), reportes: todo(), actividad: ver(),
+    calculadora: full(true), configuracion: none(), empleados: todo(), distribuidor: todo(), presupuestos: ver(), nomina: todo()
+  },
+  // Cobranza — la caja: ventas, cobros, facturas y cierre.
   cobranza: {
-    dashboard: ver(), clientes: manage(false, true, true), vehiculos: ver(),
-    servicios: ver(), taller: none(), agenda: none(), whatsapp: ver(),
-    leads: none(), inventario: ver(), papelera: none(), ventas: manage(true, true, true),
-    ia_asistente: none(), reportes: ver(), actividad: none(), calculadora: full(true),
-    configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: manage(true, true, true), nomina: ver()
+    dashboard: ver(), clientes: todo(), vehiculos: ver(), servicios: ver(), taller: none(),
+    agenda: none(), whatsapp: ver(), leads: none(), inventario: ver(), papelera: none(),
+    ventas: todo(), ia_asistente: none(), reportes: ver(), actividad: none(),
+    calculadora: full(true), configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: ver(), nomina: none()
   },
-  // Atención al Cliente — recepción: clientes, vehículos, citas, mensajería y presupuestos.
+  // Almacén — inventario, proveedores y compras.
+  almacen: {
+    dashboard: ver(), clientes: none(), vehiculos: ver(), servicios: ver(), taller: ver(),
+    agenda: none(), whatsapp: none(), leads: none(), inventario: todo(), papelera: none(),
+    ventas: none(), ia_asistente: none(), reportes: none(), actividad: none(),
+    calculadora: full(true), configuracion: none(), empleados: none(), distribuidor: todo(), presupuestos: ver(), nomina: none()
+  },
+  // Atención al Cliente — recepción. Registra la entrada, no toca dinero.
   atencion_cliente: {
-    dashboard: ver(), clientes: manage(true, true, true), vehiculos: manage(true, true, true),
-    servicios: ver(), taller: ver(), agenda: manage(true, true, true), whatsapp: manage(true, true, true),
-    leads: manage(true, true, true), inventario: ver(), papelera: none(), ventas: none(),
-    ia_asistente: manage(true, true, true), reportes: none(), actividad: none(), calculadora: full(true),
-    configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: manage(true, true, true), nomina: none()
+    dashboard: ver(), clientes: todo(), vehiculos: todo(), servicios: manage(true, true, false), taller: ver(),
+    agenda: todo(), whatsapp: todo(), leads: todo(), inventario: ver(), papelera: none(),
+    ventas: none(), ia_asistente: todo(), reportes: none(), actividad: none(),
+    calculadora: full(true), configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: todo(), nomina: none()
   },
-  // Registrador — logística de ingreso: registra el vehículo, define el servicio y le
-  // pone precio. Todo lo demás es solo consulta. Rol 100% reconfigurable desde
-  // /ajustes/permisos (el chatbot lee esos permisos en vivo).
-  registrador: {
-    dashboard: ver(), clientes: manage(true, true, true), vehiculos: manage(true, true, true),
-    servicios: manage(true, true, true), taller: ver(), agenda: manage(true, true, true), whatsapp: ver(),
-    leads: none(), inventario: ver(), papelera: none(), ventas: ver(),
-    ia_asistente: manage(true, true, true), reportes: none(), actividad: none(), calculadora: full(true),
-    configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: manage(true, true, true), nomina: none()
-  },
-  // Jefe de Taller — manda en el taller: servicios, vehículos e inventario.
+  // Jefe de Taller — el piso: órdenes, mecánicos, vehículos y su ficha, inventario.
   jefe_taller: {
-    dashboard: ver(), clientes: ver(), vehiculos: manage(true, true, true),
-    servicios: manage(true, true, true), taller: manage(true, true, true), agenda: ver(), whatsapp: none(),
-    leads: none(), inventario: manage(true, true, true), papelera: none(), ventas: none(),
-    ia_asistente: none(), reportes: ver(), actividad: none(), calculadora: full(true),
-    configuracion: none(), empleados: none(), distribuidor: ver(), presupuestos: manage(true, true, false), nomina: manage(true, true, false)
+    dashboard: ver(), clientes: todo(), vehiculos: todo(), servicios: todo(), taller: todo(),
+    agenda: ver(), whatsapp: none(), leads: none(), inventario: todo(), papelera: none(),
+    ventas: none(), ia_asistente: todo(), reportes: none(), actividad: none(),
+    calculadora: full(true), configuracion: none(), empleados: ver(), distribuidor: todo(), presupuestos: todo(), nomina: manage(true, true, true)
   },
-  // Mecánico — ejecuta servicios; sin eliminar, sin áreas administrativas.
+  // Presupuesto — cotiza y registra el ingreso con su precio.
+  presupuesto: {
+    dashboard: ver(), clientes: todo(), vehiculos: todo(), servicios: manage(true, true, true), taller: ver(),
+    agenda: ver(), whatsapp: ver(), leads: ver(), inventario: ver(), papelera: none(),
+    ventas: none(), ia_asistente: todo(), reportes: none(), actividad: none(),
+    calculadora: full(true), configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: todo(), nomina: none()
+  },
+  // Taller (pantalla) — solo la pantalla del taller: ver y cargar trabajos.
+  taller: {
+    dashboard: none(), clientes: none(), vehiculos: none(), servicios: ver(), taller: manage(true, true, true),
+    agenda: none(), whatsapp: none(), leads: none(), inventario: none(), papelera: none(),
+    ventas: none(), ia_asistente: none(), reportes: none(), actividad: none(),
+    calculadora: none(), configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: none(), nomina: none()
+  },
+  // Personal de nómina — no entra al sistema.
   mecanico: {
-    dashboard: ver(), clientes: none(), vehiculos: ver(),
-    servicios: manage(true, true, true), taller: manage(false, true, true), agenda: none(), whatsapp: none(),
-    leads: none(), inventario: ver(), papelera: none(), ventas: none(),
-    ia_asistente: none(), reportes: none(), actividad: none(), calculadora: full(true),
-    configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: none(), nomina: ver()
+    dashboard: none(), clientes: none(), vehiculos: none(), servicios: none(), taller: none(),
+    agenda: none(), whatsapp: none(), leads: none(), inventario: none(), papelera: none(),
+    ventas: none(), ia_asistente: none(), reportes: none(), actividad: none(),
+    calculadora: none(), configuracion: none(), empleados: none(), distribuidor: none(), presupuestos: none(), nomina: none()
   },
 };
 
-// REGLA DEL SISTEMA: la eliminación definitiva es exclusiva del Administrador.
-// Se fuerza eliminar=false en TODOS los roles excepto admin (incluye módulos-
-// herramienta como calculadora). El admin puede reactivar permisos puntuales
-// por-usuario desde Gestión de Empleados si lo desea.
+// REGLA DEL SISTEMA: la eliminación definitiva es exclusiva del Usuario Maestro.
+// Se fuerza eliminar=false en TODOS los roles excepto admin.
 for (const [rol, perms] of Object.entries(PERMISOS_DEFAULT)) {
   if (rol === 'admin') continue;
-  const soloLectura = rol === 'dueno'; // el Dueño ve todo pero nunca crea/edita/elimina
-  for (const mod of MODULES) {
-    const p = normalizePermiso(perms[mod]);
-    perms[mod] = soloLectura
-      ? { crear: false, leer: p.leer, editar: false, eliminar: false }
-      : { ...p, eliminar: false };
-  }
+  for (const mod of MODULES) perms[mod] = { ...normalizePermiso(perms[mod]), eliminar: false };
 }
 
 // Permiso mínimo seguro para roles desconocidos: solo lectura del dashboard.
@@ -344,7 +373,8 @@ export function getPermisos(
 }
 
 // ── Reglas de sistema ───────────────────────────────────────────────────────
-// Único usuario maestro autorizado a crear/asignar el rol de Administrador.
+// Cuenta maestra genérica. Asignar el rol de Usuario Maestro lo puede hacer
+// cualquier Usuario Maestro (Juan y esta cuenta), no solo ella.
 export const MASTER_ADMIN_USERNAME = 'administrador';
 
 // ── Capacidades del Chatbot (Modo Dios) por rol ─────────────────────────────

@@ -12,7 +12,7 @@ const CAMPOS = [
 /** Edita un proveedor del catálogo. */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const auth = await authorize('vehiculos', 'editar');
+  const auth = await authorize('distribuidor', 'editar');
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   let body: Record<string, unknown>;
@@ -59,7 +59,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
  */
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const auth = await authorize('vehiculos', 'eliminar');
+  const auth = await authorize('distribuidor', 'eliminar');
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const { data, error } = await auth.db.from('proveedores')

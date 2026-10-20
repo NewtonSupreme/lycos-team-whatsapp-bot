@@ -2129,7 +2129,7 @@ CAMBIOS SENSIBLES (precio/stock, eliminar producto, registrar venta): el sistema
       // Supervisor de Sede que gestiona la distribución desde Carrizal). NUNCA a clientes.
       let gananciasInfo = '';
       const rolCanonGan = resolveRol(botRol);
-      const puedeVerGanancias = rolCanonGan === 'admin' || rolCanonGan === 'dueno' || hasPermiso(botPermisos?.distribuidor, 'leer');
+      const puedeVerGanancias = rolCanonGan === 'admin' || rolCanonGan === 'administracion' || hasPermiso(botPermisos?.distribuidor, 'leer');
       if (puedeVerGanancias) {
         // Mapa de costo de fabricante por inventario_id (fallback para distribuciones sin snapshot)
         const costMap: Record<string, number> = {};
@@ -2179,7 +2179,7 @@ CAMBIOS SENSIBLES (precio/stock, eliminar producto, registrar venta): el sistema
 
       // ─── NÓMINA Y COMISIONES (semana actual) — para responder al admin por WhatsApp ───
       let nominaInfo = '';
-      const puedeVerNomina = rolCanonGan === 'admin' || rolCanonGan === 'dueno' || rolCanonGan === 'supervisor' || hasPermiso(botPermisos?.nomina, 'leer');
+      const puedeVerNomina = rolCanonGan === 'admin' || rolCanonGan === 'administracion' || rolCanonGan === 'supervisor' || hasPermiso(botPermisos?.nomina, 'leer');
       if (puedeVerNomina) {
         try {
           const svc = getPayrollService();
@@ -2189,7 +2189,7 @@ CAMBIOS SENSIBLES (precio/stock, eliminar producto, registrar venta): el sistema
           const domN = new Date(lunesN); domN.setDate(lunesN.getDate() + 6);
           const iniN = lunesN.toISOString().slice(0, 10);
           const finN = domN.toISOString().slice(0, 10);
-          const nominaSede = (rolCanonGan === 'admin' || rolCanonGan === 'dueno') ? null : (adminSedeId || null);
+          const nominaSede = (rolCanonGan === 'admin') ? null : (adminSedeId || null);
           const resumen = await svc.getPayrollSummary({ inicio: iniN, fin: finN, sedeId: nominaSede });
           if (resumen.length > 0) {
             const totalN = resumen.reduce((s, e) => s + e.total_pagar, 0);
@@ -2856,7 +2856,7 @@ async function isOwnerOrAdminPhone(db: ReturnType<typeof getDb>, phone: string):
     if (!user?.rol) return false;
     const raw = String(user.rol).trim().toLowerCase();
     const canonical = resolveRol(raw);
-    if (canonical === 'admin' || canonical === 'dueno'
+    if (canonical === 'admin' || canonical === 'administracion'
       || raw === 'administrador' || raw === 'dueño' || raw === 'owner') return true;
     // Cualquier rol con acceso al Modo Dios (ia_asistente.leer) es operador interno:
     // su ficha tampoco debe renombrarse al registrar clientes desde WhatsApp.

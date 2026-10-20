@@ -168,7 +168,7 @@ export default function NominaPage() {
   const isAdmin = rol === 'admin';
   const permisos = getPermisos(user?.rol || 'mecanico', user?.permisos, roleDefaults);
   const canEdit = isAdmin || hasPermiso(permisos.nomina, 'editar');
-  const canLiquidar = isAdmin || rol === 'supervisor';
+  const canLiquidar = isAdmin || rol === 'administracion' || rol === 'supervisor';
   const esTecnico = !!getRoleMeta(rol)?.esTecnico && !isAdmin;
 
   const [mounted, setMounted] = useState(false);
