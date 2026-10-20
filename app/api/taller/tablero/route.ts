@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authorize } from '@/lib/auth-server';
 import { getRoleMeta } from '@/types';
 import {
-  ESTADOS_ENTRADA, ESTADOS_PANTALLA, nombreCorto,
-  type OrdenPantalla, type PersonaPantalla, type TableroTaller,
+  ESTADOS_ENTRADA, ESTADOS_PANTALLA, nombreCorto, normalizar,
+  type ArticuloPantalla, type OrdenPantalla, type PersonaPantalla, type TableroTaller,
 } from '@/lib/taller/pantalla';
 
 export const dynamic = 'force-dynamic';
@@ -31,11 +31,15 @@ export async function GET(req: NextRequest) {
   let qp = auth.db.from('usuarios').select('id, nombre, alias, foto_url, rol, activo, sede_id').neq('activo', false).order('nombre');
   if (sede) qp = qp.eq('sede_id', sede);
 
+  // El almacén: lo activo de la sede (o sin sede), con stock y precios.
+  let qi = auth.db.from('inventario').select('id, nombre, codigo, marca, categoria, stock, unidad, precio_usd, precio_bs, sede_id, activo').neq('activo', false).order('nombre');
+  if (sede) qi = qi.or(`sede_id.eq.${sede},sede_id.is.null`);
+
   // Para las sugerencias: los renglones de las últimas órdenes.
   let qh = auth.db.from('servicios').select('items').order('created_at', { ascending: false }).limit(400);
   if (sede) qh = qh.eq('sede_id', sede);
 
-  const [{ data: filas, error }, { data: gente }, { data: historial }] = await Promise.all([q, qp, qh]);
+  const [{ data: filas, error }, { data: gente }, { data: historial }, { data: almacen }] = await Promise.all([q, qp, qh, qi]);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const ordenes: OrdenPantalla[] = (filas || []).map(s => {
@@ -70,14 +74,23 @@ export async function GET(req: NextRequest) {
     .map(u => ({ id: u.id, nombre: u.nombre, corto: (u.alias as string) || nombreCorto(u.nombre).replace(/\.$/, ''), foto: (u.foto_url as string) || null }));
 
   // Lo que más se carga como mano de obra, con el precio más común.
-  const cuenta = new Map<string, { descripcion: string; precios: number[] }>();
+  // «Alineación», «Alineación.» y «Alineación 15$» son el mismo trabajo: se
+  // agrupan sin acentos, signos ni precios escritos dentro del texto, y se
+  // muestra la forma más usada.
+  const cuenta = new Map<string, { formas: Map<string, number>; precios: number[] }>();
+  // El precio escrito dentro del texto («15$») se quita ANTES de normalizar,
+  // que se come el «$» y dejaría el «15» suelto.
+  const clave = (d: string) => normalizar(d.replace(/\$?\s*\d+([.,]\d+)?\s*\$/g, ' ')).replace(/[."]/g, '').replace(/\s+/g, ' ').trim();
   for (const h of historial || []) {
     for (const i of (Array.isArray(h.items) ? h.items as Array<Record<string, unknown>> : [])) {
-      const d = String(i.descripcion || '').trim();
+      const d = String(i.descripcion || '').replace(/\s+/g, ' ').trim();
       const esMO = !!i.es_mano_obra || /mano de obra|instalaci|soldadura|alineaci|balanceo|cambio de|reparaci/i.test(d);
       if (!d || !esMO || d.length > 60) continue;
-      const k = d.toLowerCase();
-      const e = cuenta.get(k) || { descripcion: d, precios: [] };
+      const k = clave(d);
+      if (k.length < 3) continue;
+      const e = cuenta.get(k) || { formas: new Map<string, number>(), precios: [] };
+      const limpia = d.replace(/\s*\$?\s*\d+([.,]\d+)?\s*\$\s*$/, '').replace(/\.$/, '').trim();
+      e.formas.set(limpia, (e.formas.get(limpia) || 0) + 1);
       const p = n(i.precio_unitario) || n(i.total);
       if (p > 0) e.precios.push(p);
       cuenta.set(k, e);
@@ -88,11 +101,21 @@ export async function GET(req: NextRequest) {
     return [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || 0;
   };
   const sugerencias = [...cuenta.values()]
-    .map(e => ({ descripcion: e.descripcion, precio: moda(e.precios), veces: e.precios.length }))
+    .map(e => ({
+      // La forma de escribirlo más usada, con mayúscula inicial si venía toda en mayúsculas.
+      descripcion: (([t]) => (t === t.toUpperCase() ? t.charAt(0) + t.slice(1).toLowerCase() : t))([...e.formas.entries()].sort((x, y) => y[1] - x[1])[0]),
+      precio: moda(e.precios), veces: e.precios.length,
+    }))
     .filter(e => e.veces >= 2)
     .sort((a, b) => b.veces - a.veces)
-    .slice(0, 16);
+    .slice(0, 40);
 
-  const tablero: TableroTaller = { ordenes, personal, sugerencias, generado: new Date().toISOString() };
+  const inventario: ArticuloPantalla[] = (almacen || []).map(p => ({
+    id: p.id, nombre: String(p.nombre || '').trim(), codigo: (p.codigo as string) || null, marca: (p.marca as string) || null,
+    categoria: String(p.categoria || 'general'), stock: n(p.stock), unidad: (p.unidad as string) || null,
+    precio: n(p.precio_usd) || n(p.precio_bs), precioBcv: n(p.precio_bs) || n(p.precio_usd),
+  })).filter(p => p.nombre);
+
+  const tablero: TableroTaller = { ordenes, personal, sugerencias, inventario, generado: new Date().toISOString() };
   return NextResponse.json(tablero);
 }
