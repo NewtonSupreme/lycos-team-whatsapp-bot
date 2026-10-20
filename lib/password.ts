@@ -15,6 +15,13 @@ import { promisify } from 'node:util';
 const scrypt = promisify(scryptCb) as (clave: string, sal: Buffer, largo: number) => Promise<Buffer>;
 const PREFIJO = 'scrypt$';
 
+/**
+ * Lo que se guarda a quien no inicia sesión (personal de nómina). La columna
+ * no admite vacío, y esto nunca coincide con una clave: `verificarClave`
+ * rechaza todo lo que empieza por «!».
+ */
+export const SIN_CLAVE = '!sin-acceso';
+
 export async function hashClave(clave: string): Promise<string> {
   const sal = randomBytes(16);
   const derivada = await scrypt(clave, sal, 64);
@@ -26,7 +33,7 @@ export function esHash(guardada: string | null | undefined): boolean {
 }
 
 export async function verificarClave(clave: string, guardada: string | null | undefined): Promise<{ ok: boolean; migrar: boolean }> {
-  if (!guardada || typeof clave !== 'string' || !clave) return { ok: false, migrar: false };
+  if (!guardada || guardada.startsWith('!') || typeof clave !== 'string' || !clave) return { ok: false, migrar: false };
   if (!esHash(guardada)) {
     // Formato viejo: texto plano. Comparación de tiempo constante igualmente.
     const a = Buffer.from(clave); const b = Buffer.from(guardada);

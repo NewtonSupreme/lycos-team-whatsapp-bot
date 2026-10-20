@@ -3,7 +3,7 @@ import { leerSesion } from '@/lib/session-token';
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { resolveRol, rolConAcceso } from '@/types';
-import { hashClave } from '@/lib/password';
+import { SIN_CLAVE, hashClave } from '@/lib/password';
 
 // Devuelve el usuario que hace la petición (según la cookie de sesión).
 async function getRequester(db: any) {
@@ -83,7 +83,7 @@ export async function POST(req: Request) {
       nombre: apellido ? `${nombre} ${apellido}`.trim() : nombre,
       email: finalEmail,
       // El personal de nómina no inicia sesión: no lleva clave. El resto, con hash.
-      password_hash: rolConAcceso(rol) ? await hashClave(String(password_hash || 'lycos2026')) : null,
+      password_hash: rolConAcceso(rol) ? await hashClave(String(password_hash || 'lycos2026')) : SIN_CLAVE,
       rol: rol,
       // Todos los roles tienen acceso al panel; nuevos usuarios heredan los
       // permisos de su rol (permisos por-usuario quedan en NULL).

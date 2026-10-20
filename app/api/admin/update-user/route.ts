@@ -3,7 +3,7 @@ import { leerSesion } from '@/lib/session-token';
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { resolveRol, rolConAcceso } from '@/types';
-import { hashClave } from '@/lib/password';
+import { SIN_CLAVE, hashClave } from '@/lib/password';
 
 async function getRequester(db: any) {
   try {
@@ -86,7 +86,7 @@ export async function POST(req: Request) {
       updates.password_hash = await hashClave(password.trim());
     }
     // Pasar a personal de nómina quita la clave: ya no inicia sesión.
-    if (rol !== undefined && !rolConAcceso(rol)) updates.password_hash = null;
+    if (rol !== undefined && !rolConAcceso(rol)) updates.password_hash = SIN_CLAVE;
 
     const { data: updatedUser, error } = await supabaseAdmin
       .from('usuarios')
