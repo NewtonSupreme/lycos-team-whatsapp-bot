@@ -44,15 +44,25 @@ export async function GET(req: NextRequest) {
   const gente = await personal(auth, sede);
   const codigos = await codigosEnClaro(auth.db);
 
-  // Resumen de hoy y de la semana para todos, en una sola consulta.
+  // Resumen de hoy, de la semana y día por día (esta semana y la pasada) para todos, en una sola consulta.
   const f = fechasDeCuenta();
   const { data: jobs } = gente.length
     ? await auth.db.from('job_assignments').select('empleado_id, fecha, ingreso_usd, es_override, estado')
-      .in('empleado_id', gente.map(g => g.id)).gte('fecha', f.lunes).neq('estado', 'anulado')
+      .in('empleado_id', gente.map(g => g.id)).gte('fecha', f.lunesPasado).neq('estado', 'anulado')
     : { data: [] as Array<{ empleado_id: string; fecha: string; ingreso_usd: number; es_override: boolean; estado: string }> };
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  const propios = (jobs || []).filter(j => !j.es_override);
   const suma = (e: string, desde: string) => {
-    const t = (jobs || []).filter(j => j.empleado_id === e && !j.es_override && j.fecha >= desde);
-    return { cantidad: t.length, total: Math.round(t.reduce((a, j) => a + (Number(j.ingreso_usd) || 0), 0) * 100) / 100 };
+    const t = propios.filter(j => j.empleado_id === e && j.fecha >= desde);
+    return { cantidad: t.length, total: r2(t.reduce((a, j) => a + (Number(j.ingreso_usd) || 0), 0)) };
+  };
+  const porDia = (e: string) => {
+    const d: Record<string, { cantidad: number; total: number }> = {};
+    for (const j of propios.filter(x => x.empleado_id === e)) {
+      const x = d[j.fecha] || (d[j.fecha] = { cantidad: 0, total: 0 });
+      x.cantidad++; x.total = r2(x.total + (Number(j.ingreso_usd) || 0));
+    }
+    return d;
   };
 
   return NextResponse.json({
@@ -61,7 +71,7 @@ export async function GET(req: NextRequest) {
       cargo: u.cargo || u.especialidad || getRoleMeta(u.rol)?.label || null,
       rol: u.rol, cedula: u.cedula || null, ingreso: u.fecha_ingreso || null,
       codigo: codigos[u.id]?.codigo || null, emitido: codigos[u.id]?.creado || null,
-      hoy: suma(u.id, f.hoy), semana: suma(u.id, f.lunes),
+      hoy: suma(u.id, f.hoy), semana: suma(u.id, f.lunes), dias: porDia(u.id),
     })),
     fechas: f,
   }, { headers: { 'Cache-Control': 'no-store' } });

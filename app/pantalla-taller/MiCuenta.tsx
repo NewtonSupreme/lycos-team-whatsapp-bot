@@ -209,7 +209,13 @@ function Codigo({ persona, onAtras, onEntrar }: { persona: PersonaPantalla; onAt
 // ── 3. La cuenta ────────────────────────────────────────────────────────────
 
 function Resumen({ cuenta, vista, setVista, onSalir }: { cuenta: CuentaTrabajador; vista: Vista; setVista: (v: Vista) => void; onSalir: () => void }) {
-  const p: PeriodoCuenta = cuenta[vista];
+  // En la semana se puede tocar un día para ver solo lo de ese día.
+  const [dia, setDia] = useState<string | null>(null);
+  const base: PeriodoCuenta = cuenta[vista];
+  const p: PeriodoCuenta = dia ? (() => {
+    const t = base.trabajos.filter(x => x.fecha === dia);
+    return { ...base, trabajos: t, cantidad: t.length, total: Math.round(t.reduce((a, x) => a + x.monto, 0) * 100) / 100 };
+  })() : base;
   const pendiente = p.trabajos.filter(t => t.estado === 'pendiente').reduce((a, t) => a + t.monto, 0);
   const pagado = p.total - pendiente;
   const porDia = new Map<string, TrabajoCuenta[]>();
@@ -231,7 +237,7 @@ function Resumen({ cuenta, vista, setVista, onSalir }: { cuenta: CuentaTrabajado
         </div>
         <div className="ml-auto flex gap-2" role="tablist">
           {pestanas.map(t => (
-            <button key={t.id} type="button" role="tab" aria-selected={vista === t.id} onClick={() => setVista(t.id)}
+            <button key={t.id} type="button" role="tab" aria-selected={vista === t.id} onClick={() => { setVista(t.id); setDia(null); }}
               className={`rounded-2xl border px-5 py-2.5 text-left transition-colors ${vista === t.id ? 'border-[var(--naranja)] bg-[var(--naranja)]/15' : 'border-[var(--linea)] bg-[var(--panel)] hover:bg-[var(--panel-2)]'}`}>
               <span className="flex items-baseline gap-2">
                 <span className="display text-2xl font-black uppercase">{t.texto}</span>
@@ -247,15 +253,15 @@ function Resumen({ cuenta, vista, setVista, onSalir }: { cuenta: CuentaTrabajado
         {/* Números grandes */}
         <aside className="flex flex-col gap-5 border-b border-[var(--linea)] p-6 sm:p-8 lg:border-b-0 lg:border-r">
           <div>
-            <div className="text-sm font-bold uppercase tracking-[0.2em] text-[var(--tenue)]">Cobrado por tus trabajos</div>
-            <div key={vista} className="entra display mt-1 text-[88px] font-black leading-none tabular-nums text-[var(--naranja)]">{usd(p.total)}</div>
+            <div className="text-sm font-bold uppercase tracking-[0.2em] text-[var(--tenue)]">{dia ? `Cobrado el ${fechaLarga(dia)}` : 'Cobrado por tus trabajos'}</div>
+            <div key={`${vista}:${dia}`} className="entra display mt-1 text-[88px] font-black leading-none tabular-nums text-[var(--naranja)]">{usd(p.total)}</div>
             <div className="mt-2 text-xl text-[var(--tenue)]">{p.cantidad} trabajo{p.cantidad === 1 ? '' : 's'} cargado{p.cantidad === 1 ? '' : 's'}</div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Cifra etiqueta="Por liquidar" valor={usd(pendiente)} color="var(--amarillo)" />
             <Cifra etiqueta="Ya liquidado" valor={usd(pagado)} color="var(--verde)" />
           </div>
-          {vista !== 'hoy' && <Semana periodo={p} />}
+          {vista !== 'hoy' && <Semana periodo={base} dia={dia} onDia={d => setDia(x => (x === d ? null : d))} />}
           <p className="mt-auto text-sm leading-relaxed text-[var(--apagado)]">
             Es lo que se cobró al cliente por cada trabajo que cargaste. Si algo no cuadra, avísale al jefe de taller antes del pago.
           </p>
@@ -263,10 +269,16 @@ function Resumen({ cuenta, vista, setVista, onSalir }: { cuenta: CuentaTrabajado
 
         {/* Lo cargado, día por día */}
         <section className="min-h-0 p-5 sm:p-8">
+          {dia && (
+            <button type="button" onClick={() => setDia(null)}
+              className="mb-5 flex items-center gap-2 rounded-full border border-[var(--naranja)]/40 bg-[var(--naranja)]/10 px-4 py-2 text-lg font-bold text-[var(--naranja)]">
+              Solo el {fechaLarga(dia)} <X className="h-5 w-5" aria-hidden /> <span className="font-semibold text-[var(--tenue)]">ver toda la semana</span>
+            </button>
+          )}
           {p.cantidad === 0 ? (
             <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-3 text-center">
               <Hammer className="h-14 w-14 text-[var(--apagado)]" strokeWidth={1.5} aria-hidden />
-              <p className="text-2xl text-[var(--tenue)]">{vista === 'hoy' ? 'Hoy todavía no has cargado trabajos.' : 'No hay trabajos cargados en esta semana.'}</p>
+              <p className="text-2xl text-[var(--tenue)]">{dia ? 'Ese día no cargaste trabajos.' : vista === 'hoy' ? 'Hoy todavía no has cargado trabajos.' : 'No hay trabajos cargados en esta semana.'}</p>
             </div>
           ) : (
             <div className="space-y-7">
@@ -328,28 +340,36 @@ function Estado({ estado }: { estado: TrabajoCuenta['estado'] }) {
     : <span className="hidden shrink-0 rounded-full bg-[var(--amarillo)]/15 px-3 py-1 text-sm font-bold text-[var(--amarillo)] sm:block">Por liquidar</span>;
 }
 
-/** Siete barras, una por día: cuánto se cobró cada día de la semana. */
-function Semana({ periodo }: { periodo: PeriodoCuenta }) {
+/** Los siete días de la semana: cuánto se cargó cada uno. Tocar un día muestra solo ese día. */
+function Semana({ periodo, dia, onDia }: { periodo: PeriodoCuenta; dia: string | null; onDia: (d: string) => void }) {
   const dias = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(`${periodo.desde}T12:00:00Z`);
     d.setUTCDate(d.getUTCDate() + i);
     const iso = d.toISOString().slice(0, 10);
     const ts = periodo.trabajos.filter(t => t.fecha === iso);
-    return { iso, etiqueta: DIAS[i], total: ts.reduce((a, t) => a + t.monto, 0), n: ts.length, futuro: iso > periodo.hasta };
+    return { iso, etiqueta: DIAS[i], num: d.getUTCDate(), total: ts.reduce((a, t) => a + t.monto, 0), n: ts.length, futuro: iso > periodo.hasta };
   });
   const max = Math.max(1, ...dias.map(d => d.total));
   return (
-    <div className="rounded-2xl border border-[var(--linea)] bg-[var(--panel)] p-4">
-      <div className="mb-3 text-xs font-bold uppercase tracking-wider text-[var(--tenue)]">Día por día</div>
-      <div className="flex h-32 items-end gap-2">
-        {dias.map(d => (
-          <div key={d.iso} className="flex h-full flex-1 flex-col items-center justify-end gap-1.5" title={`${d.etiqueta}: ${usd(d.total)} · ${d.n} trabajos`}>
-            {d.total > 0 && <span className="text-[11px] font-semibold tabular-nums text-[var(--tenue)]">{Math.round(d.total)}</span>}
-            <div className={`w-full rounded-t-md ${d.futuro ? 'bg-transparent' : d.total ? 'bg-[var(--naranja)]' : 'bg-[var(--panel-2)]'}`}
-              style={{ height: d.futuro ? 0 : `${Math.max(4, (d.total / max) * 100)}%` }} />
-            <span className={`text-xs font-bold ${d.futuro ? 'text-[var(--apagado)]/50' : 'text-[var(--tenue)]'}`}>{d.etiqueta}</span>
-          </div>
-        ))}
+    <div className="rounded-2xl border border-[var(--linea)] bg-[var(--panel)] p-3">
+      <div className="mb-2 px-1 text-xs font-bold uppercase tracking-wider text-[var(--tenue)]">Día por día · toca un día</div>
+      <div className="grid grid-cols-7 gap-1.5">
+        {dias.map(d => {
+          const activo = dia === d.iso;
+          return (
+            <button key={d.iso} type="button" onClick={() => onDia(d.iso)} disabled={d.futuro} aria-pressed={activo}
+              title={`${d.etiqueta} ${d.num}: ${d.n} trabajo(s), ${usd(d.total)}`}
+              className={`flex h-36 flex-col items-center justify-end gap-1 rounded-xl border px-0.5 pb-2 pt-1.5 transition-colors disabled:opacity-30 ${activo ? 'border-[var(--naranja)] bg-[var(--naranja)]/15' : 'border-transparent hover:bg-white/5'}`}>
+              <span className="display text-lg font-black tabular-nums leading-none">{d.n || ''}</span>
+              <span className="flex w-full flex-1 items-end justify-center px-1">
+                <span className={`w-full max-w-[28px] rounded-t-md ${d.n ? (activo ? 'bg-[var(--naranja)]' : 'bg-[#b8591a]') : 'bg-[var(--panel-2)]'}`}
+                  style={{ height: d.futuro ? 0 : `${Math.max(6, (d.total / max) * 100)}%` }} />
+              </span>
+              <span className={`text-xs font-bold ${activo ? 'text-[var(--naranja)]' : 'text-[var(--tenue)]'}`}>{d.etiqueta}</span>
+              <span className="text-[11px] tabular-nums text-[var(--apagado)]">{d.num}</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
