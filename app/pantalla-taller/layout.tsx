@@ -44,8 +44,10 @@ export default function LayoutPantallaTaller({ children }: { children: React.Rea
         .pantalla-taller .entra { animation: pt-entra .45s cubic-bezier(.2,.7,.2,1) both; }
         .pantalla-taller .sube { animation: pt-sube .35s cubic-bezier(.2,.7,.2,1) both; }
         .pantalla-taller .pulso { animation: pt-pulso 2.2s ease-in-out infinite; }
+        @keyframes pt-sacude { 0%,100% { transform: none; } 20%,60% { transform: translateX(-12px); } 40%,80% { transform: translateX(12px); } }
+        .pantalla-taller .pt-sacude { animation: pt-sacude .4s ease-in-out; }
         @media (prefers-reduced-motion: reduce) {
-          .pantalla-taller .entra, .pantalla-taller .sube, .pantalla-taller .pulso { animation: none; }
+          .pantalla-taller .entra, .pantalla-taller .sube, .pantalla-taller .pulso, .pantalla-taller .pt-sacude { animation: none; }
         }
         .pantalla-taller ::-webkit-scrollbar { width: 10px; height: 10px; }
         .pantalla-taller ::-webkit-scrollbar-thumb { background: #2a313b; border-radius: 10px; }

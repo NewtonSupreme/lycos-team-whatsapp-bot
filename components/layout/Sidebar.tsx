@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Users, Car, Wrench, Calendar, MessageSquare, Monitor,
   Bot, FileText, Settings, ChevronLeft, ChevronRight,
   Activity, LogOut, TrendingUp, UserCircle, Package, Calculator, ShoppingCart, Trash2, Truck, Shield,
-  FileSpreadsheet, Receipt, Info, Banknote, ClipboardList, Landmark
+  FileSpreadsheet, Receipt, Info, Banknote, ClipboardList, Landmark, IdCard
 } from 'lucide-react';
 import { cn, getInitials } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -24,6 +24,7 @@ interface NavItem {
   badge: string | null;
   permKey?: keyof Permisos;
   group: NavGroup;
+  soloMaestro?: boolean;
 }
 
 /** Orden de los grupos en la barra. Refleja el flujo de trabajo del taller. */
@@ -63,6 +64,7 @@ const navItemsConfig: NavItem[] = [
   { href: '/dashboard/inventario/papelera', icon: Trash2, label: 'Papelera', badge: null, permKey: 'papelera', group: 'Inventario' },
 
   { href: '/dashboard/nomina', icon: Banknote, label: 'Nómina', badge: null, permKey: 'nomina', group: 'Finanzas' },
+  { href: '/dashboard/taller/carnets', icon: IdCard, label: 'Carnets del taller', badge: null, permKey: 'nomina', group: 'Finanzas', soloMaestro: true },
   { href: '/dashboard/finanzas', icon: Landmark, label: 'Finanzas', badge: null, permKey: 'reportes', group: 'Finanzas' },
   { href: '/dashboard/reportes', icon: FileText, label: 'Reportes', badge: null, permKey: 'reportes', group: 'Finanzas' },
   { href: '/dashboard/calculadora', icon: Calculator, label: 'Calculadora', badge: null, permKey: 'calculadora', group: 'Finanzas' },
@@ -123,6 +125,8 @@ export default function Sidebar() {
   const navItems = navItemsConfig
     .filter(item => {
       if (!canAccess(item.permKey)) return false;
+      // Los carnets llevan el código de cada trabajador: solo el Usuario Maestro.
+      if (item.soloMaestro && !isAdmin) return false;
       if (item.label === 'Leads' && mounted) {
         const { currentSede } = useSedeStore.getState();
         const sedeName = currentSede?.nombre?.toLowerCase() || '';

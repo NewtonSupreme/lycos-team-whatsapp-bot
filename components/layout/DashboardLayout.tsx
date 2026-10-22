@@ -213,6 +213,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     ['/dashboard/vehiculos', 'vehiculos'],
     ['/dashboard/servicios', 'servicios'],
     ['/dashboard/ficha', 'servicios'],
+    ['/dashboard/taller/carnets', 'nomina'],
     ['/dashboard/taller', 'taller'],
     ['/dashboard/agenda', 'agenda'],
     ['/dashboard/whatsapp', 'whatsapp'],

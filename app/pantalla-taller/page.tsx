@@ -3,13 +3,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, AudioWaveform, Battery, Boxes, Check, CheckCircle2, ChevronRight, CircleDot, Clock, Cog, Cylinder,
-  Delete, Disc3, Droplet, Droplets, Fuel, Funnel, Gauge, Hammer, Hand, Lightbulb, Link2, Loader2, Maximize2,
+  Delete, Disc3, IdCard, Droplet, Droplets, Fuel, Funnel, Gauge, Hammer, Hand, Lightbulb, Link2, Loader2, Maximize2,
   Minus, Package, PenLine, Play, Plus, RefreshCw, Search, ShoppingCart, Sparkles, Spline, Trash2, Wind, Wrench, X, Zap,
   type LucideIcon,
 } from 'lucide-react';
 import {
   coincide, type ArticuloPantalla, type OrdenPantalla, type PersonaPantalla, type TableroTaller, type TipoCarga,
 } from '@/lib/taller/pantalla';
+import MiCuenta from './MiCuenta';
 
 /**
  * Pantalla del taller — TV o PC del piso, cuenta «Taller».
@@ -104,9 +105,10 @@ export default function PantallaTaller() {
   const [deQuien, setDeQuien] = useState<string>('');
   const [asistente, setAsistente] = useState<{ accion: Accion; orden: OrdenPantalla } | null>(null);
   const [aviso, setAviso] = useState<{ texto: string; bien: boolean } | null>(null);
+  const [miCuenta, setMiCuenta] = useState(false);
   const [reloj, setReloj] = useState(() => new Date());
   const abierto = useRef(false);
-  abierto.current = !!asistente;
+  abierto.current = !!asistente || miCuenta;
 
   const cargar = useCallback(async (silencioso = false) => {
     if (!silencioso) setCargando(true);
@@ -148,6 +150,7 @@ export default function PantallaTaller() {
   const nQuietos = todas.filter(esQuieta).length;
 
   const abrir = (accion: Accion, orden: OrdenPantalla) => setAsistente({ accion, orden });
+  const cerrarCuenta = useCallback(() => setMiCuenta(false), []);
   // Sin carros en Entrada, el taller ocupa todo el ancho: una columna más.
   const columnas = entrada.length ? "sm:grid-cols-2 2xl:grid-cols-3" : "sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4";
 
@@ -172,6 +175,11 @@ export default function PantallaTaller() {
           </div>
 
           <div className="ml-auto flex items-center gap-3">
+            <button type="button" onClick={() => setMiCuenta(true)} disabled={!datos}
+              className="flex h-14 items-center gap-2.5 rounded-2xl border border-[var(--naranja)]/40 bg-[var(--naranja)]/10 px-5 text-[var(--naranja)] transition-colors hover:bg-[var(--naranja)]/20 disabled:opacity-40">
+              <IdCard className="h-7 w-7" strokeWidth={1.75} aria-hidden />
+              <span className="display text-2xl font-black uppercase leading-none">Mi cuenta</span>
+            </button>
             <div className="text-right leading-none">
               <div className="display text-[44px] font-black tabular-nums">{reloj.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', hour12: false })}</div>
               <div className="mt-1 text-sm capitalize text-[var(--tenue)]">{reloj.toLocaleDateString('es-VE', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
@@ -249,6 +257,8 @@ export default function PantallaTaller() {
           onListo={(texto) => { setAsistente(null); setAviso({ texto, bien: true }); void cargar(true); }}
         />
       )}
+
+      {miCuenta && datos && <MiCuenta personal={datos.personal} onCerrar={cerrarCuenta} />}
 
       {aviso && (
         <div role="status" className={`sube fixed inset-x-4 bottom-6 z-50 mx-auto flex max-w-2xl items-center gap-3 rounded-2xl px-6 py-4 text-xl font-bold shadow-2xl ${aviso.bien ? 'bg-[var(--verde)] text-black' : 'bg-[var(--rojo)] text-white'}`}>
