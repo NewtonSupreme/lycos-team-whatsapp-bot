@@ -115,6 +115,12 @@ interface Props {
     cuota: number;
     /** Cuántas cuotas van después de la inicial. Hoy el sistema cobra tres. */
     cuotas: number;
+    /**
+     * El número de factura que se pone en Cashea. Su reporte de cuotas lo trae,
+     * y con él cada cuota se descuenta de esta venta sin adivinar.
+     */
+    factura?: string;
+    onFactura?: (v: string) => void;
   };
   /** Encabezado propio del panel. El anfitrión puede poner el suyo. */
   conCabecera?: boolean;
@@ -650,6 +656,22 @@ export default function MetodoPagoPanel({
               <br />
               Sujeto a aprobación de Cashea.
             </p>
+
+            {cashea?.onFactura && (
+              <label className="mt-2.5 flex items-center gap-2 rounded-lg border border-[#e2e5ea] px-2.5 py-1.5">
+                <span className="flex-1 text-[11.5px] font-medium text-[#16181d]">
+                  N° de factura en Cashea
+                  <span className="block text-[10.5px] font-normal text-[#9ba1ab]">La misma que escribes en la app de Cashea</span>
+                </span>
+                <input
+                  value={cashea.factura || ''}
+                  onChange={e => cashea.onFactura?.(e.target.value)}
+                  placeholder="000153"
+                  aria-label="Número de factura puesto en Cashea"
+                  className="num h-[30px] w-[92px] rounded-md border border-[#e2e5ea] px-2 text-right text-[12px] font-semibold outline-none focus:border-[#f97316]"
+                />
+              </label>
+            )}
 
             <div className="mt-2.5 flex items-center gap-2 rounded-lg border border-[#e2e5ea] px-2.5 py-1.5">
               <span className="flex-1 text-[11.5px] font-medium text-[#16181d]">Monto en Cashea ($)</span>

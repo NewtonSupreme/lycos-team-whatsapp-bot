@@ -1,4 +1,5 @@
 /** Cuentas por cobrar: las formas que comparten la API, la pantalla y el PDF. */
+import type { PlanCuotas } from '@/lib/cashea/cuotas';
 
 export interface VentaPendienteCliente {
   id: string; fecha: string; placa: string | null; vehiculo: string | null; trabajo: string;
@@ -6,6 +7,10 @@ export interface VentaPendienteCliente {
   financiado: number; porCobrar: number; cashea: boolean; servicio_id: string | null;
   abonos: Array<{ fecha: string; monto: number; metodo: string | null }>;
   dias: number;
+  /** Venta con Cashea: sus cuotas (cuál toca, cuánto y cuándo vence). */
+  plan?: PlanCuotas | null;
+  /** El número de factura que se puso en Cashea, si se anotó. */
+  facturaCashea?: string | null;
 }
 export interface ClienteDeudor {
   clave: string; nombre: string; telefono: string | null; cedula: string | null;
@@ -13,6 +18,8 @@ export interface ClienteDeudor {
   ventas: VentaPendienteCliente[];
   ultimoAbono: { fecha: string; monto: number; metodo: string | null } | null;
   masAntigua: number;
+  /** La próxima cuota de Cashea que toca cobrar entre todas sus ventas. */
+  proximaCuota?: { vence: string; monto: number; n: number; vencida: boolean } | null;
 }
 
 export interface ResumenCobranza {
@@ -25,6 +32,9 @@ export interface ResumenCobranza {
   nVentas: number;
   /** Clientes con alguna deuda de más de 30 días. */
   vencidas30: number;
+  /** Cuotas de Cashea ya vencidas sin pagar, y cuánto suman. */
+  cuotasVencidas?: number;
+  cuotasVencidasUSD?: number;
 }
 
 export interface Cobranza {

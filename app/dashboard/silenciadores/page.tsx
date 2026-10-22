@@ -135,6 +135,8 @@ export default function VentasPage() {
   const [showSelector, setShowSelector] = useState(false);
   const [secondVenta, setSecondVenta] = useState<any | null>(null);
   const [modoCashea, setModoCashea] = useState(false);
+  // La factura que se pone en Cashea: enlaza esta venta con su reporte de cuotas.
+  const [casheaFactura, setCasheaFactura] = useState('');
   const [mounted, setMounted] = useState(false);
   // Collapsible sections
   const [showAbonoSection, setShowAbonoSection] = useState(false);
@@ -614,6 +616,15 @@ export default function VentasPage() {
 
       if (ventaError) throw ventaError;
 
+      // Con la factura de Cashea anotada, el reporte de cuotas encuentra esta
+      // venta solo. Si falla, se puede anotar después en Por cobrar.
+      if (modoCashea && casheaFactura.trim()) {
+        fetch('/api/finanzas/cashea-cuotas', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ venta_id: ventaDia.id, factura: casheaFactura.trim() }),
+        }).catch(() => null);
+      }
+
       // Log Activity
       await logActivity({
         usuario: useAppStore.getState().user?.nombre || 'Admin',
@@ -766,6 +777,7 @@ export default function VentasPage() {
       setNotas('');
       setBins(emptyBins());
       setModoCashea(false);
+      setCasheaFactura('');
       setAsignaciones([]);
       setAbono(0);
       setShowAbonoSection(false);
@@ -1548,6 +1560,8 @@ export default function VentasPage() {
                   resto: casheaResto,
                   cuota: casheaCuota,
                   cuotas: 3,
+                  factura: casheaFactura,
+                  onFactura: setCasheaFactura,
                 }}
               />
 

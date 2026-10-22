@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authorize } from '@/lib/auth-server';
 import { mecanicoDeOrden, servicioDeNotas } from '@/lib/facturas/mecanico';
 import type { ClienteDeudor, VentaPendienteCliente } from '@/lib/cobranza/tipos';
+import { planDeCuotas } from '@/lib/cashea/cuotas';
+import { facturasCashea } from '@/lib/cashea/descontar';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,11 +41,12 @@ export async function GET(req: NextRequest) {
   const ids = lista.map(v => v.id);
   const cliIds = [...new Set(lista.map(v => v.cliente_id).filter(Boolean))];
   const servIds = [...new Set(lista.map(v => v.servicio_id || servicioDeNotas(v.notas)).filter(Boolean))] as string[];
-  const [abs, clis, servs, jobs] = await Promise.all([
+  const [abs, clis, servs, jobs, facturas] = await Promise.all([
     ids.length ? db.from('abonos').select('venta_id, fecha, created_at, monto, metodo_pago').in('venta_id', ids).order('created_at') : { data: [] },
     cliIds.length ? db.from('clientes').select('id, nombre, apellido, telefono, cedula').in('id', cliIds) : { data: [] },
     servIds.length ? db.from('servicios').select('id, notas, seguimiento, fecha').in('id', servIds) : { data: [] },
     servIds.length ? db.from('job_assignments').select('referencia_id, empleado_nombre, es_taller').in('referencia_id', servIds).eq('es_override', false) : { data: [] },
+    facturasCashea(db),
   ]);
   const abonosDe = new Map<string, Array<Record<string, any>>>();
   for (const a of (abs.data || []) as Array<Record<string, any>>) {
@@ -80,6 +83,12 @@ export async function GET(req: NextRequest) {
       financiado: cashea ? financiado : 0, porCobrar: cashea ? r2(saldo - financiado) : saldo,
       cashea, servicio_id: sid || null, abonos, dias: dias(v.fecha),
     };
+    if (cashea) {
+      // Las cuotas: lo que falta de lo financiado más lo ya cobrado después de
+      // la venta (la inicial no es cuota: entró el día de la venta).
+      venta.plan = planDeCuotas({ fecha: v.fecha, faltaHoy: venta.financiado, pagos: abonos.filter(a => a.metodo !== 'inicial') }, hoy());
+      venta.facturaCashea = facturas.get(v.id) || null;
+    }
     let cd = porCliente.get(k);
     if (!cd) {
       cd = {
@@ -94,6 +103,10 @@ export async function GET(req: NextRequest) {
     cd.deudaCliente = r2(cd.deudaCliente + venta.porCobrar);
     cd.masAntigua = Math.max(cd.masAntigua, venta.dias);
     for (const a of abonos) if (!cd.ultimoAbono || a.fecha >= cd.ultimoAbono.fecha) cd.ultimoAbono = a;
+    const p = venta.plan?.proxima;
+    if (p && (!cd.proximaCuota || p.vence < cd.proximaCuota.vence)) {
+      cd.proximaCuota = { vence: p.vence, monto: p.falta, n: p.n, vencida: p.estado === 'vencida' };
+    }
   }
 
   const clientes = [...porCliente.values()].sort((a, b) => b.deuda - a.deuda);
@@ -106,6 +119,8 @@ export async function GET(req: NextRequest) {
       nClientes: clientes.length,
       nVentas: lista.length,
       vencidas30: clientes.filter(c => c.masAntigua > 30).length,
+      cuotasVencidas: clientes.flatMap(c => c.ventas).reduce((a, v) => a + (v.plan?.vencidas || 0), 0),
+      cuotasVencidasUSD: r2(clientes.flatMap(c => c.ventas).flatMap(v => v.plan?.cuotas || []).filter(q => q.estado === 'vencida').reduce((a, q) => a + q.falta, 0)),
     },
     generado: hoy(),
   });

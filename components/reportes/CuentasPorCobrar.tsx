@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
-  Car, Clock, Download, ExternalLink, FileText, Loader2, MessageCircle, Phone, RefreshCw, Search, Wallet, Wrench,
+  CalendarClock, Car, Check, Clock, Download, ExternalLink, FileText, Loader2, MessageCircle, Phone, Receipt, RefreshCw, Search, Wallet, Wrench,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import DialogoCobroVenta from '@/components/pagos/DialogoCobroVenta';
 import type { ClienteDeudor, Cobranza, VentaPendienteCliente } from '@/lib/cobranza/tipos';
+import type { CuotaPlan, PlanCuotas } from '@/lib/cashea/cuotas';
 
 /**
  * Cuentas por cobrar, cliente por cliente.
@@ -98,7 +99,9 @@ export default function CuentasPorCobrar({ sedeId }: { sedeId?: string | null })
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Cifra titulo="Total por cobrar" valor={usd(r.total)} nota={`${r.nVentas} ventas`} color="text-[#dc2626]" />
         <Cifra titulo="Lo deben los clientes" valor={usd(r.clientesDeben)} nota="Hay que cobrárselo" color="text-[#c2410c]" onClick={() => setFiltro('cliente')} />
-        <Cifra titulo="Lo financia Cashea / BNC" valor={usd(r.cashea)} nota="Lo paga Cashea" color="text-[#7c3aed]" onClick={() => setFiltro('cashea')} />
+        <Cifra titulo="Lo financia Cashea / BNC" valor={usd(r.cashea)}
+          nota={r.cuotasVencidas ? `${r.cuotasVencidas} cuota(s) vencida(s) · ${usd(r.cuotasVencidasUSD || 0)}` : 'Cuotas al día'}
+          color="text-[#7c3aed]" onClick={() => setFiltro('cashea')} />
         <Cifra titulo="Más de 30 días" valor={String(r.vencidas30)} nota="clientes con deuda vieja" color={r.vencidas30 ? 'text-[#dc2626]' : 'text-[#16181d]'} onClick={() => setFiltro('viejas')} />
       </div>
 
@@ -148,6 +151,11 @@ export default function CuentasPorCobrar({ sedeId }: { sedeId?: string | null })
                   </span>
                   <span className="mt-1 flex flex-wrap gap-1">
                     {c.deudaCashea > 0.009 && <Chip tono="morado">Cashea {usd(c.deudaCashea)}</Chip>}
+                    {c.proximaCuota && (
+                      <Chip tono={c.proximaCuota.vencida ? 'rojo' : 'gris'}>
+                        Cuota {c.proximaCuota.n}: {usd(c.proximaCuota.monto)} · {c.proximaCuota.vencida ? 'venció' : 'vence'} {fecha(c.proximaCuota.vence).slice(0, 5)}
+                      </Chip>
+                    )}
                     {c.ultimoAbono
                       ? <Chip tono="verde">Abonó {usd(c.ultimoAbono.monto)} el {fecha(c.ultimoAbono.fecha).slice(0, 5)}</Chip>
                       : <Chip tono="gris">Sin abonos</Chip>}
@@ -228,6 +236,8 @@ export default function CuentasPorCobrar({ sedeId }: { sedeId?: string | null })
                       </div>
                     </div>
 
+                    {v.plan && <CuotasCashea key={v.facturaCashea || ""} plan={v.plan} ventaId={v.id} factura={v.facturaCashea || null} onCambio={cargar} />}
+
                     {/* Los abonos, con su día y su método. */}
                     <div className="mt-2 rounded-lg border border-[#eef0f3]">
                       <p className="flex items-center gap-1.5 border-b border-[#f2f3f5] px-3 py-1.5 text-[11px] font-semibold text-[#5b616e]">
@@ -293,7 +303,88 @@ function Cifra({ titulo, valor, nota, color, onClick }: { titulo: string; valor:
   );
 }
 
-function Chip({ tono, children }: { tono: 'morado' | 'verde' | 'gris'; children: React.ReactNode }) {
-  const t = { morado: 'bg-[#f0eafc] text-[#7c3aed]', verde: 'bg-[#e8f7ee] text-[#15803d]', gris: 'bg-[#f2f3f5] text-[#8a909c]' }[tono];
+function Chip({ tono, children }: { tono: 'morado' | 'verde' | 'gris' | 'rojo'; children: React.ReactNode }) {
+  const t = { morado: 'bg-[#f0eafc] text-[#7c3aed]', verde: 'bg-[#e8f7ee] text-[#15803d]', gris: 'bg-[#f2f3f5] text-[#8a909c]', rojo: 'bg-[#fdecec] text-[#dc2626]' }[tono];
   return <span className={cn('rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold', t)}>{children}</span>;
+}
+
+/**
+ * Las cuotas de Cashea de una venta, como las lleva Cashea: cuánto es cada
+ * una, cuándo vence y si ya se pagó. Debajo, el número de factura que se puso
+ * en Cashea: con él, al subir su reporte la cuota se descuenta sola.
+ */
+function CuotasCashea({ plan, ventaId, factura, onCambio }: { plan: PlanCuotas; ventaId: string; factura: string | null; onCambio: () => void }) {
+  const [valor, setValor] = useState(factura || '');
+  const [guardando, setGuardando] = useState(false);
+  const [aviso, setAviso] = useState<{ bien: boolean; texto: string } | null>(null);
+  const cambiado = valor.trim() !== (factura || '');
+
+  const guardar = async () => {
+    setGuardando(true); setAviso(null);
+    try {
+      const r = await fetch('/api/finanzas/cashea-cuotas', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ venta_id: ventaId, factura: valor.trim() }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) { setAviso({ bien: false, texto: j?.error || 'No se pudo guardar.' }); return; }
+      setAviso({ bien: true, texto: valor.trim() ? 'Guardada: el reporte de Cashea la encontrará sola.' : 'Factura quitada.' });
+      onCambio();
+    } catch { setAviso({ bien: false, texto: 'Sin conexión.' }); } finally { setGuardando(false); }
+  };
+
+  return (
+    <div className="mt-2 rounded-lg border border-[#e9e1fb] bg-[#fbf9ff]">
+      <p className="flex flex-wrap items-center gap-1.5 border-b border-[#efe9fc] px-3 py-1.5 text-[11px] font-semibold text-[#6d28d9]">
+        <CalendarClock className="h-3.5 w-3.5" aria-hidden /> Cuotas de Cashea
+        <span className="num font-normal text-[#8a909c]">· financiado {usd(plan.financiado)} en {plan.cuotas.length} cuotas de {usd(plan.cuota)}, cada 14 días</span>
+      </p>
+      <ol className="grid grid-cols-1 gap-1.5 p-2 sm:grid-cols-3">
+        {plan.cuotas.map(q => <Cuota key={q.n} q={q} proxima={plan.proxima?.n === q.n} />)}
+      </ol>
+      <div className="flex flex-wrap items-center gap-2 border-t border-[#efe9fc] px-3 py-2">
+        <label className="flex items-center gap-1.5 text-[11.5px] text-[#5b616e]">
+          <Receipt className="h-3.5 w-3.5" aria-hidden /> Factura en Cashea
+          <input value={valor} onChange={e => { setValor(e.target.value); setAviso(null); }} placeholder="Ej. 000153"
+            className="num h-[28px] w-[120px] rounded-md border border-[#e2e5ea] bg-white px-2 text-[12px] outline-none focus:border-[#7c3aed]" />
+        </label>
+        {cambiado && (
+          <button onClick={guardar} disabled={guardando}
+            className="flex h-[28px] items-center gap-1 rounded-md bg-[#7c3aed] px-2.5 text-[11.5px] font-semibold text-white disabled:opacity-60">
+            {guardando ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Check className="h-3.5 w-3.5" aria-hidden />}Guardar
+          </button>
+        )}
+        {!factura && !cambiado && <span className="text-[11px] text-[#9ba1ab]">Anótala para que el reporte de Cashea descuente esta venta sin dudas.</span>}
+        {aviso && <span className={cn('text-[11px] font-medium', aviso.bien ? 'text-[#15803d]' : 'text-[#dc2626]')}>{aviso.texto}</span>}
+      </div>
+    </div>
+  );
+}
+
+function Cuota({ q, proxima }: { q: CuotaPlan; proxima: boolean }) {
+  const estilo = {
+    pagada: 'border-[#d6f0df] bg-[#f3fbf6]',
+    vencida: 'border-[#f7caca] bg-[#fef4f4]',
+    parcial: 'border-[#fde3c4] bg-[#fffaf3]',
+    por_vencer: proxima ? 'border-[#c9b5f5] bg-white' : 'border-[#eef0f3] bg-white',
+  }[q.estado];
+  const detalle = q.estado === 'pagada'
+    ? <span className="text-[#15803d]">Pagada{q.pagadaEl ? ` el ${fecha(q.pagadaEl).slice(0, 5)}` : ''}</span>
+    : q.estado === 'vencida'
+      ? <span className="font-bold text-[#dc2626]">Vencida hace {q.dias} día{q.dias === 1 ? '' : 's'}{q.pagado > 0 ? ` · faltan ${usd(q.falta)}` : ''}</span>
+      : q.estado === 'parcial'
+        ? <span className="text-[#c2410c]">Abonó {usd(q.pagado)} · faltan {usd(q.falta)}</span>
+        : <span className="text-[#5b616e]">{q.dias === 0 ? 'Vence hoy' : `Vence en ${q.dias} día${q.dias === 1 ? '' : 's'}`}</span>;
+  return (
+    <li className={cn('rounded-md border px-2.5 py-1.5', estilo)}>
+      <p className="flex items-baseline justify-between gap-2">
+        <span className="text-[11px] font-bold text-[#16181d]">Cuota {q.n}{proxima && q.estado !== 'pagada' ? <span className="ml-1 font-semibold text-[#7c3aed]">· la que toca</span> : null}</span>
+        <span className={cn('num text-[13px] font-extrabold', q.estado === 'pagada' ? 'text-[#15803d] line-through decoration-1' : 'text-[#16181d]')}>{usd(q.monto)}</span>
+      </p>
+      <p className="num flex items-center justify-between gap-2 text-[10.5px]">
+        <span className="text-[#8a909c]">Vence {fecha(q.vence)}</span>
+        {detalle}
+      </p>
+    </li>
+  );
 }

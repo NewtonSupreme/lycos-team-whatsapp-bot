@@ -22,6 +22,12 @@ export interface EntradaCobro {
   sinCuentaUSD?: number;
   nota?: string | null;
   usuario: string;
+  /**
+   * El día en que entró el dinero, si no es hoy: las cuotas de Cashea se
+   * descuentan desde su reporte, días después de cobrarse, y cuentan el día
+   * en que se pagaron.
+   */
+  fecha?: string;
 }
 
 export type SalidaCobro =
@@ -38,7 +44,7 @@ export async function registrarCobro(db: Db, ventaId: string, e: EntradaCobro): 
   const r = calcularCobro(venta, cuentas, tasa, sinCuenta);
   if ('error' in r) return { ok: false, estado: r.error === 'sin_saldo' ? 409 : 400, error: r.detalle };
 
-  const fecha = hoyCaracas();
+  const fecha = /^\d{4}-\d{2}-\d{2}$/.test(e.fecha || '') ? e.fecha! : hoyCaracas();
   const lineas = lineasDePago(cuentas, tasa);
   const soloConDinero = Object.fromEntries(Object.entries(cuentas).filter(([, v]) => v > 0));
   const metodo = lineas.length

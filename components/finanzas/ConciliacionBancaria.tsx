@@ -7,6 +7,7 @@ import {
   Landmark, Loader2, RotateCcw, Scale, ShieldAlert, ShieldCheck, Upload, X,
 } from 'lucide-react';
 import LogoBanco from '@/components/pagos/LogoBanco';
+import DescontarCuotasCashea from '@/components/finanzas/DescontarCuotasCashea';
 import { Chip, Panel, Pestanas, TarjetaKpi, Vacio } from '@/components/panel/Piezas';
 import { cn } from '@/lib/utils';
 import type { BankBin } from '@/lib/reporte/ventas-mapping';
@@ -101,7 +102,7 @@ export default function ConciliacionBancaria({ sede }: { sede?: string | null })
   const reiniciar = () => { setDatos(null); setArchivo(null); setCruce(null); setError(null); };
 
   if (datos) {
-    return <Resultado datos={datos} pestana={pestana} setPestana={setPestana} onPdf={descargarPdf} onNueva={reiniciar} />;
+    return <Resultado datos={datos} pestana={pestana} setPestana={setPestana} onPdf={descargarPdf} onNueva={reiniciar} archivo={archivo} sede={sede} />;
   }
 
   return (
@@ -257,9 +258,11 @@ function ZonaArchivo({ archivo, onArchivo, titulo, detalle, compacta, deshabilit
 
 // ── Resultado ───────────────────────────────────────────────────────────────
 
-function Resultado({ datos, pestana, setPestana, onPdf, onNueva }: {
+function Resultado({ datos, pestana, setPestana, onPdf, onNueva, archivo, sede }: {
   datos: { resultado: ResultadoConciliacion; meta: MetaConciliacion };
   pestana: Pestana; setPestana: (p: Pestana) => void; onPdf: () => void; onNueva: () => void;
+  /** El reporte subido: con el de Cashea se descuentan las cuotas a cada cliente. */
+  archivo?: File | null; sede?: string | null;
 }) {
   const r = datos.resultado;
   const e = r.estado;
@@ -339,6 +342,8 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva }: {
           </div>
         </div>
       </section>
+
+      {esCashea && archivo && <DescontarCuotasCashea archivo={archivo} sede={sede} />}
 
       {/* Cifras */}
       {/* Una por fila en el teléfono: los montos en bolívares no caben de a dos. */}
