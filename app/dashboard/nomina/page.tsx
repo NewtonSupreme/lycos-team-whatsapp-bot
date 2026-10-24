@@ -380,11 +380,16 @@ export default function NominaPage() {
       sueldo_base: e.sueldo_base, total_comisiones: e.total_comisiones,
       total_overrides: e.total_overrides, total_flat: e.total_flat,
       bruto: e.bruto, deducciones: e.deducciones, total_pagar: e.total_pagar,
+      total_comisiones_bs: e.total_comisiones_bs,
+      total_pagar_bs: e.total_pagar_bs,
       trabajos: (e.jobs || []).map(j => ({
         fecha: j.fecha, zona: j.zona, tipo_trabajo: j.tipo_trabajo, descripcion: j.descripcion,
         ingreso_total: j.ingreso_total, ingreso_usd: (j as { ingreso_usd?: number }).ingreso_usd,
         mano_obra_usd: (j as { mano_obra_usd?: number }).mano_obra_usd,
-        comision_usd: j.comision_usd, es_override: j.es_override, moneda: j.moneda,
+        comision_usd: j.comision_usd,
+        tasa: j.tasa_cambio,
+        comision_bs: (j as any).comision_bs,
+        es_override: j.es_override, moneda: j.moneda,
         desglose: (j as { desglose?: Record<string, unknown> }).desglose as never,
       })),
       adelantos: (e.adelantos || []).map(a => ({
@@ -1067,6 +1072,7 @@ function JobsTable({ jobs, onSelectJob }: { jobs: JobAssignment[]; onSelectJob?:
               <th className="text-left px-3 py-2">Zona</th>
               <th className="text-left px-3 py-2">Detalle</th>
               <th className="text-left px-3 py-2">Cliente / Vehículo</th>
+              <th className="text-right px-3 py-2">Tasa día</th>
               <th className="text-right px-3 py-2">Mano obra</th>
               <th className="text-right px-4 py-2">Comisión</th>
             </tr>
@@ -1085,8 +1091,23 @@ function JobsTable({ jobs, onSelectJob }: { jobs: JobAssignment[]; onSelectJob?:
                   <div className="font-semibold text-slate-700 dark:text-slate-300">{String(j.desglose?.cliente || 'Consumidor Final')}</div>
                   <div className="text-[11px] text-slate-400 truncate max-w-[180px]">{String(j.desglose?.vehiculo || 'Vehículo de Taller')}</div>
                 </td>
-                <td className="text-right px-3 py-2 text-slate-500 font-mono">{money(j.mano_obra_usd)}</td>
-                <td className="text-right px-4 py-2 font-bold text-emerald-600 font-mono">{money(j.comision_usd)}</td>
+                <td className="text-right px-3 py-2 text-xs font-mono text-slate-500">
+                  {j.tasa_cambio && j.tasa_cambio > 1 ? `Bs. ${Number(j.tasa_cambio).toFixed(2)}` : '—'}
+                </td>
+                <td className="text-right px-3 py-2 text-slate-500 font-mono">
+                  <div>{money(j.mano_obra_usd)}</div>
+                  {j.mano_obra_bs && j.mano_obra_bs > 0 ? (
+                    <div className="text-[10px] text-slate-400">Bs. {j.mano_obra_bs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                  ) : null}
+                </td>
+                <td className="text-right px-4 py-2 font-mono">
+                  <div className="font-bold text-emerald-600">{money(j.comision_usd)}</div>
+                  {j.comision_bs && j.comision_bs > 0 ? (
+                    <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
+                      Bs. {j.comision_bs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  ) : null}
+                </td>
               </tr>
             ))}
           </tbody>

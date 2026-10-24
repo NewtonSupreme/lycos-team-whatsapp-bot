@@ -832,6 +832,9 @@ export interface JobAssignment {
   comision: number;
   comision_moneda: MonedaNomina;
   comision_usd: number;
+  comision_bs?: number;
+  mano_obra_bs?: number;
+  ingreso_bs?: number;
   es_override: boolean;
   override_de: string | null;
   proveedor_monto: number;
@@ -911,6 +914,8 @@ export interface EmployeeEarnings {
   bruto: number;                // USD
   deducciones: number;          // USD (adelantos pendientes)
   total_pagar: number;          // USD
+  total_comisiones_bs?: number; // VES histórico sumando tasa del momento de cada trabajo
+  total_pagar_bs?: number;      // VES total acumulado a pagar
   desglose_monedas: Record<string, number>;
   jobs: JobAssignment[];
   adelantos: PayrollAdvance[];

@@ -28,12 +28,15 @@ export interface TrabajoRelacion {
   ingreso_usd?: number | null;
   mano_obra_usd?: number | null;
   comision_usd: number;
+  tasa?: number | null;
+  comision_bs?: number | null;
+  base_bs?: number | null;
   es_override?: boolean;
   moneda?: string | null;
   desglose?: {
     pct?: number; base?: string | number; placa?: string | null;
     cliente?: string | null; vehiculo?: string | null; regla?: string | null;
-    sobre?: string | null;
+    sobre?: string | null; tasa_cambio?: number; comision_bs?: number;
   } | null;
 }
 
@@ -54,6 +57,8 @@ export interface RelacionPagoData {
   bruto: number;
   deducciones: number;
   total_pagar: number;
+  total_comisiones_bs?: number | null;
+  total_pagar_bs?: number | null;
   trabajos: TrabajoRelacion[];
   adelantos?: { fecha: string; motivo?: string | null; monto_usd: number }[];
   /** Referencia informativa. Si falta, no se imprime ninguna conversión. */
@@ -198,6 +203,8 @@ export function generateRelacionPagoPDF(d: RelacionPagoData) {
     const baseUsada = t.desglose?.base === 'mano_obra'
       ? Number(t.mano_obra_usd || 0)
       : Number(t.ingreso_usd ?? t.ingreso_total ?? 0);
+    const tasa = Number(t.tasa || t.desglose?.tasa_cambio || d.tasa_bs || 0);
+    const comisionBs = Number(t.comision_bs || t.desglose?.comision_bs || (tasa > 0 ? t.comision_usd * tasa : 0));
     const vehiculo = [t.desglose?.placa, t.desglose?.vehiculo].filter(Boolean).join(' · ');
     const concepto = t.es_override
       ? `Supervisión sobre ${t.desglose?.sobre || 'trabajo del taller'}`
@@ -207,9 +214,10 @@ export function generateRelacionPagoPDF(d: RelacionPagoData) {
       vehiculo || (t.desglose?.cliente ?? '—'),
       concepto,
       (t.zona || '—').replace(/_/g, ' '),
+      tasa > 1 ? `${tasa.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—',
       money(baseUsada),
       pct != null ? `${pct}%` : '—',
-      money(t.comision_usd),
+      `${money(t.comision_usd)}${comisionBs > 0 ? `\nBs. ${comisionBs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}`,
     ];
   });
 
@@ -222,20 +230,21 @@ export function generateRelacionPagoPDF(d: RelacionPagoData) {
   } else {
     autoTable(doc, {
       startY: y + 2,
-      head: [['Fecha', 'Vehículo / cliente', 'Trabajo', 'Zona', 'Monto', '%', 'Comisión']],
+      head: [['Fecha', 'Vehículo / cliente', 'Trabajo', 'Zona', 'Tasa Bs/$', 'Monto', '%', 'Comisión ($ / Bs)']],
       body: filas,
       theme: 'grid',
-      styles: { fontSize: 7.5, cellPadding: 1.8, textColor: NEGRO, lineColor: [226, 232, 240], lineWidth: 0.1 },
-      headStyles: { fillColor: NEGRO, textColor: BLANCO, fontSize: 7, fontStyle: 'bold' },
+      styles: { fontSize: 7, cellPadding: 1.6, textColor: NEGRO, lineColor: [226, 232, 240], lineWidth: 0.1 },
+      headStyles: { fillColor: NEGRO, textColor: BLANCO, fontSize: 6.8, fontStyle: 'bold' },
       alternateRowStyles: { fillColor: [250, 251, 252] },
       columnStyles: {
-        0: { cellWidth: 13, halign: 'center' },
-        1: { cellWidth: 38 },
-        2: { cellWidth: 52 },
-        3: { cellWidth: 22 },
-        4: { cellWidth: 20, halign: 'right' },
-        5: { cellWidth: 12, halign: 'center' },
-        6: { cellWidth: 25, halign: 'right', fontStyle: 'bold' },
+        0: { cellWidth: 12, halign: 'center' },
+        1: { cellWidth: 34 },
+        2: { cellWidth: 46 },
+        3: { cellWidth: 18 },
+        4: { cellWidth: 16, halign: 'right', fontStyle: 'italic' },
+        5: { cellWidth: 18, halign: 'right' },
+        6: { cellWidth: 10, halign: 'center' },
+        7: { cellWidth: 28, halign: 'right', fontStyle: 'bold' },
       },
       margin: { left: margen, right: margen },
     });
@@ -264,17 +273,24 @@ export function generateRelacionPagoPDF(d: RelacionPagoData) {
   // ── Liquidación ──────────────────────────────────────────────────────────
   if (y > 215) { doc.addPage(); y = 20; }
 
-  const anchoCaja = 88;
+  const anchoCaja = 96;
   const x = ancho - margen - anchoCaja;
 
-  const conceptos: [string, number, boolean?][] = [
+  const sumaComisionesBs = d.total_comisiones_bs ?? d.trabajos.reduce((s, t) => {
+    const tasa = Number(t.tasa || t.desglose?.tasa_cambio || d.tasa_bs || 0);
+    return s + Number(t.comision_bs || (tasa > 0 ? t.comision_usd * tasa : 0));
+  }, 0);
+  const tasaRef = d.tasa_bs || (d.trabajos.find(t => (t.tasa || 0) > 1)?.tasa) || 1;
+  const netoPagarBs = d.total_pagar_bs ?? (sumaComisionesBs + (d.sueldo_base * tasaRef) - (d.deducciones * tasaRef));
+
+  const conceptos: [string, number, number?][] = [
     ['Sueldo base', d.sueldo_base],
-    ['Comisiones', d.total_comisiones],
+    ['Comisiones', d.total_comisiones, sumaComisionesBs],
     ['Supervisión (override)', d.total_overrides],
     ['Destajo', d.total_flat],
   ];
   const visibles = conceptos.filter(([, v]) => Math.abs(v) > 0.001);
-  const altura = (visibles.length + 2) * 6 + 22;
+  const altura = (visibles.length + 2) * 6 + 28;
 
   doc.setDrawColor(226, 232, 240);
   doc.setLineWidth(0.3);
@@ -282,13 +298,16 @@ export function generateRelacionPagoPDF(d: RelacionPagoData) {
 
   let cy = y + 7;
   doc.setFontSize(8.5);
-  for (const [etiqueta, valor] of visibles) {
+  for (const [etiqueta, valor, valorBs] of visibles) {
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(...GRIS);
     doc.text(etiqueta, x + 4, cy);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(...NEGRO);
-    doc.text(money(valor), x + anchoCaja - 4, cy, { align: 'right' });
+    const textoValor = valorBs != null && valorBs > 0
+      ? `${money(valor)}  (Bs. ${valorBs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+      : money(valor);
+    doc.text(textoValor, x + anchoCaja - 4, cy, { align: 'right' });
     cy += 6;
   }
 
@@ -310,21 +329,28 @@ export function generateRelacionPagoPDF(d: RelacionPagoData) {
   }
 
   doc.setFillColor(...NEGRO);
-  doc.roundedRect(x, cy - 1, anchoCaja, 13, 2, 2, 'F');
+  doc.roundedRect(x, cy - 1, anchoCaja, 16, 2, 2, 'F');
   doc.setTextColor(...BLANCO);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
-  doc.text('NETO A PAGAR', x + 4, cy + 6.5);
-  doc.setFontSize(13);
-  doc.text(money(d.total_pagar), x + anchoCaja - 4, cy + 7, { align: 'right' });
+  doc.text('NETO A PAGAR', x + 4, cy + 5.5);
+  doc.setFontSize(12);
+  doc.text(money(d.total_pagar), x + anchoCaja - 4, cy + 6, { align: 'right' });
+  doc.setFontSize(7.5);
+  doc.setTextColor(...NARANJA);
+  doc.text(`Bs. ${netoPagarBs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, x + anchoCaja - 4, cy + 12.5, { align: 'right' });
+  doc.setFontSize(6.5);
+  doc.setTextColor(...BLANCO);
+  doc.text('(Suma exacta según tasa de cada día)', x + 4, cy + 12.5);
+  cy += 4;
 
   if (d.tasa_bs && d.tasa_bs > 0) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
     doc.setTextColor(...GRIS_CLARO);
     doc.text(
-      `Referencia: ${bs(d.total_pagar, d.tasa_bs)} a Bs. ${d.tasa_bs} por dólar. El pago se calcula en dólares.`,
-      x + anchoCaja, cy + 16, { align: 'right' },
+      `Tasa referencial de cierre: Bs. ${d.tasa_bs.toLocaleString('de-DE')} por dólar.`,
+      x + anchoCaja, cy + 17, { align: 'right' },
     );
   }
 

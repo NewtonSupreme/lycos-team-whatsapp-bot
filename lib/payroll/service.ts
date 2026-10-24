@@ -354,6 +354,10 @@ export class PayrollCalculationService {
       periodoInicio: periodo.inicio, periodoFin: periodo.fin, rates,
     });
 
+    const defaultRate = rates.ves_bcv || 886.22;
+    const total_comisiones_bs = round2(jobs.reduce((s, j) => s + (Number(j.comision_bs) || (Number(j.comision_usd) * (j.tasa_cambio || defaultRate))), 0));
+    const total_pagar_bs = round2(total_comisiones_bs + (agg.sueldo_base * defaultRate) - (agg.deducciones * defaultRate));
+
     return {
       empleado_id: employeeId,
       empleado_nombre: emp?.nombre || 'Empleado',
@@ -366,6 +370,8 @@ export class PayrollCalculationService {
       bruto: agg.bruto,
       deducciones: agg.deducciones,
       total_pagar: agg.total_pagar,
+      total_comisiones_bs,
+      total_pagar_bs,
       desglose_monedas: agg.desglose_monedas,
       jobs, adelantos,
       jobs_en_curso: jobsEnCurso,
@@ -505,6 +511,27 @@ export class PayrollCalculationService {
       (ventas || []).forEach((v: any) => ventaMap.set(String(v.id), v));
     }
 
+    // Buscar tasas históricas reales para cada día de los trabajos
+    const fechas = Array.from(new Set(jobs.map(j => j.fecha?.slice(0, 10)).filter(Boolean)));
+    const tasaMap = new Map<string, number>();
+    if (fechas.length > 0) {
+      const [{ data: cierres }, { data: ventasTasa }] = await Promise.all([
+        this.db.from('cierres_caja').select('fecha, tasa_bcv').in('fecha', fechas),
+        this.db.from('ventas_dia').select('fecha, tasa_cambio').in('fecha', fechas).gt('tasa_cambio', 1),
+      ]);
+      (cierres || []).forEach((c: any) => {
+        const val = Number(c.tasa_bcv);
+        if (val > 1) tasaMap.set(c.fecha, val);
+      });
+      (ventasTasa || []).forEach((v: any) => {
+        const val = Number(v.tasa_cambio);
+        if (val > 1 && !tasaMap.has(v.fecha)) tasaMap.set(v.fecha, val);
+      });
+    }
+
+    const rates = await this.rates();
+    const defaultRate = rates.ves_bcv || 886.22;
+
     return jobs.map(job => {
       let cliente = job.desglose?.cliente || null;
       let vehiculo = job.desglose?.vehiculo || null;
@@ -533,11 +560,26 @@ export class PayrollCalculationService {
 
       const desc = job.descripcion || (job.referencia_tabla === 'servicios' ? 'Servicio de taller' : job.referencia_tabla === 'ventas_dia' ? 'Venta en mostrador' : 'Trabajo asignado');
 
+      const jobFecha = job.fecha?.slice(0, 10);
+      const tasaDelDia = (job.tasa_cambio && job.tasa_cambio > 1)
+        ? job.tasa_cambio
+        : (tasaMap.get(jobFecha) || defaultRate);
+
+      const comision_bs = round2((job.comision_usd || 0) * tasaDelDia);
+      const mano_obra_bs = round2((job.mano_obra_usd || 0) * tasaDelDia);
+      const ingreso_bs = round2((job.ingreso_usd || job.ingreso_total || 0) * tasaDelDia);
+
       return {
         ...job,
+        tasa_cambio: tasaDelDia,
+        comision_bs,
+        mano_obra_bs,
+        ingreso_bs,
         descripcion: desc,
         desglose: {
           ...job.desglose,
+          tasa_cambio: tasaDelDia,
+          comision_bs,
           cliente: cliente || 'Consumidor Final',
           vehiculo: vehiculo || (placa ? `Placa: ${placa}` : 'No especificado'),
           placa: placa || null,

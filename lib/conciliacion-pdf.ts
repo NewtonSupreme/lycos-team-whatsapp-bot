@@ -82,9 +82,22 @@ export function generarConciliacionPDF(r: ResultadoConciliacion, meta: MetaConci
     });
     y = doc.lastAutoTable.finalY + 6;
   };
-  // Monto del movimiento en su moneda (Cashea: USD y Bs).
-  const montoMov = (m: MovimientoBanco) => (esCashea ? `${usd(m.usd || 0)}  (${bs(Math.abs(m.monto))})` : bs(Math.abs(m.monto)));
-  const montoSis = (s: AsientoSistema) => (s.enDolares ? usd(s.monto) : bs(s.monto));
+  // Monto dual para que tanto en dólares como en bolívares se aprecie el monto exacto según la tasa del momento
+  const montoSis = (s: AsientoSistema) => {
+    if (s.enDolares) {
+      const bsMonto = s.tasa > 0 ? s.monto * s.tasa : null;
+      return bsMonto ? `${usd(s.monto)}  (${bs(bsMonto)})` : usd(s.monto);
+    }
+    const usdMonto = s.usd > 0 ? s.usd : (s.tasa > 0 ? s.monto / s.tasa : null);
+    return usdMonto ? `${bs(s.monto)}  (${usd(usdMonto)})` : bs(s.monto);
+  };
+  const montoMov = (m: MovimientoBanco) => {
+    if (esCashea) {
+      return `${usd(m.usd || 0)}  (${bs(Math.abs(m.monto))})`;
+    }
+    const usdEquiv = m.tasa && m.tasa > 0 ? Math.abs(m.monto) / m.tasa : null;
+    return usdEquiv ? `${bs(Math.abs(m.monto))}  (${usd(usdEquiv)})` : bs(Math.abs(m.monto));
+  };
 
   // ── Encabezado ─────────────────────────────────────────────────────────
   barra();

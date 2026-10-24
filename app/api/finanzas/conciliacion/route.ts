@@ -23,6 +23,10 @@ const mas = (d: string, n: number) => new Date(Date.parse(d) + n * 86_400_000).t
  *
  * El archivo no se guarda: se lee en memoria y se descarta. Queda en la
  * bitácora quién concilió qué banco y período, y el resultado resumido.
+ *
+ * Los movimientos de bancos en Bs (BNC, Banesco, Exterior) se enriquecen con
+ * la tasa del cierre de caja del día para mostrar el equivalente en USD
+ * a la tasa exacta del momento del cobro o pago (UI y PDF).
  */
 export async function POST(req: NextRequest) {
   const auth = await authorize('reportes', 'leer');
@@ -65,6 +69,49 @@ export async function POST(req: NextRequest) {
   const bancoEfectivo = estado.banco;
   const margen = bancoEfectivo === 'cashea' || bancoEfectivo === 'bnc' || bancoEfectivo === 'bnc_cuotas' ? 25 : 12;
   const sede = auth.effectiveSede(String(form.get('sede') || '') || null);
+
+  // ── Tasas del día: enriquecer movimientos en Bs con su equivalente en USD ──
+  // Cashea ya trae tasa y usd desde el reporte. BNC, Banesco y Exterior son
+  // puramente en Bs: inyectamos la tasa del cierre de caja de cada día para
+  // poder mostrar ambas monedas en la UI y el PDF.
+  if (bancoEfectivo !== 'cashea') {
+    try {
+      const { data: cierres } = await auth.db
+        .from('cierres_caja')
+        .select('fecha, tasa_cambio')
+        .gte('fecha', mas(estado.desde, -3))
+        .lte('fecha', mas(estado.hasta, 1))
+        .order('fecha');
+
+      if (cierres && cierres.length > 0) {
+        const tasaMap = new Map<string, number>();
+        for (const c of cierres) {
+          const t = Number(c.tasa_cambio);
+          if (t > 0) tasaMap.set(String(c.fecha).slice(0, 10), t);
+        }
+        const fechasOrdenadas = [...tasaMap.keys()].sort();
+        // Fallback: si no hay cierre exacto, usa el cierre más reciente anterior
+        const tasaParaFecha = (fecha: string): number => {
+          if (tasaMap.has(fecha)) return tasaMap.get(fecha)!;
+          let ultima = 0;
+          for (const f of fechasOrdenadas) {
+            if (f <= fecha) ultima = tasaMap.get(f)!;
+            else break;
+          }
+          return ultima;
+        };
+        for (const mov of estado.movimientos) {
+          if (!mov.tasa || mov.tasa <= 0) {
+            const t = tasaParaFecha(mov.fecha);
+            if (t > 0) mov.tasa = t;
+          }
+        }
+      }
+    } catch {
+      // No crítico: si falla la consulta de tasas se muestra solo Bs
+    }
+  }
+
   try {
     const cuentas = CUENTAS_DEL_BANCO[bancoEfectivo] || CUENTAS_DEL_BANCO[banco];
     const sistema = await cargarSistema(auth.db, {

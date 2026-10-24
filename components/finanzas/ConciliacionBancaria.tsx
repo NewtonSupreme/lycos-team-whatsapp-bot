@@ -274,10 +274,31 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
   const esCashea = r.banco === 'cashea';
   const b = BANCOS.find(x => x.id === r.banco) || BANCOS[1];
   const v = r.veredicto;
-  const montoMov = (m: MovimientoBanco) => (esCashea || m.clase === 'cuota_cashea'
-    ? <>{usd(m.usd || 0)} <span className="text-muted-foreground">· {bs(Math.abs(m.monto))}</span></>
-    : bs(Math.abs(m.monto)));
-  const montoSis = (s: AsientoSistema) => (s.enDolares ? usd(s.monto) : bs(s.monto));
+  const montoMov = (m: MovimientoBanco): React.ReactNode => {
+    if (esCashea || m.clase === 'cuota_cashea') {
+      return <>{usd(m.usd || 0)} <span className="text-muted-foreground">· {bs(Math.abs(m.monto))}</span></>;
+    }
+    // Bancos en Bs: mostrar Bs + equivalente en $ si hay tasa
+    const usdEquiv = m.tasa && m.tasa > 0 ? Math.abs(m.monto) / m.tasa : null;
+    return (
+      <>
+        {bs(Math.abs(m.monto))}
+        {usdEquiv != null && (
+          <span className="ml-1 text-muted-foreground">· {usd(usdEquiv)}</span>
+        )}
+      </>
+    );
+  };
+  const montoSis = (s: AsientoSistema): string => {
+    if (s.enDolares) {
+      // En dólares → mostrar $ y equivalente Bs si hay tasa
+      const bsEquiv = s.tasa && s.tasa > 0 ? s.monto * s.tasa : null;
+      return bsEquiv ? `${usd(s.monto)}  (${bs(bsEquiv)})` : usd(s.monto);
+    }
+    // En Bs → mostrar Bs y equivalente $ si hay tasa o campo usd
+    const usdEquiv = s.usd && s.usd > 0 ? s.usd : (s.tasa && s.tasa > 0 ? s.monto / s.tasa : null);
+    return usdEquiv ? `${bs(s.monto)}  (${usd(usdEquiv)})` : bs(s.monto);
+  };
 
   const [modalAccion, setModalAccion] = useState<{
     abierto: boolean;
