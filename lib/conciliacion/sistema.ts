@@ -15,7 +15,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BANK_METHODS, type BankBin } from '@/lib/reporte/ventas-mapping';
 import { binsDeFila } from '@/lib/reporte/entradas';
-import type { AsientoSistema, DatosSistema, VentaCashea } from './motor';
+import type { AsientoSistema, DatosSistema, VentaCashea, JustificacionConciliacion, TraspasoCuentaInfo } from './motor';
 import type { BancoConciliable } from './leer-estado';
 
 const r2 = (x: number) => Math.round((Number(x) || 0) * 100) / 100;
@@ -59,23 +59,48 @@ export async function cargarSistema(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- el constructor de Supabase anidado agota la inferencia de tipos
   const conSede = (q: any) => (sede ? q.eq('sede_id', sede) : q);
 
-  const [ventas, abonos, egresos, usuarios, trabajos] = await Promise.all([
+  const [ventas, abonos, egresos, usuarios, trabajos, traspasosRaw, confJustRaw, ctasRaw] = await Promise.all([
     todas<Record<string, unknown>>(() => conSede(db.from('ventas_dia').select('*').gte('fecha', desde).lte('fecha', hasta).order('fecha'))),
     todas<Record<string, unknown>>(() => conSede(db.from('abonos').select('*').gte('fecha', desde).lte('fecha', hasta).order('fecha'))),
     todas<Record<string, unknown>>(() => conSede(db.from('egresos').select('*').gte('fecha', desde).lte('fecha', hasta).order('fecha'))),
     db.from('usuarios').select('nombre, cedula').then(r => r.data || []),
     db.from('job_assignments').select('empleado_nombre').gte('fecha', desde).then(r => r.data || []),
+    todas<Record<string, unknown>>(() => db.from('traspasos_cuenta').select('*').gte('fecha', desde).lte('fecha', hasta).order('fecha')).catch(() => []),
+    db.from('configuracion').select('valor').eq('clave', 'conciliacion_justificaciones').is('sede_id', null).maybeSingle().then(r => r, () => ({ data: null })),
+    db.from('cuentas_financieras').select('id, nombre').then(r => r, () => ({ data: [] })),
   ]);
 
+  const ctasMap = new Map<string, string>();
+  for (const c of ((ctasRaw as { data?: Array<{ id: string; nombre: string }> })?.data || [])) {
+    ctasMap.set(String(c.id), c.nombre);
+  }
+  const traspasos: TraspasoCuentaInfo[] = (traspasosRaw as Array<Record<string, unknown>>).map(t => ({
+    id: String(t.id),
+    fecha: String(t.fecha).slice(0, 10),
+    origen_id: String(t.origen_id || ''),
+    destino_id: String(t.destino_id || ''),
+    origen_nombre: ctasMap.get(String(t.origen_id)) || 'Cuenta Origen',
+    destino_nombre: ctasMap.get(String(t.destino_id)) || 'Cuenta Destino',
+    monto: n(t.monto),
+    monto_destino: n(t.monto_destino),
+    tasa: t.tasa ? n(t.tasa) : null,
+    motivo: t.motivo ? String(t.motivo) : null,
+    registrado_por: t.registrado_por ? String(t.registrado_por) : null,
+  }));
+
+  const justificaciones: JustificacionConciliacion[] = Array.isArray((confJustRaw as { data?: { valor?: unknown } })?.data?.valor)
+    ? ((confJustRaw as { data: { valor: unknown } }).data.valor as JustificacionConciliacion[])
+    : [];
+
   // Cliente y trabajo de las ventas que tienen cobros.
-  const idsVenta = [...new Set(abonos.map(a => String(a.venta_id || '')).filter(Boolean))];
+  const idsVenta = [...new Set(abonos.map((a: Record<string, unknown>) => String(a.venta_id || '')).filter(Boolean))];
   const ventasDeAbonos = new Map<string, Record<string, unknown>>();
   for (let i = 0; i < idsVenta.length; i += 200) {
     const { data } = await db.from('ventas_dia').select('id, cliente, placa, desglose, notas, servicio_id').in('id', idsVenta.slice(i, i + 200));
     for (const v of data || []) ventasDeAbonos.set(String(v.id), v);
   }
 
-  const conCashea = banco === 'cashea' || banco === 'bnc';
+  const conCashea = banco === 'cashea' || banco === 'bnc' || banco === 'bnc_cuotas';
   const todos: AsientoSistema[] = [];
   for (const v of ventas) {
     const bins = binsDeFila(v);
@@ -196,5 +221,7 @@ export async function cargarSistema(
     personal: [...personal.values()],
     ventasCashea,
     ventasRecientes,
+    justificaciones,
+    traspasos,
   };
 }

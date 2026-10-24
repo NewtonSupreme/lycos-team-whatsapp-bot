@@ -280,6 +280,34 @@ export function generarConciliacionPDF(r: ResultadoConciliacion, meta: MetaConci
       }),
       { 1: { halign: 'center', cellWidth: 22 }, 2: { halign: 'right', cellWidth: 28 }, 3: { halign: 'right', cellWidth: 28 }, 4: { halign: 'right', cellWidth: 28, fontStyle: 'bold' } }, C.gris);
   }
+  if (r.traspasosInternos?.banco?.length) {
+    const ti = r.traspasosInternos;
+    seccion('Traspasos entre cuentas propias', `${ti.banco.length} movimiento(s)`, C.gris);
+    explicacion('Movimientos de fondos entre cuentas del taller (por ejemplo, BNC 8215 a BNC 8201 o a Banesco). No constituyen ingresos ni egresos operacionales.');
+    tabla(['FECHA', 'REFERENCIA', 'DESCRIPCIÓN', 'MONTO', 'ESTADO'],
+      ti.banco.map(m => {
+        const conc = ti.conciliados.find(x => x.banco.fila === m.fila);
+        return [f(m.fecha), m.referencia, corto(`${m.descripcion} ${m.detalle}`.trim(), 45), bs(m.monto), conc ? `Conciliado (${conc.traspaso.origen_nombre} → ${conc.traspaso.destino_nombre})` : 'Pendiente en sistema'];
+      }),
+      { 0: { cellWidth: 16 }, 1: { cellWidth: 22 }, 3: { halign: 'right', cellWidth: 24, fontStyle: 'bold' }, 4: { cellWidth: 46 } }, C.gris);
+  }
+  const justificadosTodos = [
+    ...(ing.justificados || []).map(m => ({ m, tipo: 'Ingreso' })),
+    ...(egr.justificados || []).map(m => ({ m, tipo: 'Egreso' })),
+  ];
+  if (justificadosTodos.length) {
+    seccion('Movimientos con justificativo contable', `${justificadosTodos.length} justificativo(s)`, C.azul);
+    explicacion('Movimientos autorizados con justificación formal en lugar de asiento contable directo.');
+    tabla(['TIPO', 'FECHA', 'REFERENCIA', 'MONTO', 'MOTIVO'],
+      justificadosTodos.map(({ m, tipo }) => [
+        tipo,
+        f(m.fecha),
+        m.referencia,
+        bs(Math.abs(m.monto)),
+        corto(typeof m.justificacion === 'object' && m.justificacion ? m.justificacion.motivo : String(m.justificacion || 'Justificado'), 65),
+      ]),
+      { 0: { cellWidth: 16 }, 1: { cellWidth: 16 }, 2: { cellWidth: 22 }, 3: { halign: 'right', cellWidth: 24, fontStyle: 'bold' }, 4: { cellWidth: 60 } }, C.azul);
+  }
   if (r.reversos.length) {
     seccion('Reversos emparejados', `${r.reversos.length}`, C.gris);
     tabla(['FECHA', 'MOVIMIENTO ORIGINAL', 'REVERSO', 'MONTO'],

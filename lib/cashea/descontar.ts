@@ -132,9 +132,10 @@ export async function prepararDescuento(db: SupabaseClient, estado: EstadoLeido,
 
   // Las ventas con Cashea de las fechas posibles: hasta 60 días antes del primer pago.
   const primero = estado.movimientos.map(m => m.fecha).sort()[0] || estado.desde;
+  const ultimo = estado.movimientos.map(m => m.fecha).sort().reverse()[0] || estado.hasta;
   let q = db.from('ventas_dia')
     .select('id, fecha, cliente, placa, total_ingresos, con_iva, cashea, cashea_pct, inicial, financiado, saldo_pendiente, sede_id')
-    .gte('fecha', masDias(primero, -60)).lte('fecha', estado.hasta)
+    .gte('fecha', masDias(primero, -60)).lte('fecha', masDias(ultimo, 3))
     .or('cashea.gt.0,financiado.gt.0,cashea_pct.not.is.null')
     .limit(2000);
   if (sede) q = q.eq('sede_id', sede);
@@ -185,14 +186,15 @@ export async function prepararDescuento(db: SupabaseClient, estado: EstadoLeido,
 
   const salida: GrupoCashea[] = [];
   const porResolver = armados.filter(a => !a.venta).map(a => {
-    const libres = pool.filter(v => !usadas.has(v.id) && v.fecha <= a.primerPago.fecha);
+    const maxPagoFecha = a.pagos.map(p => p.fecha).sort().reverse()[0] || a.primerPago.fecha;
+    const libres = pool.filter(v => !usadas.has(v.id) && v.fecha <= masDias(maxPagoFecha, 3));
     const cuadra = (id: string) => {
       const r = resumenes.get(id)!;
       return a.g.inicial ? Math.abs(r.inicial - a.g.cuotaUSD) <= 0.03 : !!r.plan && Math.abs(r.plan.cuota - a.g.cuotaUSD) <= 0.03;
     };
     const candidatas = libres.filter(v => cuadra(v.id)).map(v => a.conDesfase(v.id))
       .filter(c => Math.abs(c.desfase) <= 21).sort((x, y) => Math.abs(x.desfase) - Math.abs(y.desfase));
-    return { ...a, candidatas };
+    return { ...a, candidatas, maxPagoFecha };
   }).sort((x, y) => x.candidatas.length - y.candidatas.length);
 
   for (const a of armados.filter(x => x.venta)) {
@@ -207,7 +209,7 @@ export async function prepararDescuento(db: SupabaseClient, estado: EstadoLeido,
     // Solo se sugiere cuando hay UNA que cuadra y de la fecha que toca.
     const unica = candidatas.length === 1 && Math.abs(candidatas[0].desfase) <= 10 ? candidatas[0] : null;
     if (unica && !a.g.inicial) usadas.add(unica.id);
-    const otras = pool.filter(v => !usadas.has(v.id) && v.fecha <= a.primerPago.fecha && !candidatas.some(c => c.id === v.id))
+    const otras = pool.filter(v => !usadas.has(v.id) && v.fecha <= masDias(a.maxPagoFecha, 3) && !candidatas.some(c => c.id === v.id))
       .map(v => a.conDesfase(v.id)).filter(c => Math.abs(c.desfase) <= 30)
       .sort((x, y) => Math.abs(x.desfase) - Math.abs(y.desfase)).slice(0, 12);
     salida.push({

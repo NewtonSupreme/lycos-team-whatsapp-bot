@@ -3,11 +3,13 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
-  AlertTriangle, ArrowDownLeft, ArrowUpRight, CheckCircle2, Download, FileSpreadsheet,
-  Landmark, Loader2, RotateCcw, Scale, ShieldAlert, ShieldCheck, Upload, X,
+  AlertTriangle, ArrowDownLeft, ArrowLeftRight, ArrowUpRight, CheckCircle2, Download, FileSpreadsheet,
+  Landmark, Loader2, Plus, RotateCcw, Scale, ShieldAlert, ShieldCheck, Tag, Trash2, Upload, Wrench, X,
 } from 'lucide-react';
 import LogoBanco from '@/components/pagos/LogoBanco';
 import DescontarCuotasCashea from '@/components/finanzas/DescontarCuotasCashea';
+import ModalAccionConciliacion from '@/components/finanzas/ModalAccionConciliacion';
+import ModalTraspasoConciliacion from '@/components/finanzas/ModalTraspasoConciliacion';
 import { Chip, Panel, Pestanas, TarjetaKpi, Vacio } from '@/components/panel/Piezas';
 import { cn } from '@/lib/utils';
 import type { BankBin } from '@/lib/reporte/ventas-mapping';
@@ -27,7 +29,8 @@ import type { MetaConciliacion } from '@/lib/conciliacion-pdf';
 
 const BANCOS: Array<{ id: BancoConciliable; logo: BankBin; nombre: string; plantilla: string; cuenta: string; cruce?: string }> = [
   { id: 'banesco', logo: 'pago_movil_banesco', nombre: 'Banesco', plantilla: 'Movimientos de Banesco Online exportados a Excel (.xls)', cuenta: 'PM / transferencias y Punto Banesco' },
-  { id: 'bnc', logo: 'bnc', nombre: 'BNC · Cashea', plantilla: 'Reporte «Movimientos entre fechas» de BNC en Línea (.xls)', cuenta: 'Cuenta de Cashea: iniciales, cuotas y liquidaciones', cruce: 'Reporte de Cashea del mismo mes' },
+  { id: 'bnc', logo: 'bnc', nombre: 'BNC 8201 · Iniciales / General', plantilla: 'Reporte «Movimientos entre fechas» cuenta 8201 (.xls)', cuenta: 'Cuenta general / iniciales Cashea y PM', cruce: 'Reporte de Cashea del mismo mes' },
+  { id: 'bnc_cuotas', logo: 'bnc', nombre: 'BNC 8215 · Cuotas Cashea', plantilla: 'Reporte «Movimientos entre fechas» cuenta 8215 (.xls)', cuenta: 'Cuenta de cuotas Cashea exclusivamente', cruce: 'Reporte de Cashea del mismo mes' },
   { id: 'exterior', logo: 'pago_movil_exterior', nombre: 'Banco Exterior', plantilla: 'Movimientos de Exterior en Línea exportados a Excel (.xls)', cuenta: 'Pago móvil Exterior' },
   { id: 'cashea', logo: 'cashea', nombre: 'Cashea', plantilla: 'Reporte de cuotas cobradas del portal de comercios (.xlsx)', cuenta: 'Cada orden financiada con su venta', cruce: 'Estado del BNC del mismo mes' },
 ];
@@ -47,7 +50,7 @@ const REGLA: Record<string, string> = {
   tasa_dolar: 'Dólares a la tasa del día', cashea_usd: 'Cuota en dólares',
 };
 
-type Pestana = 'sin_registrar' | 'no_llegaron' | 'iniciales' | 'otra_cuenta' | 'diferencias' | 'ordenes' | 'pagos' | 'gastos' | 'banco' | 'conciliados';
+type Pestana = 'sin_registrar' | 'no_llegaron' | 'iniciales' | 'otra_cuenta' | 'diferencias' | 'traspasos' | 'justificados' | 'ordenes' | 'pagos' | 'gastos' | 'banco' | 'conciliados';
 
 export default function ConciliacionBancaria({ sede }: { sede?: string | null }) {
   const [banco, setBanco] = useState<BancoConciliable | null>(null);
@@ -83,6 +86,7 @@ export default function ConciliacionBancaria({ sede }: { sede?: string | null })
         ['sin_registrar', r0.ingresos.sinRegistrar.length], ['no_llegaron', r0.ingresos.noLlegaron.length],
         ['iniciales', r0.ingresos.inicialesSinCuenta.length], ['otra_cuenta', r0.ingresos.enOtraCuenta.length],
         ['diferencias', r0.ingresos.diferencias.length + r0.egresos.diferencias.length],
+        ['traspasos', (r0.traspasosInternos?.banco || []).length],
         ['ordenes', r0.ordenesCashea.length], ['pagos', r0.egresos.sinRegistrar.length], ['gastos', r0.egresos.noSalieron.length],
       ];
       setPestana(orden.find(([, n]) => n > 0)?.[0] || 'conciliados');
@@ -102,7 +106,7 @@ export default function ConciliacionBancaria({ sede }: { sede?: string | null })
   const reiniciar = () => { setDatos(null); setArchivo(null); setCruce(null); setError(null); };
 
   if (datos) {
-    return <Resultado datos={datos} pestana={pestana} setPestana={setPestana} onPdf={descargarPdf} onNueva={reiniciar} archivo={archivo} sede={sede} />;
+    return <Resultado datos={datos} pestana={pestana} setPestana={setPestana} onPdf={descargarPdf} onNueva={reiniciar} onRecargar={conciliar} archivo={archivo} sede={sede} />;
   }
 
   return (
@@ -258,21 +262,51 @@ function ZonaArchivo({ archivo, onArchivo, titulo, detalle, compacta, deshabilit
 
 // ── Resultado ───────────────────────────────────────────────────────────────
 
-function Resultado({ datos, pestana, setPestana, onPdf, onNueva, archivo, sede }: {
+function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, archivo, sede }: {
   datos: { resultado: ResultadoConciliacion; meta: MetaConciliacion };
   pestana: Pestana; setPestana: (p: Pestana) => void; onPdf: () => void; onNueva: () => void;
+  onRecargar: () => void;
   /** El reporte subido: con el de Cashea se descuentan las cuotas a cada cliente. */
   archivo?: File | null; sede?: string | null;
 }) {
   const r = datos.resultado;
   const e = r.estado;
   const esCashea = r.banco === 'cashea';
-  const b = BANCOS.find(x => x.id === r.banco)!;
+  const b = BANCOS.find(x => x.id === r.banco) || BANCOS[1];
   const v = r.veredicto;
   const montoMov = (m: MovimientoBanco) => (esCashea || m.clase === 'cuota_cashea'
     ? <>{usd(m.usd || 0)} <span className="text-muted-foreground">· {bs(Math.abs(m.monto))}</span></>
     : bs(Math.abs(m.monto)));
   const montoSis = (s: AsientoSistema) => (s.enDolares ? usd(s.monto) : bs(s.monto));
+
+  const [modalAccion, setModalAccion] = useState<{
+    abierto: boolean;
+    movimiento: MovimientoBanco | null;
+    tipo: 'ingreso' | 'egreso' | 'diferencia';
+  }>({ abierto: false, movimiento: null, tipo: 'ingreso' });
+
+  const [modalTraspaso, setModalTraspaso] = useState<{
+    abierto: boolean;
+    movimiento: MovimientoBanco | null;
+  }>({ abierto: false, movimiento: null });
+
+  const [quitandoJustificacion, setQuitandoJustificacion] = useState<string | null>(null);
+
+  const quitarJustificacion = async (hash: string) => {
+    setQuitandoJustificacion(hash);
+    try {
+      await fetch('/api/finanzas/conciliacion/accion', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accion: 'quitar_justificacion', movimientoHash: hash }),
+      });
+      onRecargar();
+    } catch {
+      /* ignore */
+    } finally {
+      setQuitandoJustificacion(null);
+    }
+  };
 
   const pestanas = useMemo(() => {
     const p: Array<{ valor: Pestana; n: number; label: string }> = [
@@ -281,13 +315,15 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, archivo, sede }
       { valor: 'iniciales', n: r.ingresos.inicialesSinCuenta.length, label: 'Iniciales Cashea' },
       { valor: 'otra_cuenta', n: r.ingresos.enOtraCuenta.length, label: 'En otra cuenta' },
       { valor: 'diferencias', n: r.ingresos.diferencias.length + r.egresos.diferencias.length, label: 'Montos distintos' },
+      { valor: 'traspasos', n: (r.traspasosInternos?.banco || []).length, label: 'Traspasos entre cuentas' },
+      { valor: 'justificados', n: (r.ingresos.justificados || []).length + (r.egresos.justificados || []).length, label: 'Justificados' },
       { valor: 'ordenes', n: r.ordenesCashea.length, label: 'Órdenes Cashea' },
       { valor: 'pagos', n: r.egresos.sinRegistrar.length, label: 'Pagos sin gasto' },
       { valor: 'gastos', n: r.egresos.noSalieron.length, label: 'Gastos sin salida' },
       { valor: 'banco', n: r.propiosDelBanco.reduce((a, g) => a + g.movimientos.length, 0) + r.reversos.length, label: 'Propios del banco' },
       { valor: 'conciliados', n: r.ingresos.conciliados.length + r.egresos.conciliados.length, label: 'Conciliados' },
     ];
-    return p.filter(x => x.n > 0 || x.valor === 'conciliados');
+    return p.filter(x => x.n > 0 || x.valor === 'conciliados' || x.valor === 'traspasos' || x.valor === 'justificados');
   }, [r]);
 
   return (
@@ -346,7 +382,6 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, archivo, sede }
       {esCashea && archivo && <DescontarCuotasCashea archivo={archivo} sede={sede} />}
 
       {/* Cifras */}
-      {/* Una por fila en el teléfono: los montos en bolívares no caben de a dos. */}
       <div className="grid grid-cols-1 gap-2.5 min-[480px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
         {esCashea ? (
           <>
@@ -389,13 +424,25 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, archivo, sede }
         </div>
         <div className="p-3.5">
           {pestana === 'sin_registrar' && (
-            <Seccion ayuda="El dinero entró al banco, pero ninguna venta ni cobro del sistema lo explica. Busca la venta y regístrala con esta cuenta (o, si es un aporte del personal, regístralo como tal).">
+            <Seccion ayuda="El dinero entró al banco, pero ninguna venta ni cobro del sistema lo explica. Puedes registrarlo como servicio/venta directamente, aplicarlo como abono o justificarlo con un motivo contable.">
               <Tabla filas={r.ingresos.sinRegistrar} vacio="Todo lo que entró está registrado." columnas={[
                 { t: 'Fecha', c: m => fecha(m.fecha), w: 'w-24' },
                 { t: 'Referencia', c: m => <span className="font-mono text-[11px]">{m.referencia}</span> },
                 { t: 'Descripción del banco', c: m => <span className="line-clamp-2">{`${m.descripcion} ${m.detalle}`.trim()}</span> },
                 { t: 'Monto', c: m => montoMov(m), d: true },
                 { t: 'Pista', c: m => m.pista ? <span className="text-muted-foreground">{m.pista}</span> : '—' },
+                {
+                  t: 'Acción',
+                  c: m => (
+                    <button
+                      type="button"
+                      onClick={() => setModalAccion({ abierto: true, movimiento: m, tipo: 'ingreso' })}
+                      className="inline-flex items-center gap-1 rounded-lg bg-primary/10 px-2.5 py-1 text-[11px] font-bold text-primary hover:bg-primary/20"
+                    >
+                      Registrar / Justificar
+                    </button>
+                  ),
+                },
               ]} />
             </Seccion>
           )}
@@ -421,7 +468,7 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, archivo, sede }
             </Seccion>
           )}
           {pestana === 'diferencias' && (
-            <Seccion ayuda="Banco y sistema hablan del mismo pago, pero el monto difiere (aunque sea un céntimo). Corrige el monto del sistema con el del banco.">
+            <Seccion ayuda="Banco y sistema hablan del mismo pago, pero el monto difiere (aunque sea un céntimo). Corrige el monto del sistema o justifícalo con un motivo contable.">
               <Tabla filas={[...r.ingresos.diferencias.map(d => ({ ...d, tipo: 'Cobro' })), ...r.egresos.diferencias.map(d => ({ ...d, tipo: 'Pago' }))]} vacio="" columnas={[
                 { t: 'Tipo', c: d => d.tipo },
                 { t: 'Fecha', c: d => fecha(d.banco.fecha) },
@@ -429,18 +476,130 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, archivo, sede }
                 { t: 'Sistema', c: d => montoSis(d.sistema), d: true },
                 { t: 'Diferencia', c: d => <span className="font-bold text-red-600 dark:text-red-400">{d.diferencia > 0 ? '+' : ''}{num(d.diferencia)}</span>, d: true },
                 { t: 'Cliente / proveedor', c: d => <Cliente s={d.sistema} /> },
+                {
+                  t: 'Acción',
+                  c: d => (
+                    <button
+                      type="button"
+                      onClick={() => setModalAccion({ abierto: true, movimiento: d.banco, tipo: 'diferencia' })}
+                      className="inline-flex items-center gap-1 rounded-lg bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold text-amber-700 dark:text-amber-400 hover:bg-amber-500/20"
+                    >
+                      Justificar
+                    </button>
+                  ),
+                },
               ]} />
+            </Seccion>
+          )}
+          {pestana === 'traspasos' && (
+            <Seccion ayuda="Movimientos entre cuentas propias del taller (por ejemplo, BNC 8215 a BNC 8201 o a Banesco). No constituyen ventas ni egresos operacionales.">
+              <div className="mb-2.5 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setModalTraspaso({ abierto: true, movimiento: null })}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-[12px] font-bold text-primary-foreground hover:opacity-90"
+                >
+                  <Plus className="h-4 w-4" /> Registrar Traspaso
+                </button>
+              </div>
+              <Tabla
+                filas={r.traspasosInternos.banco}
+                vacio="No se detectaron traspasos entre cuentas propias en este período."
+                columnas={[
+                  { t: 'Fecha', c: m => fecha(m.fecha), w: 'w-24' },
+                  { t: 'Referencia', c: m => <span className="font-mono text-[11px]">{m.referencia}</span> },
+                  { t: 'Descripción del banco', c: m => <span className="line-clamp-2">{`${m.descripcion} ${m.detalle}`.trim()}</span> },
+                  { t: 'Monto', c: m => <span className={cn('font-bold', m.monto > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>{bs(m.monto)}</span>, d: true },
+                  {
+                    t: 'Estado',
+                    c: m => {
+                      const conc = r.traspasosInternos.conciliados.find(c => c.banco.fila === m.fila);
+                      return conc ? (
+                        <Chip tono="exito">Conciliado · {conc.traspaso.origen_nombre} → {conc.traspaso.destino_nombre}</Chip>
+                      ) : (
+                        <Chip tono="aviso">Sin registrar en sistema</Chip>
+                      );
+                    },
+                  },
+                  {
+                    t: 'Acción',
+                    c: m => {
+                      const conc = r.traspasosInternos.conciliados.find(c => c.banco.fila === m.fila);
+                      return conc ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setModalTraspaso({ abierto: true, movimiento: m })}
+                          className="inline-flex items-center gap-1 rounded-lg bg-primary/10 px-2.5 py-1 text-[11px] font-bold text-primary hover:bg-primary/20"
+                        >
+                          Registrar
+                        </button>
+                      );
+                    },
+                  },
+                ]}
+              />
+            </Seccion>
+          )}
+          {pestana === 'justificados' && (
+            <Seccion ayuda="Movimientos bancarios que no tienen asiento contable pero cuentan con una justificación autorizada. Suman al porcentaje de conciliación y aparecen en el informe.">
+              <Tabla
+                filas={[
+                  ...r.ingresos.justificados.map(m => ({ m, tipo: 'Ingreso / Cobro' })),
+                  ...r.egresos.justificados.map(m => ({ m, tipo: 'Egreso / Pago' })),
+                ]}
+                vacio="No hay movimientos con justificación contable."
+                columnas={[
+                  { t: 'Tipo', c: x => <Chip tono={x.tipo.includes('Ingreso') ? 'exito' : 'peligro'}>{x.tipo}</Chip> },
+                  { t: 'Fecha', c: x => fecha(x.m.fecha), w: 'w-24' },
+                  { t: 'Referencia', c: x => <span className="font-mono text-[11px]">{x.m.referencia}</span> },
+                  { t: 'Motivo de Justificación', c: x => (
+                    <span className="font-medium text-foreground">
+                      {typeof x.m.justificacion === 'object' && x.m.justificacion ? x.m.justificacion.motivo : String(x.m.justificacion || 'Justificado')}
+                    </span>
+                  ) },
+                  {
+                    t: 'Acción',
+                    c: x => {
+                      const hash = `${x.m.fecha}_${x.m.referencia}_${x.m.monto}`;
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => quitarJustificacion(hash)}
+                          disabled={quitandoJustificacion === hash}
+                          className="inline-flex items-center gap-1 rounded-lg border border-red-500/20 bg-red-500/5 px-2 py-1 text-[11px] font-bold text-red-600 hover:bg-red-500/15"
+                        >
+                          <Trash2 className="h-3 w-3" /> Quitar
+                        </button>
+                      );
+                    },
+                  },
+                ]}
+              />
             </Seccion>
           )}
           {pestana === 'ordenes' && <OrdenesCashea r={r} />}
           {pestana === 'pagos' && (
-            <Seccion ayuda="Dinero que salió a terceros (proveedores, personal, servicios) sin gasto en el sistema. Mientras no se registren, la utilidad sale más alta de lo que es.">
+            <Seccion ayuda="Dinero que salió a terceros (proveedores, personal, servicios) sin gasto en el sistema. Puedes registrarlo como egreso contable o justificarlo.">
               <Tabla filas={r.egresos.sinRegistrar} vacio="" columnas={[
                 { t: 'Fecha', c: m => fecha(m.fecha), w: 'w-24' },
                 { t: 'Referencia', c: m => <span className="font-mono text-[11px]">{m.referencia}</span> },
                 { t: 'Descripción del banco', c: m => <span className="line-clamp-2">{`${m.descripcion} ${m.detalle}`.trim()}</span> },
                 { t: 'Monto', c: m => bs(Math.abs(m.monto)), d: true },
                 { t: 'Pista', c: m => m.pista ? <span className="text-muted-foreground">{m.pista}</span> : '—' },
+                {
+                  t: 'Acción',
+                  c: m => (
+                    <button
+                      type="button"
+                      onClick={() => setModalAccion({ abierto: true, movimiento: m, tipo: 'egreso' })}
+                      className="inline-flex items-center gap-1 rounded-lg bg-primary/10 px-2.5 py-1 text-[11px] font-bold text-primary hover:bg-primary/20"
+                    >
+                      Registrar / Justificar
+                    </button>
+                  ),
+                },
               ]} />
             </Seccion>
           )}
@@ -486,6 +645,24 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, archivo, sede }
           )}
         </div>
       </Panel>
+
+      {/* Modales de acción */}
+      <ModalAccionConciliacion
+        abierto={modalAccion.abierto}
+        onCerrar={() => setModalAccion({ abierto: false, movimiento: null, tipo: 'ingreso' })}
+        movimiento={modalAccion.movimiento}
+        tipo={modalAccion.tipo}
+        banco={r.banco}
+        onCompletado={onRecargar}
+      />
+
+      <ModalTraspasoConciliacion
+        abierto={modalTraspaso.abierto}
+        onCerrar={() => setModalTraspaso({ abierto: false, movimiento: null })}
+        movimiento={modalTraspaso.movimiento}
+        banco={r.banco}
+        onCompletado={onRecargar}
+      />
 
       <p className="text-[11px] text-muted-foreground">
         Archivo: {datos.meta.archivo}{datos.meta.cruce ? ` · cruzado con ${BANCOS.find(x => x.id === datos.meta.cruce!.banco)?.nombre || datos.meta.cruce.banco}` : ''} · el archivo no se guarda: se leyó en memoria y se descartó.

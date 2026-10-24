@@ -2,27 +2,10 @@
 // Motor de conciliación bancaria.
 //
 // Cruza cada movimiento del estado de cuenta con lo que el sistema dice que
-// entró o salió por ESA cuenta, y explica cada diferencia. No inventa nada: un
-// movimiento queda «conciliado» solo si el monto coincide al céntimo (o, en lo
-// que el sistema lleva en dólares, a la tasa del día con tolerancia declarada).
-//
-// El sistema casi nunca guarda la referencia del pago, así que la llave
-// principal es monto exacto + fecha. Las pasadas van de la más segura a la más
-// floja y cada emparejamiento dice con qué regla se hizo:
-//
-//   1. Referencia y monto iguales.
-//   2. Monto exacto, mismo día.
-//   3. Monto exacto, hasta 3 días de diferencia (registro atrasado o fin de semana).
-//   4. Monto exacto, hasta 10 días (fecha lejana: se marca para revisar).
-//   5. Uno contra varios: un pago del banco = 2 o 3 registros del sistema, o al revés.
-//   6. Dólares a tasa (Cashea dentro del BNC): ±1,5 % y ±3 días.
-//   7. Monto casi igual (±1 Bs o ±0,5 %): DIFERENCIA, no conciliado.
-//   8. Lo que sobra en el banco se busca en las demás cuentas del sistema:
-//      «registrado en otro banco».
-//
-// Antes de cruzar, el estado se limpia: los reversos se emparejan con su
-// original y salen los dos; las comisiones de un pago (misma referencia, ≤1,5 %)
-// se separan como gasto bancario.
+// entró o salió por ESA cuenta, y explica cada diferencia.
+// Soporta Banesco, BNC 8201 (Iniciales / General), BNC 8215 (Cuotas Cashea),
+// Banco Exterior y Cashea.
+// Permite traspasos entre cuentas y justificaciones contables con soporte.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { BankBin } from '@/lib/reporte/ventas-mapping';
@@ -35,10 +18,10 @@ const TOL = 0.01;
 /** Qué columnas del sistema corresponden a cada estado de cuenta. */
 export const CUENTAS_DEL_BANCO: Record<BancoConciliable, BankBin[]> = {
   banesco: ['pago_movil_banesco', 'punto_banesco'],
-  // La cuenta BNC del estado es la de Cashea: ahí entran las iniciales y cuotas.
   bnc: ['bnc', 'cashea'],
+  bnc_cuotas: ['bnc', 'cashea'],
   exterior: ['pago_movil_exterior'],
-  cashea: ['cashea'],
+  cashea: ['cashea', 'bnc'],
 };
 
 export const NOMBRE_CUENTA: Record<string, string> = {
@@ -103,6 +86,33 @@ export interface EnOtraCuenta {
   sistema: AsientoSistema;
 }
 
+/** Justificación contable asociada a un movimiento bancario o diferencia. */
+export interface JustificacionConciliacion {
+  id: string;
+  movimientoHash: string;
+  tipo: 'ingreso' | 'egreso' | 'diferencia' | 'sistema';
+  motivo: string;
+  fecha: string;
+  monto: number;
+  usuario: string;
+  createdAt: string;
+}
+
+/** Información de un traspaso entre cuentas registrado en el sistema. */
+export interface TraspasoCuentaInfo {
+  id: string;
+  fecha: string;
+  origen_id: string;
+  destino_id: string;
+  origen_nombre: string;
+  destino_nombre: string;
+  monto: number;
+  monto_destino: number;
+  tasa: number | null;
+  motivo: string | null;
+  registrado_por: string | null;
+}
+
 /** Venta financiada con Cashea, para casarla con sus cuotas. */
 export interface VentaCashea {
   id: string;
@@ -112,10 +122,8 @@ export interface VentaCashea {
   total: number;
   inicial: number;
   financiado: number;
-  /** Columna «cashea» de la venta: la inicial (o, en las viejas, todo). */
   casheaCol: number;
   servicioId: string | null;
-  /** Cuotas de Cashea ya registradas como cobro en el sistema (USD, todas las fechas). */
   cuotasRegistradasUSD: number;
 }
 
@@ -126,17 +134,14 @@ export interface OrdenCashea {
   cuotaUSD: number;
   cobradoUSD: number;
   cobradoBs: number;
-  /** La cuota más alta pagada: con la 3 pagada, se debieron cobrar 3 cuotas. */
   ultimaCuota: number;
   fechaEstimadaVenta: string;
   venta: VentaCashea | null;
   candidatos: number;
-  /** Lo que según Cashea ya se cobró hasta la última cuota (cuota × número). */
   esperadoUSD: number;
   registradoUSD: number;
   estado: 'al_dia' | 'cuotas_sin_registrar' | 'venta_no_encontrada' | 'registrado_de_mas';
   nota: string;
-  /** Si no se identificó la venta: las que encajan por plan y fecha (no confirmadas). */
   posibles: Array<{ fecha: string; cliente: string; placa: string | null; total: number; plan: string; metodo: string }>;
 }
 
@@ -150,48 +155,42 @@ export interface GrupoBanco {
 export interface ResultadoConciliacion {
   banco: BancoConciliable;
   estado: Omit<EstadoLeido, 'movimientos'>;
-  /** Ingresos: cobros del banco ↔ ventas y cobros del sistema. */
   ingresos: {
     conciliados: Pareja[];
     diferencias: Diferencia[];
     enOtraCuenta: EnOtraCuenta[];
     sinRegistrar: Array<MovimientoBanco & { pista: string | null }>;
+    justificados: Array<MovimientoBanco & { pista: string | null }>;
     noLlegaron: AsientoSistema[];
-    /**
-     * Iniciales de Cashea guardadas en la cuenta «Cashea / BNC» que no entraron
-     * por ahí (ni en el BNC ni como «cuota 0» de Cashea): el cliente pagó la
-     * inicial por otra vía y la venta no lo dice.
-     */
     inicialesSinCuenta: AsientoSistema[];
     totalBanco: number;
     totalSistema: number;
   };
-  /** Egresos: pagos del banco ↔ gastos del sistema. */
   egresos: {
     conciliados: Pareja[];
     diferencias: Diferencia[];
     sinRegistrar: Array<MovimientoBanco & { pista: string | null }>;
+    justificados: Array<MovimientoBanco & { pista: string | null }>;
     noSalieron: AsientoSistema[];
     totalBanco: number;
     totalSistema: number;
   };
-  /** Lo que el banco mueve y no es venta ni gasto del taller. */
   propiosDelBanco: GrupoBanco[];
   reversos: Array<{ original: MovimientoBanco; reverso: MovimientoBanco }>;
-  /** Cashea por orden: cada compra financiada, sus cuotas y su venta en el sistema. */
+  traspasosInternos: {
+    banco: MovimientoBanco[];
+    registrados: TraspasoCuentaInfo[];
+    conciliados: Array<{ banco: MovimientoBanco; traspaso: TraspasoCuentaInfo }>;
+    pendientesRegistro: MovimientoBanco[];
+    total: number;
+  };
   ordenesCashea: OrdenCashea[];
-  /** Cashea: cuotas del reporte que aparecen (o no) en el estado del BNC. */
   cruceCashea: null | {
     archivo: 'bnc' | 'cashea';
     encontradas: Array<{ cuota: MovimientoBanco; abono: MovimientoBanco }>;
     faltanEnBnc: MovimientoBanco[];
     pmBncSinCuota: MovimientoBanco[];
   };
-  /**
-   * La prueba: cada bolívar que entró y salió del banco, repartido en una sola
-   * categoría. Si la suma de las categorías no da el total del banco, algo se
-   * quedó fuera y se dice.
-   */
   explicacion: {
     entradas: Array<{ concepto: string; monto: number; tono: 'ok' | 'aviso' | 'mal' | 'neutro' }>;
     salidas: Array<{ concepto: string; monto: number; tono: 'ok' | 'aviso' | 'mal' | 'neutro' }>;
@@ -203,7 +202,6 @@ export interface ResultadoConciliacion {
   veredicto: {
     cuadra: boolean;
     porcentaje: number;
-    /** Dinero que el banco y el sistema cuentan distinto, sumado en valor absoluto. */
     enJuego: number;
     titulares: string[];
   };
@@ -223,10 +221,6 @@ const TITULO_CLASE: Partial<Record<ClaseMovimiento, string>> = {
   liquidacion_cashea: 'Liquidaciones de Grupo Cashea',
 };
 
-/**
- * Empareja reversos con su original y separa las comisiones de cada pago.
- * Devuelve los movimientos que quedan para conciliar.
- */
 function limpiar(movs: MovimientoBanco[]) {
   const usados = new Set<number>();
   const reversos: Array<{ original: MovimientoBanco; reverso: MovimientoBanco }> = [];
@@ -236,7 +230,6 @@ function limpiar(movs: MovimientoBanco[]) {
       && (m.referencia === rev.referencia || Math.abs(dias(m.fecha, rev.fecha)) <= 1));
     if (original) { usados.add(original.fila); usados.add(rev.fila); reversos.push({ original, reverso: rev }); }
   }
-  // Comisión de un pago: misma referencia que un débito mayor y ≤ 1,5 % de él.
   const reclasificados = movs.map(m => {
     if (m.monto >= 0 || m.clase === 'comision' || !m.referencia || /^0+$/.test(m.referencia)) return m;
     const padre = movs.find(p => p.fila !== m.fila && p.referencia === m.referencia && p.monto < m.monto
@@ -255,7 +248,6 @@ function emparejar(lado: Lado, opciones: { ventanaCashea: number; dolaresATasa: 
   const libresS = new Set(lado.sistema.map(s => s.id));
   const parejas: Pareja[] = [];
   const montoB = (m: MovimientoBanco) => Math.abs(m.clase === 'cuota_cashea' ? (m.usd ?? m.monto) : m.monto);
-  // En dólares solo se compara directo con el reporte de Cashea (que trae USD).
   const comparable = (s: AsientoSistema, m: MovimientoBanco) => (s.enDolares ? m.clase === 'cuota_cashea' : m.clase !== 'cuota_cashea');
 
   const tomar = (regla: Regla, confianza: Pareja['confianza'], b: MovimientoBanco[], s: AsientoSistema[]) => {
@@ -285,7 +277,7 @@ function emparejar(lado: Lado, opciones: { ventanaCashea: number; dolaresATasa: 
   pasada('fecha_cercana', 'alta', (m, s) => igual(m, s) && Math.abs(dias(m.fecha, s.fecha)) <= ventana(s, 3));
   pasada('fecha_lejana', 'revisar', (m, s) => igual(m, s) && Math.abs(dias(m.fecha, s.fecha)) <= ventana(s, 10));
 
-  // Uno contra varios (2 o 3), dentro de ±2 días y en la misma moneda.
+  // Uno contra varios (2 o 3)
   const combos = <T,>(arr: T[], k: number): T[][] => {
     const out: T[][] = [];
     const rec = (i: number, acc: T[]) => {
@@ -317,7 +309,7 @@ function emparejar(lado: Lado, opciones: { ventanaCashea: number; dolaresATasa: 
     }
   }
 
-  // Dólares del sistema (Cashea dentro del BNC) contra bolívares del banco.
+  // Dólares del sistema contra bolívares del banco
   if (opciones.dolaresATasa) {
     for (const m of lado.banco) {
       if (!libresB.has(m.fila) || m.clase === 'cuota_cashea') continue;
@@ -330,7 +322,7 @@ function emparejar(lado: Lado, opciones: { ventanaCashea: number; dolaresATasa: 
     }
   }
 
-  // Casi iguales: diferencia de monto (no se dan por conciliados).
+  // Diferencias
   const diferencias: Diferencia[] = [];
   for (const m of lado.banco) {
     if (!libresB.has(m.fila)) continue;
@@ -353,16 +345,13 @@ function emparejar(lado: Lado, opciones: { ventanaCashea: number; dolaresATasa: 
 // ── Entrada principal ──────────────────────────────────────────────────────
 
 export interface DatosSistema {
-  /** Asientos de las cuentas de este banco, en una ventana algo mayor que el período. */
   propios: AsientoSistema[];
-  /** Asientos de las DEMÁS cuentas (para «registrado en otro banco»). */
   otros: AsientoSistema[];
-  /** Personal: nombre y cédula, para reconocer pagos de nómina en el banco. */
   personal: Array<{ nombre: string; cedula: string | null }>;
-  /** Ventas con Cashea de los últimos meses (solo para BNC y Cashea). */
   ventasCashea: VentaCashea[];
-  /** Todas las ventas del mismo lapso, para sugerir candidatas. */
   ventasRecientes: Array<{ id: string; fecha: string; cliente: string; placa: string | null; total: number; metodo: string }>;
+  justificaciones: JustificacionConciliacion[];
+  traspasos: TraspasoCuentaInfo[];
 }
 
 export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: EstadoLeido | null): ResultadoConciliacion {
@@ -371,11 +360,14 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
 
   // ── Cruce Cashea ↔ BNC por referencia y monto en bolívares
   let cruceCashea: ResultadoConciliacion['cruceCashea'] = null;
+  const esBnc = estado.banco === 'bnc' || estado.banco === 'bnc_cuotas';
+  const cruceEsBnc = cruce?.banco === 'bnc' || cruce?.banco === 'bnc_cuotas';
   const cuotas = estado.banco === 'cashea' ? estado.movimientos : cruce?.banco === 'cashea' ? cruce.movimientos : null;
-  const bnc = estado.banco === 'bnc' ? estado.movimientos : cruce?.banco === 'bnc' ? cruce.movimientos : null;
+  const bnc = esBnc ? estado.movimientos : cruceEsBnc ? cruce!.movimientos : null;
   const cuotaDelAbono = new Map<number, MovimientoBanco>();
+
   if (cuotas && bnc) {
-    const libres = new Set(bnc.filter(m => m.clase === 'cobro_pago_movil').map(m => m.fila));
+    const libres = new Set(bnc.filter(m => m.clase === 'cobro_pago_movil' || m.clase === 'cuota_cashea').map(m => m.fila));
     const encontradas: Array<{ cuota: MovimientoBanco; abono: MovimientoBanco }> = [];
     const faltanEnBnc: MovimientoBanco[] = [];
     for (const c of cuotas) {
@@ -390,9 +382,8 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
       pmBncSinCuota: bnc.filter(m => libres.has(m.fila)),
     };
   }
-  // En el BNC, cada pago móvil que es una cuota de Cashea se concilia en
-  // dólares contra el cobro registrado, al céntimo (la cuota trae su USD).
-  const vivos: MovimientoBanco[] = estado.banco === 'bnc' && cuotaDelAbono.size
+
+  const vivos: MovimientoBanco[] = esBnc && cuotaDelAbono.size
     ? vivosCrudos.map(m => {
       const c = cuotaDelAbono.get(m.fila);
       return c
@@ -401,20 +392,70 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
     })
     : vivosCrudos;
 
+  // ── Identificación de Justificaciones existentes
+  const hashMov = (m: MovimientoBanco) =>
+    m.referencia ? `${m.fecha}_${m.referencia}_${Math.abs(m.monto)}` : `${m.fecha}_fila${m.fila}_${Math.abs(m.monto)}`;
+
+  const justificarSiAplica = (m: MovimientoBanco) => {
+    const h = hashMov(m);
+    const j = (sistema.justificaciones || []).find(x =>
+      x.movimientoHash === h ||
+      (x.fecha === m.fecha && Math.abs(x.monto - Math.abs(m.monto)) <= 0.01 && (m.referencia ? x.movimientoHash.includes(m.referencia) : true))
+    );
+    if (j) {
+      m.justificado = true;
+      m.justificacion = { motivo: j.motivo, usuario: j.usuario, fecha: j.fecha };
+      return true;
+    }
+    return false;
+  };
+
+  // ── Traspasos entre cuentas internas
+  const movsTraspaso = vivos.filter(m => m.clase === 'traspaso_interno');
+  const libresTraspasos = new Set((sistema.traspasos || []).map(t => t.id));
+  const traspasosConciliados: Array<{ banco: MovimientoBanco; traspaso: TraspasoCuentaInfo }> = [];
+  const traspasosPendientes: MovimientoBanco[] = [];
+
+  for (const m of movsTraspaso) {
+    const mb = Math.abs(m.monto);
+    const cand = (sistema.traspasos || []).find(t =>
+      libresTraspasos.has(t.id) &&
+      (Math.abs(t.monto - mb) <= TOL || Math.abs(t.monto_destino - mb) <= TOL) &&
+      Math.abs(dias(m.fecha, t.fecha)) <= 3
+    );
+    if (cand) {
+      libresTraspasos.delete(cand.id);
+      traspasosConciliados.push({ banco: m, traspaso: cand });
+    } else {
+      traspasosPendientes.push(m);
+    }
+  }
+
   // ── Ingresos
   const bIng = vivos.filter(m => ES_INGRESO.has(m.clase));
   const sIng = sistema.propios.filter(s => s.sentido === 'ingreso');
-  const ing = emparejar({ banco: bIng, sistema: sIng }, { ventanaCashea: 20, dolaresATasa: estado.banco === 'bnc' });
-  // Lo que sobra en el banco: ¿está registrado en otra cuenta?
+  const ing = emparejar({ banco: bIng, sistema: sIng }, { ventanaCashea: 20, dolaresATasa: esBnc });
+
   const libresOtros = new Set(sistema.otros.map(s => s.id));
   const enOtraCuenta: EnOtraCuenta[] = [];
-  const sinRegistrar: Array<MovimientoBanco & { pista: string | null }> = [];
+  const sinRegistrarBruto: Array<MovimientoBanco & { pista: string | null }> = [];
   for (const m of ing.sobrantesBanco) {
     const c = sistema.otros.filter(s => libresOtros.has(s.id) && s.sentido === 'ingreso' && !s.enDolares
       && Math.abs(s.monto - Math.abs(m.monto)) <= TOL && Math.abs(dias(m.fecha, s.fecha)) <= 3)
       .sort((a, b) => Math.abs(dias(m.fecha, a.fecha)) - Math.abs(dias(m.fecha, b.fecha)))[0];
-    if (c) { libresOtros.delete(c.id); enOtraCuenta.push({ banco: m, sistema: c }); } else sinRegistrar.push({ ...m, pista: null });
+    if (c) { libresOtros.delete(c.id); enOtraCuenta.push({ banco: m, sistema: c }); } else sinRegistrarBruto.push({ ...m, pista: null });
   }
+
+  const sinRegistrar: Array<MovimientoBanco & { pista: string | null }> = [];
+  const justificadosIngresos: Array<MovimientoBanco & { pista: string | null }> = [];
+  for (const m of sinRegistrarBruto) {
+    if (justificarSiAplica(m)) {
+      justificadosIngresos.push(m);
+    } else {
+      sinRegistrar.push(m);
+    }
+  }
+
   const esInicialCashea = (s: AsientoSistema) => s.cuenta === 'cashea' && s.tabla === 'ventas_dia';
   const noLlegaron = ing.sobrantesSistema.filter(enPeriodo).filter(s => !esInicialCashea(s));
   const inicialesSinCuenta = ing.sobrantesSistema.filter(enPeriodo).filter(esInicialCashea);
@@ -424,6 +465,7 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
   const bEgr = vivos.filter(m => ES_EGRESO.has(m.clase));
   const sEgr = sistema.propios.filter(s => s.sentido === 'egreso');
   const egr = emparejar({ banco: bEgr, sistema: sEgr }, { ventanaCashea: 3, dolaresATasa: false });
+
   const pista = (m: MovimientoBanco): string | null => {
     const doc = (m.documento || '').replace(/\D/g, '');
     const desc = `${m.descripcion} ${m.detalle}`.toUpperCase();
@@ -436,13 +478,24 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
     return null;
   };
 
+  const egrSinRegistrar: Array<MovimientoBanco & { pista: string | null }> = [];
+  const justificadosEgresos: Array<MovimientoBanco & { pista: string | null }> = [];
+  for (const m of egr.sobrantesBanco) {
+    const conPista = { ...m, pista: pista(m) };
+    if (justificarSiAplica(conPista)) {
+      justificadosEgresos.push(conPista);
+    } else {
+      egrSinRegistrar.push(conPista);
+    }
+  }
+
   for (const m of sinRegistrar) {
     m.pista = m.clase === 'cuota_cashea'
       ? 'Cuota cobrada por Cashea sin su cobro registrado en el sistema'
       : (pista(m)?.replace('Posible pago a', 'Viene de') ?? null);
   }
 
-  // ── Lo propio del banco (no es venta ni gasto)
+  // ── Lo propio del banco
   const grupos = new Map<ClaseMovimiento, MovimientoBanco[]>();
   for (const m of vivos) {
     if (ES_INGRESO.has(m.clase) || ES_EGRESO.has(m.clase)) continue;
@@ -458,33 +511,47 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
   const totalIngBanco = r2(bIng.reduce((a, m) => a + montoMov(m), 0));
   const totalIngSistema = r2(sIng.filter(enPeriodo).reduce((a, s) => a + (s.enDolares && !enDolaresBanco ? s.usd * s.tasa : s.monto), 0));
 
+  const totalJustificadoIngresos = r2(justificadosIngresos.reduce((a, m) => a + montoMov(m), 0));
+  const totalJustificadoEgresos = r2(justificadosEgresos.reduce((a, m) => a + Math.abs(m.monto), 0));
+
   const conflictos = sinRegistrar.length + noLlegaron.length + inicialesSinCuenta.length + ing.diferencias.length + enOtraCuenta.length
-    + egr.sobrantesBanco.length + egr.diferencias.length + (cruceCashea?.faltanEnBnc.length || 0) + ordenesCashea.filter(o => o.estado !== 'al_dia').length
+    + egrSinRegistrar.length + egr.diferencias.length + (cruceCashea?.faltanEnBnc.length || 0) + ordenesCashea.filter(o => o.estado !== 'al_dia').length
     + ing.parejas.filter(p => p.confianza === 'revisar').length;
+
   const enJuego = r2(
     sinRegistrar.reduce((a, m) => a + montoMov(m), 0)
     + inicialesSinCuenta.reduce((a, s) => a + (enDolaresBanco ? s.monto : s.usd * s.tasa), 0)
     + noLlegaron.reduce((a, s) => a + (s.enDolares && !enDolaresBanco ? s.usd * s.tasa : s.monto), 0)
     + ing.diferencias.reduce((a, d) => a + Math.abs(d.diferencia), 0)
-    + egr.sobrantesBanco.reduce((a, m) => a + Math.abs(m.monto), 0)
+    + egrSinRegistrar.reduce((a, m) => a + Math.abs(m.monto), 0)
     + egr.diferencias.reduce((a, d) => a + Math.abs(d.diferencia), 0),
   );
+
   const relevantes = bIng.length + bEgr.length + noLlegaron.length + egr.sobrantesSistema.filter(enPeriodo).length;
-  const conciliadosN = ing.parejas.reduce((a, p) => a + p.banco.length, 0) + egr.parejas.reduce((a, p) => a + p.banco.length, 0);
-  const porcentaje = relevantes ? Math.round((conciliadosN / relevantes) * 1000) / 10 : 100;
+  const conciliadosN = ing.parejas.reduce((a, p) => a + p.banco.length, 0)
+    + egr.parejas.reduce((a, p) => a + p.banco.length, 0)
+    + justificadosIngresos.length + justificadosEgresos.length
+    + traspasosConciliados.length;
+  const porcentaje = relevantes ? Math.min(100, Math.round((conciliadosN / relevantes) * 1000) / 10) : 100;
 
   const titulares: string[] = [];
   if (estado.saltosDeSaldo.length) titulares.push(`El archivo tiene ${estado.saltosDeSaldo.length} salto(s) de saldo: falta o sobra alguna fila.`);
-  if (sinRegistrar.length) titulares.push(`${sinRegistrar.length} cobro(s) en el banco que no están registrados en el sistema.`);
+  if (sinRegistrar.length) titulares.push(`${sinRegistrar.length} cobro(s) en el banco pendientes de registrar o justificar.`);
+  if (justificadosIngresos.length + justificadosEgresos.length > 0) {
+    titulares.push(`${justificadosIngresos.length + justificadosEgresos.length} movimiento(s) justificado(s) con soporte contable.`);
+  }
+  if (traspasosPendientes.length > 0) {
+    titulares.push(`${traspasosPendientes.length} traspaso(s) entre cuentas del banco listos para registrar en el sistema.`);
+  }
   if (enOtraCuenta.length) titulares.push(`${enOtraCuenta.length} cobro(s) registrados en el sistema con OTRA cuenta.`);
   if (inicialesSinCuenta.length) titulares.push(`${inicialesSinCuenta.length} inicial(es) de Cashea anotadas en «Cashea / BNC» que no entraron por esa cuenta.`);
   if (noLlegaron.length) titulares.push(`${noLlegaron.length} cobro(s) registrados a este banco que no aparecen en el estado.`);
   if (ing.diferencias.length + egr.diferencias.length) titulares.push(`${ing.diferencias.length + egr.diferencias.length} pago(s) con monto distinto entre banco y sistema.`);
-  if (egr.sobrantesBanco.length) titulares.push(`${egr.sobrantesBanco.length} pago(s) a terceros salieron del banco sin gasto registrado.`);
+  if (egrSinRegistrar.length) titulares.push(`${egrSinRegistrar.length} pago(s) a terceros salieron del banco sin gasto registrado.`);
   const sinVenta = ordenesCashea.filter(o => o.estado === 'venta_no_encontrada').length;
   if (sinVenta) titulares.push(`${sinVenta} orden(es) de Cashea sin venta identificable en el sistema.`);
   if (cruceCashea?.faltanEnBnc.length) titulares.push(`${cruceCashea.faltanEnBnc.length} cuota(s) de Cashea que no aparecen en el BNC.`);
-  if (!titulares.length) titulares.push('Cada movimiento del banco tiene su registro en el sistema, al céntimo.');
+  if (!titulares.length) titulares.push('Cada movimiento del banco tiene su registro o justificación en el sistema, al céntimo.');
 
   // ── La prueba de cada bolívar
   const absB = (ms: MovimientoBanco[]) => r2(ms.reduce((a, m) => a + Math.abs(m.monto), 0));
@@ -493,19 +560,23 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
   const lado = reversos.reduce((a, x) => a + Math.max(x.original.monto, x.reverso.monto, 0), 0);
   const entradas = [
     { concepto: 'Cobros conciliados con el sistema', monto: r2(ing.parejas.reduce((a, p) => a + absB(p.banco), 0)), tono: 'ok' as const },
+    ...(totalJustificadoIngresos > 0 ? [{ concepto: 'Cobros con justificativo contable', monto: totalJustificadoIngresos, tono: 'ok' as const }] : []),
     { concepto: 'Cobros registrados con otra cuenta', monto: absB(enOtraCuenta.map(x => x.banco)), tono: 'aviso' as const },
     { concepto: 'Cobros con monto distinto', monto: absB(ing.diferencias.map(d => d.banco)), tono: 'aviso' as const },
     { concepto: 'Cobros que no están en el sistema', monto: absB(sinRegistrar), tono: 'mal' as const },
     ...gruposMas.map(g => ({ ...g, tono: 'neutro' as const })),
     { concepto: 'Reversos (se anulan con su original)', monto: r2(lado), tono: 'neutro' as const },
   ].filter(x => x.monto > 0);
+
   const salidas = [
     { concepto: 'Pagos conciliados con gastos', monto: r2(egr.parejas.reduce((a, p) => a + absB(p.banco), 0)), tono: 'ok' as const },
+    ...(totalJustificadoEgresos > 0 ? [{ concepto: 'Pagos con justificativo contable', monto: totalJustificadoEgresos, tono: 'ok' as const }] : []),
     { concepto: 'Pagos con monto distinto', monto: absB(egr.diferencias.map(d => d.banco)), tono: 'aviso' as const },
-    { concepto: 'Pagos sin gasto registrado', monto: absB(egr.sobrantesBanco), tono: 'mal' as const },
+    { concepto: 'Pagos sin gasto registrado', monto: absB(egrSinRegistrar), tono: 'mal' as const },
     ...gruposMenos.map(g => ({ ...g, tono: 'neutro' as const })),
     { concepto: 'Movimientos que luego se reversaron', monto: r2(lado), tono: 'neutro' as const },
   ].filter(x => x.monto > 0);
+
   const totalEntradas = r2(entradas.reduce((a, x) => a + x.monto, 0));
   const totalSalidas = r2(salidas.reduce((a, x) => a + x.monto, 0));
   const explicacion = {
@@ -520,16 +591,26 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
     banco: estado.banco,
     estado: cabecera,
     ingresos: {
-      conciliados: ing.parejas, diferencias: ing.diferencias, enOtraCuenta, sinRegistrar, noLlegaron, inicialesSinCuenta,
+      conciliados: ing.parejas, diferencias: ing.diferencias, enOtraCuenta, sinRegistrar,
+      justificados: justificadosIngresos, noLlegaron, inicialesSinCuenta,
       totalBanco: totalIngBanco, totalSistema: totalIngSistema,
     },
     egresos: {
       conciliados: egr.parejas, diferencias: egr.diferencias,
-      sinRegistrar: egr.sobrantesBanco.map(m => ({ ...m, pista: pista(m) })),
+      sinRegistrar: egrSinRegistrar,
+      justificados: justificadosEgresos,
       noSalieron: egr.sobrantesSistema.filter(enPeriodo),
       totalBanco: sum(bEgr), totalSistema: r2(sEgr.filter(enPeriodo).reduce((a, s) => a + s.monto, 0)),
     },
-    propiosDelBanco, reversos, cruceCashea, ordenesCashea, explicacion,
+    propiosDelBanco, reversos,
+    traspasosInternos: {
+      banco: movsTraspaso,
+      registrados: sistema.traspasos || [],
+      conciliados: traspasosConciliados,
+      pendientesRegistro: traspasosPendientes,
+      total: r2(movsTraspaso.reduce((a, m) => a + Math.abs(m.monto), 0)),
+    },
+    cruceCashea, ordenesCashea, explicacion,
     veredicto: { cuadra: conflictos === 0 && estado.saltosDeSaldo.length === 0, porcentaje, enJuego, titulares },
     totalMovimientos: estado.movimientos.length,
   };
@@ -537,13 +618,6 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
 
 // ── Cashea por orden ───────────────────────────────────────────────────────
 
-/**
- * Casa cada orden de Cashea con su venta. El reporte no trae cliente ni placa,
- * así que se usa lo que sí se sabe: las cuotas van cada 14 días (la venta fue
- * unos 14 × número de cuota días antes del pago) y lo financiado se divide en
- * 3 cuotas iguales. Entre varias ventas posibles gana la de fecha más cercana,
- * y se dice cuántas había.
- */
 export function casarOrdenesCashea(cuotas: MovimientoBanco[], ventas: VentaCashea[], recientes: DatosSistema['ventasRecientes'] = []): OrdenCashea[] {
   const porOrden = new Map<string, MovimientoBanco[]>();
   for (const c of cuotas) {
@@ -555,8 +629,6 @@ export function casarOrdenesCashea(cuotas: MovimientoBanco[], ventas: VentaCashe
     cs.sort((a, b) => a.fecha.localeCompare(b.fecha));
     const primera = cs.reduce((a, b) => ((a.cuota ?? 9) <= (b.cuota ?? 9) ? a : b));
     const estimada = new Date(Date.parse(primera.fecha) - 14 * (primera.cuota ?? 1) * 86_400_000).toISOString().slice(0, 10);
-    // La cuota es la que se repite; la inicial (cuota 0) va aparte. Un pago
-    // que cubre varias cuotas se divide entre ellas.
     const deCuota = cs.filter(c => (c.cuota ?? 1) > 0);
     const cuotaUSD = r2(Math.max(0, ...deCuota.map(c => (c.usd || 0) / Math.max(1, c.cuotas?.length || 1))));
     const ultimaCuota = Math.max(0, ...cs.flatMap(c => c.cuotas?.length ? c.cuotas : [c.cuota || 0]));
@@ -576,8 +648,6 @@ export function casarOrdenesCashea(cuotas: MovimientoBanco[], ventas: VentaCashe
     if (venta) usadas.add(venta.id);
     const cobradoUSD = r2(o.cs.reduce((a, c) => a + (c.usd || 0), 0));
     const esperadoUSD = r2(o.cuotaUSD * o.ultimaCuota);
-    // Candidatas, solo como sugerencia: ventas de la misma época cuyo total,
-    // con algún plan de Cashea (0–60 % de inicial, con o sin IVA), da esta cuota.
     const posibles: OrdenCashea['posibles'] = [];
     if (!venta && o.cuotaUSD > 0) {
       for (const v of recientes) {

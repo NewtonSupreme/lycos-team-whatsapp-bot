@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     estado = leerEstadoDeCuenta(a.buf, banco);
     const c = await leer('cruce');
     if (c) {
-      const esperado: BancoConciliable = banco === 'bnc' ? 'cashea' : 'bnc';
+      const esperado: BancoConciliable = (banco === 'bnc' || banco === 'bnc_cuotas') ? 'cashea' : 'bnc';
       cruce = leerEstadoDeCuenta(c.buf, esperado);
     }
   } catch (e) {
@@ -62,18 +62,20 @@ export async function POST(req: NextRequest) {
 
   // Una ventana alrededor del período: los registros atrasados o adelantados
   // se cruzan igual (y se marcan); lo de Cashea se registra con más retraso.
-  const margen = banco === 'cashea' || banco === 'bnc' ? 25 : 12;
+  const bancoEfectivo = estado.banco;
+  const margen = bancoEfectivo === 'cashea' || bancoEfectivo === 'bnc' || bancoEfectivo === 'bnc_cuotas' ? 25 : 12;
   const sede = auth.effectiveSede(String(form.get('sede') || '') || null);
   try {
+    const cuentas = CUENTAS_DEL_BANCO[bancoEfectivo] || CUENTAS_DEL_BANCO[banco];
     const sistema = await cargarSistema(auth.db, {
       desde: mas(estado.desde, -margen), hasta: mas(estado.hasta, margen), sede,
-      cuentas: CUENTAS_DEL_BANCO[banco], banco,
+      cuentas, banco: bancoEfectivo,
     });
     const resultado = conciliar(estado, sistema, cruce);
     await logActivityServer(auth.db, {
       usuario: auth.user?.nombre || 'Sistema',
       modulo: 'Finanzas',
-      accion: `Concilió ${BANCOS_CONCILIABLES[banco].nombre}`,
+      accion: `Concilió ${BANCOS_CONCILIABLES[bancoEfectivo]?.nombre || bancoEfectivo}`,
       detalles: `${estado.desde} a ${estado.hasta} · ${resultado.veredicto.cuadra ? 'CUADRA' : 'NO CUADRA'} · ${resultado.veredicto.porcentaje}% conciliado · ${nombreArchivo}`,
       referencia_tabla: 'conciliacion',
       sede_id: sede,
@@ -82,6 +84,7 @@ export async function POST(req: NextRequest) {
       resultado,
       meta: {
         archivo: nombreArchivo,
+        banco: bancoEfectivo,
         cruce: cruce ? { banco: cruce.banco, desde: cruce.desde, hasta: cruce.hasta, movimientos: cruce.movimientos.length } : null,
         generadoPor: auth.user?.nombre || '',
         generadoEn: new Date().toISOString(),
