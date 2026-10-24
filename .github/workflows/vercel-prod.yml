@@ -1,0 +1,23 @@
+name: Deploy to Vercel Production
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create .vercel directory and project.json
+        run: |
+          mkdir -p .vercel
+          echo '{"projectId":"prj_vSU6dRgEuMj6FaVYQLfmruScZUZq","orgId":"team_eR6CUjauNrqIf5pqZYbodLqh"}' > .vercel/project.json
+
+      - name: Deploy to Vercel
+        run: |
+          rm -rf .git && npx vercel deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}"
