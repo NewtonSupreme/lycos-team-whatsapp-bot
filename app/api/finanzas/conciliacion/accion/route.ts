@@ -180,7 +180,7 @@ export async function POST(req: NextRequest) {
       const columnasPago = buildPagoColumnsCompletas(metodosObj);
       const columnasCat = buildCategoriaColumns(categoria, totalDolares);
       const refTag = `[ServicioID: ${newServ.id}]`;
-      const notasVenta = `${descFinal} [Total: $${totalDolares.toFixed(2)} (${ctaMetodo.replace(/_/g, ' ')})] | Ref: ${referencia || 'S/R'} ${refTag}`;
+      const notasVenta = `[Conciliado] ${descFinal} [Total: $${totalDolares.toFixed(2)} (${ctaMetodo.replace(/_/g, ' ')})] | Ref: ${referencia || 'S/R'} ${refTag}`;
 
       const { data: newVenta, error: ventaErr } = await auth.db.from('ventas_dia').insert({
         fecha: fechaEfectiva,
@@ -211,7 +211,7 @@ export async function POST(req: NextRequest) {
         sede_id: sedeId,
         fecha_registro: new Date().toISOString(),
         registro_atrasado: false,
-        estado: 'conciliado',
+        estado: 'pagado',
       }).select().single();
 
       if (ventaErr) throw new Error(ventaErr.message);
@@ -320,7 +320,6 @@ export async function POST(req: NextRequest) {
         metodo_pago: ctaMetodo,
         metodos_pago: { [ctaMetodo]: numTotal },
         tasa_cambio: tasa || null,
-        comprobante_referencia: comprobante || null,
         notas: `Egreso registrado desde Conciliación Bancaria · Ref ${comprobante || ''} · ${descripcion || ''}`.trim(),
         creado_por: auth.user?.nombre || 'Admin',
         sede_id: sedeId,
