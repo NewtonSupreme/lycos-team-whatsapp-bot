@@ -211,7 +211,7 @@ export async function POST(req: NextRequest) {
         sede_id: sedeId,
         fecha_registro: new Date().toISOString(),
         registro_atrasado: false,
-        estado: 'pagado',
+        estado: 'conciliado',
       }).select().single();
 
       if (ventaErr) throw new Error(ventaErr.message);
@@ -320,6 +320,7 @@ export async function POST(req: NextRequest) {
         metodo_pago: ctaMetodo,
         metodos_pago: { [ctaMetodo]: numTotal },
         tasa_cambio: tasa || null,
+        comprobante_referencia: comprobante || null,
         notas: `Egreso registrado desde Conciliación Bancaria · Ref ${comprobante || ''} · ${descripcion || ''}`.trim(),
         creado_por: auth.user?.nombre || 'Admin',
         sede_id: sedeId,
