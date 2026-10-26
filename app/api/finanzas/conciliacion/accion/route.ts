@@ -289,7 +289,7 @@ export async function POST(req: NextRequest) {
         accion: 'Registró abono desde conciliación bancaria',
         detalles: `Venta ${ventaId} · Monto: ${monto} · Ref ${referencia || 'N/A'}`,
         referencia_tabla: 'abonos',
-        referencia_id: (res.abono as any)?.id,
+        referencia_id: (res.abono as { id?: string })?.id ?? null,
         sede_id: auth.user?.sede_id || null,
       });
 
@@ -298,9 +298,16 @@ export async function POST(req: NextRequest) {
 
     // ── 5. REGISTRAR EGRESO / GASTO DIRECTO DESDE CONCILIACIÓN ──────────────
     if (accion === 'registrar_egreso') {
-      const { proveedor, categoria, total_egresos, moneda, cuenta, fecha, descripcion, comprobante, tasa } = body;
+      const { proveedor, categoria, total_egresos, moneda, cuenta, fecha, descripcion, comprobante, tasa: tasaUser } = body;
       const numTotal = Number(total_egresos);
       if (!numTotal || numTotal <= 0) return NextResponse.json({ error: 'El monto del gasto debe ser mayor a cero.' }, { status: 400 });
+
+      // Resolver la tasa si no viene y la moneda es Bs (para poder convertir a USD).
+      let tasa = Number(tasaUser) || 0;
+      if (!tasa && (moneda === 'VES' || moneda === 'Bs' || !moneda)) {
+        const { data: tData } = await auth.db.from('tasas_bcv').select('bcv').order('fecha', { ascending: false }).limit(1).maybeSingle();
+        tasa = Number(tData?.bcv) || 0;
+      }
 
       const sedeId = auth.user?.sede_id || null;
       const ctaMetodo = cuenta || 'bnc';
@@ -312,8 +319,8 @@ export async function POST(req: NextRequest) {
         moneda: moneda || 'VES',
         metodo_pago: ctaMetodo,
         metodos_pago: { [ctaMetodo]: numTotal },
-        tasa_cambio: Number(tasa) || null,
-        comprobante: comprobante || null,
+        tasa_cambio: tasa || null,
+        comprobante_referencia: comprobante || null,
         notas: `Egreso registrado desde Conciliación Bancaria · Ref ${comprobante || ''} · ${descripcion || ''}`.trim(),
         creado_por: auth.user?.nombre || 'Admin',
         sede_id: sedeId,
