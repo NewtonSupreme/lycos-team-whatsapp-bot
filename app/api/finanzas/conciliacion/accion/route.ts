@@ -5,6 +5,7 @@ import { registrarCobro } from '@/lib/pagos/registrar-cobro';
 import { buildCategoriaColumns, buildPagoColumnsCompletas, inferirCategoria } from '@/lib/categorias';
 import type { JustificacionConciliacion } from '@/lib/conciliacion/motor';
 import { anotarAccion, cambiarCuenta, corregirMonto, tasaDelDia } from '@/lib/conciliacion/acciones';
+import { BANK_METHODS } from '@/lib/reporte/ventas-mapping';
 
 export const dynamic = 'force-dynamic';
 
@@ -325,24 +326,36 @@ export async function POST(req: NextRequest) {
       // Resolver la tasa si no viene y la moneda es Bs (para poder convertir a USD).
       let tasa = Number(tasaUser) || 0;
       let tasaInfo: { tasa: number; fecha: string; fuente: string } | null = tasa > 0 ? { tasa, fecha: String(fecha || '').slice(0, 10), fuente: 'Indicada por el usuario' } : null;
-      if (!tasa && (moneda === 'VES' || moneda === 'Bs' || !moneda)) {
+      // El egreso se guarda como en todo el sistema: el total en DÓLARES y el reparto por cuenta en la moneda de la cuenta.
+      // Un pago de Bs 19.600 no es «$19.600»: se divide entre la tasa del día del pago.
+      const cuentaEsBs = BANK_METHODS.find(m => m.id === (cuenta || 'bnc'))?.moneda !== 'USD';
+      if (!tasa && cuentaEsBs) {
         tasaInfo = await tasaDelDia(auth.db, String(fecha || new Date().toISOString().slice(0, 10)));
         tasa = tasaInfo?.tasa || 0;
+        if (!tasa) return NextResponse.json({ error: 'No hay tasa BCV registrada para esa fecha: indícala a mano para no equivocar los dólares.' }, { status: 409 });
       }
+      const totalUsd = cuentaEsBs ? Math.round((numTotal / tasa) * 100) / 100 : numTotal;
+      const fechaGasto = fecha || new Date().toISOString().slice(0, 10);
+      const descGasto = String(descripcion || '').trim() || 'Gasto registrado desde conciliación bancaria';
 
       const sedeId = auth.user?.sede_id || null;
       const ctaMetodo = cuenta || 'bnc';
       const { data: egreso, error: egErr } = await auth.db.from('egresos').insert({
-        fecha: fecha || new Date().toISOString().slice(0, 10),
+        fecha: fechaGasto,
         proveedor: proveedor || 'Gasto Operativo',
         categoria: categoria || 'repuestos',
-        total_egresos: numTotal,
-        moneda: moneda || 'VES',
+        total_egresos: totalUsd,
+        moneda: 'USD',
+        estado_pago: 'pagado',
+        monto_pagado: totalUsd,
+        fecha_pago: fechaGasto,
+        origen: 'conciliacion',
+        desglose: [{ descripcion: descGasto, cantidad: 1, precio_unitario: totalUsd, total: totalUsd }],
         metodo_pago: ctaMetodo,
         metodos_pago: { [ctaMetodo]: numTotal },
         tasa_cambio: tasa || null,
         comprobante_referencia: comprobante || null,
-        notas: `Egreso registrado desde Conciliación Bancaria · Ref ${comprobante || ''} · ${descripcion || ''}`.trim(),
+        notas: `${descGasto} · Ref ${comprobante || 'S/R'} · Conciliación bancaria`,
         creado_por: auth.user?.nombre || 'Admin',
         sede_id: sedeId,
       }).select().single();
@@ -373,14 +386,14 @@ export async function POST(req: NextRequest) {
         usuario: auth.user?.nombre || 'Usuario',
         modulo: 'Finanzas',
         accion: 'Registró egreso desde conciliación bancaria',
-        detalles: `${proveedor || 'Gasto'} · ${numTotal.toFixed(2)} ${moneda || 'VES'} · ${categoria || 'repuestos'} · Ref ${comprobante || 'N/A'}`,
+        detalles: `${proveedor || 'Gasto'} · ${numTotal.toFixed(2)} ${cuentaEsBs ? 'Bs' : 'USD'} ($${totalUsd.toFixed(2)}) · ${categoria || 'repuestos'} · Ref ${comprobante || 'N/A'}`,
         referencia_tabla: 'egresos',
         referencia_id: egreso.id,
         sede_id: sedeId,
       });
 
       await anotarAccion(auth.db, { ...ctx, caso: 'pago_sin_gasto', accion: 'registrar_egreso', fecha: fecha || null, monto: numTotal, referencia: comprobante || ctx.referencia,
-        despues: { proveedor: proveedor || 'Gasto Operativo', categoria: categoria || 'repuestos', cuenta: ctaMetodo }, tasa: tasaInfo, tabla: 'egresos', registroId: egreso.id });
+        despues: { proveedor: proveedor || 'Gasto Operativo', categoria: categoria || 'repuestos', cuenta: ctaMetodo, bs: cuentaEsBs ? numTotal : null, usd: totalUsd }, tasa: tasaInfo, tabla: 'egresos', registroId: egreso.id });
       return NextResponse.json({ ok: true, egreso });
     }
 

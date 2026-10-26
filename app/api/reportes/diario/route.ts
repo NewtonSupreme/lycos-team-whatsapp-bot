@@ -583,13 +583,18 @@ export async function GET(req: NextRequest) {
         : (e.metodo_pago ? { [e.metodo_pago]: usd } : null);
       const lineas = lineasDeMetodos(reparto, n(e.tasa_cambio) || tasa);
       const debe = e.estado_pago === 'por_pagar' || e.estado_pago === 'parcial';
+      // Bolívares: lo que salió de cada cuenta en Bs es exacto; lo demás se pasa con la tasa del PROPIO gasto (no la del día del reporte).
+      const tasaGasto = n(e.tasa_cambio) || tasa;
+      const bsExactos = !debe && lineas.length
+        ? r2(lineas.reduce((s: number, l: any) => s + (l.moneda === 'Bs' ? n(l.monto) : n(l.monto) * tasaGasto), 0))
+        : null;
       return {
         concepto: (detalle || e.notas || e.categoria || e.cliente || 'Gasto').toString().slice(0, 120),
         proveedor: e.proveedor || e.cliente || '',
         placa: String(e.placa || '').toUpperCase(),
         cuenta: lineas.length ? resumenCorto(lineas) : (debe ? 'Por pagar' : 'Sin cuenta'),
         usd,
-        bs: r2(usd * tasa),
+        bs: bsExactos ?? r2(usd * tasaGasto),
       };
     });
     const gastosTotal = { usd: r2(gastos.reduce((s: number, g: any) => s + g.usd, 0)), bs: r2(gastos.reduce((s: number, g: any) => s + g.bs, 0)) };

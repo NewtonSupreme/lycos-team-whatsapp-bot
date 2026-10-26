@@ -85,6 +85,7 @@ export const ORIGENES: Record<string, string> = {
   bot: 'Bot de WhatsApp',
   whatsapp: 'Bot de WhatsApp',
   escaneo: 'Escaneado',
+  conciliacion: 'Conciliación bancaria',
 };
 
 const r2 = (n: unknown) => Math.round((Number(n) || 0) * 100) / 100;
