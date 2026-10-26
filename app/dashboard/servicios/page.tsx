@@ -2504,6 +2504,18 @@ function ServiceFormModal({ cita, onClose, globalBcvRate = 0 }: { cita?: CitaSer
             : (cita?.notas || ''),
           updated_at: new Date().toISOString()
         };
+        {
+          const cambios: string[] = [];
+          if (JSON.stringify(cita.metodos_pago || {}) !== JSON.stringify(metodosPago || {})) cambios.push('forma de pago');
+          if (Math.abs((Number(cita.costo_estimado) || 0) - costoFinalCalc) > 0.005) cambios.push(`monto (${(Number(cita.costo_estimado) || 0).toFixed(2)} → ${costoFinalCalc.toFixed(2)})`);
+          if ((cita.nombre_cliente || '') !== (formData.nombre_cliente || '')) cambios.push('cliente');
+          if ((cita.placa || '') !== (formData.placa || '') || (cita.vehiculo_info || '') !== (formData.vehiculo_info || '')) cambios.push('vehículo');
+          if (cambios.length) {
+            updatePayload.seguimiento = [...(cita.seguimiento || []), {
+              fecha: new Date().toISOString(), accion: `Orden editada: ${cambios.join(', ')}`, usuario: user?.nombre || 'Admin', tipo: 'sistema',
+            }];
+          }
+        }
         // Avoid sending empty strings for optional fields
         if (!updatePayload.tipo_personalizado) delete updatePayload.tipo_personalizado;
         if (!updatePayload.placa) delete updatePayload.placa;
@@ -3631,6 +3643,7 @@ function TrackingModal({ cita, onClose }: { cita: CitaServicio; onClose: () => v
 
 // ── Invoice Modal (Keep as is but polish colors) ───────────────
 function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita: CitaServicio; citas: CitaServicio[]; inventory: any[]; onClose: () => void; globalBcvRate?: number }) {
+  const { user } = useAppStore();
   const [clientName, setClientName] = useState(getDisplayName(cita) || 'Consumidor Final');
 
   const [vehicleStr, setVehicleStr] = useState(cita.vehiculos
@@ -3900,8 +3913,23 @@ function InvoiceModal({ cita, citas, inventory, onClose, globalBcvRate }: { cita
 
       // La orden guarda el mismo cobro que la venta: si no, al reabrirla no
       // consta cómo se pagó.
+      // Cobrar y entregar también CIERRA la orden: debe quedar en su historial y con su fecha de fin,
+      // igual que cuando se arrastra a «Completada» (antes pasaba a completada sin dejar rastro).
+      const yaCompletada = ['completada', 'completado', 'finalizado', 'finalizada'].includes(String(cita.estado));
+      const ahoraCierre = new Date().toISOString();
+      const cierre = yaCompletada ? {} : {
+        seguimiento: [...(cita.seguimiento || []), {
+          fecha: ahoraCierre,
+          accion: `Cobrado y entregado: ${etiquetaEstado(cita.estado)} → ${etiquetaEstado('completada')}`,
+          usuario: user?.nombre || 'Admin',
+          tipo: 'sistema',
+        }],
+        fecha_fin: ahoraCierre,
+        ...(cita.fecha_inicio ? {} : { fecha_inicio: ahoraCierre }),
+      };
       const { error: citaError } = await withSedeFilter(supabase.from('servicios')).update({
         estado: 'completada',
+        ...cierre,
         metodos_pago: payments,
         con_iva: withIva,
         tasa_cambio: tasaDelCobro || null,
