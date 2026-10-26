@@ -510,7 +510,8 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
           monto: v.inicial, enDolares: true, usd: v.inicial, tasa: tasaBanco, concepto: v.cliente,
           detalle: `Inicial de Cashea · venta del ${v.fecha} (pagada el ${m.fecha})`, placa: v.placa, referencia: null, servicioId: v.servicioId,
         };
-        ing.parejas.push({ regla: 'inicial_tardia', confianza: 'revisar', banco: [m], sistema: [as], diferenciaDias: Math.abs(dias(m.fecha, v.fecha)), diferenciaMonto: r2(usdBanco - v.inicial) });
+        const confirmada = (sistema.justificaciones || []).some(j => j.movimientoHash === hashMov(m) && /^Confirmado/.test(j.motivo));
+        ing.parejas.push({ regla: 'inicial_tardia', confianza: confirmada ? 'alta' : 'revisar', banco: [m], sistema: [as], diferenciaDias: Math.abs(dias(m.fecha, v.fecha)), diferenciaMonto: r2(usdBanco - v.inicial) });
         continue;
       }
       if (cands.length > 1) {

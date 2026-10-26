@@ -410,6 +410,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
+    // ── 9. CONFIRMAR UNA PAREJA QUE EL SISTEMA UNIÓ CON DUDA ────────────────
+    if (accion === 'confirmar_pareja') {
+      const { registroId, tabla, referencia, monto, fecha, concepto } = body;
+      if (!ctx.movimientoHash) return NextResponse.json({ error: 'Falta el movimiento del banco.' }, { status: 400 });
+      const motivo = `Confirmado: ${concepto || 'pago'} ← movimiento del banco ref ${referencia || 'S/R'}`;
+      const ahora = new Date().toISOString();
+      const { data: conf } = await auth.db.from('configuracion').select('id, valor').eq('clave', 'conciliacion_justificaciones').is('sede_id', null).maybeSingle();
+      const list = Array.isArray(conf?.valor) ? [...conf.valor] : [];
+      list.push({ id: crypto.randomUUID(), movimientoHash: ctx.movimientoHash, tipo: 'ingreso', motivo, fecha: String(fecha || ahora.slice(0, 10)), monto: Math.round(Number(monto || 0) * 100) / 100, usuario: ctx.usuario, createdAt: ahora });
+      if (conf?.id) await auth.db.from('configuracion').update({ valor: list, updated_at: ahora }).eq('id', conf.id);
+      else await auth.db.from('configuracion').insert({ clave: 'conciliacion_justificaciones', valor: list, sede_id: null, updated_at: ahora });
+      // La referencia del banco queda en la venta (si no tenía) para que el próximo cruce la una por referencia.
+      if (tabla === 'ventas_dia' && registroId && referencia) {
+        const { data: v } = await auth.db.from('ventas_dia').select('comprobante_referencia').eq('id', String(registroId)).maybeSingle();
+        if (v && !String(v.comprobante_referencia || '').trim()) await auth.db.from('ventas_dia').update({ comprobante_referencia: String(referencia) }).eq('id', String(registroId));
+      }
+      await anotarAccion(auth.db, { ...ctx, caso: 'pareja_dudosa', accion: 'confirmar_pareja', fecha: /^\d{4}-\d{2}-\d{2}$/.test(String(fecha || '')) ? String(fecha) : null, monto: Number(monto) || null, motivo, tabla, registroId });
+      return NextResponse.json({ ok: true });
+    }
+
     // ── 8. DEJAR EN SEGUIMIENTO (no se resuelve hoy, pero queda anotado quién y por qué) ──
     if (accion === 'seguimiento') {
       const { motivo, monto, fecha } = body;

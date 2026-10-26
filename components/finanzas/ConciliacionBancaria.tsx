@@ -332,6 +332,19 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
       Resolver
     </button>
   );
+  const [confirmando, setConfirmando] = useState<string | null>(null);
+  const confirmarPareja = async (p: { banco: MovimientoBanco[]; sistema: AsientoSistema[] }) => {
+    const m = p.banco[0]; const s = p.sistema[0];
+    const hash = `${m.fecha}_${m.referencia}_${m.monto}`;
+    setConfirmando(hash);
+    try {
+      await fetch('/api/finanzas/conciliacion/accion', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accion: 'confirmar_pareja', movimientoHash: hash, registroId: s.registroId, tabla: s.tabla, referencia: m.referencia, refMovimiento: m.referencia, monto: Math.abs(m.monto), fecha: m.fecha, concepto: s.concepto, banco: r.banco, corridaId: datos.meta.corridaId ?? null }),
+      });
+      onRecargar();
+    } finally { setConfirmando(null); }
+  };
   /** Lo último que se hizo con un movimiento del banco: queda visible en la lista aunque siga pendiente. */
   const seg = (m: MovimientoBanco) => {
     const x = datos.meta.seguimientos?.[`${m.fecha}_${m.referencia}_${m.monto}`];
@@ -727,6 +740,10 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
                 { t: 'Banco', c: x => <span className="flex flex-col">{x.p.banco.map(m => <span key={m.fila}>{montoMov(m)}</span>)}</span>, d: true },
                 { t: 'Sistema', c: x => <span className="flex flex-col gap-0.5">{x.p.sistema.map(s => <Cliente key={s.id} s={s} monto={montoSis(s)} />)}</span> },
                 { t: 'Regla', c: x => <Chip tono={x.p.confianza === 'alta' ? 'exito' : x.p.confianza === 'media' ? 'info' : 'aviso'}>{REGLA[x.p.regla] || x.p.regla}</Chip> },
+                { t: 'Acción', c: x => x.p.confianza === 'revisar' && x.p.banco.length === 1 && x.p.sistema.length === 1 ? (
+                  <button type="button" disabled={confirmando === `${x.p.banco[0].fecha}_${x.p.banco[0].referencia}_${x.p.banco[0].monto}`} onClick={() => confirmarPareja(x.p)}
+                    className="inline-flex items-center gap-1 rounded-lg bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-500/20">Confirmar</button>
+                ) : <span className="text-muted-foreground">—</span> },
               ]} />
             </Seccion>
           )}
