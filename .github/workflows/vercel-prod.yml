@@ -1,23 +1,31 @@
 name: Deploy to Vercel Production
 
+# Vercel (plan Hobby) bloquea los despliegues disparados por Git cuando el autor del
+# commit no coincide con la cuenta de Vercel. Aquí se despliega con el token, sin
+# metadatos de git, así que cualquier push a master (GitHub Desktop o Claude) se publica.
 on:
   push:
     branches:
       - master
   workflow_dispatch:
 
+concurrency:
+  group: vercel-prod
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: team_eR6CUjauNrqIf5pqzYbodLqh
+      VERCEL_PROJECT_ID: prj_vSU6dRgEuMj6FaVYQLfmruScZUZQ
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Create .vercel directory and project.json
-        run: |
-          mkdir -p .vercel
-          echo '{"projectId":"prj_vSU6dRgEuMj6FaVYQLfmruScZUZq","orgId":"team_eR6CUjauNrqIf5pqZYbodLqh"}' > .vercel/project.json
-
       - name: Deploy to Vercel
         run: |
-          rm -rf .git && npx vercel deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}"
+          rm -rf .git .vercel
+          mkdir -p .vercel
+          printf '{"projectId":"%s","orgId":"%s"}' "$VERCEL_PROJECT_ID" "$VERCEL_ORG_ID" > .vercel/project.json
+          npx --yes vercel@latest deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}"
