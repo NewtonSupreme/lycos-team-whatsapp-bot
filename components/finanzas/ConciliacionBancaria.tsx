@@ -10,11 +10,14 @@ import LogoBanco from '@/components/pagos/LogoBanco';
 import DescontarCuotasCashea from '@/components/finanzas/DescontarCuotasCashea';
 import ModalAccionConciliacion from '@/components/finanzas/ModalAccionConciliacion';
 import ModalTraspasoConciliacion from '@/components/finanzas/ModalTraspasoConciliacion';
+import ModalSistemaConciliacion, { type CasoSistema } from '@/components/finanzas/ModalSistemaConciliacion';
+import HistorialConciliacion from '@/components/finanzas/HistorialConciliacion';
 import { Chip, Panel, Pestanas, TarjetaKpi, Vacio } from '@/components/panel/Piezas';
 import { cn } from '@/lib/utils';
 import type { BankBin } from '@/lib/reporte/ventas-mapping';
 import type { BancoConciliable, MovimientoBanco } from '@/lib/conciliacion/leer-estado';
 import type { AsientoSistema, ResultadoConciliacion } from '@/lib/conciliacion/motor';
+import { CUENTAS_DEL_BANCO } from '@/lib/conciliacion/motor';
 import type { MetaConciliacion } from '@/lib/conciliacion-pdf';
 
 /**
@@ -47,7 +50,7 @@ const NOMBRE_CUENTA: Record<string, string> = {
 const REGLA: Record<string, string> = {
   referencia: 'Referencia y monto', mismo_dia: 'Monto exacto, mismo día', fecha_cercana: 'Monto exacto, fecha cercana',
   fecha_lejana: 'Monto exacto, fecha lejana', agrupado_banco: 'Un pago, varios registros', agrupado_sistema: 'Varios pagos, un registro',
-  tasa_dolar: 'Dólares a la tasa del día', cashea_usd: 'Cuota en dólares',
+  tasa_dolar: 'Dólares a la tasa del día', cashea_usd: 'Cuota en dólares', inicial_tardia: 'Inicial pagada días después (revisar)',
 };
 
 type Pestana = 'sin_registrar' | 'no_llegaron' | 'iniciales' | 'otra_cuenta' | 'diferencias' | 'traspasos' | 'justificados' | 'ordenes' | 'pagos' | 'gastos' | 'banco' | 'conciliados';
@@ -60,6 +63,7 @@ export default function ConciliacionBancaria({ sede }: { sede?: string | null })
   const [error, setError] = useState<string | null>(null);
   const [datos, setDatos] = useState<{ resultado: ResultadoConciliacion; meta: MetaConciliacion } | null>(null);
   const [pestana, setPestana] = useState<Pestana>('sin_registrar');
+  const [historialInicio, setHistorialInicio] = useState(false);
 
   const elegido = BANCOS.find(b => b.id === banco) || null;
 
@@ -111,6 +115,13 @@ export default function ConciliacionBancaria({ sede }: { sede?: string | null })
 
   return (
     <div className="space-y-4">
+      <div className="flex justify-end">
+        <button type="button" onClick={() => setHistorialInicio(v => !v)}
+          className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border px-3.5 text-[12.5px] font-semibold text-foreground hover:border-primary">
+          {historialInicio ? 'Ocultar historial' : 'Historial y seguimiento'}
+        </button>
+      </div>
+      {historialInicio && <HistorialConciliacion banco={null} sede={sede} />}
       <Panel
         titulo="Conciliación bancaria"
         subtitulo="Sube el estado de cuenta tal como lo descarga el banco: se valida, se verifica y se cruza con el sistema"
@@ -289,6 +300,8 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
       </>
     );
   };
+  const pendientesAhora = r.ingresos.sinRegistrar.length + r.ingresos.noLlegaron.length + r.ingresos.diferencias.length + r.ingresos.enOtraCuenta.length + r.ingresos.inicialesSinCuenta.length
+    + r.egresos.sinRegistrar.length + r.egresos.noSalieron.length + r.egresos.diferencias.length;
   const montoSis = (s: AsientoSistema): string => {
     if (s.enDolares) {
       // En dólares → mostrar $ y equivalente Bs si hay tasa
@@ -304,7 +317,29 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
     abierto: boolean;
     movimiento: MovimientoBanco | null;
     tipo: 'ingreso' | 'egreso' | 'diferencia';
+    sistema?: AsientoSistema | null;
   }>({ abierto: false, movimiento: null, tipo: 'ingreso' });
+
+  const [modalSistema, setModalSistema] = useState<{
+    abierto: boolean; sistema: AsientoSistema | null; caso: CasoSistema; movimiento: MovimientoBanco | null;
+  }>({ abierto: false, sistema: null, caso: 'no_llego', movimiento: null });
+  const [verHistorial, setVerHistorial] = useState(false);
+
+  /** Botón «Resolver» de un registro del sistema que el banco no confirma. */
+  const botonSis = (s: AsientoSistema, caso: CasoSistema, movimiento: MovimientoBanco | null = null) => (
+    <button type="button" onClick={() => setModalSistema({ abierto: true, sistema: s, caso, movimiento })}
+      className="inline-flex items-center gap-1 rounded-lg bg-primary/10 px-2.5 py-1 text-[11px] font-bold text-primary hover:bg-primary/20">
+      Resolver
+    </button>
+  );
+  /** Lo último que se hizo con un movimiento del banco: queda visible en la lista aunque siga pendiente. */
+  const seg = (m: MovimientoBanco) => {
+    const x = datos.meta.seguimientos?.[`${m.fecha}_${m.referencia}_${m.monto}`];
+    if (!x) return null;
+    const etiqueta = x.accion === 'seguimiento' ? 'En seguimiento' : x.accion === 'reabrir' ? 'Reabierto' : 'Atendido';
+    return <span title={`${x.motivo || ''} · ${x.usuario || ''}`} className={cn('rounded-md px-1.5 py-0.5 text-[10px] font-bold', x.resuelto ? 'bg-emerald-500/10 text-emerald-700' : 'bg-amber-400/20 text-amber-800')}>{etiqueta}{x.usuario ? ` · ${x.usuario.split(' ')[0]}` : ''}</span>;
+  };
+
 
   const [modalTraspaso, setModalTraspaso] = useState<{
     abierto: boolean;
@@ -337,7 +372,7 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
       { valor: 'otra_cuenta', n: r.ingresos.enOtraCuenta.length, label: 'En otra cuenta' },
       { valor: 'diferencias', n: r.ingresos.diferencias.length + r.egresos.diferencias.length, label: 'Montos distintos' },
       { valor: 'traspasos', n: (r.traspasosInternos?.banco || []).length, label: 'Traspasos entre cuentas' },
-      { valor: 'justificados', n: (r.ingresos.justificados || []).length + (r.egresos.justificados || []).length, label: 'Justificados' },
+      { valor: 'justificados', n: (r.ingresos.justificados || []).length + (r.egresos.justificados || []).length + (r.ingresos.sistemaJustificados || []).length + (r.egresos.sistemaJustificados || []).length, label: 'Justificados' },
       { valor: 'ordenes', n: r.ordenesCashea.length, label: 'Órdenes Cashea' },
       { valor: 'pagos', n: r.egresos.sinRegistrar.length, label: 'Pagos sin gasto' },
       { valor: 'gastos', n: r.egresos.noSalieron.length, label: 'Gastos sin salida' },
@@ -455,6 +490,7 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
                 {
                   t: 'Acción',
                   c: m => (
+                    <span className="flex flex-col items-start gap-1">
                     <button
                       type="button"
                       onClick={() => setModalAccion({ abierto: true, movimiento: m, tipo: 'ingreso' })}
@@ -462,6 +498,8 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
                     >
                       Registrar / Justificar
                     </button>
+                    {seg(m)}
+                    </span>
                   ),
                 },
               ]} />
@@ -469,12 +507,12 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
           )}
           {pestana === 'no_llegaron' && (
             <Seccion ayuda={`El sistema dice que estos clientes pagaron a ${b.nombre}, pero el dinero no aparece en el estado. O pagaron a otra cuenta (corrige la cuenta de la venta) o el pago no se hizo (cóbralo).`}>
-              <TablaSistema filas={r.ingresos.noLlegaron} monto={montoSis} />
+              <TablaSistema filas={r.ingresos.noLlegaron} monto={montoSis} accion={s => botonSis(s, 'no_llego')} />
             </Seccion>
           )}
           {pestana === 'iniciales' && (
             <Seccion ayuda="La venta anota la inicial en «Cashea / BNC», pero no entró por ahí (no está en el BNC ni como inicial en el reporte de Cashea). El cliente la pagó por otra vía: corrige la cuenta de la inicial en la venta.">
-              <TablaSistema filas={r.ingresos.inicialesSinCuenta} monto={montoSis} />
+              <TablaSistema filas={r.ingresos.inicialesSinCuenta} monto={montoSis} accion={s => botonSis(s, 'inicial_sin_cuenta')} />
             </Seccion>
           )}
           {pestana === 'otra_cuenta' && (
@@ -485,11 +523,12 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
                 { t: 'Registrado como', c: x => <Chip tono="aviso">{NOMBRE_CUENTA[x.sistema.cuenta] || x.sistema.cuenta}</Chip> },
                 { t: 'Cliente', c: x => <Cliente s={x.sistema} /> },
                 { t: 'Fecha sistema', c: x => fecha(x.sistema.fecha) },
+                { t: 'Acción', c: x => botonSis(x.sistema, 'otra_cuenta', x.banco) },
               ]} />
             </Seccion>
           )}
           {pestana === 'diferencias' && (
-            <Seccion ayuda="Banco y sistema hablan del mismo pago, pero el monto difiere (aunque sea un céntimo). Corrige el monto del sistema o justifícalo con un motivo contable.">
+            <Seccion ayuda="Banco y sistema hablan del mismo pago, pero el monto difiere (aunque sea un céntimo). Con «Resolver» puedes poner en el sistema el monto que confirmó el banco (queda anotado el valor anterior), justificarlo o dejarlo en seguimiento.">
               <Tabla filas={[...r.ingresos.diferencias.map(d => ({ ...d, tipo: 'Cobro' })), ...r.egresos.diferencias.map(d => ({ ...d, tipo: 'Pago' }))]} vacio="" columnas={[
                 { t: 'Tipo', c: d => d.tipo },
                 { t: 'Fecha', c: d => fecha(d.banco.fecha) },
@@ -500,13 +539,16 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
                 {
                   t: 'Acción',
                   c: d => (
+                    <span className="flex flex-col items-start gap-1">
                     <button
                       type="button"
-                      onClick={() => setModalAccion({ abierto: true, movimiento: d.banco, tipo: 'diferencia' })}
+                      onClick={() => setModalAccion({ abierto: true, movimiento: d.banco, tipo: 'diferencia', sistema: d.sistema })}
                       className="inline-flex items-center gap-1 rounded-lg bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold text-amber-700 dark:text-amber-400 hover:bg-amber-500/20"
                     >
-                      Justificar
+                      Resolver
                     </button>
+                    {seg(d.banco)}
+                    </span>
                   ),
                 },
               ]} />
@@ -598,6 +640,27 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
                   },
                 ]}
               />
+              {(r.ingresos.sistemaJustificados.length + r.egresos.sistemaJustificados.length) > 0 && (
+                <div className="mt-4">
+                  <p className="mb-1.5 text-[12px] font-bold text-foreground">Registros del sistema que el banco no muestra, justificados</p>
+                  <Tabla
+                    filas={[...r.ingresos.sistemaJustificados, ...r.egresos.sistemaJustificados]}
+                    vacio=""
+                    columnas={[
+                      { t: 'Fecha', c: x => fecha(x.sistema.fecha), w: 'w-24' },
+                      { t: 'Cliente / proveedor', c: x => <Cliente s={x.sistema} /> },
+                      { t: 'Monto', c: x => montoSis(x.sistema), d: true },
+                      { t: 'Motivo', c: x => <span className="font-medium text-foreground">{x.justificacion.motivo}<span className="block text-[10.5px] font-normal text-muted-foreground">{x.justificacion.usuario}</span></span> },
+                      { t: 'Acción', c: x => (
+                        <button type="button" onClick={() => quitarJustificacion(`sis:${x.sistema.id}`)} disabled={quitandoJustificacion === `sis:${x.sistema.id}`}
+                          className="inline-flex items-center gap-1 rounded-lg border border-red-500/20 bg-red-500/5 px-2 py-1 text-[11px] font-bold text-red-600 hover:bg-red-500/15">
+                          <Trash2 className="h-3 w-3" /> Quitar
+                        </button>
+                      ) },
+                    ]}
+                  />
+                </div>
+              )}
             </Seccion>
           )}
           {pestana === 'ordenes' && <OrdenesCashea r={r} />}
@@ -612,6 +675,7 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
                 {
                   t: 'Acción',
                   c: m => (
+                    <span className="flex flex-col items-start gap-1">
                     <button
                       type="button"
                       onClick={() => setModalAccion({ abierto: true, movimiento: m, tipo: 'egreso' })}
@@ -619,6 +683,8 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
                     >
                       Registrar / Justificar
                     </button>
+                    {seg(m)}
+                    </span>
                   ),
                 },
               ]} />
@@ -626,7 +692,7 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
           )}
           {pestana === 'gastos' && (
             <Seccion ayuda={`El sistema dice que estos gastos se pagaron desde ${b.nombre}, pero el banco no muestra la salida. Revisa si se pagaron desde otra cuenta o en efectivo.`}>
-              <TablaSistema filas={r.egresos.noSalieron} monto={montoSis} proveedor />
+              <TablaSistema filas={r.egresos.noSalieron} monto={montoSis} proveedor accion={s => botonSis(s, 'gasto_no_salio')} />
             </Seccion>
           )}
           {pestana === 'banco' && (
@@ -674,6 +740,20 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
         movimiento={modalAccion.movimiento}
         tipo={modalAccion.tipo}
         banco={r.banco}
+        sistema={modalAccion.sistema ?? null}
+        corridaId={datos.meta.corridaId ?? null}
+        onCompletado={onRecargar}
+      />
+
+      <ModalSistemaConciliacion
+        abierto={modalSistema.abierto}
+        onCerrar={() => setModalSistema(m => ({ ...m, abierto: false }))}
+        sistema={modalSistema.sistema}
+        caso={modalSistema.caso}
+        movimientoBanco={modalSistema.movimiento}
+        banco={r.banco}
+        corridaId={datos.meta.corridaId ?? null}
+        cuentaDelBanco={(CUENTAS_DEL_BANCO[r.banco] || [])[0]}
         onCompletado={onRecargar}
       />
 
@@ -688,6 +768,19 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
       <p className="text-[11px] text-muted-foreground">
         Archivo: {datos.meta.archivo}{datos.meta.cruce ? ` · cruzado con ${BANCOS.find(x => x.id === datos.meta.cruce!.banco)?.nombre || datos.meta.cruce.banco}` : ''} · el archivo no se guarda: se leyó en memoria y se descartó.
       </p>
+      {datos.meta.anterior && datos.meta.anterior.pendientes != null && (
+        <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-[12px] text-foreground/85">
+          Avance de este período: antes había <strong>{datos.meta.anterior.pendientes}</strong> pendiente(s), ahora <strong>{pendientesAhora}</strong>
+          {pendientesAhora < datos.meta.anterior.pendientes ? ` (${datos.meta.anterior.pendientes - pendientesAhora} resuelto(s) desde la conciliación anterior).` : pendientesAhora > datos.meta.anterior.pendientes ? ' (aparecieron nuevos).' : ' (sin cambios).'}
+        </p>
+      )}
+      <div>
+        <button type="button" onClick={() => setVerHistorial(v => !v)}
+          className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border px-3.5 text-[12.5px] font-semibold text-foreground hover:border-primary">
+          {verHistorial ? 'Ocultar historial y seguimiento' : 'Ver historial y seguimiento'}
+        </button>
+      </div>
+      {verHistorial && <HistorialConciliacion banco={r.banco} sede={sede} />}
       {datos.meta.autoCuotas && (datos.meta.autoCuotas.aplicados.length > 0 || datos.meta.autoCuotas.pendientes > 0) && (
         <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[12px] text-emerald-700 dark:text-emerald-400">
           Cuotas de Cashea descontadas automáticamente: <strong>{datos.meta.autoCuotas.aplicados.length}</strong> (${datos.meta.autoCuotas.totalUSD.toFixed(2)})
@@ -796,7 +889,7 @@ function Cliente({ s, monto }: { s: AsientoSistema; monto?: string }) {
   );
 }
 
-function TablaSistema({ filas, monto, proveedor }: { filas: AsientoSistema[]; monto: (s: AsientoSistema) => string; proveedor?: boolean }) {
+function TablaSistema({ filas, monto, proveedor, accion }: { filas: AsientoSistema[]; monto: (s: AsientoSistema) => string; proveedor?: boolean; accion?: (s: AsientoSistema) => React.ReactNode }) {
   return (
     <Tabla filas={filas} vacio="Nada aquí." columnas={[
       { t: 'Fecha', c: s => fecha(s.fecha), w: 'w-24' },
@@ -804,6 +897,7 @@ function TablaSistema({ filas, monto, proveedor }: { filas: AsientoSistema[]; mo
       { t: 'Cuenta', c: s => <Chip>{NOMBRE_CUENTA[s.cuenta] || s.cuenta}</Chip> },
       { t: 'Origen', c: s => (s.tabla === 'abonos' ? 'Cobro de deuda' : s.tabla === 'egresos' ? 'Gasto' : 'Venta') },
       { t: 'Monto', c: s => monto(s), d: true },
+      ...(accion ? [{ t: 'Acción', c: (s: AsientoSistema) => accion(s) }] : []),
     ]} />
   );
 }

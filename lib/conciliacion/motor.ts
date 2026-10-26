@@ -14,6 +14,7 @@ import type { BancoConciliable, ClaseMovimiento, EstadoLeido, MovimientoBanco } 
 const r2 = (x: number) => Math.round((Number(x) || 0) * 100) / 100;
 const dias = (a: string, b: string) => Math.round((Date.parse(a) - Date.parse(b)) / 86_400_000);
 const TOL = 0.01;
+const num2 = (x: number) => (x > 0 ? '+' : '') + x.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 /** Diferencia de redondeo (tasa con 4 decimales) que se acepta como «el mismo pago» el mismo día. */
 const CENTIMOS = 0.05;
 
@@ -54,7 +55,7 @@ export interface AsientoSistema {
 
 export type Regla =
   | 'referencia' | 'mismo_dia' | 'fecha_cercana' | 'fecha_lejana'
-  | 'agrupado_banco' | 'agrupado_sistema' | 'tasa_dolar' | 'cashea_usd';
+  | 'agrupado_banco' | 'agrupado_sistema' | 'tasa_dolar' | 'cashea_usd' | 'inicial_tardia';
 
 export const REGLA_TEXTO: Record<Regla, string> = {
   referencia: 'Referencia y monto',
@@ -65,6 +66,7 @@ export const REGLA_TEXTO: Record<Regla, string> = {
   agrupado_sistema: 'Varios pagos de un registro',
   tasa_dolar: 'Dólares a la tasa del día',
   cashea_usd: 'Cuota Cashea en dólares',
+  inicial_tardia: 'Inicial de Cashea pagada días después de la venta',
 };
 
 export interface Pareja {
@@ -154,6 +156,11 @@ export interface GrupoBanco {
   total: number;
 }
 
+export interface SistemaJustificado {
+  sistema: AsientoSistema;
+  justificacion: { motivo: string; usuario: string; fecha: string };
+}
+
 export interface ResultadoConciliacion {
   banco: BancoConciliable;
   estado: Omit<EstadoLeido, 'movimientos'>;
@@ -165,6 +172,8 @@ export interface ResultadoConciliacion {
     justificados: Array<MovimientoBanco & { pista: string | null }>;
     noLlegaron: AsientoSistema[];
     inicialesSinCuenta: AsientoSistema[];
+    /** Registros del sistema que no están en el estado y que alguien justificó (con su motivo). */
+    sistemaJustificados: SistemaJustificado[];
     totalBanco: number;
     totalSistema: number;
   };
@@ -174,6 +183,7 @@ export interface ResultadoConciliacion {
     sinRegistrar: Array<MovimientoBanco & { pista: string | null }>;
     justificados: Array<MovimientoBanco & { pista: string | null }>;
     noSalieron: AsientoSistema[];
+    sistemaJustificados: SistemaJustificado[];
     totalBanco: number;
     totalSistema: number;
   };
@@ -473,6 +483,44 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
   const sIng = sistema.propios.filter(s => s.sentido === 'ingreso');
   const ing = emparejar({ banco: bIng, sistema: sIng }, { ventanaCashea: 20, dolaresATasa: esBnc, periodo: { desde: estado.desde, hasta: estado.hasta } });
 
+  // ── Inicial de Cashea pagada DÍAS DESPUÉS de la venta ────────────────────────
+  // La venta anota la inicial el día de la orden (p. ej. 31/08) y el cliente la paga al BNC
+  // semanas después (23/10): ese día no hay ninguna venta que el cruce por fecha alcance. Se
+  // busca, entre las ventas con Cashea de los 120 días anteriores, la inicial que equivale a
+  // ese pago (dólares a la tasa del día del banco, ±1,5 %). Si hay UNA sola se empareja y se
+  // marca «revisar»; si hay varias se muestran como pista para que se elija a mano.
+  const pistaInicial = new Map<number, string>();
+  if (esBnc && (sistema.ventasCashea || []).length) {
+    const yaEnLaCorrida = new Set<string>();
+    for (const x of [...ing.parejas.flatMap(q => q.sistema), ...ing.diferencias.map(d => d.sistema), ...ing.sobrantesSistema]) yaEnLaCorrida.add(x.registroId);
+    const usadasAqui = new Set<string>();
+    const restantes: MovimientoBanco[] = [];
+    for (const m of ing.sobrantesBanco) {
+      const tasaBanco = m.tasa && m.tasa > 0 ? m.tasa : 0;
+      if (!tasaBanco || (m.clase !== 'cobro_pago_movil' && m.clase !== 'otro_credito')) { restantes.push(m); continue; }
+      const usdBanco = Math.abs(m.monto) / tasaBanco;
+      const cands = (sistema.ventasCashea || []).filter(v => v.inicial > 0 && !yaEnLaCorrida.has(v.id) && !usadasAqui.has(v.id)
+        && v.fecha <= m.fecha && dias(m.fecha, v.fecha) <= 120
+        && Math.abs(usdBanco - v.inicial) <= Math.max(0.5, v.inicial * 0.015));
+      if (cands.length === 1) {
+        const v = cands[0];
+        usadasAqui.add(v.id);
+        const as: AsientoSistema = {
+          id: `ventas_dia:${v.id}:inicial`, tabla: 'ventas_dia', registroId: v.id, fecha: v.fecha, sentido: 'ingreso', cuenta: 'cashea',
+          monto: v.inicial, enDolares: true, usd: v.inicial, tasa: tasaBanco, concepto: v.cliente,
+          detalle: `Inicial de Cashea · venta del ${v.fecha} (pagada el ${m.fecha})`, placa: v.placa, referencia: null, servicioId: v.servicioId,
+        };
+        ing.parejas.push({ regla: 'inicial_tardia', confianza: 'revisar', banco: [m], sistema: [as], diferenciaDias: Math.abs(dias(m.fecha, v.fecha)), diferenciaMonto: r2(usdBanco - v.inicial) });
+        continue;
+      }
+      if (cands.length > 1) {
+        pistaInicial.set(m.fila, `Podría ser la inicial de Cashea de: ${cands.slice(0, 3).map(v => `${v.cliente} (${v.fecha}, $${v.inicial.toFixed(2)})`).join(' · ')}`);
+      }
+      restantes.push(m);
+    }
+    ing.sobrantesBanco = restantes;
+  }
+
   const libresOtros = new Set(sistema.otros.map(s => s.id));
   const enOtraCuenta: EnOtraCuenta[] = [];
   const sinRegistrarBruto: Array<MovimientoBanco & { pista: string | null }> = [];
@@ -493,14 +541,32 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
     }
   }
 
+  // Un monto distinto que ya se justificó deja de ser pendiente: pasa a «Justificados» con su motivo.
+  ing.diferencias = ing.diferencias.filter(d => {
+    if (!justificarSiAplica(d.banco)) return true;
+    justificadosIngresos.push({ ...d.banco, pista: `Monto distinto de ${num2(d.diferencia)} con ${d.sistema.concepto}` });
+    return false;
+  });
+
   const esInicialCashea = (s: AsientoSistema) => s.cuenta === 'cashea' && s.tabla === 'ventas_dia';
-  const noLlegaron = ing.sobrantesSistema.filter(enPeriodo).filter(s => !esInicialCashea(s));
-  const inicialesSinCuenta = ing.sobrantesSistema.filter(enPeriodo).filter(esInicialCashea);
+  // Un registro del sistema que no está en el estado y que alguien justificó («sis:<id>») deja de estar pendiente.
+  const justSis = new Map((sistema.justificaciones || []).filter(j => j.movimientoHash.startsWith('sis:')).map(j => [j.movimientoHash.slice(4), j]));
+  const sistemaJustIng: SistemaJustificado[] = [];
+  const sinJustificarSis = (xs: AsientoSistema[], destino: SistemaJustificado[]) => xs.filter(x => {
+    const j = justSis.get(x.id);
+    if (!j) return true;
+    destino.push({ sistema: x, justificacion: { motivo: j.motivo, usuario: j.usuario, fecha: j.fecha } });
+    return false;
+  });
+  const pendientesSis = sinJustificarSis(ing.sobrantesSistema.filter(enPeriodo), sistemaJustIng);
+  const noLlegaron = pendientesSis.filter(s => !esInicialCashea(s));
+  const inicialesSinCuenta = pendientesSis.filter(esInicialCashea);
   const ordenesCashea = cuotas ? casarOrdenesCashea(cuotas, sistema.ventasCashea, sistema.ventasRecientes) : [];
 
   // ── Egresos
   const bEgr = vivos.filter(m => ES_EGRESO.has(m.clase));
   const sEgr = sistema.propios.filter(s => s.sentido === 'egreso');
+  const sistemaJustEgr: SistemaJustificado[] = [];
   const egr = emparejar({ banco: bEgr, sistema: sEgr }, { ventanaCashea: 3, dolaresATasa: false, periodo: { desde: estado.desde, hasta: estado.hasta } });
 
   const pista = (m: MovimientoBanco): string | null => {
@@ -526,10 +592,16 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
     }
   }
 
+  egr.diferencias = egr.diferencias.filter(d => {
+    if (!justificarSiAplica(d.banco)) return true;
+    justificadosEgresos.push({ ...d.banco, pista: `Monto distinto de ${num2(d.diferencia)} con ${d.sistema.concepto}` });
+    return false;
+  });
+
   for (const m of sinRegistrar) {
     m.pista = m.clase === 'cuota_cashea'
       ? 'Cuota cobrada por Cashea sin su cobro registrado en el sistema'
-      : (pista(m)?.replace('Posible pago a', 'Viene de') ?? null);
+      : (pistaInicial.get(m.fila) ?? pista(m)?.replace('Posible pago a', 'Viene de') ?? null);
   }
 
   // ── Lo propio del banco
@@ -564,10 +636,12 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
     + egr.diferencias.reduce((a, d) => a + Math.min(Math.abs(d.diferencia), Math.abs(d.banco.monto)), 0),
   );
 
-  const relevantes = bIng.length + bEgr.length + noLlegaron.length + egr.sobrantesSistema.filter(enPeriodo).length;
+  const noSalieron = sinJustificarSis(egr.sobrantesSistema.filter(enPeriodo), sistemaJustEgr);
+  const relevantes = bIng.length + bEgr.length + noLlegaron.length + noSalieron.length + sistemaJustIng.length + sistemaJustEgr.length;
   const conciliadosN = ing.parejas.reduce((a, p) => a + p.banco.length, 0)
     + egr.parejas.reduce((a, p) => a + p.banco.length, 0)
     + justificadosIngresos.length + justificadosEgresos.length
+    + sistemaJustIng.length + sistemaJustEgr.length
     + traspasosConciliados.length;
   const porcentaje = relevantes ? Math.min(100, Math.round((conciliadosN / relevantes) * 1000) / 10) : 100;
 
@@ -629,14 +703,14 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
     estado: cabecera,
     ingresos: {
       conciliados: ing.parejas, diferencias: ing.diferencias, enOtraCuenta, sinRegistrar,
-      justificados: justificadosIngresos, noLlegaron, inicialesSinCuenta,
+      justificados: justificadosIngresos, noLlegaron, inicialesSinCuenta, sistemaJustificados: sistemaJustIng,
       totalBanco: totalIngBanco, totalSistema: totalIngSistema,
     },
     egresos: {
       conciliados: egr.parejas, diferencias: egr.diferencias,
       sinRegistrar: egrSinRegistrar,
       justificados: justificadosEgresos,
-      noSalieron: egr.sobrantesSistema.filter(enPeriodo),
+      noSalieron, sistemaJustificados: sistemaJustEgr,
       totalBanco: sum(bEgr), totalSistema: r2(sEgr.filter(enPeriodo).reduce((a, s) => a + s.monto, 0)),
     },
     propiosDelBanco, reversos,

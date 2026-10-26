@@ -4,6 +4,7 @@ import { logActivityServer } from '@/lib/activity-server';
 import { registrarCobro } from '@/lib/pagos/registrar-cobro';
 import { buildCategoriaColumns, buildPagoColumnsCompletas, inferirCategoria } from '@/lib/categorias';
 import type { JustificacionConciliacion } from '@/lib/conciliacion/motor';
+import { anotarAccion, cambiarCuenta, corregirMonto, tasaDelDia } from '@/lib/conciliacion/acciones';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +15,16 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { accion } = body;
+    // Lo que cada acción deja anotado: de qué banco/corrida viene y a qué movimiento atiende.
+    const ctx = {
+      banco: typeof body.banco === 'string' ? body.banco : null,
+      corridaId: typeof body.corridaId === 'string' ? body.corridaId : null,
+      caso: typeof body.caso === 'string' && body.caso ? body.caso : 'otro',
+      movimientoHash: typeof body.movimientoHash === 'string' ? body.movimientoHash : null,
+      referencia: typeof body.refMovimiento === 'string' ? body.refMovimiento : null,
+      usuario: auth.user?.nombre || 'Usuario',
+      sedeId: auth.user?.sede_id || null,
+    };
 
     // ── 1. JUSTIFICAR UN MOVIMIENTO O DISCREPANCIA ──────────────────────────
     if (accion === 'justificar') {
@@ -58,6 +69,7 @@ export async function POST(req: NextRequest) {
         sede_id: auth.user?.sede_id || null,
       });
 
+      await anotarAccion(auth.db, { ...ctx, caso: tipo === 'diferencia' ? 'monto_distinto' : ctx.caso, accion: 'justificar', fecha: nueva.fecha, monto: nueva.monto, motivo: nueva.motivo, despues: { motivo: nueva.motivo } });
       return NextResponse.json({ ok: true, justificacion: nueva });
     }
 
@@ -74,6 +86,7 @@ export async function POST(req: NextRequest) {
         const filtrados = (conf.valor as JustificacionConciliacion[]).filter(j => (id ? j.id !== id : j.movimientoHash !== movimientoHash));
         await auth.db.from('configuracion').update({ valor: filtrados, updated_at: new Date().toISOString() }).eq('id', conf.id);
       }
+      await anotarAccion(auth.db, { ...ctx, accion: 'reabrir', resuelto: false, motivo: 'Se quitó la justificación: el caso vuelve a estar pendiente.' });
       return NextResponse.json({ ok: true });
     }
 
@@ -97,10 +110,13 @@ export async function POST(req: NextRequest) {
       const numMonto = Math.round(Number(monto || 0) * 100) / 100;
       if (numMonto <= 0) return NextResponse.json({ error: 'El monto debe ser mayor a cero.' }, { status: 400 });
 
+      // La tasa es la del día del movimiento (no la de hoy): un cobro del viernes se convierte a la tasa del viernes.
       let tasa = Number(tasaUser) || 0;
+      let tasaInfo: { tasa: number; fecha: string; fuente: string } | null = tasa > 0 ? { tasa, fecha: String(fecha || '').slice(0, 10), fuente: 'Indicada por el usuario' } : null;
       if (!tasa && !enDolares) {
-        const { data: tData } = await auth.db.from('tasas_bcv').select('bcv').order('fecha', { ascending: false }).limit(1).maybeSingle();
-        tasa = Number(tData?.bcv) || 1;
+        tasaInfo = await tasaDelDia(auth.db, String(fecha || new Date().toISOString().slice(0, 10)));
+        tasa = tasaInfo?.tasa || 0;
+        if (!tasa) return NextResponse.json({ error: 'No hay tasa BCV registrada para esa fecha: indícala a mano para no equivocar los dólares.' }, { status: 409 });
       }
 
       const totalDolares = enDolares ? numMonto : (tasa > 0 ? Math.round((numMonto / tasa) * 100) / 100 : numMonto);
@@ -247,6 +263,8 @@ export async function POST(req: NextRequest) {
         sede_id: sedeId,
       });
 
+      await anotarAccion(auth.db, { ...ctx, caso: 'sin_registrar', accion: 'registrar_servicio', fecha: fechaEfectiva, monto: numMonto, referencia: referencia || ctx.referencia,
+        despues: { cliente: clienteNombre, placa: placa || null, usd: totalDolares, cuenta: ctaMetodo, categoria }, tasa: enDolares ? null : tasaInfo, tabla: 'ventas_dia', registroId: newVenta?.id });
       return NextResponse.json({ ok: true, servicio: newServ, venta: newVenta });
     }
 
@@ -293,6 +311,8 @@ export async function POST(req: NextRequest) {
         sede_id: auth.user?.sede_id || null,
       });
 
+      await anotarAccion(auth.db, { ...ctx, caso: 'sin_registrar', accion: 'registrar_abono', fecha: fecha || null, monto: Number(monto), referencia: referencia || ctx.referencia,
+        despues: { ventaId, cuenta: cuenta || 'bnc' }, tasa: Number(tasa) > 0 ? { tasa: Number(tasa), fecha: String(fecha || '').slice(0, 10), fuente: 'Indicada por el usuario' } : null, tabla: 'abonos', registroId: (res.abono as { id?: string })?.id ?? null });
       return NextResponse.json({ ok: true, abono: res.abono });
     }
 
@@ -304,9 +324,10 @@ export async function POST(req: NextRequest) {
 
       // Resolver la tasa si no viene y la moneda es Bs (para poder convertir a USD).
       let tasa = Number(tasaUser) || 0;
+      let tasaInfo: { tasa: number; fecha: string; fuente: string } | null = tasa > 0 ? { tasa, fecha: String(fecha || '').slice(0, 10), fuente: 'Indicada por el usuario' } : null;
       if (!tasa && (moneda === 'VES' || moneda === 'Bs' || !moneda)) {
-        const { data: tData } = await auth.db.from('tasas_bcv').select('bcv').order('fecha', { ascending: false }).limit(1).maybeSingle();
-        tasa = Number(tData?.bcv) || 0;
+        tasaInfo = await tasaDelDia(auth.db, String(fecha || new Date().toISOString().slice(0, 10)));
+        tasa = tasaInfo?.tasa || 0;
       }
 
       const sedeId = auth.user?.sede_id || null;
@@ -358,7 +379,43 @@ export async function POST(req: NextRequest) {
         sede_id: sedeId,
       });
 
+      await anotarAccion(auth.db, { ...ctx, caso: 'pago_sin_gasto', accion: 'registrar_egreso', fecha: fecha || null, monto: numTotal, referencia: comprobante || ctx.referencia,
+        despues: { proveedor: proveedor || 'Gasto Operativo', categoria: categoria || 'repuestos', cuenta: ctaMetodo }, tasa: tasaInfo, tabla: 'egresos', registroId: egreso.id });
       return NextResponse.json({ ok: true, egreso });
+    }
+
+    // ── 6. CORREGIR EL MONTO DEL SISTEMA AL QUE CONFIRMÓ EL BANCO ───────────
+    if (accion === 'corregir_monto') {
+      const { tabla, registroId, cuenta, montoNuevo, montoBanco, fecha } = body;
+      const fechaOk = /^\d{4}-\d{2}-\d{2}$/.test(String(fecha || '')) ? String(fecha) : null;
+      const r = await corregirMonto(auth.db, { tabla: String(tabla || ''), registroId: String(registroId || ''), cuenta: String(cuenta || ''), montoNuevo: Number(montoNuevo) });
+      if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.estado });
+      const tasaInfo = fechaOk ? await tasaDelDia(auth.db, fechaOk) : null;
+      const motivo = `Monto corregido de ${r.antes.toFixed(2)} a ${r.despues.toFixed(2)} según el estado de cuenta (${r.cliente})`;
+      await anotarAccion(auth.db, { ...ctx, caso: 'monto_distinto', accion: 'corregir_monto', fecha: fechaOk, monto: Number(montoBanco ?? montoNuevo), motivo,
+        antes: { monto: r.antes, cuenta }, despues: { monto: r.despues, cuenta }, tasa: tasaInfo, tabla, registroId });
+      await logActivityServer(auth.db, { usuario: ctx.usuario, modulo: 'Finanzas', accion: 'Corrigió un monto desde la conciliación', detalles: motivo, referencia_tabla: String(tabla), referencia_id: String(registroId), sede_id: ctx.sedeId });
+      return NextResponse.json({ ok: true, antes: r.antes, despues: r.despues });
+    }
+
+    // ── 7. EL CLIENTE PAGÓ A OTRA CUENTA: CAMBIAR LA CUENTA DE LA VENTA ─────
+    if (accion === 'cambiar_cuenta') {
+      const { registroId, desde, hacia, fecha, montoBanco } = body;
+      const r = await cambiarCuenta(auth.db, { registroId: String(registroId || ''), desde: String(desde || ''), hacia: String(hacia || '') });
+      if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.estado });
+      const motivo = `Cuenta de la venta de ${r.cliente} cambiada de ${desde} a ${hacia} (Bs ${r.monto.toFixed(2)})`;
+      await anotarAccion(auth.db, { ...ctx, caso: ctx.caso === 'otro' ? 'no_llego' : ctx.caso, accion: 'cambiar_cuenta', fecha: /^\d{4}-\d{2}-\d{2}$/.test(String(fecha || '')) ? String(fecha) : null, monto: Number(montoBanco ?? r.monto), motivo,
+        antes: { cuenta: desde }, despues: { cuenta: hacia }, tabla: 'ventas_dia', registroId });
+      await logActivityServer(auth.db, { usuario: ctx.usuario, modulo: 'Finanzas', accion: 'Cambió la cuenta de una venta desde la conciliación', detalles: motivo, referencia_tabla: 'ventas_dia', referencia_id: String(registroId), sede_id: ctx.sedeId });
+      return NextResponse.json({ ok: true });
+    }
+
+    // ── 8. DEJAR EN SEGUIMIENTO (no se resuelve hoy, pero queda anotado quién y por qué) ──
+    if (accion === 'seguimiento') {
+      const { motivo, monto, fecha } = body;
+      if (!String(motivo || '').trim()) return NextResponse.json({ error: 'Anota qué falta para resolverlo.' }, { status: 400 });
+      await anotarAccion(auth.db, { ...ctx, accion: 'seguimiento', resuelto: false, fecha: /^\d{4}-\d{2}-\d{2}$/.test(String(fecha || '')) ? String(fecha) : null, monto: Number(monto) || null, motivo: String(motivo).trim() });
+      return NextResponse.json({ ok: true });
     }
 
     return NextResponse.json({ error: `Acción desconocida: ${accion}` }, { status: 400 });

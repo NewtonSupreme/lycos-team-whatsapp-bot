@@ -141,6 +141,39 @@ export async function POST(req: NextRequest) {
       cuentas, banco: bancoEfectivo,
     });
     const resultado = conciliar(estado, sistema, cruce);
+
+    // ── Seguimiento: la corrida queda guardada y se compara con la anterior del mismo período ──
+    const ing = resultado.ingresos; const egr = resultado.egresos;
+    const conciliados = ing.conciliados.length + egr.conciliados.length + ing.justificados.length + egr.justificados.length;
+    const pendientes = ing.sinRegistrar.length + ing.noLlegaron.length + ing.diferencias.length + ing.enOtraCuenta.length + ing.inicialesSinCuenta.length
+      + egr.sinRegistrar.length + egr.noSalieron.length + egr.diferencias.length;
+    let corridaId: string | null = null;
+    let anterior: { creada: string; pendientes: number | null; porcentaje: number | null; usuario: string | null } | null = null;
+    let seguimientos: Record<string, { accion: string; resuelto: boolean; motivo: string | null; usuario: string | null; fecha: string }> = {};
+    try {
+      const { data: prev } = await auth.db.from('conciliacion_corridas').select('created_at, pendientes, porcentaje, usuario')
+        .eq('banco', bancoEfectivo).eq('desde', estado.desde).eq('hasta', estado.hasta).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (prev) anterior = { creada: prev.created_at, pendientes: prev.pendientes, porcentaje: prev.porcentaje, usuario: prev.usuario };
+      const { data: fila } = await auth.db.from('conciliacion_corridas').insert({
+        banco: bancoEfectivo, desde: estado.desde, hasta: estado.hasta, archivo: nombreArchivo, usuario: auth.user?.nombre || null, sede_id: sede,
+        cuadra: resultado.veredicto.cuadra, porcentaje: resultado.veredicto.porcentaje, en_juego: resultado.veredicto.enJuego,
+        movimientos: resultado.totalMovimientos, conciliados, pendientes,
+        resumen: {
+          sinRegistrar: ing.sinRegistrar.length, noLlegaron: ing.noLlegaron.length, montosDistintos: ing.diferencias.length + egr.diferencias.length,
+          otraCuenta: ing.enOtraCuenta.length, pagosSinGasto: egr.sinRegistrar.length, gastosNoSalieron: egr.noSalieron.length,
+          justificados: ing.justificados.length + egr.justificados.length, totalBanco: ing.totalBanco, totalSistema: ing.totalSistema,
+        },
+      }).select('id').single();
+      corridaId = fila?.id ?? null;
+      // Lo último que se hizo con cada movimiento de este período (para marcar lo que está en seguimiento).
+      const { data: acc } = await auth.db.from('conciliacion_acciones').select('movimiento_hash, accion, resuelto, motivo, usuario, created_at')
+        .eq('banco', bancoEfectivo).gte('fecha', mas(estado.desde, -margen)).lte('fecha', mas(estado.hasta, margen))
+        .not('movimiento_hash', 'is', null).order('created_at', { ascending: false }).limit(2000);
+      for (const a of acc || []) {
+        const h = String(a.movimiento_hash);
+        if (!seguimientos[h]) seguimientos[h] = { accion: a.accion, resuelto: a.resuelto, motivo: a.motivo, usuario: a.usuario, fecha: a.created_at };
+      }
+    } catch { /* el seguimiento no debe impedir ver la conciliación */ }
     await logActivityServer(auth.db, {
       usuario: auth.user?.nombre || 'Sistema',
       modulo: 'Finanzas',
@@ -155,7 +188,7 @@ export async function POST(req: NextRequest) {
         archivo: nombreArchivo,
         banco: bancoEfectivo,
         cruce: cruce ? { banco: cruce.banco, desde: cruce.desde, hasta: cruce.hasta, movimientos: cruce.movimientos.length } : null,
-        autoCuotas,
+        autoCuotas, corridaId, anterior, seguimientos,
         generadoPor: auth.user?.nombre || '',
         generadoEn: new Date().toISOString(),
       },

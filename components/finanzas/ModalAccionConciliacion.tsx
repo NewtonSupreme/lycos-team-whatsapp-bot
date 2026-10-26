@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Check, FilePlus2, FileSpreadsheet, Loader2, Receipt, ShieldAlert, Sparkles, Tag, Wrench } from 'lucide-react';
+import { Check, Clock, Loader2, Receipt, Scale, Tag, Wrench } from 'lucide-react';
 import ModalBase from '@/components/ui/modales/ModalBase';
 import type { MovimientoBanco, BancoConciliable } from '@/lib/conciliacion/leer-estado';
+import type { AsientoSistema } from '@/lib/conciliacion/motor';
 import { CATEGORIAS_VENTA } from '@/lib/categorias';
 
 interface Props {
@@ -13,6 +14,10 @@ interface Props {
   tipo: 'ingreso' | 'egreso' | 'diferencia';
   banco: BancoConciliable;
   onCompletado: () => void;
+  /** El registro del sistema con el que el banco habla del mismo pago (montos distintos). */
+  sistema?: AsientoSistema | null;
+  /** Para dejar rastro: la corrida de la que sale este caso. */
+  corridaId?: string | null;
 }
 
 export default function ModalAccionConciliacion({
@@ -22,8 +27,10 @@ export default function ModalAccionConciliacion({
   tipo,
   banco,
   onCompletado,
+  sistema = null,
+  corridaId = null,
 }: Props) {
-  const [modo, setModo] = useState<'servicio' | 'abono' | 'egreso' | 'justificar'>('justificar');
+  const [modo, setModo] = useState<'servicio' | 'abono' | 'egreso' | 'justificar' | 'corregir' | 'seguimiento'>('justificar');
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,8 +54,12 @@ export default function ModalAccionConciliacion({
   const [proveedor, setProveedor] = useState('');
   const [categoriaEgreso, setCategoriaEgreso] = useState('repuestos');
 
-  // Campos para Justificación
+  // Campos para Justificación y seguimiento
   const [motivoJustificacion, setMotivoJustificacion] = useState('');
+  const [motivoSeguimiento, setMotivoSeguimiento] = useState('');
+  const [confirmaDolares, setConfirmaDolares] = useState(false);
+
+  const puedeCorregir = tipo === 'diferencia' && !!sistema && (sistema.tabla === 'ventas_dia' || sistema.tabla === 'egresos') && !sistema.enDolares;
 
   useEffect(() => {
     if (!abierto || !movimiento) return;
@@ -82,16 +93,27 @@ export default function ModalAccionConciliacion({
 
     setProveedor(descTotal.slice(0, 40));
     setMotivoJustificacion('');
+    setMotivoSeguimiento('');
+    setConfirmaDolares(false);
 
     // Modo inicial
     if (tipo === 'ingreso') setModo('servicio');
     else if (tipo === 'egreso') setModo('egreso');
+    else if (sistema && (sistema.tabla === 'ventas_dia' || sistema.tabla === 'egresos') && !sistema.enDolares) setModo('corregir');
     else setModo('justificar');
-  }, [abierto, movimiento, tipo, banco]);
+  }, [abierto, movimiento, tipo, banco, sistema]);
 
   if (!movimiento) return null;
 
   const movimientoHash = `${movimiento.fecha}_${movimiento.referencia}_${movimiento.monto}`;
+  const casoActual = tipo === 'ingreso' ? 'sin_registrar' : tipo === 'egreso' ? 'pago_sin_gasto' : 'monto_distinto';
+  const montoBanco = Math.abs(movimiento.monto);
+  // Qué pasa si el sistema toma el monto del banco: los dólares de la venta NO cambian, así que se avisa si el monto nuevo ya no cuadra con ellos.
+  const tasaVenta = sistema?.tasa || 0;
+  const usdVenta = sistema?.usd || 0;
+  const usdNuevo = tasaVenta > 0 ? montoBanco / tasaVenta : 0;
+  const desvioUsd = usdVenta > 0 && usdNuevo > 0 ? Math.abs(usdNuevo - usdVenta) / usdVenta : 0;
+  const cambiaDolares = desvioUsd > 0.02;
 
   const ejecutarAccion = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -162,10 +184,27 @@ export default function ModalAccionConciliacion({
         };
       }
 
+      if (modo === 'corregir') {
+        if (!sistema) throw new Error('No hay registro del sistema que corregir.');
+        if (cambiaDolares && !confirmaDolares) {
+          setError('El monto del banco cambia el valor en dólares de la venta. Marca la confirmación si el banco es el correcto.');
+          setGuardando(false);
+          return;
+        }
+        body = { accion: 'corregir_monto', movimientoHash, tabla: sistema.tabla, registroId: sistema.registroId, cuenta: sistema.cuenta, montoNuevo: montoBanco, montoBanco, fecha: movimiento.fecha };
+      } else if (modo === 'seguimiento') {
+        if (!motivoSeguimiento.trim()) {
+          setError('Anota qué falta para resolverlo.');
+          setGuardando(false);
+          return;
+        }
+        body = { accion: 'seguimiento', movimientoHash, motivo: motivoSeguimiento.trim(), monto: montoBanco, fecha: movimiento.fecha };
+      }
+
       const res = await fetch('/api/finanzas/conciliacion/accion', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, banco, corridaId, caso: casoActual, refMovimiento: movimiento.referencia || null }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error al procesar la acción');
@@ -203,7 +242,7 @@ export default function ModalAccionConciliacion({
     <ModalBase
       abierto={abierto}
       onCerrar={onCerrar}
-      titulo={tipo === 'ingreso' ? 'Registrar o Justificar Cobro' : tipo === 'egreso' ? 'Registrar o Justificar Gasto' : 'Justificar Diferencia'}
+      titulo={tipo === 'ingreso' ? 'Registrar o Justificar Cobro' : tipo === 'egreso' ? 'Registrar o Justificar Gasto' : 'Resolver monto distinto'}
       subtitulo="Aplica una corrección directa o justificación contable para conciliar este movimiento"
       icono={tipo === 'ingreso' ? <Wrench className="h-5 w-5" /> : tipo === 'egreso' ? <Receipt className="h-5 w-5" /> : <Tag className="h-5 w-5" />}
       tinteIcono="bg-primary/10 text-primary"
@@ -250,6 +289,22 @@ export default function ModalAccionConciliacion({
             </button>
           )}
 
+          {puedeCorregir && (
+            <button
+              type="button"
+              onClick={() => setModo('corregir')}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-bold text-[12px] transition-colors ${modo === 'corregir' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
+            >
+              <Scale className="h-3.5 w-3.5" /> Corregir el monto del sistema
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setModo('seguimiento')}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-bold text-[12px] transition-colors ${modo === 'seguimiento' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
+          >
+            <Clock className="h-3.5 w-3.5" /> Dejar en seguimiento
+          </button>
           <button
             type="button"
             onClick={() => setModo('justificar')}
@@ -528,6 +583,51 @@ export default function ModalAccionConciliacion({
             </div>
           )}
 
+          {/* MODO 5: CORREGIR EL MONTO DEL SISTEMA */}
+          {modo === 'corregir' && sistema && (
+            <div className="space-y-3">
+              <p className="text-[12px] text-muted-foreground">
+                El banco confirma el pago de <strong>{sistema.concepto}</strong>. El sistema tomará el monto del banco en la cuenta <strong>{sistema.cuenta.replace(/_/g, ' ')}</strong>;
+                el total en dólares, la tasa y los demás datos no se tocan, y queda anotado el valor anterior.
+              </p>
+              <div className="grid grid-cols-3 gap-2 rounded-xl border border-border bg-muted/30 p-3 text-center">
+                <div><span className="block text-[10.5px] font-bold uppercase text-muted-foreground">Sistema ahora</span><span className="font-mono text-[14px] font-bold tabular-nums">{sistema.monto.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span></div>
+                <div><span className="block text-[10.5px] font-bold uppercase text-muted-foreground">Quedará (banco)</span><span className="font-mono text-[14px] font-bold tabular-nums text-primary">{montoBanco.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</span></div>
+                <div><span className="block text-[10.5px] font-bold uppercase text-muted-foreground">Cambio</span><span className="font-mono text-[14px] font-bold tabular-nums">{(montoBanco - sistema.monto).toLocaleString('es-VE', { minimumFractionDigits: 2, signDisplay: 'always' })}</span></div>
+              </div>
+              {tasaVenta > 0 && (
+                <p className="text-[11.5px] text-muted-foreground">
+                  A la tasa de la venta ({tasaVenta.toLocaleString('es-VE', { minimumFractionDigits: 4 })}): ${usdNuevo.toFixed(2)} con el monto del banco; la venta vale ${usdVenta.toFixed(2)}.
+                </p>
+              )}
+              {cambiaDolares && (
+                <label className="flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-2.5 text-[12px] text-amber-800 dark:text-amber-300">
+                  <input type="checkbox" checked={confirmaDolares} onChange={e => setConfirmaDolares(e.target.checked)} className="mt-0.5" />
+                  <span>El monto del banco equivale a ${usdNuevo.toFixed(2)}, no a ${usdVenta.toFixed(2)}: la diferencia es grande. Confirmo que el banco es el correcto y el sistema tenía el monto mal digitado.</span>
+                </label>
+              )}
+            </div>
+          )}
+
+          {/* MODO 6: SEGUIMIENTO */}
+          {modo === 'seguimiento' && (
+            <div className="space-y-3">
+              <p className="text-[12px] text-muted-foreground">
+                No se resuelve hoy, pero queda anotado quién lo vio, qué falta y cuándo. Aparece en el historial de conciliaciones y marcado en este movimiento.
+              </p>
+              <div>
+                <label className="block text-[11px] font-bold text-muted-foreground uppercase mb-1">¿Qué falta para resolverlo?</label>
+                <textarea
+                  value={motivoSeguimiento}
+                  onChange={e => setMotivoSeguimiento(e.target.value)}
+                  rows={3}
+                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+                  placeholder="Ej. Esperando el comprobante del cliente / preguntar a Cesar quién cobró"
+                />
+              </div>
+            </div>
+          )}
+
           {/* MODO 4: JUSTIFICAR */}
           {modo === 'justificar' && (
             <div className="space-y-3">
@@ -586,7 +686,7 @@ export default function ModalAccionConciliacion({
               className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 font-bold text-primary-foreground hover:opacity-90 disabled:opacity-50"
             >
               {guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              {guardando ? 'Guardando...' : modo === 'justificar' ? 'Guardar Justificación' : 'Guardar y Trasladar'}
+              {guardando ? 'Guardando...' : modo === 'justificar' ? 'Guardar Justificación' : modo === 'seguimiento' ? 'Dejar en seguimiento' : modo === 'corregir' ? 'Corregir el monto' : 'Guardar y Trasladar'}
             </button>
           </div>
         </form>

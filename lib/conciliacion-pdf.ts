@@ -38,6 +38,10 @@ export interface MetaConciliacion {
   cruce: { banco: string; desde: string; hasta: string; movimientos: number } | null;
   generadoPor: string;
   generadoEn: string;
+  /** Seguimiento: la corrida guardada, la anterior del mismo período y lo último hecho con cada movimiento. */
+  corridaId?: string | null;
+  anterior?: { creada: string; pendientes: number | null; porcentaje: number | null; usuario: string | null } | null;
+  seguimientos?: Record<string, { accion: string; resuelto: boolean; motivo: string | null; usuario: string | null; fecha: string }>;
   autoCuotas?: { aplicados: unknown[]; rechazados: unknown[]; enlazadas: number; totalUSD: number; pendientes: number } | null;
 }
 
