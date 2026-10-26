@@ -14,6 +14,8 @@ import type { BancoConciliable, ClaseMovimiento, EstadoLeido, MovimientoBanco } 
 const r2 = (x: number) => Math.round((Number(x) || 0) * 100) / 100;
 const dias = (a: string, b: string) => Math.round((Date.parse(a) - Date.parse(b)) / 86_400_000);
 const TOL = 0.01;
+/** Diferencia de redondeo (tasa con 4 decimales) que se acepta como «el mismo pago» el mismo día. */
+const CENTIMOS = 0.05;
 
 /** Qué columnas del sistema corresponden a cada estado de cuenta. */
 export const CUENTAS_DEL_BANCO: Record<BancoConciliable, BankBin[]> = {
@@ -243,7 +245,7 @@ function limpiar(movs: MovimientoBanco[]) {
 
 interface Lado { banco: MovimientoBanco[]; sistema: AsientoSistema[] }
 
-function emparejar(lado: Lado, opciones: { ventanaCashea: number; dolaresATasa: boolean }) {
+function emparejar(lado: Lado, opciones: { ventanaCashea: number; dolaresATasa: boolean; periodo?: { desde: string; hasta: string } }) {
   const libresB = new Set(lado.banco.map(m => m.fila));
   const libresS = new Set(lado.sistema.map(s => s.id));
   const parejas: Pareja[] = [];
@@ -261,10 +263,16 @@ function emparejar(lado: Lado, opciones: { ventanaCashea: number; dolaresATasa: 
       if (!libresB.has(m.fila)) continue;
       const cands = lado.sistema.filter(s => libresS.has(s.id) && comparable(s, m) && cumple(m, s));
       if (!cands.length) continue;
-      cands.sort((a, b) => Math.abs(dias(m.fecha, a.fecha)) - Math.abs(dias(m.fecha, b.fecha)));
+      cands.sort((a, b) => Math.abs(dias(m.fecha, a.fecha)) - Math.abs(dias(m.fecha, b.fecha))
+        // a igual distancia, el registro del mismo día o anterior al banco (el banco nunca se adelanta a la venta)
+        || Number(a.fecha > m.fecha) - Number(b.fecha > m.fecha)
+        || Math.abs(montoB(m) - a.monto) - Math.abs(montoB(m) - b.monto));
       tomar(regla, confianza, [m], [cands[0]]);
     }
   };
+  // Un registro posterior al último día del estado no puede explicar un movimiento del
+  // estado: es del día siguiente y queda fuera de este período (no se le «roba» a otro).
+  const posterior = (s: AsientoSistema) => !!opciones.periodo && s.fecha > opciones.periodo.hasta;
   const igual = (m: MovimientoBanco, s: AsientoSistema) => Math.abs(montoB(m) - s.monto) <= TOL;
   const refIgual = (m: MovimientoBanco, s: AsientoSistema) => {
     const a = (s.referencia || '').replace(/\D/g, ''); const b = m.referencia.replace(/\D/g, '');
@@ -274,8 +282,24 @@ function emparejar(lado: Lado, opciones: { ventanaCashea: number; dolaresATasa: 
 
   pasada('referencia', 'alta', (m, s) => igual(m, s) && refIgual(m, s));
   pasada('mismo_dia', 'alta', (m, s) => igual(m, s) && m.fecha === s.fecha);
-  pasada('fecha_cercana', 'alta', (m, s) => igual(m, s) && Math.abs(dias(m.fecha, s.fecha)) <= ventana(s, 3));
-  pasada('fecha_lejana', 'revisar', (m, s) => igual(m, s) && Math.abs(dias(m.fecha, s.fecha)) <= ventana(s, 10));
+
+  // El mismo día y el monto a un céntimo o pocos (redondeo de la tasa): es ese pago.
+  // Va ANTES de las pasadas por fecha para que un registro de otro día con el monto
+  // exacto no se lleve el movimiento de quien sí pagó ese día.
+  const diferencias: Diferencia[] = [];
+  for (const m of lado.banco) {
+    if (!libresB.has(m.fila) || m.clase === 'cuota_cashea') continue;
+    const mb = montoB(m);
+    const cands = lado.sistema.filter(s => libresS.has(s.id) && comparable(s, m) && !s.enDolares && s.fecha === m.fecha
+      && Math.abs(mb - s.monto) <= CENTIMOS);
+    if (!cands.length) continue;
+    cands.sort((a, b) => Math.abs(mb - a.monto) - Math.abs(mb - b.monto));
+    libresB.delete(m.fila); libresS.delete(cands[0].id);
+    diferencias.push({ banco: m, sistema: cands[0], diferencia: r2(mb - cands[0].monto), diferenciaDias: 0 });
+  }
+
+  pasada('fecha_cercana', 'alta', (m, s) => igual(m, s) && !posterior(s) && Math.abs(dias(m.fecha, s.fecha)) <= ventana(s, 3));
+  pasada('fecha_lejana', 'revisar', (m, s) => igual(m, s) && !posterior(s) && Math.abs(dias(m.fecha, s.fecha)) <= ventana(s, 10));
 
   // Uno contra varios (2 o 3)
   const combos = <T,>(arr: T[], k: number): T[][] => {
@@ -288,7 +312,7 @@ function emparejar(lado: Lado, opciones: { ventanaCashea: number; dolaresATasa: 
   };
   for (const m of lado.banco) {
     if (!libresB.has(m.fila)) continue;
-    const cands = lado.sistema.filter(s => libresS.has(s.id) && comparable(s, m) && Math.abs(dias(m.fecha, s.fecha)) <= 2 && s.monto < montoB(m)).slice(0, 25);
+    const cands = lado.sistema.filter(s => libresS.has(s.id) && comparable(s, m) && !posterior(s) && Math.abs(dias(m.fecha, s.fecha)) <= 2 && s.monto < montoB(m)).slice(0, 25);
     let hecho = false;
     for (const k of [2, 3]) {
       for (const c of combos(cands, k)) {
@@ -322,15 +346,28 @@ function emparejar(lado: Lado, opciones: { ventanaCashea: number; dolaresATasa: 
     }
   }
 
+  // Coma o punto corrido: el sistema tiene el monto del banco ×10, ×100 o ÷10, ÷100 (35.449,08 digitado
+  // como 3.544.908). Es un error de captura del mismo pago: se enseña como diferencia para corregirlo.
+  for (const m of lado.banco) {
+    if (!libresB.has(m.fila) || m.clase === 'cuota_cashea') continue;
+    const mb = montoB(m);
+    if (mb < 1) continue;
+    const cands = lado.sistema.filter(s => libresS.has(s.id) && comparable(s, m) && !s.enDolares && !posterior(s)
+      && Math.abs(dias(m.fecha, s.fecha)) <= 1
+      && [10, 100, 1000].some(f => Math.abs(s.monto - mb * f) <= 0.01 * f || Math.abs(s.monto * f - mb) <= 0.01 * f));
+    if (!cands.length) continue;
+    libresB.delete(m.fila); libresS.delete(cands[0].id);
+    diferencias.push({ banco: m, sistema: cands[0], diferencia: r2(mb - cands[0].monto), diferenciaDias: Math.abs(dias(m.fecha, cands[0].fecha)) });
+  }
+
   // Diferencias
-  const diferencias: Diferencia[] = [];
   for (const m of lado.banco) {
     if (!libresB.has(m.fila)) continue;
     const mb = montoB(m);
-    const cands = lado.sistema.filter(s => libresS.has(s.id) && comparable(s, m) && Math.abs(dias(m.fecha, s.fecha)) <= 3
+    const cands = lado.sistema.filter(s => libresS.has(s.id) && comparable(s, m) && !posterior(s) && Math.abs(dias(m.fecha, s.fecha)) <= 3
       && Math.abs(mb - s.monto) <= Math.max(m.clase === 'cuota_cashea' ? 0.05 : 1, s.monto * 0.005));
     if (!cands.length) continue;
-    cands.sort((a, b) => Math.abs(mb - a.monto) - Math.abs(mb - b.monto));
+    cands.sort((a, b) => Math.abs(dias(m.fecha, a.fecha)) - Math.abs(dias(m.fecha, b.fecha)) || Math.abs(mb - a.monto) - Math.abs(mb - b.monto));
     libresB.delete(m.fila); libresS.delete(cands[0].id);
     diferencias.push({ banco: m, sistema: cands[0], diferencia: r2(mb - cands[0].monto), diferenciaDias: Math.abs(dias(m.fecha, cands[0].fecha)) });
   }
@@ -434,7 +471,7 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
   // ── Ingresos
   const bIng = vivos.filter(m => ES_INGRESO.has(m.clase));
   const sIng = sistema.propios.filter(s => s.sentido === 'ingreso');
-  const ing = emparejar({ banco: bIng, sistema: sIng }, { ventanaCashea: 20, dolaresATasa: esBnc });
+  const ing = emparejar({ banco: bIng, sistema: sIng }, { ventanaCashea: 20, dolaresATasa: esBnc, periodo: { desde: estado.desde, hasta: estado.hasta } });
 
   const libresOtros = new Set(sistema.otros.map(s => s.id));
   const enOtraCuenta: EnOtraCuenta[] = [];
@@ -464,7 +501,7 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
   // ── Egresos
   const bEgr = vivos.filter(m => ES_EGRESO.has(m.clase));
   const sEgr = sistema.propios.filter(s => s.sentido === 'egreso');
-  const egr = emparejar({ banco: bEgr, sistema: sEgr }, { ventanaCashea: 3, dolaresATasa: false });
+  const egr = emparejar({ banco: bEgr, sistema: sEgr }, { ventanaCashea: 3, dolaresATasa: false, periodo: { desde: estado.desde, hasta: estado.hasta } });
 
   const pista = (m: MovimientoBanco): string | null => {
     const doc = (m.documento || '').replace(/\D/g, '');
@@ -522,9 +559,9 @@ export function conciliar(estado: EstadoLeido, sistema: DatosSistema, cruce?: Es
     sinRegistrar.reduce((a, m) => a + montoMov(m), 0)
     + inicialesSinCuenta.reduce((a, s) => a + (enDolaresBanco ? s.monto : s.usd * s.tasa), 0)
     + noLlegaron.reduce((a, s) => a + (s.enDolares && !enDolaresBanco ? s.usd * s.tasa : s.monto), 0)
-    + ing.diferencias.reduce((a, d) => a + Math.abs(d.diferencia), 0)
+    + ing.diferencias.reduce((a, d) => a + Math.min(Math.abs(d.diferencia), Math.abs(montoMov(d.banco))), 0)
     + egrSinRegistrar.reduce((a, m) => a + Math.abs(m.monto), 0)
-    + egr.diferencias.reduce((a, d) => a + Math.abs(d.diferencia), 0),
+    + egr.diferencias.reduce((a, d) => a + Math.min(Math.abs(d.diferencia), Math.abs(d.banco.monto)), 0),
   );
 
   const relevantes = bIng.length + bEgr.length + noLlegaron.length + egr.sobrantesSistema.filter(enPeriodo).length;
