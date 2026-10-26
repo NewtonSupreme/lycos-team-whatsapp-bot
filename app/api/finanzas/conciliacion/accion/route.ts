@@ -388,7 +388,7 @@ export async function POST(req: NextRequest) {
     if (accion === 'corregir_monto') {
       const { tabla, registroId, cuenta, montoNuevo, montoBanco, fecha } = body;
       const fechaOk = /^\d{4}-\d{2}-\d{2}$/.test(String(fecha || '')) ? String(fecha) : null;
-      const r = await corregirMonto(auth.db, { tabla: String(tabla || ''), registroId: String(registroId || ''), cuenta: String(cuenta || ''), montoNuevo: Number(montoNuevo) });
+      const r = await corregirMonto(auth.db, { tabla: String(tabla || ''), registroId: String(registroId || ''), cuenta: String(cuenta || ''), montoNuevo: Number(montoNuevo), referencia: ctx.referencia });
       if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.estado });
       const tasaInfo = fechaOk ? await tasaDelDia(auth.db, fechaOk) : null;
       const motivo = `Monto corregido de ${r.antes.toFixed(2)} a ${r.despues.toFixed(2)} según el estado de cuenta (${r.cliente})`;

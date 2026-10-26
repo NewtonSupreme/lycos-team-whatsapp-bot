@@ -104,7 +104,7 @@ async function tieneCobrosPosteriores(db: SupabaseClient, ventaId: string): Prom
  * Pone en el sistema el monto que el banco confirmó, para UNA cuenta de una venta
  * o de un gasto. El total en dólares y la tasa de la venta no se tocan.
  */
-export async function corregirMonto(db: SupabaseClient, e: { tabla: string; registroId: string; cuenta: string; montoNuevo: number }): Promise<Resultado<{ antes: number; despues: number; cliente: string }>> {
+export async function corregirMonto(db: SupabaseClient, e: { tabla: string; registroId: string; cuenta: string; montoNuevo: number; referencia?: string | null }): Promise<Resultado<{ antes: number; despues: number; cliente: string }>> {
   const nuevo = r2(e.montoNuevo);
   if (!(nuevo > 0)) return { ok: false, estado: 400, error: 'El monto nuevo debe ser mayor a cero.' };
   if (!CUENTAS.has(e.cuenta)) return { ok: false, estado: 400, error: 'Cuenta desconocida.' };
@@ -116,7 +116,11 @@ export async function corregirMonto(db: SupabaseClient, e: { tabla: string; regi
     if (viejo <= 0) return { ok: false, estado: 409, error: 'Esa venta ya no tiene monto en esa cuenta: recarga la conciliación.' };
     if (await tieneCobrosPosteriores(db, e.registroId)) return { ok: false, estado: 409, error: 'La venta tiene cobros posteriores: corrígela desde «Por cobrar» para no descuadrar su saldo.' };
     const mp = reemplazarEnMetodos(v.metodos_pago, e.cuenta, viejo, nuevo);
-    const { error } = await db.from('ventas_dia').update({ [e.cuenta]: nuevo, metodos_pago: mp }).eq('id', e.registroId);
+    // La referencia del banco queda en la venta (si no tenía): así el próximo cruce las une por referencia, sin depender del monto ni de la fecha.
+    const ref = String(e.referencia || '').trim();
+    const cambios: Record<string, unknown> = { [e.cuenta]: nuevo, metodos_pago: mp };
+    if (ref && !String(v.comprobante_referencia || '').trim()) cambios.comprobante_referencia = ref;
+    const { error } = await db.from('ventas_dia').update(cambios).eq('id', e.registroId);
     if (error) return { ok: false, estado: 500, error: error.message };
     if (v.servicio_id) {
       const { data: sv } = await db.from('servicios').select('metodos_pago').eq('id', v.servicio_id).maybeSingle();
