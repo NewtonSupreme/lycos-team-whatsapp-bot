@@ -17,6 +17,8 @@ const TOL = 0.01;
 const num2 = (x: number) => (x > 0 ? '+' : '') + x.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 /** Diferencia de redondeo (tasa con 4 decimales) que se acepta como «el mismo pago» el mismo día. */
 const CENTIMOS = 0.05;
+/** Hasta aquí es redondeo de la tasa (4 decimales) y el pago se da por conciliado; más es «monto distinto». */
+const REDONDEO = 0.02;
 
 /** Qué columnas del sistema corresponden a cada estado de cuenta. */
 export const CUENTAS_DEL_BANCO: Record<BancoConciliable, BankBin[]> = {
@@ -55,7 +57,7 @@ export interface AsientoSistema {
 
 export type Regla =
   | 'referencia' | 'mismo_dia' | 'fecha_cercana' | 'fecha_lejana'
-  | 'agrupado_banco' | 'agrupado_sistema' | 'tasa_dolar' | 'cashea_usd' | 'inicial_tardia';
+  | 'agrupado_banco' | 'agrupado_sistema' | 'tasa_dolar' | 'cashea_usd' | 'inicial_tardia' | 'redondeo';
 
 export const REGLA_TEXTO: Record<Regla, string> = {
   referencia: 'Referencia y monto',
@@ -67,6 +69,7 @@ export const REGLA_TEXTO: Record<Regla, string> = {
   tasa_dolar: 'Dólares a la tasa del día',
   cashea_usd: 'Cuota Cashea en dólares',
   inicial_tardia: 'Inicial de Cashea pagada días después de la venta',
+  redondeo: 'Mismo día, redondeo de la tasa (hasta 0,02 Bs)',
 };
 
 export interface Pareja {
@@ -304,6 +307,7 @@ function emparejar(lado: Lado, opciones: { ventanaCashea: number; dolaresATasa: 
       && Math.abs(mb - s.monto) <= CENTIMOS);
     if (!cands.length) continue;
     cands.sort((a, b) => Math.abs(mb - a.monto) - Math.abs(mb - b.monto));
+    if (Math.abs(mb - cands[0].monto) <= REDONDEO + 1e-9) { tomar('redondeo', 'alta', [m], [cands[0]]); continue; }
     libresB.delete(m.fila); libresS.delete(cands[0].id);
     diferencias.push({ banco: m, sistema: cands[0], diferencia: r2(mb - cands[0].monto), diferenciaDias: 0 });
   }

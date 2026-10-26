@@ -50,7 +50,7 @@ const NOMBRE_CUENTA: Record<string, string> = {
 const REGLA: Record<string, string> = {
   referencia: 'Referencia y monto', mismo_dia: 'Monto exacto, mismo día', fecha_cercana: 'Monto exacto, fecha cercana',
   fecha_lejana: 'Monto exacto, fecha lejana', agrupado_banco: 'Un pago, varios registros', agrupado_sistema: 'Varios pagos, un registro',
-  tasa_dolar: 'Dólares a la tasa del día', cashea_usd: 'Cuota en dólares', inicial_tardia: 'Inicial pagada días después (revisar)',
+  tasa_dolar: 'Dólares a la tasa del día', cashea_usd: 'Cuota en dólares', inicial_tardia: 'Inicial pagada días después (revisar)', redondeo: 'Mismo día, redondeo de la tasa',
 };
 
 type Pestana = 'sin_registrar' | 'no_llegaron' | 'iniciales' | 'otra_cuenta' | 'diferencias' | 'traspasos' | 'justificados' | 'ordenes' | 'pagos' | 'gastos' | 'banco' | 'conciliados';
