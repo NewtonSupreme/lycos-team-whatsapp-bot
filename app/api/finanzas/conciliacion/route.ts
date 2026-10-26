@@ -7,6 +7,7 @@ import {
 } from '@/lib/conciliacion/leer-estado';
 import { CUENTAS_DEL_BANCO, conciliar } from '@/lib/conciliacion/motor';
 import { cargarSistema } from '@/lib/conciliacion/sistema';
+import { aplicarDescuento, prepararDescuento, type ResultadoDescuento } from '@/lib/cashea/descontar';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -112,6 +113,27 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Cashea: las cuotas se descuentan solas al conciliar. Solo lo seguro: órdenes ya
+  // enlazadas o con UNA venta que cuadra al céntimo; lo dudoso queda para decidir.
+  // Cada pago se aplica una sola vez (su referencia queda en el cobro).
+  let autoCuotas: (ResultadoDescuento & { pendientes: number }) | null = null;
+  if (bancoEfectivo === 'cashea' && String(form.get('auto_cuotas') || '1') !== '0' && auth.can('ventas', 'editar')) {
+    try {
+      const previa = await prepararDescuento(auth.db, estado, sede);
+      const elecciones: Record<string, string | null> = {};
+      for (const g of previa.grupos) if (g.estado === 'sugerida' && g.venta) elecciones[g.clave] = g.venta.id;
+      const r = await aplicarDescuento(auth.db, estado, sede, elecciones, auth.user?.nombre || 'Conciliación');
+      autoCuotas = { ...r, pendientes: previa.resumen.porResolver };
+      if (r.aplicados.length || r.enlazadas) {
+        await logActivityServer(auth.db, {
+          usuario: auth.user?.nombre || 'Sistema', modulo: 'Finanzas', accion: 'Cuotas de Cashea descontadas (automático)',
+          detalles: `${r.aplicados.length} cuota(s), $${r.totalUSD.toFixed(2)} · ${r.enlazadas} orden(es) enlazada(s) · ${r.rechazados.length} sin aplicar`,
+          referencia_tabla: 'abonos', referencia_id: null, sede_id: sede,
+        });
+      }
+    } catch { /* no crítico: se concilia igual y se pueden descontar a mano */ }
+  }
+
   try {
     const cuentas = CUENTAS_DEL_BANCO[bancoEfectivo] || CUENTAS_DEL_BANCO[banco];
     const sistema = await cargarSistema(auth.db, {
@@ -133,6 +155,7 @@ export async function POST(req: NextRequest) {
         archivo: nombreArchivo,
         banco: bancoEfectivo,
         cruce: cruce ? { banco: cruce.banco, desde: cruce.desde, hasta: cruce.hasta, movimientos: cruce.movimientos.length } : null,
+        autoCuotas,
         generadoPor: auth.user?.nombre || '',
         generadoEn: new Date().toISOString(),
       },

@@ -688,6 +688,13 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
       <p className="text-[11px] text-muted-foreground">
         Archivo: {datos.meta.archivo}{datos.meta.cruce ? ` · cruzado con ${BANCOS.find(x => x.id === datos.meta.cruce!.banco)?.nombre || datos.meta.cruce.banco}` : ''} · el archivo no se guarda: se leyó en memoria y se descartó.
       </p>
+      {datos.meta.autoCuotas && (datos.meta.autoCuotas.aplicados.length > 0 || datos.meta.autoCuotas.pendientes > 0) && (
+        <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[12px] text-emerald-700 dark:text-emerald-400">
+          Cuotas de Cashea descontadas automáticamente: <strong>{datos.meta.autoCuotas.aplicados.length}</strong> (${datos.meta.autoCuotas.totalUSD.toFixed(2)})
+          {datos.meta.autoCuotas.pendientes > 0 && <> · {datos.meta.autoCuotas.pendientes} orden(es) por asignar a una venta en «Por cobrar»</>}
+          {datos.meta.autoCuotas.rechazados.length > 0 && <> · {datos.meta.autoCuotas.rechazados.length} no se pudieron aplicar</>}.
+        </p>
+      )}
     </div>
   );
 }

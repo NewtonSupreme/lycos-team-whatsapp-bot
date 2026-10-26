@@ -38,6 +38,7 @@ export interface MetaConciliacion {
   cruce: { banco: string; desde: string; hasta: string; movimientos: number } | null;
   generadoPor: string;
   generadoEn: string;
+  autoCuotas?: { aplicados: unknown[]; rechazados: unknown[]; enlazadas: number; totalUSD: number; pendientes: number } | null;
 }
 
 export function generarConciliacionPDF(r: ResultadoConciliacion, meta: MetaConciliacion, opciones?: { guardar?: (doc: jsPDF) => void }) {
