@@ -670,7 +670,30 @@ export async function GET(req: NextRequest) {
         pendientesDetalle: (c.resumen?.pendientesDetalle || []).filter((p: any) => String(p.fecha).slice(0, 10) === fecha).slice(0, 8),
       }));
       const hayBancoUsado = cuentasUsadas.size > 0;
+      // Lo que entró de verdad a los bancos ese día (BNC y Cashea son el mismo dinero: se cuenta una vez).
+      const filasEntrada: any[] = [];
+      const yaBnc = ultimaPorBanco.has('bnc') || ultimaPorBanco.has('bnc_cuotas');
+      for (const c of ultimaPorBanco.values()) {
+        if (c.banco === 'cashea' && yaBnc) continue;
+        const e = c.resumen?.entradasPorDia?.[fecha];
+        if (!e) continue;
+        const usdBanco = c.resumen?.moneda === 'USD';
+        filasEntrada.push({
+          banco: NOMBRE_BANCO[c.banco] || c.banco, moneda: usdBanco ? 'USD' : 'Bs',
+          total: n(e.total), enSistema: n(e.enSistema), deVentasAnteriores: n(e.deVentasAnteriores),
+          justificado: n(e.justificado), sinRegistrar: n(e.sinRegistrar), otraCuenta: n(e.otraCuenta),
+          usd: usdBanco ? n(e.total) : (tasa > 0 ? r2(n(e.total) / tasa) : 0),
+        });
+      }
+      const entradasBanco = filasEntrada.length ? {
+        filas: filasEntrada,
+        totalUsd: r2(filasEntrada.reduce((s, f) => s + f.usd, 0)),
+        totalBs: r2(filasEntrada.filter(f => f.moneda === 'Bs').reduce((s, f) => s + f.total, 0)),
+        deVentasAnterioresUsd: r2(filasEntrada.reduce((s, f) => s + (f.moneda === 'USD' ? f.deVentasAnteriores : (tasa > 0 ? f.deVentasAnteriores / tasa : 0)), 0)),
+        sinRegistrarUsd: r2(filasEntrada.reduce((s, f) => s + (f.moneda === 'USD' ? f.sinRegistrar : (tasa > 0 ? f.sinRegistrar / tasa : 0)), 0)),
+      } : null;
       conciliacion = {
+        entradasBanco,
         estado: !bancos.length ? (hayBancoUsado ? 'sin_conciliar' : 'sin_banco')
           : bancos.some(b => b.desactualizada) ? 'desactualizada'
             : bancos.every(b => b.cuadra) && !sinConciliar.length ? 'conciliado' : 'parcial',

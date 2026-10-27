@@ -107,6 +107,11 @@ export interface ReporteDiarioData {
     bancos: Array<{ nombre: string; periodo: string; porcentaje: number; pendientes: number; cuadra: boolean; enJuego: number; usuario: string; creada: string; desactualizada: boolean; pendientesDetalle: Array<{ tipo: string; fecha: string; ref?: string; monto: number; concepto?: string }> }>;
     sinConciliar?: string[];
     nota?: string;
+    /** Lo que entró de verdad a los bancos ese día, según los estados de cuenta, y qué lo explica. */
+    entradasBanco?: {
+      filas: Array<{ banco: string; moneda: 'Bs' | 'USD'; total: number; enSistema: number; deVentasAnteriores: number; justificado: number; sinRegistrar: number; otraCuenta: number; usd: number }>;
+      totalUsd: number; totalBs: number; deVentasAnterioresUsd: number; sinRegistrarUsd: number;
+    } | null;
   };
   gastosTotal: { usd: number; bs: number };
   generadoEn: string;
@@ -202,6 +207,8 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
       { t: 'BNC (DESGLOSE, YA SUMADO)', v: bsTxt(en.bnc.totalBs), eq: `PM ${bsTxt(en.bnc.bs)} + Cashea ${usd(en.bnc.casheaUsd)}`, color: C.orange, light: C.orangeL },
       { t: 'TOTAL DEL DÍA', v: usd(en.totalUsd), eq: `equiv. ${bsTxt(en.totalBs)}`, color: C.dark, light: C.bg },
     ];
+    const eb = data.conciliacion?.entradasBanco;
+    if (eb) cajas.push({ t: 'ENTRÓ AL BANCO (ESTADOS)', v: usd(eb.totalUsd), eq: eb.totalBs ? `Bs ${fmt(eb.totalBs)}` : 'según estados de cuenta', color: C.green, light: C.greenL });
     const w = (pageW - margin * 2 - (cajas.length - 1) * 2.4) / cajas.length;
     cajas.forEach((k, i) => {
       const x = margin + i * (w + 2.4);
@@ -637,8 +644,30 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   afterTable();
 
   // ══════════════ 16 · CONCILIACIÓN BANCARIA DEL DÍA ══════════════
+  if (cn?.entradasBanco) {
+    const eb = cn.entradasBanco;
+    section('16 · Lo que entró a los bancos hoy (según los estados de cuenta)', `${usd(eb.totalUsd)}${eb.totalBs ? `  ·  Bs ${fmt(eb.totalBs)}` : ''}`);
+    const m = (f: { moneda: string }, x: number) => (f.moneda === 'USD' ? usd(x) : fmt(x));
+    autoTable(doc, {
+      startY: y,
+      head: [['BANCO', 'ENTRÓ (SU MONEDA)', 'EQUIV. $', 'EN VENTAS Y COBROS DEL DÍA', 'INICIAL / CUOTA DE VENTA ANTERIOR', 'JUSTIFICADO', 'SIN REGISTRAR', 'EN OTRA CUENTA']],
+      body: eb.filas.map(f => [f.banco, `${f.moneda === 'USD' ? '$' : 'Bs '}${fmt(f.total)}`, usd(f.usd), m(f, f.enSistema), m(f, f.deVentasAnteriores), m(f, f.justificado), m(f, f.sinRegistrar), m(f, f.otraCuenta)]),
+      foot: [['TOTAL ENTRÓ', '', usd(eb.totalUsd), '', usd(eb.deVentasAnterioresUsd), usd(eb.filas.reduce((t, f) => t + (f.moneda === 'USD' ? f.justificado : (data.tasa > 0 ? f.justificado / data.tasa : 0)), 0)), usd(eb.sinRegistrarUsd), '']],
+      theme: 'grid',
+      headStyles: { fillColor: C.green, textColor: C.white, fontSize: 6.2, fontStyle: 'bold', halign: 'center' },
+      bodyStyles: { fontSize: 6.6, cellPadding: 1.4, textColor: C.dark },
+      footStyles: { fillColor: C.dark, textColor: C.white, fontSize: 6.6, fontStyle: 'bold' },
+      columnStyles: { 1: { halign: 'right', fontStyle: 'bold' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' } },
+      margin: { left: margin, right: margin },
+    });
+    afterTable();
+    doc.setTextColor(...C.gray); doc.setFontSize(6.3); doc.setFont('helvetica', 'italic');
+    doc.text(`Ventas del día (por fecha de la venta): ${usd(tv.total)}  ·  Entró al banco: ${usd(eb.totalUsd)}. La diferencia son cobros de ventas de otros días (${usd(eb.deVentasAnterioresUsd)}), cobros aún sin registrar (${usd(eb.sinRegistrarUsd)}), cuotas y lo que no pasó por banco.`, margin, y + 1);
+    y += 7;
+  }
+
   if (cn && cn.estado !== 'sin_banco') {
-    section('16 · Conciliación bancaria', cn.estado === 'conciliado' ? 'Todo confirmado por el banco' : cn.estado === 'sin_conciliar' ? 'Sin estado de cuenta' : 'Hay pendientes');
+    section('Conciliación bancaria · estado', cn.estado === 'conciliado' ? 'Todo confirmado por el banco' : cn.estado === 'sin_conciliar' ? 'Sin estado de cuenta' : 'Hay pendientes');
     if (cn.bancos.length) {
       autoTable(doc, {
         startY: y,

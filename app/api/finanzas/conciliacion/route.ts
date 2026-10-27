@@ -147,6 +147,22 @@ export async function POST(req: NextRequest) {
     const conciliados = ing.conciliados.length + egr.conciliados.length + ing.justificados.length + egr.justificados.length;
     const pendientes = ing.sinRegistrar.length + ing.noLlegaron.length + ing.diferencias.length + ing.enOtraCuenta.length + ing.inicialesSinCuenta.length
       + egr.sinRegistrar.length + egr.noSalieron.length + egr.diferencias.length;
+    // Lo que entró al banco cada día (según el estado de cuenta) y qué lo explica: en ventas y cobros de ese día,
+    // en una inicial o cuota de una venta anterior, justificado, o todavía sin registrar. Así el reporte diario
+    // puede decir cuánto entró de verdad, no solo lo que se vendió ese día.
+    const enUsd = bancoEfectivo === 'cashea';
+    const valor = (m: { monto: number; usd?: number | null }) => Math.round((enUsd ? Math.abs(m.usd ?? 0) : Math.abs(m.monto)) * 100) / 100;
+    const entradasPorDia: Record<string, { total: number; enSistema: number; deVentasAnteriores: number; justificado: number; sinRegistrar: number; otraCuenta: number }> = {};
+    const suma = (fecha: string, campo: 'enSistema' | 'deVentasAnteriores' | 'justificado' | 'sinRegistrar' | 'otraCuenta', monto: number) => {
+      const d = (entradasPorDia[fecha] ||= { total: 0, enSistema: 0, deVentasAnteriores: 0, justificado: 0, sinRegistrar: 0, otraCuenta: 0 });
+      d[campo] = Math.round((d[campo] + monto) * 100) / 100;
+      d.total = Math.round((d.total + monto) * 100) / 100;
+    };
+    for (const p of resultado.ingresos.conciliados) for (const m of p.banco) suma(m.fecha, p.regla === 'inicial_tardia' ? 'deVentasAnteriores' : 'enSistema', valor(m));
+    for (const d of resultado.ingresos.diferencias) suma(d.banco.fecha, 'enSistema', valor(d.banco));
+    for (const m of resultado.ingresos.justificados) suma(m.fecha, 'justificado', valor(m));
+    for (const m of resultado.ingresos.sinRegistrar) suma(m.fecha, 'sinRegistrar', valor(m));
+    for (const x of resultado.ingresos.enOtraCuenta) suma(x.banco.fecha, 'otraCuenta', valor(x.banco));
     let corridaId: string | null = null;
     let anterior: { creada: string; pendientes: number | null; porcentaje: number | null; usuario: string | null } | null = null;
     let seguimientos: Record<string, { accion: string; resuelto: boolean; motivo: string | null; usuario: string | null; fecha: string }> = {};
@@ -162,6 +178,8 @@ export async function POST(req: NextRequest) {
           sinRegistrar: ing.sinRegistrar.length, noLlegaron: ing.noLlegaron.length, montosDistintos: ing.diferencias.length + egr.diferencias.length,
           otraCuenta: ing.enOtraCuenta.length, pagosSinGasto: egr.sinRegistrar.length, gastosNoSalieron: egr.noSalieron.length,
           justificados: ing.justificados.length + egr.justificados.length, totalBanco: ing.totalBanco, totalSistema: ing.totalSistema,
+          moneda: enUsd ? 'USD' : 'Bs',
+          entradasPorDia,
           // Registros del sistema que el banco confirmó (venta, cobro o gasto): el reporte diario les pone su sello de «conciliado».
           ids: [...new Set([
             ...ing.conciliados.flatMap(p => p.sistema.map(s => `${s.tabla}:${s.registroId}`)),
