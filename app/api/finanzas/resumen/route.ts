@@ -1,3 +1,4 @@
+import { cargarDatosCaja, construirFlujo, type CuentaCaja } from '@/lib/caja/flujo';
 import { NextRequest, NextResponse } from 'next/server';
 import { authorize } from '@/lib/auth-server';
 import { BANK_METHODS, binToUSD } from '@/lib/reporte/ventas-mapping';
@@ -442,106 +443,26 @@ export async function GET(req: NextRequest) {
 
   let cuentas: SaldoCuenta[] = [];
   if (cuentasRaw.length > 0) {
-    const binsUsados = cuentasRaw.map(c => c.bin).filter(Boolean) as string[];
-    // Los movimientos de la cuenta van desde SU fecha de arranque, que puede
-    // ser anterior al período que se está viendo.
-    const arranqueMin = cuentasRaw.reduce(
-      (min, c) => (c.desde < min ? c.desde : min), cuentasRaw[0].desde,
-    );
-
-    // Cashea se liquida en el BNC: si hay cuenta BNC, se trae también la
-    // columna de Cashea para sumársela.
-    const colsMov = [...new Set([...binsUsados, ...(binsUsados.includes('bnc') ? ['cashea'] : [])])];
-    let qMov = auth.db.from('ventas_dia')
-      .select(`fecha, tasa, tasa_cambio, ${colsMov.join(', ')}`)
-      .gte('fecha', arranqueMin).lte('fecha', hasta).limit(5000);
-    if (sede) qMov = qMov.eq('sede_id', sede);
-
-    let qSal = auth.db.from('egresos')
-      .select('fecha, total_egresos, moneda, tasa_cambio, metodo_pago, metodos_pago')
-      .gte('fecha', arranqueMin).lte('fecha', hasta).limit(5000);
-    if (sede) qSal = qSal.eq('sede_id', sede);
-
-    // Lo cobrado de ventas anteriores entra a su cuenta el día del cobro.
-    let qAb = auth.db.from('abonos')
-      .select('fecha, created_at, tasa_cambio, metodos_pago')
-      .gte('fecha', arranqueMin).lte('fecha', hasta).limit(5000);
-    if (sede) qAb = qAb.eq('sede_id', sede);
-
-    const [rMov, rSal, rAb] = await Promise.all([qMov, qSal, qAb]);
-    const movs = (rMov.data as unknown as FilaVenta[]) || [];
-    const sals = (rSal.data as unknown as FilaEgreso[]) || [];
-    const abonosCuenta = ((rAb.data || []) as Array<{ fecha: string | null; tasa_cambio: number | null; metodos_pago: Record<string, number> | null }>);
-
+    // La regla del saldo vive en UN sitio (lib/caja/flujo.ts): ventas, cobros, gastos, traspasos y
+    // movimientos manuales. Finanzas, el flujo de caja y el PDF no pueden decir cosas distintas.
+    const defs: CuentaCaja[] = cuentasRaw.map(c => ({
+      id: c.id, nombre: c.nombre, tipo: c.tipo, moneda: c.moneda as CuentaCaja['moneda'], bin: c.bin,
+      saldo_inicial: Number(c.saldo_inicial) || 0, desde: String(c.desde).slice(0, 10),
+    }));
+    const arranqueMin = defs.reduce((min, c) => (c.desde < min ? c.desde : min), defs[0].desde);
+    const datosCaja = await cargarDatosCaja(auth.db, { sede: sede || null, desde: arranqueMin, hasta, cuentas: defs });
     cuentas = cuentasRaw.map(c => {
-      let entradas = 0;
-      let salidas = 0;
-      // Desglose del BNC: lo que entró en Bs y lo que vino de Cashea.
-      let pmBs = 0, casheaUsd = 0, casheaBs = 0;
-      if (c.bin) {
-        const meta = BANK_METHODS.find(m => m.id === c.bin);
-        // El bin y la cuenta tienen que llevarse en la misma moneda; si no, se
-        // estarían sumando bolívares a un saldo en dólares. Es un error de
-        // configuración, no de datos, así que se avisa y no se suma nada.
-        const monedaBin = meta?.moneda === 'Bs' ? 'VES' : 'USD';
-        if (meta && monedaBin !== c.moneda) {
-          avisos.push(
-            `La cuenta «${c.nombre}» está en ${c.moneda} pero «${meta.label}» se cobra en `
-            + `${meta.moneda}. Corrige su moneda para que el saldo cuadre.`,
-          );
-        } else {
-          for (const m of movs) {
-            if (!m.fecha || m.fecha.slice(0, 10) < c.desde) continue;
-            // El bin ya viene en la moneda de la cuenta; no se convierte nada.
-            entradas += Number(m[c.bin!] as number) || 0;
-            // Lo de Cashea cae en el BNC: se pasa a bolívares con la tasa de la venta.
-            if (c.bin === 'bnc') {
-              const t = Number(m.tasa_cambio) || Number(m.tasa) || 0;
-              const cu = Number((m as Record<string, unknown>).cashea) || 0;
-              pmBs += Number(m.bnc as number) || 0;
-              casheaUsd += cu; casheaBs += cu * t;
-              entradas += cu * t;
-            }
-          }
-          for (const a of abonosCuenta) {
-            if (!a.fecha || a.fecha < c.desde || !a.metodos_pago) continue;
-            entradas += Number(a.metodos_pago[c.bin!]) || 0;
-            if (c.bin === 'bnc') {
-              const cu = Number(a.metodos_pago.cashea) || 0;
-              pmBs += Number(a.metodos_pago.bnc) || 0;
-              casheaUsd += cu; casheaBs += cu * (Number(a.tasa_cambio) || 0);
-              entradas += cu * (Number(a.tasa_cambio) || 0);
-            }
-          }
-        }
-        for (const e of sals) {
-          if (!e.fecha || e.fecha.slice(0, 10) < c.desde) continue;
-          // Con el reparto por cuenta se descuenta exactamente lo que salió de
-          // ESTA cuenta, ya en su moneda. Un pago partido entre Banesco y la
-          // caja en dólares baja las dos, cada una por su parte.
-          const reparto = e.metodos_pago && typeof e.metodos_pago === 'object' ? e.metodos_pago : null;
-          if (reparto && Object.values(reparto).some(v => Number(v) > 0)) {
-            salidas += Number(reparto[c.bin!]) || 0;
-            continue;
-          }
-          if (e.metodo_pago !== c.bin) continue;
-          const monto = Number(e.total_egresos) || 0;
-          const esUsd = String(e.moneda || 'USD').toUpperCase() === 'USD';
-          const tasa = Number(e.tasa_cambio) || 0;
-          // Se lleva a la moneda de la cuenta, que es la unidad del saldo.
-          if (c.moneda === 'USD') salidas += esUsd ? monto : (tasa > 0 ? monto / tasa : 0);
-          else salidas += esUsd ? (tasa > 0 ? monto * tasa : 0) : monto;
-        }
-      }
-      const inicial = r2(Number(c.saldo_inicial) || 0);
+      const def = defs.find(d => d.id === c.id)!;
+      const f = construirFlujo(def, datosCaja, { desde: def.desde, hasta });
+      for (const a of f.avisos) avisos.push(a);
       return {
         id: c.id, nombre: c.nombre, tipo: c.tipo, moneda: c.moneda,
         banco: c.banco, bin: c.bin,
-        saldoInicial: inicial,
-        entradas: r2(entradas),
-        salidas: r2(salidas),
-        saldo: r2(inicial + entradas - salidas),
-        ...(c.bin === 'bnc' ? { desglose: { pmBs: r2(pmBs), casheaUsd: r2(casheaUsd), casheaBs: r2(casheaBs) } } : {}),
+        saldoInicial: r2(def.saldo_inicial),
+        entradas: f.entradas,
+        salidas: f.salidas,
+        saldo: f.saldoFinal,
+        ...(f.desgloseBnc ? { desglose: f.desgloseBnc } : {}),
       };
     });
     // La cuenta de Cashea es el mismo dinero que ya está dentro del BNC: se

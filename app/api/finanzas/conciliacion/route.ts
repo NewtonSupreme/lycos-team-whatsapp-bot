@@ -180,6 +180,8 @@ export async function POST(req: NextRequest) {
           justificados: ing.justificados.length + egr.justificados.length, totalBanco: ing.totalBanco, totalSistema: ing.totalSistema,
           moneda: enUsd ? 'USD' : 'Bs',
           entradasPorDia,
+          // El saldo que dice el banco: el flujo de caja lo compara con el del sistema.
+          saldos: { inicial: estado.saldoInicial ?? null, final: estado.saldoFinal ?? null, desde: estado.desde, hasta: estado.hasta },
           // Registros del sistema que el banco confirmó (venta, cobro o gasto): el reporte diario les pone su sello de «conciliado».
           ids: [...new Set([
             ...ing.conciliados.flatMap(p => p.sistema.map(s => `${s.tabla}:${s.registroId}`)),

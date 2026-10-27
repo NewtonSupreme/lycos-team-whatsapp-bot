@@ -12,6 +12,7 @@ import ModalAccionConciliacion from '@/components/finanzas/ModalAccionConciliaci
 import ModalTraspasoConciliacion from '@/components/finanzas/ModalTraspasoConciliacion';
 import ModalSistemaConciliacion, { type CasoSistema } from '@/components/finanzas/ModalSistemaConciliacion';
 import HistorialConciliacion from '@/components/finanzas/HistorialConciliacion';
+import FlujoCaja from '@/components/finanzas/FlujoCaja';
 import { avisarCambio } from '@/lib/use-refrescar';
 import { Chip, Panel, Pestanas, TarjetaKpi, Vacio } from '@/components/panel/Piezas';
 import { cn } from '@/lib/utils';
@@ -65,6 +66,8 @@ export default function ConciliacionBancaria({ sede }: { sede?: string | null })
   const [datos, setDatos] = useState<{ resultado: ResultadoConciliacion; meta: MetaConciliacion } | null>(null);
   const [pestana, setPestana] = useState<Pestana>('sin_registrar');
   const [historialInicio, setHistorialInicio] = useState(false);
+  // Dos formas de llevar una cuenta: conciliar su estado de cuenta, o llevar su flujo de caja (Binance, Zelle, efectivo).
+  const [vista, setVista] = useState<'estados' | 'flujo'>('estados');
 
   const elegido = BANCOS.find(b => b.id === banco) || null;
 
@@ -110,12 +113,28 @@ export default function ConciliacionBancaria({ sede }: { sede?: string | null })
 
   const reiniciar = () => { setDatos(null); setArchivo(null); setCruce(null); setError(null); };
 
+  const selectorVista = (
+    <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Qué quieres hacer">
+      {([['estados', 'Conciliar estado de cuenta'], ['flujo', 'Flujo de caja · Binance, Zelle y cuentas']] as const).map(([id, texto]) => (
+        <button key={id} type="button" role="tab" aria-selected={vista === id} onClick={() => setVista(id)}
+          className={cn('h-9 rounded-xl px-3.5 text-[12.5px] font-bold transition-colors', vista === id ? 'bg-primary text-primary-foreground' : 'border border-border text-foreground hover:border-primary')}>
+          {texto}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (vista === 'flujo') {
+    return <div className="space-y-4">{selectorVista}<FlujoCaja sede={sede} /></div>;
+  }
+
   if (datos) {
     return <Resultado datos={datos} pestana={pestana} setPestana={setPestana} onPdf={descargarPdf} onNueva={reiniciar} onRecargar={conciliar} archivo={archivo} sede={sede} />;
   }
 
   return (
     <div className="space-y-4">
+      {selectorVista}
       <div className="flex justify-end">
         <button type="button" onClick={() => setHistorialInicio(v => !v)}
           className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border px-3.5 text-[12.5px] font-semibold text-foreground hover:border-primary">
