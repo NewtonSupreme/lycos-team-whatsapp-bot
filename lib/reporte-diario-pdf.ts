@@ -68,7 +68,7 @@ export interface ReporteDiarioData {
   fecha: string;
   fechaLabel: string;
   tasa: number;
-  ventas: Array<{ verif?: SelloBanco; nombre: string; carro: string; placa?: string; trabajo?: string; pago?: string; mecanico?: string; total: number; contado: number; cashea: number; iva: number; inicial: number; financiado: number; porCobrar: number; bancos: BankRec; departamentos: DeptRec }>;
+  ventas: Array<{ duplicada?: boolean; verif?: SelloBanco; nombre: string; carro: string; placa?: string; trabajo?: string; pago?: string; mecanico?: string; total: number; contado: number; cashea: number; iva: number; inicial: number; financiado: number; porCobrar: number; bancos: BankRec; departamentos: DeptRec }>;
   totalesVentas: { total: number; contado: number; cashea: number; iva: number; inicial: number; financiado: number; porCobrar: number; departamentos: DeptRec; bancos: BankRec };
   porCobrar: Array<{ nombre: string; carro: string; placa?: string; monto: number; observacion: string }>;
   porCobrarTotal: number;
@@ -101,6 +101,8 @@ export interface ReporteDiarioData {
   /** Lo que entró hoy (ventas + cobros), cada moneda por su lado. */
   entradas?: ResumenEntradas;
   gastos: Array<{ verif?: SelloBanco; concepto: string; proveedor?: string; placa?: string; cuenta?: string; usd: number; bs: number }>;
+  /** Lo recibido de un mismo cliente registrado dos veces el mismo día. */
+  duplicados?: Array<{ cliente: string; recibidoUsd: number; veces: number }>;
   /** Estado de la conciliación bancaria de este día. */
   conciliacion?: {
     estado: 'conciliado' | 'parcial' | 'desactualizada' | 'sin_conciliar' | 'sin_banco';
@@ -252,6 +254,17 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
     }
   }
 
+  // ══════════════ ¿ALGUIEN SE REGISTRÓ DOS VECES? ══════════════
+  if (data.duplicados?.length) {
+    doc.setFillColor(...C.amberL); doc.roundedRect(margin, y, pageW - margin * 2, 9, 2, 2, 'F');
+    doc.setFillColor(...C.red); doc.rect(margin, y, 2.2, 9, 'F');
+    doc.setTextColor(...C.red); doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
+    doc.text('POSIBLE VENTA DUPLICADA: SUMA DOBLE AL INGRESO DEL DÍA', margin + 6, y + 4);
+    doc.setTextColor(...C.dark); doc.setFontSize(6.3); doc.setFont('helvetica', 'normal');
+    doc.text(data.duplicados.map(d => `${d.cliente} (${usd(d.recibidoUsd)} dos veces)`).join('  ·  ').substring(0, 190) + '  ·  Revisa el detalle de ventas (sección 3) y elimina la repetida.', margin + 6, y + 7.4);
+    y += 13;
+  }
+
   // ══════════════ SEGUIMIENTO DE VEHÍCULOS (arriba) ══════════════
   // Lo primero que se lee: qué carros entraron, se movieron o salieron ese
   // día, en qué quedaron y si ya pagaron. Iba al final, detrás de los gastos.
@@ -348,7 +361,7 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
         v.nombre.substring(0, 28),
         v.carro || '—',
         v.placa || '—',
-        (v.trabajo || '—').substring(0, 160),
+        `${v.duplicada ? '[POSIBLE DUPLICADO] ' : ''}${v.trabajo || '—'}`.substring(0, 170),
         v.mecanico || '—',
         v.pago || '—',
         SELLO_TXT[(v.verif || 'sin_banco') as SelloBanco],

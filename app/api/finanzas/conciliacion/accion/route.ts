@@ -6,6 +6,11 @@ import { buildCategoriaColumns, buildPagoColumnsCompletas, inferirCategoria } fr
 import type { JustificacionConciliacion } from '@/lib/conciliacion/motor';
 import { anotarAccion, cambiarCuenta, corregirMonto, tasaDelDia } from '@/lib/conciliacion/acciones';
 import { BANK_METHODS } from '@/lib/reporte/ventas-mapping';
+import { crearFacturaServidor } from '@/lib/facturas/servidor';
+
+const hoyCaracas = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Caracas' });
+const sinTildes = (t: unknown) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const sumarDias = (f: string, k: number) => new Date(Date.parse(`${f}T12:00:00Z`) + k * 86_400_000).toISOString().slice(0, 10);
 
 export const dynamic = 'force-dynamic';
 
@@ -129,6 +134,37 @@ export async function POST(req: NextRequest) {
       const fechaIso = `${fechaEfectiva}T12:00:00Z`;
       const ctaMetodo = cuenta || 'bnc';
 
+      // Lo que entró al banco puede incluir el IVA: el ingreso de la venta es la base (como al cobrar a mano).
+      const conIva = Boolean(body.conIva);
+      const pagadoUsd = totalDolares;
+      const baseUsd = conIva ? Math.round((pagadoUsd / 1.16) * 100) / 100 : pagadoUsd;
+
+      // ¿Ya está registrado? Registrar dos veces el mismo pago (a mano y desde la conciliación) duplicaba el ingreso del día.
+      if (!body.forzar) {
+        let cq = auth.db.from('ventas_dia')
+          .select(`id, fecha, cliente, total_ingresos, con_iva, comprobante_referencia, creado_por, created_at, ${ctaMetodo}`)
+          .gte('fecha', sumarDias(fechaEfectiva, -3)).lte('fecha', sumarDias(fechaEfectiva, 3)).limit(500);
+        if (sedeId) cq = cq.eq('sede_id', sedeId);
+        const { data: cercanas } = await cq;
+        const refLimpia = String(referencia || '').replace(/\D/g, '');
+        const duplicada = ((cercanas || []) as unknown as Array<Record<string, unknown>>).find(v => {
+          const refV = String(v.comprobante_referencia || '').replace(/\D/g, '');
+          const mismaRef = refLimpia.length >= 6 && refV.length >= 6 && (refV.endsWith(refLimpia.slice(-8)) || refLimpia.endsWith(refV.slice(-8)));
+          const enCuenta = Number(v[ctaMetodo]) || 0;
+          const mismoMontoBanco = enCuenta > 0 && Math.abs(enCuenta - numMonto) <= 0.01;
+          const mismoCliente = clienteNombre !== 'Cliente Conciliado' && sinTildes(v.cliente) === sinTildes(clienteNombre);
+          const baseV = Number(v.total_ingresos) || 0;
+          const mismoTotal = Math.abs(baseV - baseUsd) <= Math.max(0.5, baseUsd * 0.01) || Math.abs(baseV * (v.con_iva ? 1.16 : 1) - pagadoUsd) <= Math.max(0.5, pagadoUsd * 0.01);
+          return mismaRef || (mismoMontoBanco && v.fecha === fechaEfectiva) || (mismoCliente && mismoTotal);
+        });
+        if (duplicada) {
+          return NextResponse.json({
+            error: `Ya hay una venta de ${duplicada.cliente} por $${Number(duplicada.total_ingresos).toFixed(2)} (${String(duplicada.fecha)}), registrada por ${duplicada.creado_por || 'otro usuario'}. Si es el mismo pago, no la registres otra vez: aplícalo a esa venta.`,
+            duplicada: { id: duplicada.id, fecha: duplicada.fecha, cliente: duplicada.cliente, total: Number(duplicada.total_ingresos), creadoPor: duplicada.creado_por },
+          }, { status: 409 });
+        }
+      }
+
       let clienteId: string | null = null;
       let vehiculoId: string | null = null;
       if (placa && placa.trim().length >= 5) {
@@ -172,8 +208,8 @@ export async function POST(req: NextRequest) {
         tipo: categoria,
         tipo_personalizado: descFinal,
         descripcion: descFinal,
-        costo_estimado: totalDolares,
-        costo_final: totalDolares,
+        costo_estimado: baseUsd,
+        costo_final: baseUsd,
         estado: 'completada',
         fecha: fechaEfectiva,
         fecha_inicio: fechaIso,
@@ -195,7 +231,7 @@ export async function POST(req: NextRequest) {
       // Insertar venta_dia
       const metodosObj: Record<string, number> = { [ctaMetodo]: numMonto };
       const columnasPago = buildPagoColumnsCompletas(metodosObj);
-      const columnasCat = buildCategoriaColumns(categoria, totalDolares);
+      const columnasCat = buildCategoriaColumns(categoria, baseUsd);
       const refTag = `[ServicioID: ${newServ.id}]`;
       const notasVenta = `[Conciliado] ${descFinal} [Total: $${totalDolares.toFixed(2)} (${ctaMetodo.replace(/_/g, ' ')})] | Ref: ${referencia || 'S/R'} ${refTag}`;
 
@@ -209,26 +245,27 @@ export async function POST(req: NextRequest) {
         vehiculo_info: vehiculo_info || (placa ? `Placa ${placa}` : null),
         categoria,
         ...columnasCat,
-        total_ingresos: totalDolares,
+        total_ingresos: baseUsd,
         total_servicios: 1,
         total_clientes: 1,
         desglose: [{
           descripcion: descFinal,
           cantidad: 1,
-          precio_unitario: totalDolares,
-          total: totalDolares,
+          precio_unitario: baseUsd,
+          total: baseUsd,
         }],
         metodos_pago: metodosObj,
         ...columnasPago,
         tasa_cambio: tasa,
-        con_iva: false,
+        con_iva: conIva,
         comprobante_referencia: referencia || null,
         notas: notasVenta,
         creado_por: auth.user?.nombre || 'Admin',
         sede_id: sedeId,
         fecha_registro: new Date().toISOString(),
-        registro_atrasado: false,
-        estado: 'conciliado',
+        // Estado normal (el resto del sistema solo conoce pagado/pendiente); que vino de la conciliación consta en la nota y en el historial.
+        registro_atrasado: fechaEfectiva < hoyCaracas(),
+        estado: 'pagado',
       }).select().single();
 
       if (ventaErr) {
@@ -270,7 +307,21 @@ export async function POST(req: NextRequest) {
 
       await anotarAccion(auth.db, { ...ctx, caso: 'sin_registrar', accion: 'registrar_servicio', fecha: fechaEfectiva, monto: numMonto, referencia: referencia || ctx.referencia,
         despues: { cliente: clienteNombre, placa: placa || null, usd: totalDolares, cuenta: ctaMetodo, categoria }, tasa: enDolares ? null : tasaInfo, tabla: 'ventas_dia', registroId: newVenta?.id });
-      return NextResponse.json({ ok: true, servicio: newServ, venta: newVenta });
+      // La factura, igual que al cobrar a mano: sin ella la venta quedaba fuera de Facturas.
+      const factura = await crearFacturaServidor(auth.db, {
+        referenciaId: newServ.id, referenciaTabla: 'servicios', moduloOrigen: 'servicios', cliente: clienteNombre,
+        vehiculo: vehiculo_info || placa || null, totalBase: baseUsd, tasa: enDolares ? null : tasa, totalBs: enDolares ? null : numMonto,
+        items: [{ descripcion: descFinal, cantidad: 1, precio_unitario: baseUsd, total: baseUsd }], metodosPago: metodosObj, conIva,
+        notas: `Registrada desde la conciliación bancaria · Ref ${referencia || 'S/R'}`, emitidoPor: auth.user?.nombre || 'Admin', fecha: fechaEfectiva,
+        sedeId, comprobanteReferencia: referencia || null,
+      });
+      return NextResponse.json({
+        ok: true, servicio: newServ, venta: newVenta,
+        resumen: {
+          cliente: clienteNombre, fecha: fechaEfectiva, ingresoUsd: baseUsd, pagadoUsd, conIva, cuenta: ctaMetodo, montoBanco: numMonto,
+          factura: factura?.correlativo || null, ventaId: newVenta?.id,
+        },
+      });
     }
 
     // ── 4. REGISTRAR ABONO A UNA VENTA PENDIENTE ────────────────────────────
@@ -344,6 +395,16 @@ export async function POST(req: NextRequest) {
 
       const sedeId = auth.user?.sede_id || null;
       const ctaMetodo = cuenta || 'bnc';
+      // Mismo comprobante, mismo gasto: no se duplica (a mano y desde la conciliación).
+      if (!body.forzar && String(comprobante || '').trim().length >= 4) {
+        const { data: previo } = await auth.db.from('egresos').select('id, fecha, proveedor, total_egresos, creado_por').eq('comprobante_referencia', String(comprobante).trim()).limit(1).maybeSingle();
+        if (previo) {
+          return NextResponse.json({
+            error: `Ya hay un gasto con esa referencia: ${previo.proveedor} por $${Number(previo.total_egresos).toFixed(2)} (${String(previo.fecha)}), registrado por ${previo.creado_por || 'otro usuario'}.`,
+            duplicada: { id: previo.id, fecha: previo.fecha, cliente: previo.proveedor, total: Number(previo.total_egresos), creadoPor: previo.creado_por },
+          }, { status: 409 });
+        }
+      }
       const { data: egreso, error: egErr } = await auth.db.from('egresos').insert({
         fecha: fechaGasto,
         proveedor: proveedor || 'Gasto Operativo',

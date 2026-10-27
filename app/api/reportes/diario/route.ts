@@ -706,6 +706,22 @@ export async function GET(req: NextRequest) {
     } catch (e) {
       console.error('Reporte diario: no se pudo leer la conciliación', e);
     }
+    // ── ¿El mismo pago registrado dos veces? (a mano y desde la conciliación, por ejemplo) ───────────
+    // Mismo cliente y lo recibido igual (±1 %): suma doble al ingreso del día, y es lo primero que hay que mirar.
+    const sinT = (t: string) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const recibido = (v: VentaNorm) => binsTotalUSD(v.bancos, tasa);
+    const duplicados: Array<{ cliente: string; recibidoUsd: number; veces: number }> = [];
+    for (let i = 0; i < ventas.length; i++) {
+      const a = ventas[i]; const ra = recibido(a);
+      if (ra <= 0 || sinT(a.nombre) === 'consumidor final') continue;
+      for (let j = i + 1; j < ventas.length; j++) {
+        const b = ventas[j]; const rb = recibido(b);
+        if (sinT(a.nombre) === sinT(b.nombre) && rb > 0 && Math.abs(ra - rb) <= Math.max(0.5, ra * 0.01)) {
+          (a as any).duplicada = true; (b as any).duplicada = true;
+          if (!duplicados.some(d => sinT(d.cliente) === sinT(a.nombre) && Math.abs(d.recibidoUsd - ra) < 1)) duplicados.push({ cliente: a.nombre, recibidoUsd: r2(ra), veces: 2 });
+        }
+      }
+    }
     const ventasOut = ventas.map(({ refs: _r, actualizado: _a, ...v }) => v);
 
     // ── Respuesta ───────────────────────────────────────────────
@@ -719,6 +735,7 @@ export async function GET(req: NextRequest) {
       tasa,
       deptLabels: DEPT_LABELS,
       ventas: ventasOut,
+      duplicados,
       conciliacion,
       totalesVentas,
       porCobrar, porCobrarTotal,

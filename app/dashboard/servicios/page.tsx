@@ -776,9 +776,18 @@ export default function ServiciosPage() {
     try {
       const refTag = `[ServicioID: ${cita.id}]`;
       const [{ data: vd }, { data: vs }] = await Promise.all([
-        supabase.from('ventas_dia').select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
-        supabase.from('ventas_silenciadores').select('id').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
+        supabase.from('ventas_dia').select('*').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
+        supabase.from('ventas_silenciadores').select('*').like('notas', `%${refTag}%`).limit(1).maybeSingle(),
       ]);
+      // Respaldo completo en la papelera (Reportes › Papelera): si fue un error, se restaura con sus cuentas y su fecha.
+      for (const [fila, origen] of [[vd, 'ventas_dia'], [vs, 'ventas_silenciadores']] as const) {
+        if (!fila) continue;
+        await logActivity({
+          usuario: user?.nombre || 'Admin', modulo: 'Servicios', accion: 'Eliminó venta (Papelera)',
+          detalles: JSON.stringify({ originalRecord: fila, source: origen === 'ventas_silenciadores' ? 'ia' : 'dashboard', deletedAt: new Date().toISOString(), motivo: `La orden #${cita.id.slice(0, 5)} salió de completado` }),
+          referencia_id: String(fila.id), referencia_tabla: origen,
+        });
+      }
       if (vd) await supabase.from('ventas_dia').delete().eq('id', vd.id);
       if (vs) await supabase.from('ventas_silenciadores').delete().eq('id', vs.id);
       logActivity({

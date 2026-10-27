@@ -33,6 +33,10 @@ export default function ModalAccionConciliacion({
   const [modo, setModo] = useState<'servicio' | 'abono' | 'egreso' | 'justificar' | 'corregir' | 'seguimiento'>('justificar');
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Lo que se registró (para que nadie lo vuelva a registrar a mano) y el aviso si ya existía.
+  const [conIva, setConIva] = useState(false);
+  const [duplicada, setDuplicada] = useState<{ id: string; fecha: string; cliente: string; total: number; creadoPor?: string } | null>(null);
+  const [exito, setExito] = useState<null | { cliente: string; fecha: string; ingresoUsd: number; pagadoUsd: number; conIva: boolean; montoBanco: number; factura: string | null }>(null);
 
   // Campos para Servicio / Venta
   const [cliente, setCliente] = useState('');
@@ -64,6 +68,7 @@ export default function ModalAccionConciliacion({
   useEffect(() => {
     if (!abierto || !movimiento) return;
     setError(null);
+    setDuplicada(null); setExito(null); setConIva(false);
 
     // Cuenta predeterminada
     let ctaDefault = 'bnc';
@@ -115,8 +120,9 @@ export default function ModalAccionConciliacion({
   const desvioUsd = usdVenta > 0 && usdNuevo > 0 ? Math.abs(usdNuevo - usdVenta) / usdVenta : 0;
   const cambiaDolares = desvioUsd > 0.02;
 
-  const ejecutarAccion = async (e: React.FormEvent) => {
+  const ejecutarAccion = async (e: React.FormEvent, forzar = false) => {
     e.preventDefault();
+    setDuplicada(null);
     setGuardando(true);
     setError(null);
 
@@ -152,6 +158,7 @@ export default function ModalAccionConciliacion({
           referencia,
           cuenta,
           categoria,
+          conIva,
         };
       } else if (modo === 'abono') {
         if (!ventaId.trim()) {
@@ -204,11 +211,16 @@ export default function ModalAccionConciliacion({
       const res = await fetch('/api/finanzas/conciliacion/accion', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...body, banco, corridaId, caso: casoActual, refMovimiento: movimiento.referencia || null }),
+        body: JSON.stringify({ ...body, banco, corridaId, caso: casoActual, refMovimiento: movimiento.referencia || null, forzar }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error al procesar la acción');
+      if (!res.ok) {
+        if (data.duplicada) setDuplicada(data.duplicada);
+        throw new Error(data.error || 'Error al procesar la acción');
+      }
 
+      // Una venta registrada se confirma con lo que quedó: quien la hizo ve que ya está y no la repite a mano.
+      if (modo === 'servicio' && data.resumen) { setExito(data.resumen); return; }
       onCompletado();
       onCerrar();
     } catch (err) {
@@ -217,6 +229,28 @@ export default function ModalAccionConciliacion({
       setGuardando(false);
     }
   };
+
+  const cerrar = () => { if (exito) onCompletado(); onCerrar(); };
+
+  if (exito) {
+    return (
+      <ModalBase abierto={abierto} onCerrar={cerrar} titulo="Venta registrada" subtitulo="Ya está en el sistema: no hace falta registrarla otra vez" icono={<Check className="h-5 w-5" />} tinteIcono="bg-emerald-500/10 text-emerald-600" ancho="md">
+        <div className="space-y-3 text-[13px]">
+          <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3">
+            <p className="text-[14px] font-black text-foreground">{exito.cliente}</p>
+            <p className="mt-1 text-foreground/85">Con fecha <strong>{exito.fecha.split('-').reverse().join('/')}</strong> · ingreso <strong>${exito.ingresoUsd.toFixed(2)}</strong>{exito.conIva ? ` (+ IVA = $${exito.pagadoUsd.toFixed(2)} cobrados)` : ''}</p>
+            <p className="text-foreground/85">Entró por {exito.montoBanco.toLocaleString('es-VE', { minimumFractionDigits: 2 })} {banco === 'cashea' ? 'USD' : 'Bs'}{exito.factura ? ` · factura ${exito.factura}` : ''}</p>
+          </div>
+          <ul className="list-disc space-y-0.5 pl-5 text-[12px] text-muted-foreground">
+            <li>Suma a los <strong>ingresos del reporte diario de ese día</strong> y a la cuenta del banco.</li>
+            <li>Quedó en Ventas, Servicios y Facturas, marcada como registrada desde la conciliación.</li>
+            <li>Si el cliente se registra a mano otra vez, el sistema avisará del duplicado.</li>
+          </ul>
+          <div className="flex justify-end"><button type="button" onClick={cerrar} className="rounded-xl bg-primary px-4 py-2 font-bold text-primary-foreground hover:opacity-90">Listo</button></div>
+        </div>
+      </ModalBase>
+    );
+  }
 
   const chipsSugeridos = tipo === 'ingreso'
     ? [
@@ -410,6 +444,11 @@ export default function ModalAccionConciliacion({
                   required
                 />
               </div>
+
+              <label className="flex items-start gap-2 rounded-xl border border-border bg-muted/30 p-2.5 text-[12px] text-foreground/85">
+                <input type="checkbox" checked={conIva} onChange={e => setConIva(e.target.checked)} className="mt-0.5" />
+                <span>El pago <strong>incluye el IVA (16%)</strong>: el ingreso de la venta será la base sin IVA y la factura saldrá con IVA, como al cobrar a mano.</span>
+              </label>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div>
@@ -668,6 +707,15 @@ export default function ModalAccionConciliacion({
           {error && (
             <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-2.5 text-[12px] text-red-600 dark:text-red-400">
               {error}
+            </div>
+          )}
+          {duplicada && (
+            <div className="space-y-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-2.5 text-[12px] text-amber-900 dark:text-amber-200">
+              <p><strong>Posible duplicado.</strong> {duplicada.cliente} · ${duplicada.total.toFixed(2)} · {duplicada.fecha}{duplicada.creadoPor ? ` · ${duplicada.creadoPor}` : ''}</p>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => { setDuplicada(null); setError(null); }} className="rounded-lg border border-amber-500/50 px-2.5 py-1 font-bold hover:bg-amber-500/20">Es el mismo pago: no registrar</button>
+                <button type="button" onClick={e => void ejecutarAccion(e as unknown as React.FormEvent, true)} className="rounded-lg bg-amber-600 px-2.5 py-1 font-bold text-white hover:opacity-90">Es otro pago: registrar de todos modos</button>
+              </div>
             </div>
           )}
 

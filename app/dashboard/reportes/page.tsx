@@ -2316,6 +2316,9 @@ function MetricasDiaModal({ onClose, defaultFecha }: { onClose: () => void; defa
 }
 
 // ── Main Page ──────────────────────────────────────────────────
+/** Las columnas de la lista que la venta respaldada sí trae (sin valores vacíos). */
+const COLUMNA_VENTA_FILTRO = (cols: string[], fila: Record<string, unknown>) => cols.filter(c => fila[c] !== undefined && fila[c] !== null);
+
 export default function ReportesPage() {
   const [ventas, setVentas] = useState<VentaDia[]>([]);
   /** Quién hizo cada venta, por id de venta. Se carga aparte, en bloque. */
@@ -2937,22 +2940,17 @@ export default function ReportesPage() {
           });
           if (insError) throw insError;
         } else {
-          const { error: insError } = await supabase.from('ventas_dia').insert({
-            id: originalRecord.id,
-            fecha: originalRecord.fecha,
-            cliente: originalRecord.cliente,
-            total_ingresos: originalRecord.total_ingresos,
-            total_servicios: originalRecord.total_servicios,
-            total_clientes: originalRecord.total_clientes,
-            desglose: originalRecord.desglose,
-            notas: originalRecord.notas,
-            creado_por: originalRecord.creado_por,
-            created_at: originalRecord.created_at,
-            sede_id: logRecord.sede_id,
-            pago_usd: originalRecord.pago_usd || 0,
-            pago_ves: originalRecord.pago_ves || 0,
-            tasa_cambio: originalRecord.tasa_cambio || 0
-          });
+          // Todas las columnas que traía la venta (cuentas de banco, IVA, referencia, cliente, vehículo…): antes solo volvían cinco
+          // y el pago de la venta quedaba en cero.
+          const COLUMNAS_VENTA = ['id', 'fecha', 'cliente', 'cliente_id', 'vehiculo_id', 'servicio_id', 'placa', 'vehiculo_info', 'categoria', 'total_ingresos', 'total_servicios', 'total_clientes',
+            'desglose', 'notas', 'creado_por', 'created_at', 'metodos_pago', 'con_iva', 'tasa', 'tasa_cambio', 'pago_usd', 'pago_ves', 'estado', 'abono', 'saldo_pendiente', 'tiene_abono', 'total_abonado',
+            'inicial', 'financiado', 'cashea_pct', 'por_cobrar', 'por_cobrar_detalle', 'iva', 'contado', 'facturas', 'fecha_registro', 'registro_atrasado', 'comprobante_url', 'comprobante_referencia',
+            'silenciador', 'cauchera', 'alineacion', 'electronica', 'mecanica', 'frenos', 'lavado', 'repuestos',
+            'pago_movil_banesco', 'pago_movil_exterior', 'punto_bancamiga', 'punto_banesco', 'bnc', 'dolares', 'binance', 'zelle', 'efectivo_bs', 'cashea'];
+          const fila: Record<string, unknown> = {};
+          for (const c of COLUMNA_VENTA_FILTRO(COLUMNAS_VENTA, originalRecord)) fila[c] = originalRecord[c];
+          fila.sede_id = originalRecord.sede_id ?? logRecord.sede_id;
+          const { error: insError } = await supabase.from('ventas_dia').insert(fila);
           if (insError) throw insError;
         }
 
