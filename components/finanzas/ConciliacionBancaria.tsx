@@ -12,6 +12,7 @@ import ModalAccionConciliacion from '@/components/finanzas/ModalAccionConciliaci
 import ModalTraspasoConciliacion from '@/components/finanzas/ModalTraspasoConciliacion';
 import ModalSistemaConciliacion, { type CasoSistema } from '@/components/finanzas/ModalSistemaConciliacion';
 import HistorialConciliacion from '@/components/finanzas/HistorialConciliacion';
+import { avisarCambio } from '@/lib/use-refrescar';
 import { Chip, Panel, Pestanas, TarjetaKpi, Vacio } from '@/components/panel/Piezas';
 import { cn } from '@/lib/utils';
 import type { BankBin } from '@/lib/reporte/ventas-mapping';
@@ -333,6 +334,8 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
     </button>
   );
   const [confirmando, setConfirmando] = useState<string | null>(null);
+  // Cada cosa que se hace desde aquí cambia las cifras: se avisa para que Reportes y Finanzas se actualicen solos.
+  const alCompletar = () => { avisarCambio(); onRecargar(); };
   const confirmarPareja = async (p: { banco: MovimientoBanco[]; sistema: AsientoSistema[] }) => {
     const m = p.banco[0]; const s = p.sistema[0];
     const hash = `${m.fecha}_${m.referencia}_${m.monto}`;
@@ -342,7 +345,7 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accion: 'confirmar_pareja', movimientoHash: hash, registroId: s.registroId, tabla: s.tabla, referencia: m.referencia, refMovimiento: m.referencia, monto: Math.abs(m.monto), fecha: m.fecha, concepto: s.concepto, banco: r.banco, corridaId: datos.meta.corridaId ?? null }),
       });
-      onRecargar();
+      alCompletar();
     } finally { setConfirmando(null); }
   };
   /** Lo último que se hizo con un movimiento del banco: queda visible en la lista aunque siga pendiente. */
@@ -369,7 +372,7 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accion: 'quitar_justificacion', movimientoHash: hash }),
       });
-      onRecargar();
+      alCompletar();
     } catch {
       /* ignore */
     } finally {
@@ -759,7 +762,7 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
         banco={r.banco}
         sistema={modalAccion.sistema ?? null}
         corridaId={datos.meta.corridaId ?? null}
-        onCompletado={onRecargar}
+        onCompletado={alCompletar}
       />
 
       <ModalSistemaConciliacion
@@ -771,7 +774,7 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
         banco={r.banco}
         corridaId={datos.meta.corridaId ?? null}
         cuentaDelBanco={(CUENTAS_DEL_BANCO[r.banco] || [])[0]}
-        onCompletado={onRecargar}
+        onCompletado={alCompletar}
       />
 
       <ModalTraspasoConciliacion
@@ -779,7 +782,7 @@ function Resultado({ datos, pestana, setPestana, onPdf, onNueva, onRecargar, arc
         onCerrar={() => setModalTraspaso({ abierto: false, movimiento: null })}
         movimiento={modalTraspaso.movimiento}
         banco={r.banco}
-        onCompletado={onRecargar}
+        onCompletado={alCompletar}
       />
 
       <p className="text-[11px] text-muted-foreground">

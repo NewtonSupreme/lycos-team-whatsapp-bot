@@ -1,6 +1,7 @@
 'use client';
 import Link from 'next/link';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useRefrescarAlCambiar } from '@/lib/use-refrescar';
 import { createPortal } from 'react-dom';
 import {
   Download, TrendingUp, DollarSign, Wrench, Users, Plus, Pencil,
@@ -2622,6 +2623,8 @@ export default function ReportesPage() {
   }, [period, currentSede]);
 
   useEffect(() => { loadData(); }, [loadData]);
+  // Y también cuando otra pantalla avisa de un cambio (conciliación, correcciones) o al volver a la pestaña.
+  useRefrescarAlCambiar(loadData);
 
   // Realtime
   useEffect(() => {
@@ -3033,7 +3036,8 @@ export default function ReportesPage() {
     setGenerandoReporte(true);
     try {
       const sedeQ = currentSede?.id ? `&sede=${currentSede.id}` : '';
-      const res = await fetch(`/api/reportes/diario?fecha=${f}${sedeQ}`);
+      // Siempre lo último que hay en la base: sin copias guardadas del navegador.
+      const res = await fetch(`/api/reportes/diario?fecha=${f}${sedeQ}&_=${Date.now()}`, { cache: 'no-store' });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err?.error || `Error ${res.status}`);

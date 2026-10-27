@@ -11,6 +11,10 @@ import { getCategoria, inferirCategoria } from '@/lib/categorias';
 import { lineasDeMetodos, lineasDePago, montoConMoneda, resumenCorto } from '@/lib/pagos/desglose';
 import { mecanicoDeOrden, servicioDeNotas } from '@/lib/facturas/mecanico';
 
+// El reporte se arma con lo que hay en la base EN ESTE MOMENTO: nunca se sirve una copia vieja.
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 // Comisión que cobra el banco por cada transacción de punto de venta (referencial, ajustable).
 const COMISION_PUNTO_PCT = 0.05;
 const DEPT_KEYS: DeptKey[] = ['silenciador', 'cauchera', 'alineacion', 'electronica', 'mecanica', 'frenos', 'lavado', 'repuestos'];
@@ -19,6 +23,11 @@ const n = (x: unknown) => Number(x) || 0;
 const r2 = (x: number) => Math.round((Number(x) || 0) * 100) / 100;
 
 interface VentaNorm {
+  id: string;
+  /** Sello del banco: 'conciliado', 'pendiente' (hay banco y aún no cuadra) o 'sin_banco' (efectivo, divisas o crédito). */
+  verif: 'conciliado' | 'pendiente' | 'cambio' | 'sin_banco';
+  /** Última vez que se tocó la venta: si es posterior a la conciliación, el sello ya no vale. */
+  actualizado: string;
   nombre: string;
   carro: string;
   /** La placa aparte: es lo que identifica al carro, y en el texto se recortaba. */
@@ -220,7 +229,11 @@ export async function GET(req: NextRequest) {
         ? lineasDePago(bancos, tasa)
         : lineasDeMetodos(v.metodos_pago, tasa);
       const sid = v.servicio_id || servicioDeNotas(v.notas);
+      const hayBanco = BANK_METHODS.some(m => m.id !== 'efectivo_bs' && m.moneda === 'Bs' && bancos[m.id] > 0) || bancos.cashea > 0;
       return {
+        id: String(v.id),
+        actualizado: String(v.updated_at || v.created_at || ''),
+        verif: (hayBanco ? 'pendiente' : 'sin_banco') as VentaNorm['verif'],
         nombre: v.cliente || 'Consumidor Final',
         carro: sinPlaca(carroTxt, placaV),
         placa: placaV,
@@ -595,9 +608,82 @@ export async function GET(req: NextRequest) {
         cuenta: lineas.length ? resumenCorto(lineas) : (debe ? 'Por pagar' : 'Sin cuenta'),
         usd,
         bs: bsExactos ?? r2(usd * tasaGasto),
+        id: String(e.id),
+        verif: (lineas.some((l: any) => l.moneda === 'Bs') ? 'pendiente' : 'sin_banco') as 'conciliado' | 'pendiente' | 'cambio' | 'sin_banco',
+        cuentas: lineas.map((l: any) => String(l.cuenta)),
+        actualizado: String(e.updated_at || e.created_at || ''),
       };
     });
     const gastosTotal = { usd: r2(gastos.reduce((s: number, g: any) => s + g.usd, 0)), bs: r2(gastos.reduce((s: number, g: any) => s + g.bs, 0)) };
+
+    // ── Conciliación bancaria: ¿esto que dice el reporte lo confirmó el banco? ──────────
+    // Se toma la última conciliación de cada banco que cubre este día. Lo que se tocó DESPUÉS
+    // de conciliar no conserva el sello: hay que volver a conciliar para que cuadre.
+    const NOMBRE_BANCO: Record<string, string> = { banesco: 'Banesco', bnc: 'BNC', bnc_cuotas: 'BNC cuotas', exterior: 'Banco Exterior', cashea: 'Cashea' };
+    const COBERTURA: Record<string, string[]> = { pago_movil_banesco: ['banesco'], punto_banesco: ['banesco'], bnc: ['bnc', 'bnc_cuotas'], cashea: ['bnc', 'bnc_cuotas', 'cashea'], pago_movil_exterior: ['exterior'] };
+    let conciliacion: any = { estado: 'sin_banco', bancos: [] };
+    try {
+      let cq = db.from('conciliacion_corridas').select('banco, desde, hasta, archivo, usuario, cuadra, porcentaje, pendientes, en_juego, created_at, resumen')
+        .lte('desde', fecha).gte('hasta', fecha).order('created_at', { ascending: false }).limit(40);
+      if (sede) cq = cq.or(`sede_id.is.null,sede_id.eq.${sede}`);
+      const { data: corridas } = await cq;
+      const ultimaPorBanco = new Map<string, any>();
+      for (const c of corridas || []) if (!ultimaPorBanco.has(c.banco)) ultimaPorBanco.set(c.banco, c);
+
+      const confirmados = new Set<string>();
+      for (const c of ultimaPorBanco.values()) for (const id of (c.resumen?.ids || [])) confirmados.add(`${c.banco}|${id}`);
+      const idsDe = (bancos: string[], clave: string) => bancos.some(b => confirmados.has(`${b}|${clave}`));
+      const enBanco = (cuentas: string[]) => [...new Set(cuentas.flatMap(c => COBERTURA[c] || []))];
+      const corridaDe = (cuentas: string[]) => enBanco(cuentas).map(b => ultimaPorBanco.get(b)).filter(Boolean)
+        .sort((a: any, b: any) => (a.created_at < b.created_at ? 1 : -1))[0];
+
+      const sello = (clave: string, cuentas: string[], actualizado: string, actual: string) => {
+        if (actual === 'sin_banco') return 'sin_banco';
+        const bancosAplican = enBanco(cuentas);
+        if (!idsDe(bancosAplican, clave)) return 'pendiente';
+        const c = corridaDe(cuentas);
+        return c && actualizado && actualizado > c.created_at ? 'cambio' : 'conciliado';
+      };
+      for (const v of ventas) {
+        const cuentas = BANK_METHODS.filter(m => v.bancos[m.id] > 0).map(m => m.id);
+        (v as any).verif = sello(`ventas_dia:${v.id}`, cuentas, v.actualizado, v.verif);
+      }
+      for (const g of gastos as any[]) g.verif = sello(`egresos:${g.id}`, g.cuentas || [], g.actualizado, g.verif);
+
+      // ¿Falta conciliar algún banco que sí se usó ese día?
+      const cuentasUsadas = new Set<string>([
+        ...ventas.flatMap(v => BANK_METHODS.filter(m => v.bancos[m.id] > 0).map(m => m.id)),
+        ...(gastos as any[]).flatMap(g => g.cuentas || []),
+      ]);
+      const sinConciliar = [...new Set([...cuentasUsadas].flatMap(c => (COBERTURA[c] ? [COBERTURA[c][0]] : [])))]
+        .filter(b => !COBERTURA[b === 'banesco' ? 'pago_movil_banesco' : b === 'exterior' ? 'pago_movil_exterior' : 'bnc'].some(x => ultimaPorBanco.has(x)));
+
+      const cambioDespues = (c: any) => [...ventas.filter(v => v.verif !== 'sin_banco').map(v => v.actualizado), ...(gastos as any[]).filter(g => g.verif !== 'sin_banco').map(g => g.actualizado)]
+        .some(t => t && t > c.created_at);
+      const bancos = [...ultimaPorBanco.values()].map((c: any) => ({
+        banco: c.banco, nombre: NOMBRE_BANCO[c.banco] || c.banco,
+        periodo: [c.desde, c.hasta].map((d: string) => String(d).slice(0, 10).split('-').reverse().join('/')).join(' al '),
+        porcentaje: n(c.porcentaje), pendientes: n(c.pendientes), cuadra: !!c.cuadra, enJuego: n(c.en_juego),
+        usuario: c.usuario || '', archivo: c.archivo || '',
+        creada: new Date(c.created_at).toLocaleString('es-VE', { timeZone: 'America/Caracas', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: true }),
+        desactualizada: cambioDespues(c),
+        pendientesDetalle: (c.resumen?.pendientesDetalle || []).filter((p: any) => String(p.fecha).slice(0, 10) === fecha).slice(0, 8),
+      }));
+      const hayBancoUsado = cuentasUsadas.size > 0;
+      conciliacion = {
+        estado: !bancos.length ? (hayBancoUsado ? 'sin_conciliar' : 'sin_banco')
+          : bancos.some(b => b.desactualizada) ? 'desactualizada'
+            : bancos.every(b => b.cuadra) && !sinConciliar.length ? 'conciliado' : 'parcial',
+        bancos,
+        sinConciliar: sinConciliar.map(b => NOMBRE_BANCO[b] || b),
+        // Las conciliaciones hechas antes de esta versión no guardaron qué registros confirmaron: hay que repetirlas una vez.
+        nota: [...ultimaPorBanco.values()].some((c: any) => !Array.isArray(c.resumen?.ids))
+          ? 'Hay conciliaciones anteriores a esta versión: vuelve a subir su estado de cuenta una vez para ver el sello de cada venta y gasto.' : '',
+      };
+    } catch (e) {
+      console.error('Reporte diario: no se pudo leer la conciliación', e);
+    }
+    const ventasOut = ventas.map(({ refs: _r, actualizado: _a, ...v }) => v);
 
     // ── Respuesta ───────────────────────────────────────────────
     const fechaLabel = new Date(`${fecha}T12:00:00`).toLocaleDateString('es-VE', {
@@ -609,7 +695,8 @@ export async function GET(req: NextRequest) {
       fechaLabel,
       tasa,
       deptLabels: DEPT_LABELS,
-      ventas,
+      ventas: ventasOut,
+      conciliacion,
       totalesVentas,
       porCobrar, porCobrarTotal,
       sistema, sistemaTotal,

@@ -231,7 +231,11 @@ export async function POST(req: NextRequest) {
         estado: 'conciliado',
       }).select().single();
 
-      if (ventaErr) throw new Error(ventaErr.message);
+      if (ventaErr) {
+        // Sin venta no debe quedar la orden: antes quedaban órdenes «completadas» sin cobro y el reporte las contaba.
+        await auth.db.from('servicios').delete().eq('id', newServ.id);
+        throw new Error(ventaErr.message);
+      }
 
       // Si vino movimientoHash, guardar la justificación/enlace
       if (body.movimientoHash) {

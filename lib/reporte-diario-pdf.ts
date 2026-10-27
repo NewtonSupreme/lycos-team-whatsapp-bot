@@ -56,6 +56,11 @@ const carro = (texto: string, largo = 22): string => {
   return `${partes.slice(0, -1).join(' ').slice(0, sitio).trim()} ${ultima}`;
 };
 
+/** El sello del banco de cada venta o gasto. */
+type SelloBanco = 'conciliado' | 'pendiente' | 'cambio' | 'sin_banco';
+const SELLO_TXT: Record<SelloBanco, string> = { conciliado: 'CONCILIADO', pendiente: 'SIN CONCILIAR', cambio: 'CAMBIÓ DESPUÉS', sin_banco: '—' };
+const selloColor = (v: string): RGB | null => (v === 'CONCILIADO' ? C.green : v === 'SIN CONCILIAR' ? C.amber : v === 'CAMBIÓ DESPUÉS' ? C.orange : null);
+
 interface DeptRec { silenciador: number; cauchera: number; alineacion: number; electronica: number; mecanica: number; frenos: number; lavado: number; repuestos: number; }
 interface BankRec { pago_movil_banesco: number; bnc: number; punto_banesco: number; punto_bancamiga: number; pago_movil_exterior: number; dolares: number; binance: number; zelle: number; efectivo_bs: number; cashea: number; }
 
@@ -63,7 +68,7 @@ export interface ReporteDiarioData {
   fecha: string;
   fechaLabel: string;
   tasa: number;
-  ventas: Array<{ nombre: string; carro: string; placa?: string; trabajo?: string; pago?: string; mecanico?: string; total: number; contado: number; cashea: number; iva: number; inicial: number; financiado: number; porCobrar: number; bancos: BankRec; departamentos: DeptRec }>;
+  ventas: Array<{ verif?: SelloBanco; nombre: string; carro: string; placa?: string; trabajo?: string; pago?: string; mecanico?: string; total: number; contado: number; cashea: number; iva: number; inicial: number; financiado: number; porCobrar: number; bancos: BankRec; departamentos: DeptRec }>;
   totalesVentas: { total: number; contado: number; cashea: number; iva: number; inicial: number; financiado: number; porCobrar: number; departamentos: DeptRec; bancos: BankRec };
   porCobrar: Array<{ nombre: string; carro: string; placa?: string; monto: number; observacion: string }>;
   porCobrarTotal: number;
@@ -95,7 +100,14 @@ export interface ReporteDiarioData {
   bancos: Array<{ banco: string; moneda?: string; recibido?: number; bs: number; usd: number }>;
   /** Lo que entró hoy (ventas + cobros), cada moneda por su lado. */
   entradas?: ResumenEntradas;
-  gastos: Array<{ concepto: string; proveedor?: string; placa?: string; cuenta?: string; usd: number; bs: number }>;
+  gastos: Array<{ verif?: SelloBanco; concepto: string; proveedor?: string; placa?: string; cuenta?: string; usd: number; bs: number }>;
+  /** Estado de la conciliación bancaria de este día. */
+  conciliacion?: {
+    estado: 'conciliado' | 'parcial' | 'desactualizada' | 'sin_conciliar' | 'sin_banco';
+    bancos: Array<{ nombre: string; periodo: string; porcentaje: number; pendientes: number; cuadra: boolean; enJuego: number; usuario: string; creada: string; desactualizada: boolean; pendientesDetalle: Array<{ tipo: string; fecha: string; ref?: string; monto: number; concepto?: string }> }>;
+    sinConciliar?: string[];
+    nota?: string;
+  };
   gastosTotal: { usd: number; bs: number };
   generadoEn: string;
 }
@@ -205,6 +217,34 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
     y += 21;
   }
 
+  // ══════════════ ESTADO DE LA CONCILIACIÓN BANCARIA ══════════════
+  // Lo primero que hay que saber de las cifras: si el banco las confirmó, y si algo cambió después.
+  const cn = data.conciliacion;
+  if (cn && cn.estado !== 'sin_banco') {
+    const resumenBancos = cn.bancos.map(b => `${b.nombre} ${fmt(b.porcentaje, 1)}%${b.pendientes ? ` (${b.pendientes} pend.)` : ''}`).join('  ·  ');
+    const ultima = cn.bancos[0];
+    const b = ({
+      conciliado: { t: 'CONCILIADO CON EL BANCO', c: C.green, l: C.greenL, s: `${resumenBancos}${ultima ? `  ·  ${ultima.creada}${ultima.usuario ? ` por ${ultima.usuario}` : ''}` : ''}` },
+      parcial: { t: 'CONCILIACIÓN PARCIAL', c: C.amber, l: C.amberL, s: `${resumenBancos}${cn.sinConciliar?.length ? `  ·  Sin conciliar: ${cn.sinConciliar.join(', ')}` : ''}` },
+      desactualizada: { t: 'HAY CAMBIOS DESPUÉS DE LA ÚLTIMA CONCILIACIÓN', c: C.orange, l: C.orangeL, s: `Vuelve a conciliar para actualizar el sello  ·  ${resumenBancos}` },
+      sin_conciliar: { t: 'SIN CONCILIAR', c: C.red, l: [254, 226, 226] as RGB, s: `Falta el estado de cuenta de: ${(cn.sinConciliar || []).join(', ') || 'los bancos usados'}  ·  Finanzas › Conciliación bancaria` },
+    } as const)[cn.estado as 'conciliado' | 'parcial' | 'desactualizada' | 'sin_conciliar'];
+    if (b) {
+      doc.setFillColor(...b.l); doc.roundedRect(margin, y, pageW - margin * 2, 9, 2, 2, 'F');
+      doc.setFillColor(...b.c); doc.rect(margin, y, 2.2, 9, 'F');
+      doc.setTextColor(...b.c); doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
+      doc.text(b.t, margin + 6, y + 4);
+      doc.setTextColor(...C.dark); doc.setFontSize(6.3); doc.setFont('helvetica', 'normal');
+      doc.text(b.s.substring(0, 190), margin + 6, y + 7.4);
+      y += 13;
+      if (cn.nota) {
+        doc.setTextColor(...C.gray); doc.setFontSize(6); doc.setFont('helvetica', 'italic');
+        doc.text(cn.nota, margin + 2, y - 1.5);
+        y += 3.5;
+      }
+    }
+  }
+
   // ══════════════ SEGUIMIENTO DE VEHÍCULOS (arriba) ══════════════
   // Lo primero que se lee: qué carros entraron, se movieron o salieron ese
   // día, en qué quedaron y si ya pagaron. Iba al final, detrás de los gastos.
@@ -225,7 +265,7 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
       s.trabajo.substring(0, 60), s.mecanico.substring(0, 22),
       ESTADOS[s.estado] || s.estado.toUpperCase().replace(/_/g, ' '),
       s.pago || '—',
-      s.ultimo.substring(0, 60),
+      s.ultimo.substring(0, 96),
     ]),
     theme: 'grid',
     headStyles: { fillColor: C.black, textColor: C.white, fontSize: 6.3, fontStyle: 'bold', halign: 'center' },
@@ -294,7 +334,7 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   section('3 · Detalle de cada venta', `${data.ventas.length} venta${data.ventas.length === 1 ? '' : 's'}`);
   autoTable(doc, {
     startY: y,
-    head: [['Nº', 'CLIENTE', 'VEHÍCULO', 'PLACA', 'TRABAJO REALIZADO', 'MECÁNICO', 'CÓMO PAGÓ', 'TOTAL', 'DEBE']],
+    head: [['Nº', 'CLIENTE', 'VEHÍCULO', 'PLACA', 'TRABAJO REALIZADO', 'MECÁNICO', 'CÓMO PAGÓ', 'BANCO', 'TOTAL', 'DEBE']],
     body: (data.ventas.length ? data.ventas : [{ nombre: 'Sin ventas este día', carro: '', total: 0, porCobrar: 0, financiado: 0 } as never])
       .map((v: ReporteDiarioData['ventas'][number], i: number) => [
         data.ventas.length ? i + 1 : '',
@@ -304,6 +344,7 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
         (v.trabajo || '—').substring(0, 160),
         v.mecanico || '—',
         v.pago || '—',
+        SELLO_TXT[(v.verif || 'sin_banco') as SelloBanco],
         data.ventas.length ? usd(v.total) : '',
         data.ventas.length && (v.porCobrar + v.financiado) > 0.01 ? usd(v.porCobrar + v.financiado) : '',
       ]),
@@ -314,8 +355,12 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
     columnStyles: {
       0: { cellWidth: 7, halign: 'center' }, 1: { cellWidth: 32 }, 2: { cellWidth: 26 },
       3: { cellWidth: 15, halign: 'center', fontStyle: 'bold' }, 4: { cellWidth: 'auto' },
-      5: { cellWidth: 30 }, 6: { cellWidth: 50 }, 7: { cellWidth: 16, halign: 'right', fontStyle: 'bold' },
-      8: { cellWidth: 16, halign: 'right', textColor: C.amber, fontStyle: 'bold' },
+      5: { cellWidth: 28 }, 6: { cellWidth: 46 }, 7: { cellWidth: 19, halign: 'center', fontStyle: 'bold', fontSize: 5.2 },
+      8: { cellWidth: 16, halign: 'right', fontStyle: 'bold' },
+      9: { cellWidth: 16, halign: 'right', textColor: C.amber, fontStyle: 'bold' },
+    },
+    didParseCell: (d: any) => {
+      if (d.section === 'body' && d.column.index === 7) { const col = selloColor(String(d.cell.raw || '')); if (col) d.cell.styles.textColor = col; }
     },
     margin: { left: margin, right: margin },
   });
@@ -571,22 +616,69 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   autoTable(doc, {
     startY: y,
     // De qué cuenta salió cada gasto, a quién y para qué carro.
-    head: [['Nº', 'CONCEPTO', 'PROVEEDOR', 'PLACA', 'PAGADO DESDE', 'Bs', '$']],
-    body: (data.gastos.length ? data.gastos : [{ concepto: 'Sin gastos registrados', bs: 0, usd: 0 }])
-      .map((g, i) => [i + 1, g.concepto, (g.proveedor || '—').substring(0, 24), g.placa || '—', g.cuenta || '—', bs(g.bs), usd(g.usd)]),
-    foot: [['', 'TOTAL', '', '', '', bs(data.gastosTotal.bs), usd(data.gastosTotal.usd)]],
+    head: [['Nº', 'CONCEPTO', 'PROVEEDOR', 'PLACA', 'PAGADO DESDE', 'BANCO', 'Bs', '$']],
+    body: (data.gastos.length ? data.gastos : [{ concepto: 'Sin gastos registrados', bs: 0, usd: 0 } as ReporteDiarioData['gastos'][number]])
+      .map((g, i) => [i + 1, g.concepto, (g.proveedor || '—').substring(0, 24), g.placa || '—', g.cuenta || '—', SELLO_TXT[(g.verif || 'sin_banco') as SelloBanco], fmt(g.bs), usd(g.usd)]),
+    foot: [['', 'TOTAL', '', '', '', '', fmt(data.gastosTotal.bs), usd(data.gastosTotal.usd)]],
     theme: 'grid',
     headStyles: { fillColor: C.red, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
     bodyStyles: { fontSize: 6.5, cellPadding: 1.4, textColor: C.dark },
     footStyles: { fillColor: C.dark, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
     columnStyles: {
       0: { cellWidth: 10, halign: 'center' }, 1: { cellWidth: 'auto' }, 2: { cellWidth: 40 },
-      3: { cellWidth: 18, halign: 'center', fontStyle: 'bold' }, 4: { cellWidth: 52 },
-      5: { cellWidth: 28, halign: 'right' }, 6: { cellWidth: 24, halign: 'right' },
+      3: { cellWidth: 18, halign: 'center', fontStyle: 'bold' }, 4: { cellWidth: 48 },
+      5: { cellWidth: 22, halign: 'center', fontStyle: 'bold', fontSize: 5.2 }, 6: { cellWidth: 28, halign: 'right' }, 7: { cellWidth: 22, halign: 'right' },
+    },
+    didParseCell: (d: any) => {
+      if (d.section === 'body' && d.column.index === 5) { const col = selloColor(String(d.cell.raw || '')); if (col) d.cell.styles.textColor = col; }
     },
     margin: { left: margin, right: margin },
   });
   afterTable();
+
+  // ══════════════ 16 · CONCILIACIÓN BANCARIA DEL DÍA ══════════════
+  if (cn && cn.estado !== 'sin_banco') {
+    section('16 · Conciliación bancaria', cn.estado === 'conciliado' ? 'Todo confirmado por el banco' : cn.estado === 'sin_conciliar' ? 'Sin estado de cuenta' : 'Hay pendientes');
+    if (cn.bancos.length) {
+      autoTable(doc, {
+        startY: y,
+        head: [['BANCO', 'PERÍODO CONCILIADO', 'RESULTADO', '% CONCILIADO', 'PENDIENTES', 'POR ACLARAR', 'HECHA', 'POR', 'ESTADO']],
+        body: cn.bancos.map(b => [b.nombre, b.periodo, b.cuadra ? 'CUADRA' : 'NO CUADRA', `${fmt(b.porcentaje, 1)}%`, String(b.pendientes), fmt(b.enJuego), b.creada, b.usuario || '—', b.desactualizada ? 'DESACTUALIZADA' : 'AL DÍA']),
+        theme: 'grid',
+        headStyles: { fillColor: C.dark, textColor: C.white, fontSize: 6.3, fontStyle: 'bold', halign: 'center' },
+        bodyStyles: { fontSize: 6.5, cellPadding: 1.4, textColor: C.dark },
+        columnStyles: { 3: { halign: 'right' }, 4: { halign: 'center' }, 5: { halign: 'right' }, 8: { halign: 'center', fontStyle: 'bold' } },
+        didParseCell: (d: any) => {
+          if (d.section !== 'body') return;
+          const v = String(d.cell.raw || '');
+          if (d.column.index === 2) d.cell.styles.textColor = v === 'CUADRA' ? C.green : C.red;
+          if (d.column.index === 8) d.cell.styles.textColor = v === 'AL DÍA' ? C.green : C.orange;
+        },
+        margin: { left: margin, right: margin },
+      });
+      afterTable();
+      const pend = cn.bancos.flatMap(b => b.pendientesDetalle.map(p => [b.nombre, p.tipo, p.ref || '—', (p.concepto || '—').substring(0, 40), fmt(p.monto)]));
+      if (pend.length) {
+        autoTable(doc, {
+          startY: y,
+          head: [['BANCO', 'QUÉ FALTA', 'REFERENCIA', 'CLIENTE / PROVEEDOR', 'MONTO']],
+          body: pend,
+          theme: 'grid',
+          headStyles: { fillColor: C.amber, textColor: C.white, fontSize: 6.3, fontStyle: 'bold' },
+          bodyStyles: { fontSize: 6.5, cellPadding: 1.3, textColor: C.dark },
+          columnStyles: { 4: { halign: 'right', fontStyle: 'bold' } },
+          margin: { left: margin, right: margin },
+        });
+        afterTable();
+      }
+    }
+    if (cn.sinConciliar?.length) {
+      doc.setTextColor(...C.red); doc.setFontSize(7); doc.setFont('helvetica', 'bold');
+      doc.text(`Sin conciliar: ${cn.sinConciliar.join(', ')}. Sube su estado de cuenta en Finanzas › Conciliación bancaria.`, margin, y + 2);
+      y += 8;
+    }
+  }
+
 
   // ══════════════ FOOTER en todas las páginas ══════════════
   const pages = doc.internal.getNumberOfPages();

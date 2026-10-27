@@ -1,5 +1,6 @@
 'use client';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRefrescarAlCambiar } from '@/lib/use-refrescar';
 import {
   BarChart3, Building2, CalendarDays, Download, FileText, Landmark, Lightbulb, Loader2,
   Minus, Percent, PiggyBank, Plus, Receipt, RefreshCw, Users, Wallet, X, ArrowLeftRight,
@@ -92,6 +93,8 @@ export default function FinanzasPage() {
   }, [desde, hasta, sedeId, agrupacion]);
 
   useEffect(() => { cargar(); }, [cargar]);
+  // Se recarga sola cuando algo cambia (conciliación, correcciones, gastos…) o al volver a la pestaña.
+  useRefrescarAlCambiar(cargar);
 
   const tasa = datos?.tasa || 0;
 

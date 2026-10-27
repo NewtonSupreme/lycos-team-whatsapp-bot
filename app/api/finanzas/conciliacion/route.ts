@@ -162,6 +162,21 @@ export async function POST(req: NextRequest) {
           sinRegistrar: ing.sinRegistrar.length, noLlegaron: ing.noLlegaron.length, montosDistintos: ing.diferencias.length + egr.diferencias.length,
           otraCuenta: ing.enOtraCuenta.length, pagosSinGasto: egr.sinRegistrar.length, gastosNoSalieron: egr.noSalieron.length,
           justificados: ing.justificados.length + egr.justificados.length, totalBanco: ing.totalBanco, totalSistema: ing.totalSistema,
+          // Registros del sistema que el banco confirmó (venta, cobro o gasto): el reporte diario les pone su sello de «conciliado».
+          ids: [...new Set([
+            ...ing.conciliados.flatMap(p => p.sistema.map(s => `${s.tabla}:${s.registroId}`)),
+            ...egr.conciliados.flatMap(p => p.sistema.map(s => `${s.tabla}:${s.registroId}`)),
+            ...ing.sistemaJustificados.map(x => `${x.sistema.tabla}:${x.sistema.registroId}`),
+            ...egr.sistemaJustificados.map(x => `${x.sistema.tabla}:${x.sistema.registroId}`),
+          ])].slice(0, 1500),
+          // Lo que falta por aclarar, para leerlo en el reporte sin abrir la conciliación.
+          pendientesDetalle: [
+            ...ing.sinRegistrar.map(m => ({ tipo: 'Cobro sin registrar', fecha: m.fecha, ref: m.referencia, monto: Math.abs(m.monto) })),
+            ...ing.diferencias.map(d => ({ tipo: 'Monto distinto', fecha: d.banco.fecha, ref: d.banco.referencia, monto: Math.abs(d.diferencia), concepto: d.sistema.concepto })),
+            ...ing.noLlegaron.map(s => ({ tipo: 'No llegó al banco', fecha: s.fecha, ref: '', monto: s.monto, concepto: s.concepto })),
+            ...egr.sinRegistrar.map(m => ({ tipo: 'Pago sin gasto', fecha: m.fecha, ref: m.referencia, monto: Math.abs(m.monto) })),
+            ...egr.noSalieron.map(s => ({ tipo: 'Gasto que no salió', fecha: s.fecha, ref: '', monto: s.monto, concepto: s.concepto })),
+          ].slice(0, 40),
         },
       }).select('id').single();
       corridaId = fila?.id ?? null;
