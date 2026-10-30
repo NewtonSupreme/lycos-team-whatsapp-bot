@@ -121,6 +121,17 @@ export interface ResumenFinanzas {
     ingresos: Kpi; gastos: Kpi; utilidad: Kpi; margen: Kpi;
     porCobrar: Kpi; porPagar: Kpi;
   };
+  /**
+   * De dónde salen la utilidad y el margen: el mismo cálculo que Finanzas › Utilidad
+   * (ventas sin IVA − costo de los carros cobrados − gastos del taller).
+   */
+  utilidadDetalle?: {
+    ventas: number; costoCarros: number; gastosTaller: number; iva: number; enProceso: number;
+    entroCajaUsd: number; puntaje: number; criticos: number;
+  } | null;
+  /** Totales de los anillos: lo cobrado por método y todo lo gastado (base de caja, no de utilidad). */
+  totalCobrado?: number;
+  totalGastado?: number;
   flujo: PuntoFlujo[];
   agrupacionFlujo: 'dia' | 'semana' | 'mes';
   gastosPorCategoria: Tajada[];

@@ -21,6 +21,7 @@ import type { BankBin } from '@/lib/reporte/ventas-mapping';
 import type { ResumenFinanzas, Tajada } from '@/lib/finanzas/tipos';
 import { cn } from '@/lib/utils';
 import UtilidadPeriodo from '@/components/finanzas/UtilidadPeriodo';
+import GestionCuentas from '@/components/finanzas/GestionCuentas';
 
 /**
  * Finanzas: ingresos, gastos, flujo de caja y rentabilidad.
@@ -263,13 +264,13 @@ export default function FinanzasPage() {
             <TarjetaKpi
               icono={<Receipt className="h-[18px] w-[18px]" aria-hidden />}
               tinte="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-              etiqueta="Ingresos totales" valor={dinero(datos.kpis.ingresos.valor)}
+              etiqueta="Ventas (sin IVA)" valor={dinero(datos.kpis.ingresos.valor)}
               variacion={datos.kpis.ingresos.variacion} variacionPie="vs. período anterior"
             />
             <TarjetaKpi
               icono={<PiggyBank className="h-[18px] w-[18px]" aria-hidden />}
               tinte="bg-red-500/15 text-red-600 dark:text-red-400"
-              etiqueta="Gastos totales" valor={dinero(datos.kpis.gastos.valor)}
+              etiqueta="Costos y gastos" valor={dinero(datos.kpis.gastos.valor)}
               variacion={datos.kpis.gastos.variacion} variacionPie="vs. período anterior"
               subirEsBueno={false}
             />
@@ -300,6 +301,17 @@ export default function FinanzasPage() {
               pie={datos.kpis.porPagar.pie}
             />
           </div>
+
+          {/* Cómo se llega a la utilidad: el mismo cálculo de la pestaña «Utilidad y diagnóstico». */}
+          {datos.utilidadDetalle && (
+            <button type="button" onClick={() => setPestana('utilidad')}
+              className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border bg-card px-3.5 py-2 text-left text-[11.5px] text-muted-foreground transition-colors hover:border-primary">
+              <span><strong className="text-foreground">Utilidad</strong> = ventas {dinero(datos.utilidadDetalle.ventas)} − costo de los carros cobrados {dinero(datos.utilidadDetalle.costoCarros)} − gastos del taller {dinero(datos.utilidadDetalle.gastosTaller)}</span>
+              {datos.utilidadDetalle.enProceso > 0 && <span>· {dinero(datos.utilidadDetalle.enProceso)} en piezas de carros aún en el taller (restan al cobrarlos)</span>}
+              <span>· entró a caja {dinero(datos.utilidadDetalle.entroCajaUsd)} · IVA aparte {dinero(datos.utilidadDetalle.iva)}</span>
+              <span className={cn('ml-auto font-bold', datos.utilidadDetalle.puntaje >= 80 ? 'text-emerald-600' : datos.utilidadDetalle.puntaje >= 55 ? 'text-amber-600' : 'text-red-600')}>Confiabilidad {datos.utilidadDetalle.puntaje}/100 · ver diagnóstico →</span>
+            </button>
+          )}
 
           <Pestanas valor={pestana} onCambio={setPestana} opciones={PESTANAS} />
 
@@ -334,7 +346,12 @@ export default function FinanzasPage() {
             />
           )}
 
-          {pestana === 'cuentas' && <TabCuentas datos={datos} />}
+          {pestana === 'cuentas' && (
+            <div className="space-y-3">
+              <TabCuentas datos={datos} />
+              <GestionCuentas />
+            </div>
+          )}
 
           {/* Conciliación: que cada venta diga lo mismo en su total, en sus
               cuentas y en lo que queda por cobrar. */}
@@ -510,7 +527,7 @@ function ResumenTab({
         <Anillo
           titulo="Distribución de gastos"
           tajadas={datos.gastosPorCategoria}
-          total={datos.kpis.gastos.valor}
+          total={datos.totalGastado ?? datos.kpis.gastos.valor}
           dinero={dinero}
           enlace={<EnlacePanel onClick={onVerGastos}>Ver detalle de gastos</EnlacePanel>}
           vacio="No hay gastos registrados en el período."
@@ -519,7 +536,7 @@ function ResumenTab({
         <Anillo
           titulo="Ingresos por método de pago"
           tajadas={datos.ingresosPorMetodo}
-          total={datos.kpis.ingresos.valor}
+          total={datos.totalCobrado ?? datos.kpis.ingresos.valor}
           dinero={dinero}
           conLogo
           enlace={<EnlacePanel onClick={onVerIngresos}>Ver detalle de ingresos</EnlacePanel>}

@@ -14,6 +14,7 @@ import PanelesInferiores, { type EventoActividad } from '@/components/config/Pan
 import PanelSucursales from '@/components/config/PanelSucursales';
 import PanelRoles from '@/components/config/PanelRoles';
 import PanelGeneral from '@/components/config/PanelGeneral';
+import GestionCuentas from '@/components/finanzas/GestionCuentas';
 import DialogoEmpleado from '@/components/rrhh/DialogoEmpleado';
 import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/lib/store';
@@ -381,6 +382,8 @@ export default function ConfiguracionPage() {
           sedes={sedes.length}
           usuarios={usuarios.length}
         />
+      ) : tab === 'cuentas' ? (
+        <GestionCuentas puedeEditar={canEdit} />
       ) : tab === 'seguridad' ? (
         <>
           <KpisConfig k={kpis} />

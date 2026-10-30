@@ -66,6 +66,7 @@ export const TABS_CONFIG = [
   { id: 'roles', label: 'Roles y permisos' },
   { id: 'taller', label: 'Taller' },
   { id: 'sucursales', label: 'Sucursales' },
+  { id: 'cuentas', label: 'Cuentas bancarias' },
   { id: 'notificaciones', label: 'Notificaciones' },
   { id: 'integraciones', label: 'Integraciones' },
   { id: 'seguridad', label: 'Seguridad' },

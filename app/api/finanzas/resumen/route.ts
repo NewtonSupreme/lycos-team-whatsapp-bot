@@ -1,4 +1,5 @@
 import { cargarDatosCaja, construirFlujo, type CuentaCaja } from '@/lib/caja/flujo';
+import { analizarPeriodo } from '@/lib/utilidad/periodo';
 import { NextRequest, NextResponse } from 'next/server';
 import { authorize } from '@/lib/auth-server';
 import { BANK_METHODS, binToUSD } from '@/lib/reporte/ventas-mapping';
@@ -195,10 +196,23 @@ export async function GET(req: NextRequest) {
   const gastos = r2(egresos.reduce((s, e) => s + egresoUSD(e), 0));
   const gastosPrev = r2(egresosPrev.reduce((s, e) => s + egresoUSD(e), 0));
 
-  const utilidad = r2(ingresos - gastos);
-  const utilidadPrev = r2(ingresosPrev - gastosPrev);
-  const margen = ingresos > 0 ? r2((utilidad / ingresos) * 100) : 0;
-  const margenPrev = ingresosPrev > 0 ? r2((utilidadPrev / ingresosPrev) * 100) : 0;
+  // La utilidad sale del MISMO cálculo que Finanzas › Utilidad. Antes era «lo cobrado − todo lo gastado»:
+  // restaba piezas de carros que aún no se cobran y gastos sin pagar contra solo lo cobrado, y daba
+  // utilidades negativas que no existían (octubre: −$569 en vez de +$4.062).
+  const [uAct, uPrev] = await Promise.all([
+    analizarPeriodo(auth.db, { desde, hasta, sede: sede || null }).catch(() => null),
+    analizarPeriodo(auth.db, { desde: prevDesde, hasta: prevHasta, sede: sede || null }).catch(() => null),
+  ]);
+  if (!uAct) avisos.push('No se pudo calcular la utilidad del período; se muestra lo cobrado menos lo gastado.');
+  const totalCobrado = ingresos; const totalGastado = gastos;
+  const ventasBase = uAct ? uAct.estado.ventas.base : ingresos;
+  const ventasBasePrev = uPrev ? uPrev.estado.ventas.base : ingresosPrev;
+  const costosGastos = uAct ? r2(uAct.estado.costoCarros.total + uAct.estado.gastosTaller.total) : gastos;
+  const costosGastosPrev = uPrev ? r2(uPrev.estado.costoCarros.total + uPrev.estado.gastosTaller.total) : gastosPrev;
+  const utilidad = uAct ? uAct.estado.utilidad : r2(ingresos - gastos);
+  const utilidadPrev = uPrev ? uPrev.estado.utilidad : r2(ingresosPrev - gastosPrev);
+  const margen = ventasBase > 0 ? r2((utilidad / ventasBase) * 100) : 0;
+  const margenPrev = ventasBasePrev > 0 ? r2((utilidadPrev / ventasBasePrev) * 100) : 0;
 
   // ── Cuentas por cobrar ────────────────────────────────────────────────────
   // Se comprueba el error a propósito. La primera versión pedía `numero` y
@@ -260,8 +274,8 @@ export async function GET(req: NextRequest) {
   const porPagarTotal = r2(porPagarLista.reduce((s, x) => s + x.monto, 0));
 
   const kpis: ResumenFinanzas['kpis'] = {
-    ingresos: { valor: ingresos, variacion: variacion(ingresos, ingresosPrev) },
-    gastos: { valor: gastos, variacion: variacion(gastos, gastosPrev) },
+    ingresos: { valor: ventasBase, variacion: variacion(ventasBase, ventasBasePrev) },
+    gastos: { valor: costosGastos, variacion: variacion(costosGastos, costosGastosPrev) },
     utilidad: { valor: utilidad, variacion: variacion(utilidad, utilidadPrev) },
     margen: {
       valor: margen,
@@ -550,6 +564,12 @@ export async function GET(req: NextRequest) {
   const resumen: ResumenFinanzas = {
     desde, hasta, tasa: tasaHoy,
     kpis, flujo, agrupacionFlujo: agrupacion,
+    totalCobrado, totalGastado,
+    utilidadDetalle: uAct ? {
+      ventas: uAct.estado.ventas.base, costoCarros: uAct.estado.costoCarros.total, gastosTaller: uAct.estado.gastosTaller.total,
+      iva: uAct.estado.ventas.iva, enProceso: uAct.estado.costoCarros.enProceso.total, entroCajaUsd: uAct.estado.caja.totalEntradoUsdDelDia,
+      puntaje: uAct.diagnostico.puntaje, criticos: uAct.diagnostico.resumen.criticos,
+    } : null,
     gastosPorCategoria, ingresosPorMetodo, transacciones, cuentas,
     porCobrar: porCobrarLista.slice(0, 40),
     porPagar: porPagarLista.slice(0, 40),
