@@ -6,6 +6,7 @@ import ModalBase from '@/components/ui/modales/ModalBase';
 import type { MovimientoBanco, BancoConciliable } from '@/lib/conciliacion/leer-estado';
 import type { AsientoSistema } from '@/lib/conciliacion/motor';
 import { CATEGORIAS_VENTA } from '@/lib/categorias';
+import { CATEGORIAS_EGRESO } from '@/components/egresos/tipos';
 
 interface Props {
   abierto: boolean;
@@ -565,12 +566,8 @@ export default function ModalAccionConciliacion({
                     onChange={e => setCategoriaEgreso(e.target.value)}
                     className="w-full rounded-xl border border-border bg-background px-3 py-2 text-foreground font-medium focus:border-primary focus:outline-none"
                   >
-                    <option value="repuestos">Repuestos y Materiales</option>
-                    <option value="nomina">Nómina y Personal</option>
-                    <option value="servicios_publicos">Servicios Públicos (Luz/Agua/Net)</option>
-                    <option value="mantenimiento">Mantenimiento de Taller</option>
-                    <option value="alquiler">Alquiler</option>
-                    <option value="otros">Otros Gastos Operativos</option>
+                    {/* Las mismas categorías de todo el sistema: con otras, el gasto no salía en su rubro ni en la utilidad del carro. */}
+                    {CATEGORIAS_EGRESO.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                   </select>
                 </div>
               </div>

@@ -20,6 +20,7 @@ import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
 import type { BankBin } from '@/lib/reporte/ventas-mapping';
 import type { ResumenFinanzas, Tajada } from '@/lib/finanzas/tipos';
 import { cn } from '@/lib/utils';
+import UtilidadPeriodo from '@/components/finanzas/UtilidadPeriodo';
 
 /**
  * Finanzas: ingresos, gastos, flujo de caja y rentabilidad.
@@ -36,10 +37,11 @@ import { cn } from '@/lib/utils';
  * nunca el dato.
  */
 
-type Pestana = 'resumen' | 'ingresos' | 'gastos' | 'cuentas' | 'banco' | 'conciliacion' | 'reportes';
+type Pestana = 'resumen' | 'utilidad' | 'ingresos' | 'gastos' | 'cuentas' | 'banco' | 'conciliacion' | 'reportes';
 
 const PESTANAS = [
   { valor: 'resumen' as const, label: 'Resumen' },
+  { valor: 'utilidad' as const, label: 'Utilidad y diagnóstico' },
   { valor: 'ingresos' as const, label: 'Ingresos' },
   { valor: 'gastos' as const, label: 'Gastos' },
   { valor: 'cuentas' as const, label: 'Cuentas y Bancos' },
@@ -310,6 +312,9 @@ export default function FinanzasPage() {
               onGestionarCuentas={() => setPestana('cuentas')}
             />
           )}
+
+          {/* Utilidad del período (día, semana, mes) y lo que la distorsiona. */}
+          {pestana === 'utilidad' && <UtilidadPeriodo sede={sedeId} />}
 
           {pestana === 'ingresos' && (
             <DetalleTransacciones

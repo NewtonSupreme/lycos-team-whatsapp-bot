@@ -157,6 +157,23 @@ export async function POST(req: NextRequest) {
           const mismoTotal = Math.abs(baseV - baseUsd) <= Math.max(0.5, baseUsd * 0.01) || Math.abs(baseV * (v.con_iva ? 1.16 : 1) - pagadoUsd) <= Math.max(0.5, pagadoUsd * 0.01);
           return mismaRef || (mismoMontoBanco && v.fecha === fechaEfectiva) || (mismoCliente && mismoTotal);
         });
+        // ¿Es la inicial o una cuota de una venta con Cashea anterior? Entonces no es una venta nueva:
+        // registrarla como venta contaba ese dinero dos veces (pasó con la inicial de Álvaro Hernández).
+        if (!duplicada && clienteNombre !== 'Cliente Conciliado') {
+          let qc = auth.db.from('ventas_dia').select('id, fecha, cliente, total_ingresos, inicial, financiado, creado_por')
+            .gt('financiado', 0).gte('fecha', sumarDias(fechaEfectiva, -120)).lt('fecha', fechaEfectiva).limit(1000);
+          if (sedeId) qc = qc.eq('sede_id', sedeId);
+          const { data: conCashea } = await qc;
+          const madre = (conCashea || []).find(c => sinTildes(c.cliente) === sinTildes(clienteNombre)
+            && (Math.abs(Number(c.inicial) - pagadoUsd) <= 0.5 || Math.abs(Number(c.financiado) / 3 - pagadoUsd) <= 0.5));
+          if (madre) {
+            const que = Math.abs(Number(madre.inicial) - pagadoUsd) <= 0.5 ? 'la inicial' : 'una cuota';
+            return NextResponse.json({
+              error: `Este pago es ${que} de Cashea de la venta de ${madre.cliente} del ${String(madre.fecha)} (${Number(madre.total_ingresos).toFixed(2)}): ese dinero ya está en esa venta. No la registres como venta nueva; confírmala en «Conciliados» o aplícala como cobro de esa venta.`,
+              duplicada: { id: madre.id, fecha: madre.fecha, cliente: madre.cliente, total: Number(madre.total_ingresos), creadoPor: madre.creado_por },
+            }, { status: 409 });
+          }
+        }
         if (duplicada) {
           return NextResponse.json({
             error: `Ya hay una venta de ${duplicada.cliente} por $${Number(duplicada.total_ingresos).toFixed(2)} (${String(duplicada.fecha)}), registrada por ${duplicada.creado_por || 'otro usuario'}. Si es el mismo pago, no la registres otra vez: aplícalo a esa venta.`,

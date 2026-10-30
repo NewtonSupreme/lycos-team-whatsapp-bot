@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'node:crypto';
 import { authorize } from '@/lib/auth-server';
 import { logActivityServer } from '@/lib/activity-server';
 import {
@@ -50,10 +51,13 @@ export async function POST(req: NextRequest) {
   let estado: EstadoLeido;
   let cruce: EstadoLeido | null = null;
   let nombreArchivo = '';
+  // Huella del archivo: identifica la versión EXACTA del estado de cuenta (dos descargas del mismo período no se confunden).
+  let huellaArchivo = '';
   try {
     const a = await leer('archivo');
     if (!a) return NextResponse.json({ error: 'Adjunta el estado de cuenta.' }, { status: 400 });
     nombreArchivo = a.nombre;
+    huellaArchivo = createHash('sha256').update(a.buf).digest('hex');
     estado = leerEstadoDeCuenta(a.buf, banco);
     const c = await leer('cruce');
     if (c) {
@@ -179,6 +183,7 @@ export async function POST(req: NextRequest) {
           otraCuenta: ing.enOtraCuenta.length, pagosSinGasto: egr.sinRegistrar.length, gastosNoSalieron: egr.noSalieron.length,
           justificados: ing.justificados.length + egr.justificados.length, totalBanco: ing.totalBanco, totalSistema: ing.totalSistema,
           moneda: enUsd ? 'USD' : 'Bs',
+          huella: huellaArchivo,
           entradasPorDia,
           // El saldo que dice el banco: el flujo de caja lo compara con el del sistema.
           saldos: { inicial: estado.saldoInicial ?? null, final: estado.saldoFinal ?? null, desde: estado.desde, hasta: estado.hasta },

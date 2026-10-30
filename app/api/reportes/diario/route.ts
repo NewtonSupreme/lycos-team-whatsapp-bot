@@ -10,6 +10,7 @@ import { resumirEntradas } from '@/lib/reporte/entradas';
 import { getCategoria, inferirCategoria } from '@/lib/categorias';
 import { lineasDeMetodos, lineasDePago, montoConMoneda, resumenCorto } from '@/lib/pagos/desglose';
 import { mecanicoDeOrden, servicioDeNotas } from '@/lib/facturas/mecanico';
+import { analizarPeriodo } from '@/lib/utilidad/periodo';
 
 // El reporte se arma con lo que hay en la base EN ESTE MOMENTO: nunca se sirve una copia vieja.
 export const dynamic = 'force-dynamic';
@@ -724,6 +725,22 @@ export async function GET(req: NextRequest) {
     }
     const ventasOut = ventas.map(({ refs: _r, actualizado: _a, ...v }) => v);
 
+    // ── Utilidad del día: el mismo cálculo que Finanzas › Utilidad (no puede decir otra cosa) ──
+    let utilidad: unknown = null;
+    try {
+      const { estado: ue, diagnostico: ud } = await analizarPeriodo(db, { desde: fecha, hasta: fecha, sede: sede || null });
+      utilidad = {
+        ventas: ue.ventas.base, iva: ue.ventas.iva, costo: ue.costoCarros.total, gastos: ue.gastosTaller.total,
+        utilidadBruta: ue.utilidadBruta, utilidad: ue.utilidad, margen: ue.margen,
+        costoPorCategoria: ue.costoCarros.porCategoria, gastosPorCategoria: ue.gastosTaller.porCategoria,
+        entroUsdDelDia: ue.caja.totalEntradoUsdDelDia, entroUsdHoy: ue.caja.totalEntradoUsdHoy, gastosPagados: ue.caja.gastosPagadosUsd,
+        puntaje: ud.puntaje,
+        hallazgos: ud.hallazgos.slice(0, 8).map(h => ({ titulo: h.titulo, severidad: h.severidad, efecto: h.efecto, impactoUsd: h.impactoUsd, total: h.total, accion: h.accion })),
+      };
+    } catch (e) {
+      console.error('Reporte diario: no se pudo calcular la utilidad', e);
+    }
+
     // ── Respuesta ───────────────────────────────────────────────
     const fechaLabel = new Date(`${fecha}T12:00:00`).toLocaleDateString('es-VE', {
       weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
@@ -735,6 +752,7 @@ export async function GET(req: NextRequest) {
       tasa,
       deptLabels: DEPT_LABELS,
       ventas: ventasOut,
+      utilidad,
       duplicados,
       conciliacion,
       totalesVentas,

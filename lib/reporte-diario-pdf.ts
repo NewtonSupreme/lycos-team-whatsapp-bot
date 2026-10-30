@@ -101,6 +101,13 @@ export interface ReporteDiarioData {
   /** Lo que entró hoy (ventas + cobros), cada moneda por su lado. */
   entradas?: ResumenEntradas;
   gastos: Array<{ verif?: SelloBanco; concepto: string; proveedor?: string; placa?: string; cuenta?: string; usd: number; bs: number }>;
+  /** Utilidad del día (Finanzas › Utilidad, mismo cálculo). */
+  utilidad?: {
+    ventas: number; iva: number; costo: number; gastos: number; utilidadBruta: number; utilidad: number; margen: number;
+    costoPorCategoria: Array<{ etiqueta: string; usd: number; n: number }>; gastosPorCategoria: Array<{ etiqueta: string; usd: number; n: number }>;
+    entroUsdDelDia: number; entroUsdHoy: number; gastosPagados: number; puntaje: number;
+    hallazgos: Array<{ titulo: string; severidad: string; efecto: string; impactoUsd: number; total: number; accion: string }>;
+  } | null;
   /** Lo recibido de un mismo cliente registrado dos veces el mismo día. */
   duplicados?: Array<{ cliente: string; recibidoUsd: number; veces: number }>;
   /** Estado de la conciliación bancaria de este día. */
@@ -182,6 +189,7 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
     { label: 'POR COBRAR (TOTAL)', value: usd(data.porCobrarTotal), color: C.amber, light: C.amberL },
     { label: 'COBRADO DE DEUDAS', value: usd(data.cobrosTotal || 0), color: C.green, light: C.greenL },
     { label: 'GASTOS DÍA', value: usd(data.gastosTotal.usd), color: C.red, light: [254, 226, 226] as RGB },
+    ...(data.utilidad ? [{ label: 'UTILIDAD DÍA', value: usd(data.utilidad.utilidad), color: data.utilidad.utilidad >= 0 ? C.green : C.red, light: data.utilidad.utilidad >= 0 ? C.greenL : [254, 226, 226] as RGB }] : []),
     { label: 'CLIENTES BD', value: `${data.clientesBD.total} (+${data.clientesBD.nuevos})`, color: C.blue, light: C.blueL },
   ];
   const kW = (pageW - margin * 2) / topKpis.length - 2;
@@ -657,6 +665,37 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
   afterTable();
 
   // ══════════════ 16 · CONCILIACIÓN BANCARIA DEL DÍA ══════════════
+  // ══════════════ UTILIDAD DEL DÍA ══════════════
+  const ut = data.utilidad;
+  if (ut) {
+    section('Utilidad del día', `${usd(ut.utilidad)}  ·  margen ${fmt(ut.margen, 1)}%  ·  confiabilidad ${ut.puntaje}/100`);
+    const filasUt: Array<[string, string, boolean]> = [
+      ['Ventas del día (sin IVA)', usd(ut.ventas), true],
+      ...ut.costoPorCategoria.map(x => [`   - ${x.etiqueta} (${x.n})`, usd(-x.usd), false] as [string, string, boolean]),
+      ['= Utilidad bruta', usd(ut.utilidadBruta), true],
+      ...ut.gastosPorCategoria.map(x => [`   - ${x.etiqueta} (${x.n})`, usd(-x.usd), false] as [string, string, boolean]),
+      ['= UTILIDAD DEL DÍA', usd(ut.utilidad), true],
+      [`IVA cobrado (no es ingreso): ${usd(ut.iva)}  ·  Entró a caja: ${usd(ut.entroUsdDelDia)} a la tasa del día (${usd(ut.entroUsdHoy)} a la de hoy)  ·  Gastos pagados: ${usd(ut.gastosPagados)}`, '', false],
+    ];
+    autoTable(doc, {
+      startY: y, body: filasUt.map(f => [f[0], f[1]]), theme: 'plain',
+      bodyStyles: { fontSize: 7, cellPadding: 1, textColor: C.dark }, columnStyles: { 1: { halign: 'right', cellWidth: 36 } },
+      didParseCell: (h: any) => { if (h.section === 'body' && filasUt[h.row.index]?.[2]) { h.cell.styles.fontStyle = 'bold'; h.cell.styles.fillColor = C.bg; } },
+      margin: { left: margin, right: margin },
+    });
+    afterTable();
+    if (ut.hallazgos.length) {
+      autoTable(doc, {
+        startY: y, head: [['QUÉ DISTORSIONA LA UTILIDAD DE HOY', 'NIVEL', 'REGISTROS', 'IMPACTO', 'QUÉ HACER']],
+        body: ut.hallazgos.map(h => [h.titulo, h.severidad.toUpperCase(), String(h.total || ''), h.impactoUsd ? usd(h.impactoUsd) : '', h.accion.substring(0, 80)]),
+        theme: 'grid', headStyles: { fillColor: C.amber, textColor: C.white, fontSize: 6.2, fontStyle: 'bold' }, bodyStyles: { fontSize: 6.3, cellPadding: 1.1, textColor: C.dark },
+        columnStyles: { 1: { cellWidth: 16, halign: 'center' }, 2: { cellWidth: 18, halign: 'center' }, 3: { cellWidth: 22, halign: 'right' } },
+        margin: { left: margin, right: margin },
+      });
+      afterTable();
+    }
+  }
+
   if (cn?.entradasBanco) {
     const eb = cn.entradasBanco;
     section('16 · Lo que entró a los bancos hoy (según los estados de cuenta)', `${usd(eb.totalUsd)}${eb.totalBs ? `  ·  Bs ${fmt(eb.totalBs)}` : ''}`);
