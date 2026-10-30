@@ -47,6 +47,9 @@ export interface MovimientoBanco {
   cuotas?: number[];
   orden?: string;
   factura?: string;
+  /** Si el reporte de Cashea los trae: quién pagó. */
+  cedula?: string | null;
+  cliente?: string | null;
   // Justificaciones en la conciliación
   justificado?: boolean;
   justificacion?: { motivo: string; usuario: string; fecha: string };
@@ -92,7 +95,7 @@ function numeroEs(v: unknown): number {
 }
 
 /** Número que puede venir como 28533.45 (Cashea, BNC crudo). */
-function numeroPlano(v: unknown): number {
+export function numeroPlano(v: unknown): number {
   if (typeof v === 'number') return v;
   const s = String(v ?? '').trim();
   if (!s) return NaN;
@@ -375,6 +378,8 @@ function leerCashea(buf: Buffer): ReturnType<typeof leerBanesco> {
       usd: r2(usd), tasa: numeroPlano(k(f, 'Tasa de Cambio')) || undefined,
       cuota: nCuota, cuotas: cuotasPagadas,
       orden: String(k(f, 'Orden')).trim(), factura: String(k(f, 'Factura')).trim(),
+      cedula: String(k(f, 'Cedula') || k(f, 'Documento') || k(f, 'Identificacion') || '').trim() || null,
+      cliente: String(k(f, 'Cliente') || k(f, 'Nombre') || '').trim() || null,
     });
   });
   if (!movimientos.length) throw new PlantillaInvalida('El archivo de Cashea no trae ninguna cuota legible.');

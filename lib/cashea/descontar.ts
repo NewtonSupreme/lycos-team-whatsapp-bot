@@ -3,6 +3,7 @@ import type { EstadoLeido, MovimientoBanco } from '@/lib/conciliacion/leer-estad
 import { leerCasheaGuardado } from '@/lib/pagos/cashea';
 import { registrarCobro } from '@/lib/pagos/registrar-cobro';
 import { planDeCuotas, type PlanCuotas } from './cuotas';
+import { cruzar, diasEntre, ganadora, pistaDeFecha, type Ancla, type FichaOrden, type VentaParaCruce } from './identificar';
 
 /*
  * Descontar las cuotas de Cashea desde su reporte.
@@ -27,7 +28,6 @@ import { planDeCuotas, type PlanCuotas } from './cuotas';
 
 const CLAVE = 'cashea_enlaces';
 const r2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
-const dias = (a: string, b: string) => Math.round((Date.parse(`${b}T12:00:00Z`) - Date.parse(`${a}T12:00:00Z`)) / 86_400_000);
 const masDias = (iso: string, n: number) => new Date(Date.parse(`${iso}T12:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 const hoyCaracas = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Caracas' });
 
@@ -51,8 +51,14 @@ export interface PagoCashea {
 export interface VentaCandidata {
   id: string; fecha: string; cliente: string; placa: string | null; total: number;
   inicial: number; falta: number; plan: PlanCuotas | null;
-  /** Días entre la venta y la fecha en que, por la cuota pagada, debió comprarse. */
+  /** Días entre la venta y el día estimado de la compra. */
   desfase: number;
+  /** Qué tan bien explica la orden (0–160). Se propone sola desde 75 y con 20 de ventaja. */
+  puntaje: number;
+  /** Por qué es candidata: monto, fecha, cédula… */
+  razones: string[];
+  /** Algo que revisar en la venta (financiado distinto, no marcada como Cashea…). */
+  aviso: string | null;
 }
 
 export type EstadoGrupo = 'enlazada' | 'sugerida' | 'ambigua' | 'sin_venta' | 'solo_inicial';
@@ -67,17 +73,52 @@ export interface GrupoCashea {
   venta: VentaCandidata | null;
   /** Las que cuadran al céntimo. */
   candidatas: VentaCandidata[];
-  /** Otras ventas con Cashea de esas fechas, para elegir a mano. */
+  /** Otras ventas de esas fechas (de cualquier método de pago), para elegir a mano. */
   otras: VentaCandidata[];
+  /** El día estimado de la compra y de dónde sale. */
+  estimado: { fecha: string | null; margen: number; razones: string[] };
 }
 
 export interface PreviaCashea {
   desde: string; hasta: string;
   grupos: GrupoCashea[];
+  /** Órdenes de las que se conoce cédula/cliente por un reporte de órdenes. */
+  fichas: number;
   resumen: {
     pagos: number; yaAplicados: number; nuevos: number; nuevosUSD: number;
     enlazadas: number; sugeridas: number; porResolver: number; iniciales: number;
   };
+}
+
+const CLAVE_FICHAS = 'cashea_ordenes';
+
+/** Lo que se sabe de cada orden por los reportes de órdenes de Cashea (cédula, cliente, total…). */
+export async function leerFichasOrdenes(db: SupabaseClient): Promise<Record<string, FichaOrden>> {
+  const { data } = await db.from('configuracion').select('valor').eq('clave', CLAVE_FICHAS).is('sede_id', null)
+    .order('updated_at', { ascending: false }).limit(1).maybeSingle();
+  return (data?.valor as Record<string, FichaOrden>) || {};
+}
+
+/** Guarda (y completa) las fichas de un reporte de órdenes. Lo ya sabido no se borra. */
+export async function guardarFichasOrdenes(db: SupabaseClient, nuevas: FichaOrden[]): Promise<{ nuevas: number; actualizadas: number; total: number }> {
+  const { data } = await db.from('configuracion').select('id, valor').eq('clave', CLAVE_FICHAS).is('sede_id', null)
+    .order('updated_at', { ascending: false }).limit(1).maybeSingle();
+  const actual = (data?.valor as Record<string, FichaOrden>) || {};
+  let n = 0, a = 0;
+  for (const f of nuevas) {
+    if (!f.orden) continue;
+    const antes = actual[f.orden];
+    if (!antes) n++; else a++;
+    const junto: FichaOrden = { ...(antes || {}), orden: f.orden };
+    for (const [k, v] of Object.entries(f)) if (v != null && v !== '') (junto as unknown as Record<string, unknown>)[k] = v;
+    actual[f.orden] = junto;
+  }
+  const ahora = new Date().toISOString();
+  const { error } = data?.id
+    ? await db.from('configuracion').update({ valor: actual, updated_at: ahora }).eq('id', data.id)
+    : await db.from('configuracion').insert({ clave: CLAVE_FICHAS, valor: actual, sede_id: null, updated_at: ahora });
+  if (error) throw new Error(error.message);
+  return { nuevas: n, actualizadas: a, total: Object.keys(actual).length };
 }
 
 async function leerEnlaces(db: SupabaseClient): Promise<{ id: string | null; enlaces: Enlaces }> {
@@ -128,94 +169,152 @@ function agrupar(movs: MovimientoBanco[]) {
 
 export async function prepararDescuento(db: SupabaseClient, estado: EstadoLeido, sede: string | null): Promise<PreviaCashea> {
   const grupos = agrupar(estado.movimientos);
-  const [{ enlaces }, aplicadas] = await Promise.all([leerEnlaces(db), refsAplicadas(db)]);
+  const [{ enlaces }, aplicadas, fichas] = await Promise.all([leerEnlaces(db), refsAplicadas(db), leerFichasOrdenes(db)]);
+  // Lo que traiga el propio reporte (cédula, cliente) completa la ficha de la orden.
+  for (const m of estado.movimientos) {
+    if (!m.orden || (!m.cedula && !m.cliente)) continue;
+    fichas[m.orden] = { ...(fichas[m.orden] || { orden: m.orden }), cedula: fichas[m.orden]?.cedula || m.cedula || null, cliente: fichas[m.orden]?.cliente || m.cliente || null };
+  }
 
-  // Las ventas con Cashea de las fechas posibles: hasta 60 días antes del primer pago.
-  const primero = estado.movimientos.map(m => m.fecha).sort()[0] || estado.desde;
-  const ultimo = estado.movimientos.map(m => m.fecha).sort().reverse()[0] || estado.hasta;
-  let q = db.from('ventas_dia')
-    .select('id, fecha, cliente, placa, total_ingresos, con_iva, cashea, cashea_pct, inicial, financiado, saldo_pendiente, sede_id')
-    .gte('fecha', masDias(primero, -60)).lte('fecha', masDias(ultimo, 3))
-    .or('cashea.gt.0,financiado.gt.0,cashea_pct.not.is.null')
-    .limit(2000);
-  if (sede) q = q.eq('sede_id', sede);
-  const { data: ventas } = await q;
+  // Todas las ventas de las fechas posibles (no solo las marcadas como Cashea: muchas se
+  // registraron como pago móvil o efectivo): hasta 75 días antes del primer pago.
+  const fechasMov = estado.movimientos.map(m => m.fecha).sort();
+  const primero = fechasMov[0] || estado.desde;
+  const ultimo = fechasMov[fechasMov.length - 1] || estado.hasta;
+  const COLS = 'id, fecha, cliente, cliente_id, placa, total_ingresos, con_iva, cashea, cashea_pct, inicial, financiado, saldo_pendiente, sede_id';
+  type FilaVenta = { id: string; fecha: string; cliente: string | null; cliente_id: string | null; placa: string | null; total_ingresos: number; con_iva: boolean | null; cashea: number | null; cashea_pct: number | null; inicial: number | null; financiado: number | null; saldo_pendiente: number | null; sede_id: string | null };
+  const ventas: FilaVenta[] = [];
+  for (let i = 0; ; i += 1000) {
+    let q = db.from('ventas_dia').select(COLS).gte('fecha', masDias(primero, -75)).lte('fecha', masDias(ultimo, 3)).order('fecha').range(i, i + 999);
+    if (sede) q = q.eq('sede_id', sede);
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    ventas.push(...((data || []) as FilaVenta[]));
+    if (!data || data.length < 1000) break;
+  }
   // Más las ya enlazadas, aunque sean más viejas.
-  const enlazadasIds = [...new Set(Object.values(enlaces).map(e => e.venta_id))].filter(id => !(ventas || []).some(v => v.id === id));
+  const enlazadasIds = [...new Set(Object.values(enlaces).map(e => e.venta_id))].filter(id => !ventas.some(v => v.id === id));
   const { data: viejas } = enlazadasIds.length
-    ? await db.from('ventas_dia').select('id, fecha, cliente, placa, total_ingresos, con_iva, cashea, cashea_pct, inicial, financiado, saldo_pendiente, sede_id').in('id', enlazadasIds)
-    : { data: [] as NonNullable<typeof ventas> };
-  const pool = [...(ventas || []), ...(viejas || [])];
+    ? await db.from('ventas_dia').select(COLS).in('id', enlazadasIds)
+    : { data: [] as FilaVenta[] };
+  const pool = [...ventas, ...((viejas || []) as FilaVenta[])];
 
-  const { data: abs } = pool.length
-    ? await db.from('abonos').select('venta_id, fecha, created_at, monto, metodo_pago').in('venta_id', pool.map(v => v.id))
-    : { data: [] as Array<{ venta_id: string; fecha: string | null; created_at: string; monto: number; metodo_pago: string | null }> };
+  // Cédula del cliente de cada venta.
+  const cedulas = new Map<string, string>();
+  const idsCli = [...new Set(pool.map(v => v.cliente_id).filter(Boolean) as string[])];
+  for (let i = 0; i < idsCli.length; i += 200) {
+    const { data } = await db.from('clientes').select('id, cedula').in('id', idsCli.slice(i, i + 200));
+    for (const c of data || []) if (c.cedula) cedulas.set(c.id, c.cedula);
+  }
+
+  const abs: Array<{ venta_id: string; fecha: string | null; created_at: string; monto: number; metodo_pago: string | null }> = [];
+  const idsPool = pool.map(v => v.id);
+  for (let i = 0; i < idsPool.length; i += 200) {
+    const { data } = await db.from('abonos').select('venta_id, fecha, created_at, monto, metodo_pago').in('venta_id', idsPool.slice(i, i + 200));
+    abs.push(...(data || []));
+  }
   const hoy = hoyCaracas();
-  const resumenVenta = (v: (typeof pool)[number]): Omit<VentaCandidata, 'desfase'> => {
+  const resumenVenta = (v: FilaVenta): Omit<VentaCandidata, 'desfase' | 'puntaje' | 'razones' | 'aviso'> & { cruce: VentaParaCruce } => {
     const g = leerCasheaGuardado(v);
-    const pagos = (abs || []).filter(a => a.venta_id === v.id && a.metodo_pago !== 'inicial')
+    const pagos = abs.filter(a => a.venta_id === v.id && a.metodo_pago !== 'inicial')
       .map(a => ({ fecha: (a.fecha || a.created_at).slice(0, 10), monto: r2(a.monto) }));
-    const plan = planDeCuotas({ fecha: v.fecha, faltaHoy: Math.min(r2(v.saldo_pendiente), g.financiado), pagos }, hoy);
+    const plan = g.usa ? planDeCuotas({ fecha: v.fecha, faltaHoy: Math.min(r2(Number(v.saldo_pendiente)), g.financiado), pagos }, hoy) : null;
+    // Cashea siempre cobra con IVA: el total que vio es la base × 1,16, se guardara como se guardara.
+    const total = r2(r2(v.total_ingresos) * 1.16);
     return {
       id: v.id, fecha: v.fecha, cliente: String(v.cliente || 'Sin nombre').trim(), placa: v.placa || null,
-      total: r2(r2(v.total_ingresos) * (v.con_iva ? 1.16 : 1)), inicial: g.inicial, falta: plan?.falta ?? 0, plan,
+      total, inicial: g.inicial, falta: plan?.falta ?? 0, plan,
+      cruce: {
+        id: v.id, fecha: v.fecha, cliente: String(v.cliente || ''), cliente_id: v.cliente_id, cedula: v.cliente_id ? cedulas.get(v.cliente_id) || null : null,
+        // El total que vio Cashea lleva IVA; si la venta se guardó sin él, se prueban las dos.
+        totalConIva: total, financiadoGuardado: plan?.financiado ?? (g.usa ? g.financiado : 0), cuotaGuardada: plan?.cuota ?? null, usaCashea: g.usa,
+        inicialGuardada: g.inicial || g.enCuenta,
+      },
     };
   };
   const resumenes = new Map(pool.map(v => [v.id, resumenVenta(v)]));
+  const sinIva = new Map(pool.map(v => [v.id, r2(v.total_ingresos)]));
   const usadas = new Set(Object.values(enlaces).map(e => e.venta_id));
 
-  // Primero las órdenes con menos dudas, para que una venta no se la quede la orden equivocada.
+  // Anclas para fechar una orden por su número o su factura: lo ya enlazado, las iniciales y las fichas.
+  const anclasOrden: Ancla[] = []; const anclasFactura: Ancla[] = [];
+  for (const [k, e] of Object.entries(enlaces)) {
+    const r = resumenes.get(e.venta_id); if (!r) continue;
+    if (k.startsWith('f:')) anclasFactura.push({ n: Number(k.slice(2).replace(/\D/g, '')), fecha: r.fecha });
+    else if (e.orden) anclasOrden.push({ n: Number(e.orden), fecha: r.fecha });
+  }
+  for (const m of estado.movimientos) if (m.orden && m.cuotas?.includes(0)) anclasOrden.push({ n: Number(m.orden), fecha: m.fecha });
+  for (const f of Object.values(fichas)) {
+    if (f.fecha) anclasOrden.push({ n: Number(f.orden), fecha: f.fecha });
+    if (f.fecha && f.factura) anclasFactura.push({ n: Number(String(f.factura).replace(/\D/g, '')), fecha: f.fecha });
+  }
+
   const armados = grupos.map(g => {
     const pagos: PagoCashea[] = g.movs.sort((a, b) => a.fecha.localeCompare(b.fecha)).map(m => ({
       ref: m.referencia, fecha: m.fecha, usd: r2(m.usd || 0), ves: r2(Math.abs(m.monto)), tasa: m.tasa ?? null,
       cuotas: m.cuotas?.length ? m.cuotas : [m.cuota ?? 1], aplicado: aplicadas.has(m.referencia),
     }));
-    const pagosCuota = pagos.filter(p => p.cuotas.some(c => c > 0));
-    const nuevos = pagosCuota.filter(p => !p.aplicado);
-    const primerPago = pagos[0];
-    // Por la cuota que se pagó y su día, cuándo debió ser la compra.
-    const minCuota = Math.min(...pagos.flatMap(p => p.cuotas.filter(c => c > 0)), 99);
-    const compra = masDias(primerPago.fecha, -14 * (minCuota === 99 ? 0 : minCuota));
-    const conDesfase = (id: string): VentaCandidata => ({ ...resumenes.get(id)!, desfase: dias(compra, resumenes.get(id)!.fecha) });
-
-    // Primero por la factura (exacto), luego por la orden ya enlazada.
+    const nuevos = pagos.filter(p => p.cuotas.some(c => c > 0) && !p.aplicado);
+    // Los pagos de toda la orden (también los de otra compra de la misma orden) fechan la compra.
+    const pagosOrden = estado.movimientos.filter(m => String(m.orden || m.referencia) === g.orden).map(m => ({ fecha: m.fecha, cuotas: m.cuotas?.length ? m.cuotas : [m.cuota ?? 1] }));
+    const ficha = fichas[g.orden] || null;
+    const pista = pistaDeFecha({ orden: g.orden, factura: g.factura, pagos: pagosOrden, anclasOrden: anclasOrden.filter(a => String(a.n) !== g.orden), anclasFactura, ficha });
+    const inicialUSD = (() => { const m = g.movs.find(x => x.cuotas?.includes(0) && (x.cuotas?.length || 0) === 1); return m ? r2(m.usd || 0) : (ficha?.inicial ?? null); })();
     const enlace = (g.factura && enlaces[`f:${normalizarFactura(g.factura)}`]) || enlaces[g.clave];
-    const venta = enlace && resumenes.has(enlace.venta_id) ? conDesfase(enlace.venta_id) : null;
-    return { g, pagos, nuevos, compra, conDesfase, venta, primerPago };
+    const cand = (id: string): VentaCandidata => {
+      const r = resumenes.get(id)!;
+      let c = cruzar(r.cruce, { cuotaUSD: g.cuotaUSD, inicialUSD, pista, ficha });
+      // Venta guardada sin IVA: se prueba también con su total tal cual.
+      if (!c.montoCuadra && Math.abs(sinIva.get(id)! - r.total) > 0.01) {
+        const c2 = cruzar({ ...r.cruce, totalConIva: sinIva.get(id)!, sinIva: true }, { cuotaUSD: g.cuotaUSD, inicialUSD, pista, ficha });
+        if (c2.puntaje > c.puntaje) c = c2;
+      }
+      const { cruce: _omit, ...resto } = r; void _omit;
+      return { ...resto, desfase: pista.fecha ? diasEntre(pista.fecha, r.fecha) : 0, puntaje: c.puntaje, razones: c.razones, aviso: c.aviso };
+    };
+    const venta = enlace && resumenes.has(enlace.venta_id) ? cand(enlace.venta_id) : null;
+    return { g, pagos, nuevos, pista, cand, venta };
   });
 
   const salida: GrupoCashea[] = [];
-  const porResolver = armados.filter(a => !a.venta).map(a => {
-    const maxPagoFecha = a.pagos.map(p => p.fecha).sort().reverse()[0] || a.primerPago.fecha;
-    const libres = pool.filter(v => !usadas.has(v.id) && v.fecha <= masDias(maxPagoFecha, 3));
-    const cuadra = (id: string) => {
-      const r = resumenes.get(id)!;
-      return a.g.inicial ? Math.abs(r.inicial - a.g.cuotaUSD) <= 0.03 : !!r.plan && Math.abs(r.plan.cuota - a.g.cuotaUSD) <= 0.03;
-    };
-    const candidatas = libres.filter(v => cuadra(v.id)).map(v => a.conDesfase(v.id))
-      .filter(c => Math.abs(c.desfase) <= 21).sort((x, y) => Math.abs(x.desfase) - Math.abs(y.desfase));
-    return { ...a, candidatas, maxPagoFecha };
-  }).sort((x, y) => x.candidatas.length - y.candidatas.length);
+  const base = (a: (typeof armados)[number]) => ({
+    clave: a.g.clave, orden: a.g.orden, factura: a.g.factura, cuotaUSD: a.g.cuotaUSD, pagos: a.pagos,
+    nuevos: a.nuevos.length, nuevosUSD: r2(a.nuevos.reduce((s, p) => s + p.usd, 0)),
+    estimado: { fecha: a.pista.fecha, margen: a.pista.margen, razones: a.pista.razones },
+  });
+  for (const a of armados.filter(x => x.venta)) salida.push({ ...base(a), estado: a.g.inicial ? 'solo_inicial' : 'enlazada', venta: a.venta, candidatas: [], otras: [] });
 
-  for (const a of armados.filter(x => x.venta)) {
-    salida.push({
-      clave: a.g.clave, orden: a.g.orden, factura: a.g.factura, cuotaUSD: a.g.cuotaUSD, pagos: a.pagos,
-      nuevos: a.nuevos.length, nuevosUSD: r2(a.nuevos.reduce((s, p) => s + p.usd, 0)),
-      estado: a.g.inicial ? 'solo_inicial' : 'enlazada', venta: a.venta, candidatas: [], otras: [],
+  // Las candidatas de cada orden sin enlazar, con su puntaje.
+  const pendientes = armados.filter(a => !a.venta).map(a => ({
+    a, candidatas: pool.filter(v => !usadas.has(v.id)).map(v => a.cand(v.id)).filter(c => c.puntaje > 0).sort((x, y) => y.puntaje - x.puntaje),
+  }));
+  // Se asigna primero la orden con la ganadora más clara, para que una venta no se la quede la equivocada.
+  const asignada = new Map<string, VentaCandidata>();
+  for (let vuelta = 0; vuelta < pendientes.length; vuelta++) {
+    let mejor: { i: number; v: VentaCandidata; ventaja: number } | null = null;
+    pendientes.forEach((p, i) => {
+      if (p.a.g.inicial || asignada.has(p.a.g.clave)) return;
+      const libres = p.candidatas.filter(c => !usadas.has(c.id));
+      const gana = ganadora(libres);
+      if (!gana) return;
+      const ventaja = gana.puntaje - (libres.find(c => c.id !== gana.id)?.puntaje ?? 0);
+      if (!mejor || ventaja > mejor.ventaja) mejor = { i, v: gana, ventaja };
     });
+    if (!mejor) break;
+    const m = mejor as { i: number; v: VentaCandidata };
+    asignada.set(pendientes[m.i].a.g.clave, m.v); usadas.add(m.v.id);
   }
-  for (const a of porResolver) {
-    const candidatas = a.candidatas.filter(c => !usadas.has(c.id));
-    // Solo se sugiere cuando hay UNA que cuadra y de la fecha que toca.
-    const unica = candidatas.length === 1 && Math.abs(candidatas[0].desfase) <= 10 ? candidatas[0] : null;
-    if (unica && !a.g.inicial) usadas.add(unica.id);
-    const otras = pool.filter(v => !usadas.has(v.id) && v.fecha <= masDias(a.maxPagoFecha, 3) && !candidatas.some(c => c.id === v.id))
-      .map(v => a.conDesfase(v.id)).filter(c => Math.abs(c.desfase) <= 30)
-      .sort((x, y) => Math.abs(x.desfase) - Math.abs(y.desfase)).slice(0, 12);
+  for (const p of pendientes) {
+    const unica = asignada.get(p.a.g.clave) || null;
+    const candidatas = p.candidatas.filter(c => c.id === unica?.id || !usadas.has(c.id)).slice(0, 8);
+    const pista = p.a.pista;
+    const centro = pista.fecha || pista.porRitmo[0] || pista.tope;
+    const otras = pool.filter(v => !usadas.has(v.id) && !candidatas.some(c => c.id === v.id) && v.fecha <= masDias(pista.tope, 1)
+      && Math.abs(diasEntre(centro, v.fecha)) <= Math.max(5, Math.min(pista.margen + 2, 12)))
+      .map(v => p.a.cand(v.id)).sort((x, y) => Math.abs(x.desfase) - Math.abs(y.desfase)).slice(0, 15);
     salida.push({
-      clave: a.g.clave, orden: a.g.orden, factura: a.g.factura, cuotaUSD: a.g.cuotaUSD, pagos: a.pagos,
-      nuevos: a.nuevos.length, nuevosUSD: r2(a.nuevos.reduce((s, p) => s + p.usd, 0)),
-      estado: a.g.inicial ? 'solo_inicial' : unica ? 'sugerida' : candidatas.length > 1 ? 'ambigua' : 'sin_venta',
+      ...base(p.a),
+      estado: p.a.g.inicial ? 'solo_inicial' : unica ? 'sugerida' : candidatas.length ? 'ambigua' : 'sin_venta',
       venta: unica, candidatas, otras,
     });
   }
@@ -226,6 +325,7 @@ export async function prepararDescuento(db: SupabaseClient, estado: EstadoLeido,
   const deCuota = salida.filter(g => g.estado !== 'solo_inicial');
   return {
     desde: estado.desde, hasta: estado.hasta, grupos: salida,
+    fichas: Object.keys(fichas).length,
     resumen: {
       pagos: todos.length,
       yaAplicados: todos.filter(p => p.aplicado).length,

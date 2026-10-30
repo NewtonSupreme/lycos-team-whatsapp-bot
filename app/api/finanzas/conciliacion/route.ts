@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { esReporteOrdenesCashea, leerOrdenesCashea } from '@/lib/cashea/ordenes-reporte';
+import { guardarFichasOrdenes } from '@/lib/cashea/descontar';
 import { createHash } from 'node:crypto';
 import { authorize } from '@/lib/auth-server';
 import { logActivityServer } from '@/lib/activity-server';
@@ -58,6 +60,17 @@ export async function POST(req: NextRequest) {
     if (!a) return NextResponse.json({ error: 'Adjunta el estado de cuenta.' }, { status: 400 });
     nombreArchivo = a.nombre;
     huellaArchivo = createHash('sha256').update(a.buf).digest('hex');
+    // Un reporte de órdenes de Cashea (cédula, cliente…) no es un estado de cuenta, pero no se
+    // desperdicia: se guarda lo que dice de cada orden y con eso se enlazan solas con su venta.
+    if (banco === 'cashea' && esReporteOrdenesCashea(a.buf)) {
+      const { fichas, columnas } = leerOrdenesCashea(a.buf);
+      const g = fichas.length ? await guardarFichasOrdenes(auth.db, fichas) : null;
+      return NextResponse.json({
+        error: g
+          ? `Ese es un reporte de órdenes de Cashea, no el de cuotas cobradas. Guardé ${fichas.length} orden(es) (${g.nuevas} nuevas) con ${columnas.filter(x => x !== 'orden').join(', ')}: desde ahora el sistema reconoce de quién es cada una. Para conciliar, sube el reporte de cuotas cobradas.`
+          : 'Ese parece un reporte de órdenes de Cashea, pero no encontré ninguna orden legible.',
+      }, { status: 422 });
+    }
     estado = leerEstadoDeCuenta(a.buf, banco);
     const c = await leer('cruce');
     if (c) {

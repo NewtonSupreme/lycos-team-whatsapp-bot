@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, CheckCircle2, CircleHelp, Link2, Loader2, Sparkles, Wallet, X } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, CircleHelp, IdCard, Link2, Loader2, Sparkles, Upload, Wallet, X } from 'lucide-react';
 import { Chip, Panel, Pestanas } from '@/components/panel/Piezas';
 import { cn } from '@/lib/utils';
 import type { EstadoGrupo, GrupoCashea, PreviaCashea, ResultadoDescuento, VentaCandidata } from '@/lib/cashea/descontar';
@@ -40,6 +40,8 @@ export default function DescontarCuotasCashea({ archivo, sede }: { archivo: File
   const [elecciones, setElecciones] = useState<Record<string, string>>({});
   const [resultado, setResultado] = useState<ResultadoDescuento | null>(null);
   const [vista, setVista] = useState<Vista>('resolver');
+  const [subiendoOrdenes, setSubiendoOrdenes] = useState(false);
+  const [avisoOrdenes, setAvisoOrdenes] = useState<string | null>(null);
 
   const pedir = useCallback(async (accion: 'previa' | 'aplicar', eleg?: Record<string, string>) => {
     const fd = new FormData();
@@ -71,6 +73,21 @@ export default function DescontarCuotasCashea({ archivo, sede }: { archivo: File
       && (g.estado === 'enlazada' || !!elecciones[g.clave]));
     return { grupos, cuotas: grupos.reduce((a, g) => a + g.nuevos, 0), usd: grupos.reduce((a, g) => a + g.nuevosUSD, 0) };
   }, [previa, elecciones]);
+
+  // Otro reporte de Cashea (órdenes con cédula, cliente, teléfono…): enseña de quién es cada orden.
+  const subirOrdenes = async (f: File | null) => {
+    if (!f) return;
+    setSubiendoOrdenes(true); setAvisoOrdenes(null); setError(null);
+    try {
+      const fd = new FormData(); fd.set('accion', 'ordenes'); fd.set('archivo', f); if (sede) fd.set('sede', sede);
+      const r = await fetch('/api/finanzas/cashea-cuotas', { method: 'POST', body: fd });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(j?.error || 'No se pudo leer ese reporte.');
+      const o = j.ordenes;
+      setAvisoOrdenes(`Leí ${o.leidas} orden(es) (${o.nuevas} nuevas, ${o.actualizadas} completadas) con: ${(o.columnas as string[]).filter(c => c !== 'orden').join(', ')}. Ya se usan para reconocer las órdenes.`);
+      await cargar();
+    } catch (e) { setError((e as Error).message); } finally { setSubiendoOrdenes(false); }
+  };
 
   const aplicar = async () => {
     if (!plan.cuotas) return;
@@ -116,6 +133,20 @@ export default function DescontarCuotasCashea({ archivo, sede }: { archivo: File
           <Dato icono={<Sparkles className="h-4 w-4" aria-hidden />} etiqueta="Cuadran con una venta" valor={String(r.sugeridas)} pie="Revisa y confirma" tinte="bg-sky-500/12 text-sky-600 dark:text-sky-400" />
           <Dato icono={<CircleHelp className="h-4 w-4" aria-hidden />} etiqueta="Por resolver" valor={String(r.porResolver)} pie="Elige la venta a mano" tinte="bg-amber-500/12 text-amber-600 dark:text-amber-400" />
         </div>
+
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-border px-3 py-2 text-[11.5px] text-muted-foreground">
+          <IdCard className="h-4 w-4 text-violet-600" aria-hidden />
+          <span className="min-w-0 flex-1">
+            Para que reconozca a cada cliente sin dudas, sube también cualquier reporte de Cashea que traiga <b className="text-foreground">cédula, nombre o teléfono</b> por orden.
+            {previa.fichas ? <> Ya conoce <b className="text-foreground">{previa.fichas}</b> orden(es).</> : null}
+          </span>
+          <label className={cn('flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 font-semibold text-foreground hover:bg-muted', subiendoOrdenes && 'opacity-60')}>
+            {subiendoOrdenes ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Upload className="h-3.5 w-3.5" aria-hidden />}
+            Subir reporte de órdenes
+            <input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={subiendoOrdenes} onChange={e => { void subirOrdenes(e.target.files?.[0] || null); e.target.value = ''; }} />
+          </label>
+        </div>
+        {avisoOrdenes && <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[12px] text-emerald-800 dark:text-emerald-300">{avisoOrdenes}</p>}
 
         {resultado && <Resultado r={resultado} onCerrar={() => setResultado(null)} />}
         {error && <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-700 dark:text-red-300">{error}</p>}
@@ -188,8 +219,18 @@ function Dato({ icono, etiqueta, valor, pie, tinte }: { icono: React.ReactNode; 
 }
 
 function textoVenta(v: VentaCandidata) {
-  const prox = v.plan?.proxima;
-  return `${v.cliente} · ${fecha(v.fecha)}${v.placa ? ` · ${v.placa}` : ''} · cuota ${usd(v.plan?.cuota || 0)}${prox ? ` · debe ${usd(v.falta)}` : ' · sin deuda'}`;
+  const deuda = v.plan ? (v.falta > 0.009 ? `debe ${usd(v.falta)}` : 'sin deuda') : 'no es Cashea';
+  return `${v.puntaje ? `[${v.puntaje}] ` : ''}${v.cliente} · ${fecha(v.fecha)}${v.placa ? ` · ${v.placa}` : ''} · total ${usd(v.total)} · ${deuda}`;
+}
+
+/** Por qué se propone esa venta, y lo que hay que revisar en ella. */
+function PorQue({ v }: { v: VentaCandidata }) {
+  return (
+    <div className="mt-1 space-y-0.5">
+      {v.razones.length > 0 && <p className="text-[11px] text-muted-foreground"><Sparkles className="mr-1 inline h-3 w-3 text-sky-600" aria-hidden />{v.razones.join(' · ')}</p>}
+      {v.aviso && <p className="flex items-start gap-1 text-[11px] font-medium text-amber-700 dark:text-amber-400"><AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />{v.aviso}</p>}
+    </div>
+  );
 }
 
 function Fila({ g, eleccion, onElegir }: { g: GrupoCashea; eleccion: string; onElegir: (id: string) => void }) {
@@ -205,6 +246,11 @@ function Fila({ g, eleccion, onElegir }: { g: GrupoCashea; eleccion: string; onE
       <td className="px-3.5 py-2.5">
         <p className="num font-semibold text-foreground">{g.orden}</p>
         <p className="num text-[11px] text-muted-foreground">Factura {g.factura || '—'} · cuota {usd(g.cuotaUSD)}</p>
+        {g.estimado?.fecha && (
+          <p className="num text-[10.5px] text-muted-foreground" title={g.estimado.razones.join(' · ')}>
+            Compra ≈ {fecha(g.estimado.fecha)}{g.estimado.margen > 1 ? ` ±${g.estimado.margen} d` : ''}
+          </p>
+        )}
         <span className="mt-1 inline-block"><Chip tono={e.tono}>{e.texto}</Chip></span>
       </td>
       <td className="px-2 py-2.5">
@@ -227,19 +273,24 @@ function Fila({ g, eleccion, onElegir }: { g: GrupoCashea; eleccion: string; onE
               eleccion ? 'border-violet-500/50' : g.estado === 'sugerida' ? 'border-border' : 'border-amber-500/50')}>
             <option value="">{g.estado === 'sugerida' ? 'No descontar (no es esta)' : '— ¿De qué venta es? —'}</option>
             {opciones.length > 0 && (
-              <optgroup label="Cuadran al céntimo">
+              <optgroup label="Cuadran (de mejor a peor)">
                 {opciones.map(v => <option key={v.id} value={v.id}>{textoVenta(v)}</option>)}
               </optgroup>
             )}
             {g.otras.length > 0 && (
-              <optgroup label="Otras ventas con Cashea de esas fechas">
+              <optgroup label="Otras ventas de esas fechas (cualquier forma de pago)">
                 {g.otras.map(v => <option key={v.id} value={v.id}>{textoVenta(v)}</option>)}
               </optgroup>
             )}
           </select>
         )}
+        {fijo && g.venta && <PorQue v={g.venta} />}
+        {!fijo && elegida && <PorQue v={elegida} />}
+        {g.estado === 'ambigua' && !eleccion && opciones.length > 1 && (
+          <p className="mt-1 text-[11px] text-muted-foreground">Varias cuadran casi igual ({opciones.slice(0, 3).map(o => `${o.cliente.split(' ')[0]} ${corta(o.fecha)}`).join(', ')}). La cédula de un reporte de órdenes de Cashea lo resuelve sola.</p>
+        )}
         {g.estado === 'sin_venta' && !eleccion && (
-          <p className="mt-1 text-[11px] text-muted-foreground">Ninguna venta con Cashea cuadra: puede que se registrara como efectivo o pago móvil. Si la encuentras, anota la factura en Por cobrar.</p>
+          <p className="mt-1 text-[11px] text-muted-foreground">Ninguna venta cuadra por monto{g.estimado?.fecha ? ` cerca del ${fecha(g.estimado.fecha)}` : ''}: puede que no se registrara o que se registrara con otro total. Las de esas fechas están en la lista.</p>
         )}
         {pasa && (
           <p className="mt-1 flex items-center gap-1 text-[11px] font-medium text-amber-700 dark:text-amber-400">
