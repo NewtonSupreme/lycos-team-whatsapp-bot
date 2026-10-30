@@ -123,6 +123,9 @@ export interface ReporteDiarioData {
     } | null;
   };
   gastosTotal: { usd: number; bs: number };
+  /** Lo que salió hoy para pagar deudas con proveedores (no es gasto nuevo: el gasto contó el día de la compra). */
+  pagosProveedor?: Array<{ verif?: SelloBanco; proveedor: string; cuenta: string; aplicadoA: string; referencia?: string; usd: number; bs: number; saldoFavor?: number }>;
+  pagosProveedorTotal?: { usd: number; bs: number };
   generadoEn: string;
 }
 interface KpiPar { inicial: number; nuevos: number; total: number }
@@ -663,6 +666,32 @@ export function generateReporteDiarioPDF(data: ReporteDiarioData) {
     margin: { left: margin, right: margin },
   });
   afterTable();
+
+  // ══════════════ Pagos a proveedores del día ══════════════
+  // Dinero que salió hoy para saldar deudas. No se suma a los gastos: el gasto contó el día de la compra.
+  if (data.pagosProveedor && data.pagosProveedor.length) {
+    const tp = data.pagosProveedorTotal || { usd: 0, bs: 0 };
+    section('Pagos a proveedores del día', `Salió: ${usd(tp.usd)}  ·  ${bs(tp.bs)} Bs  (no es gasto nuevo)`);
+    autoTable(doc, {
+      startY: y,
+      head: [['Nº', 'PROVEEDOR', 'APLICADO A', 'PAGADO DESDE', 'REF.', 'BANCO', 'Bs', '$']],
+      body: data.pagosProveedor.map((p, i) => [i + 1, p.proveedor.substring(0, 30), `${p.aplicadoA}${(p.saldoFavor || 0) > 0 ? ` · a favor ${usd(p.saldoFavor || 0)}` : ''}`, p.cuenta, p.referencia || '—', SELLO_TXT[(p.verif || 'sin_banco') as SelloBanco], fmt(p.bs), usd(p.usd)]),
+      foot: [['', 'TOTAL', '', '', '', '', fmt(tp.bs), usd(tp.usd)]],
+      theme: 'grid',
+      headStyles: { fillColor: C.dark, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
+      bodyStyles: { fontSize: 6.5, cellPadding: 1.4, textColor: C.dark },
+      footStyles: { fillColor: C.dark, textColor: C.white, fontSize: 6.5, fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: 10, halign: 'center' }, 1: { cellWidth: 40 }, 2: { cellWidth: 'auto' }, 3: { cellWidth: 48 }, 4: { cellWidth: 18 },
+        5: { cellWidth: 22, halign: 'center', fontStyle: 'bold', fontSize: 5.2 }, 6: { cellWidth: 28, halign: 'right' }, 7: { cellWidth: 22, halign: 'right' },
+      },
+      didParseCell: (d: any) => {
+        if (d.section === 'body' && d.column.index === 5) { const col = selloColor(String(d.cell.raw || '')); if (col) d.cell.styles.textColor = col; }
+      },
+      margin: { left: margin, right: margin },
+    });
+    afterTable();
+  }
 
   // ══════════════ 16 · CONCILIACIÓN BANCARIA DEL DÍA ══════════════
   // ══════════════ UTILIDAD DEL DÍA ══════════════

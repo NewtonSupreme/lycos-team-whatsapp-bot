@@ -89,6 +89,13 @@ export interface DatosCaja {
   traspasos: Array<Record<string, unknown>>;
   movimientos: Array<Record<string, unknown>>;
   arqueos: Array<Record<string, unknown>>;
+  /** Pagos a proveedores (abonos generales o dirigidos): salen de caja el día del pago. */
+  pagosProveedor: Array<Record<string, unknown>>;
+  /**
+   * egreso id → lo que de su reparto vino de un pago a proveedor. Eso ya sale el día del
+   * pago; si también saliera el día de la compra, se contaría dos veces.
+   */
+  aplicadoPorEgreso: Map<string, Record<string, number>>;
   /** venta_id → cliente, para nombrar los cobros. */
   clientes: Map<string, string>;
   /** id de cuenta → nombre, para nombrar los traspasos. */
@@ -161,20 +168,31 @@ export function movimientosDeCuenta(cuenta: CuentaCaja, d: DatosCaja, hasta: str
       }
       for (const e of d.egresos) {
         const f = iso(e.fecha); if (!dentro(f)) continue;
+        // Lo que aún se debe no ha salido de ninguna cuenta.
+        if (e.estado_pago === 'por_pagar') continue;
         const reparto = e.metodos_pago && typeof e.metodos_pago === 'object' ? e.metodos_pago as Record<string, unknown> : null;
         let monto = 0;
         if (reparto && Object.values(reparto).some(v => n(v) > 0)) {
-          monto = n(reparto[bin]);
+          monto = r2(n(reparto[bin]) - n(d.aplicadoPorEgreso.get(String(e.id))?.[bin]));
         } else if (e.metodo_pago === bin) {
-          const total = n(e.total_egresos);
+          const total = e.estado_pago === 'parcial' ? n(e.monto_pagado) : n(e.total_egresos);
           const esUsd = String(e.moneda || 'USD').toUpperCase() === 'USD';
           const tasa = n(e.tasa_cambio);
           if (cuenta.moneda === 'USD') monto = esUsd ? total : (tasa > 0 ? total / tasa : 0);
           else monto = esUsd ? (tasa > 0 ? total * tasa : 0) : total;
         }
-        if (monto > 0) {
+        if (monto > 0.009) {
           const desc = primerDetalle(e.desglose, e.notas) || String(e.categoria || '');
           movs.push({ id: `egreso:${e.id}:${bin}`, fecha: f, origen: 'gasto', sentido: 'salida', monto: r2(monto), concepto: String(e.proveedor || e.cliente_nombre || e.cliente || 'Gasto'), detalle: [e.placa, desc].filter(Boolean).join(' · '), tabla: 'egresos', registroId: String(e.id) });
+        }
+      }
+      // Pagos a proveedores: el día que salió el dinero, completo (lo que sobró queda como saldo a favor con el proveedor).
+      for (const p of d.pagosProveedor) {
+        const f = iso(p.fecha); if (!dentro(f)) continue;
+        const monto = n((p.metodos_pago as Record<string, unknown> | null)?.[bin]);
+        if (monto > 0.009) {
+          const sf = n(p.saldo_favor_usd);
+          movs.push({ id: `pagoprov:${p.id}:${bin}`, fecha: f, origen: 'gasto', sentido: 'salida', monto: r2(monto), concepto: String(p.proveedor || 'Proveedor'), detalle: ['Pago a proveedor', p.referencia ? `ref ${p.referencia}` : '', sf > 0 ? `saldo a favor $${sf.toFixed(2)}` : ''].filter(Boolean).join(' · '), tabla: 'pagos_proveedor', registroId: String(p.id) });
         }
       }
     }
@@ -266,15 +284,29 @@ export async function cargarDatosCaja(db: SupabaseClient, o: { sede: string | nu
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- el constructor anidado agota la inferencia de tipos
   const conSede = (q: any) => (sede ? q.eq('sede_id', sede) : q);
 
-  const [ventas, abonos, egresos, traspasos, movimientos, arqueos, ctas] = await Promise.all([
+  const [ventas, abonos, egresos, traspasos, movimientos, arqueos, ctas, pagosProveedor, aplicaciones] = await Promise.all([
     todas<Record<string, unknown>>(() => conSede(db.from('ventas_dia').select(colsVenta).gte('fecha', desde).lte('fecha', hasta).order('fecha'))),
     todas<Record<string, unknown>>(() => conSede(db.from('abonos').select('id, venta_id, fecha, tasa_cambio, metodos_pago, nota').gte('fecha', desde).lte('fecha', hasta).order('fecha'))),
-    todas<Record<string, unknown>>(() => conSede(db.from('egresos').select('id, fecha, proveedor, cliente, cliente_nombre, placa, categoria, notas, desglose, total_egresos, moneda, tasa_cambio, metodo_pago, metodos_pago').gte('fecha', desde).lte('fecha', hasta).order('fecha'))),
+    todas<Record<string, unknown>>(() => conSede(db.from('egresos').select('id, fecha, proveedor, cliente, cliente_nombre, placa, categoria, notas, desglose, total_egresos, moneda, tasa_cambio, metodo_pago, metodos_pago, estado_pago, monto_pagado, partida_id').gte('fecha', desde).lte('fecha', hasta).order('fecha'))),
     todas<Record<string, unknown>>(() => db.from('traspasos_cuenta').select('*').gte('fecha', desde).lte('fecha', hasta).order('fecha')),
     todas<Record<string, unknown>>(() => conSede(db.from('movimientos_caja').select('*').gte('fecha', desde).lte('fecha', hasta).order('fecha'))),
     todas<Record<string, unknown>>(() => conSede(db.from('arqueos_caja').select('*').order('fecha'))),
     db.from('cuentas_financieras').select('id, nombre').then(r => r.data || []),
+    todas<Record<string, unknown>>(() => conSede(db.from('pagos_proveedor').select('id, fecha, proveedor, metodos_pago, referencia, saldo_favor_usd, modo').eq('anulado', false).neq('modo', 'saldo_favor').gte('fecha', desde).lte('fecha', hasta).order('fecha'))),
+    todas<Record<string, unknown>>(() => db.from('pagos_proveedor_aplicaciones').select('id, origen, registro_id, metodos_pago').eq('revertido', false).order('id')),
   ]);
+
+  // Lo aplicado por pagos a proveedores, por gasto (un renglón de ficha llega por su gasto espejo).
+  const egresoDePartida = new Map<string, string>();
+  for (const e of egresos) if (e.partida_id) egresoDePartida.set(String(e.partida_id), String(e.id));
+  const aplicadoPorEgreso = new Map<string, Record<string, number>>();
+  for (const a of aplicaciones) {
+    const eid = a.origen === 'partida' ? egresoDePartida.get(String(a.registro_id)) : String(a.registro_id);
+    if (!eid) continue;
+    const acc = aplicadoPorEgreso.get(eid) || {};
+    for (const [k, v] of Object.entries((a.metodos_pago || {}) as Record<string, unknown>)) acc[k] = r2((acc[k] || 0) + n(v));
+    aplicadoPorEgreso.set(eid, acc);
+  }
 
   const clientes = new Map<string, string>();
   const ids = [...new Set(abonos.map(a => String(a.venta_id || '')).filter(Boolean))];
@@ -282,7 +314,7 @@ export async function cargarDatosCaja(db: SupabaseClient, o: { sede: string | nu
     const { data } = await db.from('ventas_dia').select('id, cliente').in('id', ids.slice(i, i + 200));
     for (const v of data || []) clientes.set(String(v.id), String(v.cliente || ''));
   }
-  return { ventas, abonos, egresos, traspasos, movimientos, arqueos, clientes, cuentas: new Map((ctas as Array<{ id: string; nombre: string }>).map(c => [c.id, c.nombre])) };
+  return { ventas, abonos, egresos, traspasos, movimientos, arqueos, pagosProveedor, aplicadoPorEgreso, clientes, cuentas: new Map((ctas as Array<{ id: string; nombre: string }>).map(c => [c.id, c.nombre])) };
 }
 
 export async function leerCuentas(db: SupabaseClient, sede: string | null): Promise<CuentaCaja[]> {

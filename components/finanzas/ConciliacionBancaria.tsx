@@ -934,7 +934,7 @@ function TablaSistema({ filas, monto, proveedor, accion }: { filas: AsientoSiste
       { t: 'Fecha', c: s => fecha(s.fecha), w: 'w-24' },
       { t: proveedor ? 'Proveedor' : 'Cliente', c: s => <Cliente s={s} /> },
       { t: 'Cuenta', c: s => <Chip>{NOMBRE_CUENTA[s.cuenta] || s.cuenta}</Chip> },
-      { t: 'Origen', c: s => (s.tabla === 'abonos' ? 'Cobro de deuda' : s.tabla === 'egresos' ? 'Gasto' : 'Venta') },
+      { t: 'Origen', c: s => (s.tabla === 'abonos' ? 'Cobro de deuda' : s.tabla === 'egresos' ? 'Gasto' : s.tabla === 'pagos_proveedor' ? 'Pago a proveedor' : 'Venta') },
       { t: 'Monto', c: s => monto(s), d: true },
       ...(accion ? [{ t: 'Acción', c: (s: AsientoSistema) => accion(s) }] : []),
     ]} />

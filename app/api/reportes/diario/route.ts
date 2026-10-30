@@ -586,17 +586,45 @@ export async function GET(req: NextRequest) {
     // ── S13 · Gastos del día ────────────────────────────────────
     const egQ = db.from('egresos').select('*').eq('fecha', fecha).order('created_at', { ascending: true });
     const { data: egRaw } = await applySede(egQ as any);
+    // Lo que de cada gasto pagó DESPUÉS un pago a proveedor: ese dinero sale el día del pago,
+    // no el de la compra (va en «Pagos a proveedores» de ese día).
+    const aplicadoPorEgreso = new Map<string, Record<string, number>>();
+    const pagadoDespues = new Map<string, string>();
+    {
+      const ids = (egRaw || []).map((e: any) => String(e.id));
+      const partidas = new Map<string, string>((egRaw || []).filter((e: any) => e.partida_id).map((e: any) => [String(e.partida_id), String(e.id)] as [string, string]));
+      const claves = [...ids, ...partidas.keys()];
+      for (let i = 0; i < claves.length; i += 150) {
+        const { data: ap } = await db.from('pagos_proveedor_aplicaciones').select('origen, registro_id, metodos_pago, pago_id, pagos_proveedor(fecha)').eq('revertido', false).in('registro_id', claves.slice(i, i + 150));
+        for (const a of (ap || []) as any[]) {
+          const eid = a.origen === 'partida' ? partidas.get(String(a.registro_id)) : String(a.registro_id);
+          if (!eid) continue;
+          const acc = aplicadoPorEgreso.get(eid) || {};
+          for (const [k, v] of Object.entries(a.metodos_pago || {})) acc[k] = r2((acc[k] || 0) + n(v));
+          aplicadoPorEgreso.set(eid, acc);
+          const f = String(a.pagos_proveedor?.fecha || '').slice(0, 10);
+          if (f && f !== fecha) pagadoDespues.set(eid, f.split('-').reverse().slice(0, 2).join('/'));
+        }
+      }
+    }
     const gastos = (egRaw || []).map((e: any) => {
       const detalle = Array.isArray(e.desglose) && e.desglose.length
         ? e.desglose.map((d: any) => d.descripcion).filter(Boolean).join(', ')
         : '';
       const usd = n(e.total_egresos);
       // De qué cuenta salió: el reparto guardado, o la cuenta suelta de antes.
-      const reparto = e.metodos_pago && typeof e.metodos_pago === 'object'
+      const aplicado = aplicadoPorEgreso.get(String(e.id));
+      let reparto = e.metodos_pago && typeof e.metodos_pago === 'object'
         ? e.metodos_pago
-        : (e.metodo_pago ? { [e.metodo_pago]: usd } : null);
+        : (e.metodo_pago && e.estado_pago !== 'por_pagar' ? { [e.metodo_pago]: usd } : null);
+      if (reparto && aplicado) {
+        const resto: Record<string, number> = {};
+        for (const [k, v] of Object.entries(reparto as Record<string, unknown>)) { const x = r2(n(v) - n(aplicado[k])); if (x > 0.009) resto[k] = x; }
+        reparto = Object.keys(resto).length ? resto : null;
+      }
       const lineas = lineasDeMetodos(reparto, n(e.tasa_cambio) || tasa);
-      const debe = e.estado_pago === 'por_pagar' || e.estado_pago === 'parcial';
+      // Comprado a crédito y pagado otro día: el gasto es de hoy, el dinero salió ese día.
+      const debe = e.estado_pago === 'por_pagar' || e.estado_pago === 'parcial' || (!lineas.length && pagadoDespues.has(String(e.id)));
       // Bolívares: lo que salió de cada cuenta en Bs es exacto; lo demás se pasa con la tasa del PROPIO gasto (no la del día del reporte).
       const tasaGasto = n(e.tasa_cambio) || tasa;
       const bsExactos = !debe && lineas.length
@@ -606,7 +634,7 @@ export async function GET(req: NextRequest) {
         concepto: (detalle || e.notas || e.categoria || e.cliente || 'Gasto').toString().slice(0, 120),
         proveedor: e.proveedor || e.cliente || '',
         placa: String(e.placa || '').toUpperCase(),
-        cuenta: lineas.length ? resumenCorto(lineas) : (debe ? 'Por pagar' : 'Sin cuenta'),
+        cuenta: [lineas.length ? resumenCorto(lineas) : '', pagadoDespues.has(String(e.id)) ? `pagado el ${pagadoDespues.get(String(e.id))} (pago a proveedor)` : (!lineas.length ? (debe ? 'Por pagar' : 'Sin cuenta') : '')].filter(Boolean).join(' · '),
         usd,
         bs: bsExactos ?? r2(usd * tasaGasto),
         id: String(e.id),
@@ -616,6 +644,27 @@ export async function GET(req: NextRequest) {
       };
     });
     const gastosTotal = { usd: r2(gastos.reduce((s: number, g: any) => s + g.usd, 0)), bs: r2(gastos.reduce((s: number, g: any) => s + g.bs, 0)) };
+
+    // ── Pagos a proveedores del día: lo que salió hoy para saldar deudas (de hoy o de antes).
+    // No se suma a «Gastos del día»: el gasto ya contó el día de la compra.
+    let ppQ = db.from('pagos_proveedor').select('*, pagos_proveedor_aplicaciones(descripcion, placa, monto_usd, revertido)').eq('fecha', fecha).eq('anulado', false).neq('modo', 'saldo_favor').order('created_at', { ascending: true });
+    if (sede) ppQ = ppQ.or(`sede_id.is.null,sede_id.eq.${sede}`);
+    const { data: ppRaw } = await ppQ;
+    const pagosProveedor = ((ppRaw || []) as any[]).map(p => {
+      const lineas = lineasDeMetodos(p.metodos_pago, n(p.tasa) || tasa);
+      const apl = (p.pagos_proveedor_aplicaciones || []).filter((a: any) => !a.revertido);
+      const placas = [...new Set(apl.map((a: any) => a.placa).filter(Boolean))];
+      return {
+        id: String(p.id), proveedor: String(p.proveedor || ''), cuenta: lineas.length ? resumenCorto(lineas) : '—',
+        aplicadoA: apl.length ? `${apl.length} deuda(s)${placas.length ? ` · ${placas.join(', ')}` : ''}` : 'saldo a favor',
+        referencia: p.referencia || '', usd: r2(n(p.monto_usd)), saldoFavor: r2(n(p.saldo_favor_usd)),
+        bs: r2(lineas.reduce((s: number, l: any) => s + (l.moneda === 'Bs' ? n(l.monto) : n(l.monto) * (n(p.tasa) || tasa)), 0)),
+        cuentas: lineas.map((l: any) => String(l.cuenta)),
+        verif: (lineas.some((l: any) => l.moneda === 'Bs') ? 'pendiente' : 'sin_banco') as 'conciliado' | 'pendiente' | 'cambio' | 'sin_banco',
+        actualizado: String(p.updated_at || p.created_at || ''),
+      };
+    });
+    const pagosProveedorTotal = { usd: r2(pagosProveedor.reduce((s, p) => s + p.usd, 0)), bs: r2(pagosProveedor.reduce((s, p) => s + p.bs, 0)) };
 
     // ── Conciliación bancaria: ¿esto que dice el reporte lo confirmó el banco? ──────────
     // Se toma la última conciliación de cada banco que cubre este día. Lo que se tocó DESPUÉS
@@ -650,11 +699,13 @@ export async function GET(req: NextRequest) {
         (v as any).verif = sello(`ventas_dia:${v.id}`, cuentas, v.actualizado, v.verif);
       }
       for (const g of gastos as any[]) g.verif = sello(`egresos:${g.id}`, g.cuentas || [], g.actualizado, g.verif);
+      for (const p of pagosProveedor) p.verif = sello(`pagos_proveedor:${p.id}`, p.cuentas, p.actualizado, p.verif);
 
       // ¿Falta conciliar algún banco que sí se usó ese día?
       const cuentasUsadas = new Set<string>([
         ...ventas.flatMap(v => BANK_METHODS.filter(m => v.bancos[m.id] > 0).map(m => m.id)),
         ...(gastos as any[]).flatMap(g => g.cuentas || []),
+        ...pagosProveedor.flatMap(p => p.cuentas),
       ]);
       const sinConciliar = [...new Set([...cuentasUsadas].flatMap(c => (COBERTURA[c] ? [COBERTURA[c][0]] : [])))]
         .filter(b => !COBERTURA[b === 'banesco' ? 'pago_movil_banesco' : b === 'exterior' ? 'pago_movil_exterior' : 'bnc'].some(x => ultimaPorBanco.has(x)));
@@ -770,6 +821,7 @@ export async function GET(req: NextRequest) {
       cobros, cobrosTotal,
       bancos, entradas,
       gastos, gastosTotal,
+      pagosProveedor, pagosProveedorTotal,
       // El servidor corre en UTC, asi que la hora se fija a Caracas: si no, el
       // pie de un reporte sacado a las 9 de la noche dice el dia siguiente.
       // Y los dos digitos evitan el «17/9/2026» suelto.

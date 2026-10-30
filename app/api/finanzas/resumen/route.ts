@@ -1,5 +1,6 @@
 import { cargarDatosCaja, construirFlujo, type CuentaCaja } from '@/lib/caja/flujo';
 import { analizarPeriodo } from '@/lib/utilidad/periodo';
+import { deudasAbiertas } from '@/lib/proveedores/pagos';
 import { NextRequest, NextResponse } from 'next/server';
 import { authorize } from '@/lib/auth-server';
 import { BANK_METHODS, binToUSD } from '@/lib/reporte/ventas-mapping';
@@ -246,22 +247,18 @@ export async function GET(req: NextRequest) {
 
   // ── Cuentas por pagar ─────────────────────────────────────────────────────
   // Un gasto que no está pagado es un compromiso, esté dentro del período o
-  // no; por eso se piden aparte del cálculo del mes.
-  let qPagar = auth.db.from('egresos')
-    .select('id, proveedor, categoria, notas, total_egresos, moneda, tasa_cambio, fecha_vencimiento, monto_pagado, estado_pago')
-    .neq('estado_pago', 'pagado').limit(300);
-  if (sede) qPagar = qPagar.eq('sede_id', sede);
-  const rPagar = await qPagar;
+  // no; por eso se piden aparte del cálculo del mes. Sale de la MISMA lista que
+  // Proveedores › Cuentas por pagar (renglones de ficha + compras sueltas), así
+  // las dos pantallas dicen la misma cifra.
+  const deudas = await deudasAbiertas(auth.db, { sede: sede || null }).catch(() => []);
 
-  const porPagarLista: Pagar[] = ((rPagar.data as unknown as FilaEgreso[]) || []).map(e => {
-    const total = egresoUSD(e);
-    const pagado = r2(Number(e.monto_pagado) || 0);
-    const venc = e.fecha_vencimiento ? String(e.fecha_vencimiento).slice(0, 10) : null;
+  const porPagarLista: Pagar[] = deudas.map(e => {
+    const venc = e.vence ? String(e.vence).slice(0, 10) : null;
     return {
       id: e.id,
       proveedor: e.proveedor || 'Sin proveedor',
-      descripcion: etiquetaGasto(e.categoria),
-      monto: r2(Math.max(0, total - pagado)),
+      descripcion: [e.concepto, e.placa].filter(Boolean).join(' · ') || etiquetaGasto(e.categoria),
+      monto: e.saldo,
       vencimiento: venc,
       dias: venc
         ? Math.round((new Date(`${venc}T00:00:00`).getTime() - hoy.getTime()) / DIA)

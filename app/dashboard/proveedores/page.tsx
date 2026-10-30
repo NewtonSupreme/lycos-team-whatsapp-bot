@@ -12,6 +12,7 @@ import {
 import ModalProveedor from '@/components/proveedores/ModalProveedor';
 import ModalOrdenCompra from '@/components/proveedores/ModalOrdenCompra';
 import ModalEvaluacion from '@/components/proveedores/ModalEvaluacion';
+import CuentasPorPagar from '@/components/proveedores/CuentasPorPagar';
 import { useModales } from '@/components/ui/modales';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { useRolePermissions } from '@/lib/hooks/useRolePermissions';
@@ -41,7 +42,7 @@ const PESTANAS = [
   { valor: 'productos' as const, label: 'Productos' },
   { valor: 'ordenes' as const, label: 'Órdenes de compra' },
   { valor: 'historial' as const, label: 'Historial' },
-  { valor: 'pagos' as const, label: 'Pagos' },
+  { valor: 'pagos' as const, label: 'Cuentas por pagar' },
   { valor: 'evaluaciones' as const, label: 'Evaluaciones' },
 ] as const;
 
@@ -156,12 +157,6 @@ export default function ProveedoresPage() {
       .sort((a, b) => b.total - a.total);
   }, [datos, busqueda]);
 
-  const deudas = useMemo(
-    () => (datos?.compras || []).filter(c => c.saldo > 0.01)
-      .sort((a, b) => Number(b.vencida) - Number(a.vencida)
-        || (a.fecha_vencimiento || a.fecha).localeCompare(b.fecha_vencimiento || b.fecha)),
-    [datos],
-  );
 
   /** Las cinco barras de «compras por proveedor». */
   const barras = useMemo(() => {
@@ -622,7 +617,7 @@ export default function ProveedoresPage() {
                     {[
                       { icono: <Plus className="h-4 w-4" aria-hidden />, label: 'Registrar un proveedor', al: () => setEditando({ abierto: true, proveedor: null }) },
                       { icono: <ClipboardList className="h-4 w-4" aria-hidden />, label: 'Nueva orden de compra', al: () => setOrdenNueva({ abierto: true, proveedor: null }) },
-                      { icono: <Wallet className="h-4 w-4" aria-hidden />, label: 'Ver lo que se debe', al: () => setPestana('pagos') },
+                      { icono: <Wallet className="h-4 w-4" aria-hidden />, label: 'Pagar o abonar a un proveedor', al: () => setPestana('pagos') },
                       { icono: <Package className="h-4 w-4" aria-hidden />, label: 'Qué le compramos a cada uno', al: () => setPestana('productos') },
                     ].map(a => (
                       <button
@@ -806,12 +801,7 @@ export default function ProveedoresPage() {
 
           {/* ── Pagos ────────────────────────────────────────────────────── */}
           {pestana === 'pagos' && (
-            <TablaCompras
-              compras={deudas}
-              titulo={`Pagos pendientes (${deudas.length})`}
-              subtitulo="Lo que se le debe a cada proveedor. Lo vencido dispara la alerta a pantalla completa al entrar al sistema."
-              vacio="No se le debe nada a ningún proveedor. Todas las compras están pagadas."
-            />
+            <CuentasPorPagar busqueda={busqueda} puedePagar={can('reportes', 'editar')} sedeId={sedeId} onCambio={cargar} />
           )}
 
           {/* ── Evaluaciones ─────────────────────────────────────────────── */}

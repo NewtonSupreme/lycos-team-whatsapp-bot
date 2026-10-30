@@ -7,6 +7,8 @@
 //                       están en su venta y se saltan (si no, doble conteo).
 //   · Egresos         → el reparto por cuenta (exacto, en la moneda de la
 //                       cuenta) o, en los viejos, la cuenta suelta con su total.
+//                       Lo que llegó por un pago a proveedor no va aquí:
+//   · Pagos a proveedor → el día que salió el dinero, con su reparto por cuenta.
 //
 // Los montos van en la moneda de la cuenta, tal como se capturaron: los
 // bolívares del pago móvil se comparan al céntimo con el banco.
@@ -59,7 +61,7 @@ export async function cargarSistema(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- el constructor de Supabase anidado agota la inferencia de tipos
   const conSede = (q: any) => (sede ? q.eq('sede_id', sede) : q);
 
-  const [ventas, abonos, egresos, usuarios, trabajos, traspasosRaw, confJustRaw, ctasRaw] = await Promise.all([
+  const [ventas, abonos, egresos, usuarios, trabajos, traspasosRaw, confJustRaw, ctasRaw, pagosProv, aplicaciones] = await Promise.all([
     todas<Record<string, unknown>>(() => conSede(db.from('ventas_dia').select('*').gte('fecha', desde).lte('fecha', hasta).order('fecha'))),
     todas<Record<string, unknown>>(() => conSede(db.from('abonos').select('*').gte('fecha', desde).lte('fecha', hasta).order('fecha'))),
     todas<Record<string, unknown>>(() => conSede(db.from('egresos').select('*').gte('fecha', desde).lte('fecha', hasta).order('fecha'))),
@@ -68,7 +70,21 @@ export async function cargarSistema(
     todas<Record<string, unknown>>(() => db.from('traspasos_cuenta').select('*').gte('fecha', desde).lte('fecha', hasta).order('fecha')).catch(() => []),
     db.from('configuracion').select('valor').eq('clave', 'conciliacion_justificaciones').is('sede_id', null).maybeSingle().then(r => r, () => ({ data: null })),
     db.from('cuentas_financieras').select('id, nombre').then(r => r, () => ({ data: [] })),
+    todas<Record<string, unknown>>(() => conSede(db.from('pagos_proveedor').select('*').eq('anulado', false).neq('modo', 'saldo_favor').gte('fecha', desde).lte('fecha', hasta).order('fecha'))).catch(() => []),
+    todas<Record<string, unknown>>(() => db.from('pagos_proveedor_aplicaciones').select('id, origen, registro_id, metodos_pago').eq('revertido', false).order('id')).catch(() => []),
   ]);
+
+  // Lo que de cada gasto pagó un pago a proveedor: sale el día del pago, no el de la compra.
+  const egresoDePartida = new Map<string, string>();
+  for (const e of egresos) if (e.partida_id) egresoDePartida.set(String(e.partida_id), String(e.id));
+  const aplicadoPorEgreso = new Map<string, Record<string, number>>();
+  for (const a of aplicaciones) {
+    const eid = a.origen === 'partida' ? egresoDePartida.get(String(a.registro_id)) : String(a.registro_id);
+    if (!eid) continue;
+    const acc = aplicadoPorEgreso.get(eid) || {};
+    for (const [k, v] of Object.entries((a.metodos_pago || {}) as Record<string, unknown>)) acc[k] = r2((acc[k] || 0) + n(v));
+    aplicadoPorEgreso.set(eid, acc);
+  }
 
   const ctasMap = new Map<string, string>();
   for (const c of ((ctasRaw as { data?: Array<{ id: string; nombre: string }> })?.data || [])) {
@@ -137,6 +153,8 @@ export async function cargarSistema(
     }
   }
   for (const e of egresos) {
+    // Lo que aún se debe no ha salido de ninguna cuenta.
+    if (e.estado_pago === 'por_pagar') continue;
     const tasa = n(e.tasa_cambio);
     const reparto = e.metodos_pago && typeof e.metodos_pago === 'object' ? e.metodos_pago as Record<string, unknown> : null;
     const base = {
@@ -147,14 +165,14 @@ export async function cargarSistema(
     };
     if (reparto && Object.values(reparto).some(x => n(x) > 0)) {
       for (const m of BANK_METHODS) {
-        const monto = n(reparto[m.id]);
-        if (monto > 0) todos.push(asiento({ ...base, cuenta: m.id }, monto));
+        const monto = r2(n(reparto[m.id]) - n(aplicadoPorEgreso.get(String(e.id))?.[m.id]));
+        if (monto > 0.009) todos.push(asiento({ ...base, cuenta: m.id }, monto));
       }
       continue;
     }
     const bin = String(e.metodo_pago || '') as BankBin;
     if (!MONEDA.has(bin)) continue;
-    const total = n(e.total_egresos);
+    const total = e.estado_pago === 'parcial' ? n(e.monto_pagado) : n(e.total_egresos);
     const esUsd = String(e.moneda || 'USD').toUpperCase() === 'USD';
     // Egreso viejo en dólares pagado desde una cuenta en bolívares: solo se
     // sabe el monto a la tasa, así que va como dólares (se cruza con tolerancia).
@@ -163,6 +181,20 @@ export async function cargarSistema(
       todos.push({ ...a, enDolares: true, usd: r2(total), monto: r2(total) });
     } else {
       todos.push(asiento({ ...base, cuenta: bin }, total));
+    }
+  }
+
+  for (const p of pagosProv) {
+    const mp = (p.metodos_pago || {}) as Record<string, unknown>;
+    const sf = n(p.saldo_favor_usd);
+    for (const m of BANK_METHODS) {
+      const monto = n(mp[m.id]);
+      if (monto <= 0) continue;
+      todos.push(asiento({
+        tabla: 'pagos_proveedor', registroId: String(p.id), fecha: String(p.fecha).slice(0, 10), sentido: 'egreso', cuenta: m.id, tasa: n(p.tasa),
+        concepto: String(p.proveedor || 'Proveedor'), detalle: `Pago a proveedor${sf > 0 ? ` · saldo a favor $${sf.toFixed(2)}` : ''}${p.nota ? ` · ${String(p.nota).slice(0, 50)}` : ''}`,
+        placa: null, referencia: (p.referencia as string) || null, servicioId: null,
+      }, monto));
     }
   }
 

@@ -38,7 +38,7 @@ export const NOMBRE_CUENTA: Record<string, string> = {
 /** Un registro del sistema que dice que entró o salió dinero por una cuenta. */
 export interface AsientoSistema {
   id: string;
-  tabla: 'ventas_dia' | 'abonos' | 'egresos';
+  tabla: 'ventas_dia' | 'abonos' | 'egresos' | 'pagos_proveedor';
   registroId: string;
   fecha: string;
   sentido: 'ingreso' | 'egreso';

@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
 
   let qPart = auth.db.from('vehiculo_partidas')
     .select('id, fecha, descripcion, placa, cantidad, costo, monto_pagado, estado_pago, '
-      + 'proveedor, proveedor_id, enlace, fecha_vencimiento, origen')
+      + 'proveedor, proveedor_id, enlace, fecha_vencimiento, origen, tipo')
     .gt('costo', 0).order('fecha', { ascending: false }).limit(2000);
 
   let qEgr = auth.db.from('egresos')
@@ -84,7 +84,7 @@ export async function GET(req: NextRequest) {
     id: string; fecha: string; descripcion: string; placa: string | null;
     cantidad: number | null; costo: number | null; monto_pagado: number | null;
     estado_pago: string; proveedor: string | null; proveedor_id: string | null;
-    enlace: string | null; fecha_vencimiento: string | null; origen: string | null;
+    enlace: string | null; fecha_vencimiento: string | null; origen: string | null; tipo: string | null;
   };
   type Egr = {
     id: string; fecha: string; categoria: string | null; notas: string | null;
@@ -114,8 +114,8 @@ export async function GET(req: NextRequest) {
   const compras: CompraFila[] = [];
 
   for (const p of partidas) {
-    // Lo que trae el cliente no es una compra nuestra.
-    if (p.origen === 'cliente') continue;
+    // Lo que trae el cliente no es una compra nuestra, ni la mano de obra propia (se paga por nómina).
+    if (p.origen === 'cliente' || p.tipo === 'mano_obra') continue;
     const cantidad = Number(p.cantidad) || 1;
     const total = n2(cantidad * (Number(p.costo) || 0));
     if (total <= 0) continue;
