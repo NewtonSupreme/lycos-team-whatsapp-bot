@@ -1,69 +1,100 @@
 // ============================================================
-// Lycos Team - Service Worker v1.0
-// Maneja notificaciones push en background
+// Lycos Team - Service Worker v2
+// Notificaciones push: que suenen siempre, que se vean bien y que no se pierdan.
 // ============================================================
 
-const CACHE_NAME = 'lycos-team-v1';
+// v2 · cambiar este archivo hace que los navegadores instalen la versión nueva.
+const ICONO = '/Nuevo_Lycos_LOGO.png';
+// La clave pública VAPID llega en la URL del registro (/sw.js?k=…) para poder
+// re-suscribirse solo cuando el navegador renueve la suscripción.
+const CLAVE = new URL(self.location.href).searchParams.get('k') || '';
 
-self.addEventListener('install', (event) => {
-  self.skipWaiting();
-});
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
 
-self.addEventListener('activate', (event) => {
-  event.waitUntil(clients.claim());
-});
+// Vibración según lo que es: lo urgente insiste, un mensaje es corto.
+const VIBRA = {
+  'atencion-cliente': [400, 150, 400, 150, 400],
+  'whatsapp-human': [300, 120, 300, 120, 300],
+  'tramite_alert': [300, 120, 300],
+  'pago-proveedor': [300, 120, 300],
+  'prueba': [200, 100, 200],
+};
 
-// ── Recibir notificación push ─────────────────────────────────
+let pendientes = 0;
+
 self.addEventListener('push', (event) => {
-  if (!event.data) return;
-
   let data = {};
-  try {
-    data = event.data.json();
-  } catch {
-    data = { title: 'Lycos Team', body: event.data.text(), type: 'general' };
-  }
-
-  const title = data.title || 'Lycos Team';
-  const options = {
+  try { data = event.data ? event.data.json() : {}; } catch { data = { title: 'Lycos Team', body: event.data ? event.data.text() : '' }; }
+  const tipo = data.type || 'general';
+  const titulo = data.title || 'Lycos Team';
+  const opciones = {
     body: data.body || 'Nueva notificación',
-    icon: '/Nuevo_Lycos_LOGO copy.png',
-    badge: '/Nuevo_Lycos_LOGO copy.png',
-    tag: data.tag || data.type || 'general',
-    data: {
-      url: data.url || '/dashboard',
-      type: data.type || 'general',
-    },
-    requireInteraction: data.requireInteraction || false,
+    icon: ICONO,
+    badge: ICONO,
+    // Misma etiqueta = se agrupa en un solo aviso, pero renotify hace que VUELVA A SONAR
+    // (antes los avisos con la misma etiqueta se reemplazaban en silencio).
+    tag: data.tag || `${tipo}-${Date.now()}`,
+    renotify: true,
+    requireInteraction: !!data.requireInteraction,
     silent: false,
-    vibrate: [200, 100, 200],
-    actions: data.actions || [],
+    timestamp: data.ts || Date.now(),
+    vibrate: VIBRA[tipo] || [200, 100, 200],
+    data: { url: data.url || '/dashboard', type: tipo },
+    actions: [{ action: 'abrir', title: 'Abrir' }],
   };
-
-  event.waitUntil(
-    self.registration.showNotification(title, options)
-  );
+  pendientes += 1;
+  event.waitUntil((async () => {
+    await self.registration.showNotification(titulo, opciones);
+    try { if (self.navigator.setAppBadge) await self.navigator.setAppBadge(pendientes); } catch { /* sin insignia */ }
+    // La pestaña abierta se entera al instante (sonido y aviso dentro de la app).
+    const ventanas = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const v of ventanas) v.postMessage({ lycos: 'push', titulo, cuerpo: opciones.body, tipo, url: opciones.data.url });
+  })());
 });
 
-// ── Click en notificación → abrir/enfocar la app ─────────────
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const url = event.notification.data?.url || '/dashboard';
+  pendientes = Math.max(0, pendientes - 1);
+  const url = (event.notification.data && event.notification.data.url) || '/dashboard';
+  event.waitUntil((async () => {
+    try { if (self.navigator.clearAppBadge && pendientes === 0) await self.navigator.clearAppBadge(); } catch { /* noop */ }
+    const ventanas = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const v of ventanas) {
+      if (v.url.startsWith(self.location.origin) && 'focus' in v) {
+        await v.focus();
+        try { await v.navigate(url); } catch { v.postMessage({ lycos: 'navegar', url }); }
+        return;
+      }
+    }
+    if (self.clients.openWindow) await self.clients.openWindow(url);
+  })());
+});
 
-  event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      // Si ya hay una ventana abierta, enfocarla y navegar
-      for (const client of clientList) {
-        if (client.url.includes(self.location.origin) && 'focus' in client) {
-          client.focus();
-          client.navigate(url);
-          return;
-        }
-      }
-      // Si no hay ventana abierta, abrir una nueva
-      if (clients.openWindow) {
-        return clients.openWindow(url);
-      }
-    })
-  );
+self.addEventListener('notificationclose', () => { pendientes = Math.max(0, pendientes - 1); });
+
+// El navegador renovó (o perdió) la suscripción: se vuelve a suscribir y se avisa al servidor,
+// si no ese aparato dejaba de recibir sin que nadie se enterara.
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil((async () => {
+    const viejo = event.oldSubscription ? event.oldSubscription.endpoint : null;
+    let nueva = event.newSubscription;
+    if (!nueva && CLAVE) {
+      const b = atob(CLAVE.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (CLAVE.length % 4)) % 4));
+      const clave = Uint8Array.from(b, (c) => c.charCodeAt(0));
+      nueva = await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: clave });
+    }
+    if (!nueva) return;
+    await fetch('/api/push/subscribe', {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...nueva.toJSON(), viejo }),
+    });
+  })());
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.lycos === 'limpiar-insignia') {
+    pendientes = 0;
+    try { if (self.navigator.clearAppBadge) self.navigator.clearAppBadge(); } catch { /* noop */ }
+  }
 });

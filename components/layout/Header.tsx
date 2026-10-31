@@ -82,9 +82,8 @@ export default function Header() {
     }
   }, [pushRegistered, setPushRegistered]);
 
-  useEffect(() => {
-    registerPush();
-  }, [registerPush]);
+  // El registro de push vive en ActivadorPush (en el layout del panel, para todas las pantallas).
+  void registerPush;
 
   // ── Load Initial Notifications ──────────────────────────────
   const loadInitialNotifs = useCallback(async () => {
@@ -120,9 +119,6 @@ export default function Header() {
           leida: false,
         });
 
-        if (Notification.permission === 'granted') {
-          new Notification(notif.titulo, { body: notif.mensaje, icon: '/Nuevo_Lycos_LOGO copy.png', tag: notif.entidad_tipo || 'general' });
-        }
       })
       .subscribe();
 
@@ -261,6 +257,11 @@ export default function Header() {
                     </div>
                   );
                 })}
+              </div>
+              <div className="px-4 py-2 border-t border-border/30 text-center">
+                <button onClick={() => window.dispatchEvent(new Event('lycos:probar-push'))} className="text-[11px] font-semibold text-primary hover:underline">
+                  Probar notificaciones en este aparato
+                </button>
               </div>
               {notifications.length > 0 && (
                 <div className="px-4 py-2 border-t border-border/30 text-center">

@@ -3,6 +3,7 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import ProveedorModales from '@/components/ui/modales/ProveedorModales';
 import AlertaPagoProveedor from '@/components/alertas/AlertaPagoProveedor';
 import AlertaAtencionCliente from '@/components/alertas/AlertaAtencionCliente';
+import ActivadorPush from '@/components/notificaciones/ActivadorPush';
 
 /**
  * El proveedor de modales envuelve TODO el panel.
@@ -22,6 +23,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <DashboardLayout>{children}</DashboardLayout>
       <AlertaPagoProveedor />
       <AlertaAtencionCliente />
+      <ActivadorPush />
     </ProveedorModales>
   );
 }

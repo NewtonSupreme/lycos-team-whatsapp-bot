@@ -92,7 +92,10 @@ export default function AlertaAtencionCliente() {
     const t = setInterval(cargar, 20000);
     const alVolver = () => { if (document.visibilityState === 'visible') void cargar(); };
     document.addEventListener('visibilitychange', alVolver);
-    return () => { clearInterval(t); document.removeEventListener('visibilitychange', alVolver); };
+    // Si llega la push de una alerta, se muestra al instante (sin esperar la próxima consulta).
+    const alPush = (ev: MessageEvent) => { if (ev.data?.lycos === 'push' && /atencion|human|tramite/.test(String(ev.data.tipo || ''))) void cargar(); };
+    navigator.serviceWorker?.addEventListener('message', alPush);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', alVolver); navigator.serviceWorker?.removeEventListener('message', alPush); };
   }, [user, puedeVer, cargar]);
 
   const a = alertas[0];

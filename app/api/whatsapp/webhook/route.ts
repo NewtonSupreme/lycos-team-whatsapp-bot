@@ -1007,6 +1007,20 @@ async function procesarEntrantes(value: any) {
       console.error('❌ No se pudo reclamar el mensaje:', errReclamo.message);
     } else filaId = reclamo?.id || null;
 
+    // ── Push AL RECIBIR (antes de leer audios/fotos/videos, que tarda): a quien atiende WhatsApp
+    // de esa sede, un aviso por cliente que vuelve a sonar con cada mensaje. El personal que le
+    // escribe al bot no genera avisos.
+    const tRec = message.type;
+    const esPersonal = await checkIsBotAdmin(from, db, ADMIN_PHONES).catch(() => false);
+    const quienEs = waProfileName || from;
+    if (!esPersonal) {
+      const textoRapido = tRec === 'text' ? String(message.text?.body || '') : tRec === 'image' ? '📷 Foto' : tRec === 'video' ? '🎥 Video' : tRec === 'audio' ? '🎤 Nota de voz' : tRec === 'sticker' ? 'Sticker' : tRec === 'document' ? '📄 Documento' : tRec === 'location' ? '📍 Ubicación' : 'Mensaje';
+      await sendGlobalPushNotification({
+        title: `💬 ${quienEs}`, body: textoRapido.slice(0, 140) || 'Nuevo mensaje', type: 'whatsapp-message',
+        url: `/dashboard/whatsapp?tel=${from}`, tag: `wa-${from}`, modulo: 'whatsapp', sede: sedeId,
+      }).catch(e => console.error('push:', e));
+    }
+
     // ── Leer el contenido (texto, audio transcrito, imagen/video/sticker descritos…)
     let contenido: { body: string; mediaId: string | null; mediaType: string | null };
     try { contenido = await extraerContenido(message, from, db); }
@@ -1031,8 +1045,8 @@ async function procesarEntrantes(value: any) {
     const pushBody = t === 'image' ? 'El cliente envió una foto' : t === 'video' ? 'El cliente envió un video' : t === 'audio' ? 'Nota de voz recibida' : messageBody.slice(0, 100);
     const pushType = t === 'image' ? 'whatsapp-image' : t === 'video' ? 'whatsapp-video' : t === 'audio' ? 'whatsapp-audio' : 'whatsapp-message';
     try {
-      await db.from('notificaciones').insert({ sede_id: sedeId, tipo: 'info', titulo: pushTitle, mensaje: pushBody, entidad_tipo: 'whatsapp', entidad_id: guardadoId, leida: false });
-      void sendGlobalPushNotification({ title: pushTitle, body: pushBody, type: pushType, url: '/dashboard/whatsapp', tag: 'whatsapp' });
+      if (!esPersonal) await db.from('notificaciones').insert({ sede_id: sedeId, tipo: 'info', titulo: pushTitle.replace(from, quienEs), mensaje: pushBody, entidad_tipo: 'whatsapp', entidad_id: guardadoId, leida: false });
+      void pushType;
     } catch (ne) { console.error('Error insertando notificacion', ne); }
 
     porAtender.add(from);
@@ -1167,10 +1181,10 @@ async function atenderConversacion(db: any, from: string, waProfileName: string)
       mensajes_sin_leer: (conv?.mensajes_sin_leer ?? 0) + Math.max(1, nuevos.length),
       atendido_hasta: ultimo?.created_at || undefined,
     }).eq('telefono', phone);
-    void sendGlobalPushNotification({
-      title: '🆘 Respuesta manual requerida', body: `${from}: ${String(ultimo?.body || '').slice(0, 80)}`,
-      type: 'whatsapp-human', url: '/dashboard/whatsapp', tag: 'whatsapp-human',
-    });
+    await sendGlobalPushNotification({
+      title: '🆘 Respuesta manual requerida', body: `${waProfileName || from}: ${String(ultimo?.body || '').slice(0, 100)}`,
+      type: 'whatsapp-human', url: `/dashboard/whatsapp?tel=${phone}`, tag: `wa-humano-${phone}`, modulo: 'whatsapp', requireInteraction: true,
+    }).catch(() => null);
     return;
   }
 
@@ -3813,7 +3827,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           telefono: from, tipo, motivo, sugerencia, cliente: ctx.memoria?.nombre || waProfileName || null,
           ultimoMensaje: messageBody, sedeId: ctx.sede_id || DEFAULT_SEDE_ID,
         });
-        if (r.nueva) void sendGlobalPushNotification({ title: `🚨 ${TIPOS_ATENCION[tipo].titulo}`, body: `${quien}: ${motivo.slice(0, 100)}`, type: 'atencion-cliente', url: `/dashboard/whatsapp?tel=${from}`, tag: `atencion-${from}-${tipo}` });
+        if (r.nueva) await sendGlobalPushNotification({ title: `🚨 ${TIPOS_ATENCION[tipo].titulo}`, body: `${quien}: ${motivo.slice(0, 120)}`, type: 'atencion-cliente', url: `/dashboard/whatsapp?tel=${from}`, tag: `atencion-${from}-${tipo}`, modulo: 'whatsapp', sede: ctx.sede_id || null, requireInteraction: true }).catch(() => null);
         console.log(`🚨 [${from}] Alerta de atención: ${tipo} — ${motivo.slice(0, 80)}`);
       } catch (e) { console.error('alertar:', e); }
     };
@@ -4232,7 +4246,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
           title: '🚨 Nueva Solicitud de Trámite',
           body: `El cliente ${userName} (${from}) está solicitando un Certificado Médico o RCV. ¡Atiéndelo pronto!`,
           type: 'tramite_alert',
-          url: '/chat'
+          url: `/dashboard/whatsapp?tel=${from}`, tag: `tramite-${from}`, modulo: 'whatsapp',
         });
       }
 

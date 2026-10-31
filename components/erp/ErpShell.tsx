@@ -508,6 +508,10 @@ export default function ErpShell({
                     <Settings className="h-4 w-4" aria-hidden />
                     Configuración
                   </Link>
+                  <button onClick={() => { setMenuUsuario(false); window.dispatchEvent(new Event('lycos:probar-push')); }} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[12.5px] text-[#3d4350] hover:bg-[#f6f7f9]">
+                    <Bell className="h-4 w-4" aria-hidden />
+                    Probar notificaciones
+                  </button>
                   <button onClick={() => { setMenuUsuario(false); setConfirmandoSalida(true); }} className="flex w-full items-center gap-2.5 border-t border-[#f2f3f5] px-3 py-2 text-left text-[12.5px] text-[#dc2626] hover:bg-[#fdeaea]">
                     <LogOut className="h-4 w-4" aria-hidden />
                     Cerrar sesión
