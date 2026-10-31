@@ -34,6 +34,21 @@ export default function Header() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
+  // ── Estado real del bot ──────────────────────────────────────
+  const [estadoBot, setEstadoBot] = useState<{ texto: string; tono: 'ok' | 'aviso' | 'apagado' } | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    const leer = () => fetch('/api/configuracion/bot', { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then(d => {
+      if (!vivo || !d?.config) return;
+      const c = d.config;
+      setEstadoBot(!c.bot_whatsapp_global_activo ? { texto: 'Bot apagado', tono: 'apagado' }
+        : !c.responder_clientes ? { texto: 'Bot sin responder clientes', tono: 'aviso' }
+          : { texto: 'Bot activo', tono: 'ok' });
+    }).catch(() => {});
+    leer(); const t = setInterval(leer, 60000);
+    return () => { vivo = false; clearInterval(t); };
+  }, []);
+
   // ── Registrar Service Worker + Push ──────────────────────────
   const registerPush = useCallback(async () => {
     if (pushRegistered || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
@@ -153,11 +168,14 @@ export default function Header() {
 
       <div className="flex-1" />
 
-      {/* Status pill - Solo en pantallas medianas o si hay espacio */}
-      <div className="hidden lg:flex items-center gap-1.5 rounded-full border border-success/25 bg-success-subtle px-2.5 py-1">
-        <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-        <span className="text-[10px] text-green-400 font-medium">Bot activo</span>
-      </div>
+      {/* Estado REAL del bot (Configuración › Bot de WhatsApp); antes decía «activo» siempre. */}
+      {estadoBot && (
+        <a href="/dashboard/configuracion" title="Configurar el bot" className={cn('hidden lg:flex items-center gap-1.5 rounded-full border px-2.5 py-1',
+          estadoBot.tono === 'ok' ? 'border-success/25 bg-success-subtle' : estadoBot.tono === 'aviso' ? 'border-amber-400/30 bg-amber-400/10' : 'border-red-500/30 bg-red-500/10')}>
+          <span className={cn('w-1.5 h-1.5 rounded-full', estadoBot.tono === 'ok' ? 'bg-green-400 animate-pulse' : estadoBot.tono === 'aviso' ? 'bg-amber-400' : 'bg-red-500')} />
+          <span className={cn('text-[10px] font-medium', estadoBot.tono === 'ok' ? 'text-green-400' : estadoBot.tono === 'aviso' ? 'text-amber-500' : 'text-red-500')}>{estadoBot.texto}</span>
+        </a>
+      )}
 
       {/* Sede Selector - Ahora visible en móvil */}
       {canViewAll() && availableSedes.length > 0 && (

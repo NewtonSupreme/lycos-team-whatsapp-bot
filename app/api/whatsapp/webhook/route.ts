@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { descargarMediaWhatsApp, describirSticker, describirVideo } from '@/lib/whatsapp/multimedia';
 import { catalogoPreciosBot } from '@/lib/bot/catalogo-precios';
 import { catalogoServiciosBot } from '@/lib/bot/catalogo-servicios';
+import { CONFIG_BOT_DEFECTO, dentroDeHorario, leerConfigBot, textoBienvenida, type ConfigBot } from '@/lib/bot/config';
 import { abrirAlertaAtencion, detectarEmergencia, esTipoAtencion, TIPOS_ATENCION, type TipoAtencion } from '@/lib/whatsapp/alertas-atencion';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { getPermisos, hasPermiso, resolveRol, getRoleMeta, type Permisos } from '@/types';
@@ -392,7 +393,7 @@ ES MUY IMPORTANTE QUE SEAS EXTREMADAMENTE BREVE Y DIRECTO (MAX 3 LÍNEAS).
 
 - Español venezolano, amigable, máximo 4-5 líneas, no improvises precios, texto plano sin asteriscos.
 - Usa al menos 1 emoji por respuesta, pero sin saturar. Ejemplos: 🔧 🚗 💰 📅 😊.
-- SALUDO INICIAL (solo sesión NUEVA): Usa SIEMPRE el saludo apropiado según la hora del día indicada en SALUDO_APROPIADO más abajo, seguido de "Bienvenido a Lycos Team 🔧 Soy tu asistente virtual, estoy capacitado para responder cualquier tipo de pregunta y ayudarte con servicios, precios, citas, inventario y lo que necesites. ¿En qué te puedo ayudar? 😊"
+- SALUDO INICIAL (solo sesión NUEVA): sigue exactamente lo que diga la línea SESION más abajo (la bienvenida se configura en el sistema).
 - SALUDO_APROPIADO: ${getSaludoApropiado()}
 - REVISIÓN GRATIS: La revisión visual del vehículo al traerlo al taller es totalmente gratuita. Menciónalo SOLO UNA VEZ cuando trates de convencer al cliente de ir al taller para revisar un presupuesto que no puedes darle por chat. ESTÁ ESTRICTAMENTE PROHIBIDO repetir que la revisión es gratis en varios de tus mensajes (suena aburrido y repetitivo). Dilo en el momento exacto y una sola vez.
 - REDES SOCIALES: Instagram y TikTok @lycos.team (el sistema envía la tarjeta/enlace nativo automáticamente si el cliente pide seguir en redes). Enlace perfil general: https://www.lycosteam.com
@@ -940,6 +941,30 @@ export async function GET(request: NextRequest) {
 // El procesamiento sigue después de contestar a WhatsApp (ver POST): hasta 5 minutos.
 export const maxDuration = 300;
 
+/** «0422-810-4400» a partir de «584228104400». */
+function telefonoLegible(t: string): string {
+  const d = String(t || '').replace(/\D/g, '');
+  const local = d.startsWith('58') && d.length === 12 ? `0${d.slice(2)}` : d;
+  return local.length === 11 ? `${local.slice(0, 4)}-${local.slice(4, 7)}-${local.slice(7)}` : (local || t);
+}
+
+/**
+ * Cómo se nombra al cliente en una notificación: el nombre que tiene en el sistema (cliente del
+ * CRM o el que dio en el chat); si no hay, el de su perfil de WhatsApp. Siempre con su teléfono,
+ * para que el asesor sepa de verdad quién es (el nombre de perfil puede ser cualquier cosa).
+ */
+async function nombreParaAviso(db: any, telefono: string, perfil?: string | null): Promise<string> {
+  let nombre = '';
+  try {
+    const { data } = await db.from('conversaciones').select('memoria, datos_cliente, clientes(nombre, apellido)').eq('telefono', telefono).maybeSingle();
+    const cli = data?.clientes as { nombre?: string; apellido?: string } | null;
+    nombre = (cli ? `${cli.nombre || ''} ${cli.apellido || ''}`.trim() : '') || String(data?.datos_cliente?.nombre || '').trim() || String(data?.memoria?.nombre || '').trim();
+  } catch { /* sin nombre en el sistema */ }
+  nombre = nombre || String(perfil || '').trim();
+  const tel = telefonoLegible(telefono);
+  return nombre ? `${nombre} · ${tel}` : tel;
+}
+
 /** Marca de un mensaje recién reclamado cuyo contenido (audio, imagen, video) aún se está leyendo. */
 const RECIBIENDO = '[Recibiendo…]';
 
@@ -976,6 +1001,7 @@ async function procesarEntrantes(value: any) {
   if (!db) { console.error('❌ Database connection not available.'); return; }
   const waProfileName = value?.contacts?.[0]?.profile?.name || '';
   const porAtender = new Set<string>();
+  const cfgBot = await leerConfigBot(db as unknown as SupabaseClient);
 
   for (const message of value.messages as any[]) {
     const from: string = message.from;
@@ -1012,8 +1038,8 @@ async function procesarEntrantes(value: any) {
     // escribe al bot no genera avisos.
     const tRec = message.type;
     const esPersonal = await checkIsBotAdmin(from, db, ADMIN_PHONES).catch(() => false);
-    const quienEs = waProfileName || from;
-    if (!esPersonal) {
+    const quienEs = await nombreParaAviso(db, from, waProfileName);
+    if (!esPersonal && cfgBot.push_mensajes) {
       const textoRapido = tRec === 'text' ? String(message.text?.body || '') : tRec === 'image' ? '📷 Foto' : tRec === 'video' ? '🎥 Video' : tRec === 'audio' ? '🎤 Nota de voz' : tRec === 'sticker' ? 'Sticker' : tRec === 'document' ? '📄 Documento' : tRec === 'location' ? '📍 Ubicación' : 'Mensaje';
       await sendGlobalPushNotification({
         title: `💬 ${quienEs}`, body: textoRapido.slice(0, 140) || 'Nuevo mensaje', type: 'whatsapp-message',
@@ -1023,7 +1049,7 @@ async function procesarEntrantes(value: any) {
 
     // ── Leer el contenido (texto, audio transcrito, imagen/video/sticker descritos…)
     let contenido: { body: string; mediaId: string | null; mediaType: string | null };
-    try { contenido = await extraerContenido(message, from, db); }
+    try { contenido = await extraerContenido(message, from, db, cfgBot); }
     catch (e) { console.error('❌ extraerContenido:', e); contenido = { body: `[${message.type || 'Mensaje'}]`, mediaId: null, mediaType: null }; }
     const messageBody = contenido.body || `[Mensaje de tipo ${message.type || 'desconocido'}]`;
     console.log(`📩 [${from}]: ${messageBody.substring(0, 80)}`);
@@ -1045,7 +1071,7 @@ async function procesarEntrantes(value: any) {
     const pushBody = t === 'image' ? 'El cliente envió una foto' : t === 'video' ? 'El cliente envió un video' : t === 'audio' ? 'Nota de voz recibida' : messageBody.slice(0, 100);
     const pushType = t === 'image' ? 'whatsapp-image' : t === 'video' ? 'whatsapp-video' : t === 'audio' ? 'whatsapp-audio' : 'whatsapp-message';
     try {
-      if (!esPersonal) await db.from('notificaciones').insert({ sede_id: sedeId, tipo: 'info', titulo: pushTitle.replace(from, quienEs), mensaje: pushBody, entidad_tipo: 'whatsapp', entidad_id: guardadoId, leida: false });
+      if (!esPersonal) await db.from('notificaciones').insert({ sede_id: sedeId, tipo: 'info', titulo: pushTitle.replace(from, quienEs).replace('Nuevo mensaje de ', 'Mensaje de '), mensaje: pushBody, entidad_tipo: 'whatsapp', entidad_id: guardadoId, leida: false });
       void pushType;
     } catch (ne) { console.error('Error insertando notificacion', ne); }
 
@@ -1059,7 +1085,7 @@ async function procesarEntrantes(value: any) {
 }
 
 /** Texto que el bot entiende de cada tipo de mensaje de WhatsApp. */
-async function extraerContenido(message: any, from: string, db: any): Promise<{ body: string; mediaId: string | null; mediaType: string | null }> {
+async function extraerContenido(message: any, from: string, db: any, cfg: ConfigBot): Promise<{ body: string; mediaId: string | null; mediaType: string | null }> {
   const t = message.type;
   if (t === 'text') return { body: message.text?.body || '', mediaId: null, mediaType: null };
   if (t === 'button') return { body: message.button?.text || message.button?.payload || '[Botón]', mediaId: null, mediaType: null };
@@ -1089,26 +1115,26 @@ async function extraerContenido(message: any, from: string, db: any): Promise<{ 
   if (t === 'image') {
     const id = message.image?.id || null; const cap = message.image?.caption || '';
     const capStr = cap ? ` - Mensaje del ${quien} adjunto: "${cap}"` : '';
-    const m = id && WHATSAPP_TOKEN ? await descargarMediaWhatsApp(id, WHATSAPP_TOKEN, { timeoutMs: 20000 }) : null;
+    const m = id && WHATSAPP_TOKEN && cfg.multimedia.imagen ? await descargarMediaWhatsApp(id, WHATSAPP_TOKEN, { timeoutMs: 20000 }) : null;
     const d = m ? await describeImage(m.base64, m.mime, esAdmin) : null;
     return { body: d ? `[Imagen enviada por el ${quien}. Descripción automática (analízala y respondele en base a esto): ${d}]${capStr}` : `[El ${quien} envió una imagen]${capStr}`, mediaId: id, mediaType: 'image' };
   }
   if (t === 'audio') {
     const id = message.audio?.id || null;
-    const m = id && WHATSAPP_TOKEN ? await descargarMediaWhatsApp(id, WHATSAPP_TOKEN, { timeoutMs: 20000 }) : null;
+    const m = id && WHATSAPP_TOKEN && cfg.multimedia.audio ? await descargarMediaWhatsApp(id, WHATSAPP_TOKEN, { timeoutMs: 20000 }) : null;
     const tr = m ? await transcribeAudio(m.base64, m.mime || 'audio/ogg', esAdmin) : null;
     return { body: tr ? `${tr} (Audio transcrito)` : `[El ${quien} envió un audio, pero no se pudo transcribir]`, mediaId: id, mediaType: 'audio' };
   }
   if (t === 'video') {
     const id = message.video?.id || null; const cap = message.video?.caption || '';
-    const m = id && WHATSAPP_TOKEN ? await descargarMediaWhatsApp(id, WHATSAPP_TOKEN, { timeoutMs: 45000 }) : null;
+    const m = id && WHATSAPP_TOKEN && cfg.multimedia.video ? await descargarMediaWhatsApp(id, WHATSAPP_TOKEN, { timeoutMs: 45000 }) : null;
     const d = m ? await describirVideo(GEMINI_API_KEY, GEMINI_MODELS, m, cap, esAdmin) : null;
     const capStr = cap ? ` - Mensaje del ${quien} adjunto: "${cap}"` : '';
     return { body: d ? `[Video enviado por el ${quien}. Lo que se ve y se oye (analízalo y respóndele en base a esto): ${d}]${capStr}` : `[El ${quien} envió un video que no se pudo analizar]${capStr}`, mediaId: id, mediaType: 'video' };
   }
   if (t === 'sticker') {
     const id = message.sticker?.id || null;
-    const m = id && WHATSAPP_TOKEN ? await descargarMediaWhatsApp(id, WHATSAPP_TOKEN, { timeoutMs: 12000 }) : null;
+    const m = id && WHATSAPP_TOKEN && cfg.multimedia.sticker ? await descargarMediaWhatsApp(id, WHATSAPP_TOKEN, { timeoutMs: 12000 }) : null;
     const d = m ? await describirSticker(GEMINI_API_KEY, GEMINI_MODELS, m) : null;
     return { body: d ? `[${d} Respóndele de forma natural y breve según esa intención; no describas el sticker.]` : '[Sticker]', mediaId: id, mediaType: 'sticker' };
   }
@@ -1171,8 +1197,30 @@ async function atenderConversacion(db: any, from: string, waProfileName: string)
     if (cfg?.valor) botGlobalActivo = cfg.valor.bot_whatsapp_global_activo !== false;
   } catch { /* noop */ }
   const esAdmin = await checkIsBotAdmin(from, db, ADMIN_PHONES);
-  const { data: conv } = await db.from('conversaciones').select('estado, mensajes_sin_leer').eq('telefono', phone).maybeSingle();
-  if (!botGlobalActivo || (conv?.estado === 'humano' && !esAdmin)) {
+  const cfg = await leerConfigBot(db as unknown as SupabaseClient);
+  botGlobalActivo = botGlobalActivo && cfg.bot_whatsapp_global_activo;
+  const { data: conv } = await db.from('conversaciones').select('estado, mensajes_sin_leer, memoria').eq('telefono', phone).maybeSingle();
+
+  // Modo Dios apagado: el bot no le contesta al personal (los mensajes quedan guardados).
+  if (esAdmin && !cfg.modo_dios) {
+    const nuevos = await entrantesDesde(db, phone, await corteAtendido(db, phone));
+    if (nuevos.length) await db.from('conversaciones').update({ atendido_hasta: nuevos[nuevos.length - 1].created_at }).eq('telefono', phone);
+    return;
+  }
+  // Fuera del horario de atención (solo clientes).
+  const fueraDeHorario = !esAdmin && !dentroDeHorario(cfg.horario);
+  if (fueraDeHorario && cfg.horario.fuera === 'mensaje' && botGlobalActivo && conv?.estado !== 'humano') {
+    const hoyVz = getVzlaDateString();
+    const memoria = (conv?.memoria || {}) as Record<string, unknown>;
+    if (memoria.fuera_horario_avisado !== hoyVz) {
+      await sendMsg(phone, cfg.horario.mensaje);
+      await db.from('conversaciones').update({ memoria: { ...memoria, fuera_horario_avisado: hoyVz } }).eq('telefono', phone);
+    }
+  }
+  const sinRespuesta = !botGlobalActivo || (conv?.estado === 'humano' && !esAdmin)
+    || (!esAdmin && !cfg.responder_clientes)
+    || (fueraDeHorario && cfg.horario.fuera !== 'responder');
+  if (sinRespuesta) {
     const corte = await corteAtendido(db, phone);
     const nuevos = await entrantesDesde(db, phone, corte);
     const ultimo = nuevos[nuevos.length - 1];
@@ -1182,7 +1230,7 @@ async function atenderConversacion(db: any, from: string, waProfileName: string)
       atendido_hasta: ultimo?.created_at || undefined,
     }).eq('telefono', phone);
     await sendGlobalPushNotification({
-      title: '🆘 Respuesta manual requerida', body: `${waProfileName || from}: ${String(ultimo?.body || '').slice(0, 100)}`,
+      title: `🆘 Responder a mano · ${await nombreParaAviso(db, phone, waProfileName)}`, body: String(ultimo?.body || '').slice(0, 140) || 'Nuevo mensaje',
       type: 'whatsapp-human', url: `/dashboard/whatsapp?tel=${phone}`, tag: `wa-humano-${phone}`, modulo: 'whatsapp', requireInteraction: true,
     }).catch(() => null);
     return;
@@ -1325,6 +1373,8 @@ interface ConversationContext {
   catalogoPrecios?: string;
   /** Los trabajos que el taller hace de verdad (de las órdenes reales). */
   catalogoServicios?: string;
+  /** Lo que está encendido o apagado en Configuración › Bot de WhatsApp. */
+  cfgBot?: ConfigBot;
 }
 
 async function loadConversationContext(
@@ -2167,11 +2217,12 @@ CAMBIOS SENSIBLES (precio/stock, eliminar producto, registrar venta): el sistema
     }
   } catch (e) { console.error('Error loading context for admin/client:', e); }
 
+  const cfgBot = await leerConfigBot(db as unknown as SupabaseClient);
   const [catalogoPrecios, catalogoServicios] = await Promise.all([
-    catalogoPreciosBot(db as unknown as SupabaseClient, sede_id || DEFAULT_SEDE_ID).catch(() => ''),
+    cfgBot.dar_precios ? catalogoPreciosBot(db as unknown as SupabaseClient, sede_id || DEFAULT_SEDE_ID).catch(() => '') : Promise.resolve(''),
     catalogoServiciosBot(db as unknown as SupabaseClient).catch(() => ''),
   ]);
-  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado, isAdmin, adminName, sede_id, adminSedeId, botRol, botPermisos, capabilitiesNote, catalogoPrecios, catalogoServicios };
+  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado, isAdmin, adminName, sede_id, adminSedeId, botRol, botPermisos, capabilitiesNote, catalogoPrecios, catalogoServicios, cfgBot };
 }
 
 // ─── AI Response ───────────────────────────────────────────────────────────────
@@ -2223,6 +2274,13 @@ async function getAIResponse(
   const dayName = dayNames[dayNum];
   const greeting = getVzlaGreeting();
 
+  const cfgP = ctx.cfgBot || CONFIG_BOT_DEFECTO;
+  const apagados = [
+    !cfgP.dar_precios && !isAdmin ? '- PRECIOS DESACTIVADOS: NO des ningún precio ni monto. Si preguntan precio, di con amabilidad que un asesor le dará el precio exacto y escribe: «Te envío el contacto de nuestro asesor 👇».' : '',
+    !cfgP.ofrecer_cashea && !isAdmin ? '- CASHEA DESACTIVADO: no ofrezcas ni calcules Cashea. Si el cliente pregunta por Cashea, dile que lo consulte con el asesor.' : '',
+    !cfgP.imagenes_silenciadores ? '- IMÁGENES DESACTIVADAS: no uses la etiqueta [IMAGE: ...].' : '',
+  ].filter(Boolean).join('\n');
+
   const memoriaStr = Object.keys(ctx.memoria).length > 0
     ? `\nMEMORIA DEL CLIENTE:\n- Nombre: ${ctx.memoria.nombre || 'no registrado'}\n- Vehiculos: ${ctx.memoria.vehiculos?.map(v => `${v.marca} ${v.modelo}${v.anio ? ' ' + v.anio : ''}`).join(', ') || 'no registrado'}\n- Notas: ${ctx.memoria.notas || 'ninguna'}`
     : '';
@@ -2259,8 +2317,11 @@ HOY ES: ${dayName} ${vzlaDateStr}
 ${ratesCtx}
 ${ctx.catalogoPrecios || ''}
 ${ctx.catalogoServicios || ''}
+${apagados}
 SALUDO_APROPIADO: ${greeting} — USA ESTE SALUDO EXACTO al inicio cuando sea sesión nueva. NO uses otro.
-SESION: ${ctx.isNewSession ? `NUEVA — saluda con "${greeting}" + mensaje de bienvenida` : 'CONTINUA — ve al tema, sin repetir saludo ni bienvenida'}
+SESION: ${ctx.isNewSession ? (cfgP.bienvenida.activa && !isAdmin
+    ? `NUEVA — empieza tu respuesta EXACTAMENTE con esta bienvenida (sin cambiarle nada): «${textoBienvenida(cfgP, greeting, ctx.memoria?.nombre || null)}». Si en este mismo mensaje el cliente ya preguntó algo, después de la bienvenida respóndele eso en una línea aparte.`
+    : `NUEVA — saluda brevemente con "${greeting}" y ve al tema.`) : 'CONTINUA — ve al tema, sin repetir saludo ni bienvenida'}
 ${memoriaStr}
 ${ctx.citasInfo}
 ${ctx.historialTecnico || ''}
@@ -3821,8 +3882,9 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
     // ── Alertas de atención para los asesores (nunca para el personal interno) ──
     const alertar = async (tipo: TipoAtencion, motivo: string, sugerencia?: string | null) => {
       if (ctx.isAdmin || !db) return;
+      if (ctx.cfgBot && (!ctx.cfgBot.alertas.activas || ctx.cfgBot.alertas.tipos[tipo] === false)) return;
       try {
-        const quien = ctx.memoria?.nombre || waProfileName || from;
+        const quien = await nombreParaAviso(db, from, waProfileName);
         const r = await abrirAlertaAtencion(db as unknown as SupabaseClient, {
           telefono: from, tipo, motivo, sugerencia, cliente: ctx.memoria?.nombre || waProfileName || null,
           ultimoMensaje: messageBody, sedeId: ctx.sede_id || DEFAULT_SEDE_ID,
@@ -3886,7 +3948,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
     const mentionsParaiso = selectedSedeFromButton === 'paraiso' || bodyClean.includes('paraiso') || bodyClean.includes('paraíso') || (isLocationChoicePending && (bodyClean === '4' || bodyClean.includes('paraiso'))) || (isCaracasChoicePending && (bodyClean === '2' || bodyClean.includes('paraiso')));
     const mentionsCaracasGeneral = bodyClean.includes('caracas') && !bodyClean.includes('cementerio') && !bodyClean.includes('paraiso') && !bodyClean.includes('paraíso');
 
-    if (!ctx.isAdmin && (isLocationRequest(lowerBody) || mentionsSanAntonio || mentionsCarrizal || mentionsCaracas || mentionsParaiso || mentionsCaracasGeneral)) {
+    if (!ctx.isAdmin && ctx.cfgBot?.flujo_ubicacion !== false && (isLocationRequest(lowerBody) || mentionsSanAntonio || mentionsCarrizal || mentionsCaracas || mentionsParaiso || mentionsCaracasGeneral)) {
       const mentionsOtherSedes = mentionsCarrizal || mentionsCaracas || mentionsParaiso || mentionsCaracasGeneral;
       const selectedSedePhone = '584123343519';
 
@@ -4127,7 +4189,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
     }
 
     // Social media intent (solo clientes — nunca a admins en Modo Dios)
-    if (isSocialRequest(lowerBody) && !ctx.isAdmin) {
+    if (isSocialRequest(lowerBody) && !ctx.isAdmin && ctx.cfgBot?.flujo_redes !== false) {
       await sendMsg(from, 'Aqui te van nuestras redes sociales 📱 Siguenos para tips, novedades y promos 🔧');
       await delay(500);
       await sendMsg(from, IG_LINK, true);
@@ -4138,7 +4200,8 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
     }
 
     // Asesor contact intent (explicit) — solo clientes, nunca admins
-    if (isContactRequest(lowerBody) && !ctx.isAdmin) {
+    if (isContactRequest(lowerBody) && !ctx.isAdmin && ctx.cfgBot?.tarjeta_asesor !== false) {
+      await alertar('pide_asesor', `Pidió hablar con una persona: «${messageBody.replace(/\s+/g, ' ').slice(0, 200)}»`);
       await sendMsg(from, 'Con gusto 😊 Te comparto el contacto directo de nuestro asesor:');
       await delay(600);
       await sendContactCard(from, ASESOR_PHONE, ASESOR_DISPLAY_NAME);
@@ -4198,7 +4261,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
 
       // ── Process Image Tags [IMAGE: slug] ───────────────────────────
       const imageMatches = Array.from(cleanedAiBody.matchAll(/\[IMAGE:\s*([^\]]+)\]/gi));
-      for (const match of imageMatches) {
+      for (const match of (ctx.cfgBot?.imagenes_silenciadores === false ? [] : imageMatches)) {
         const slug = match[1].trim().toLowerCase();
         console.log(`🤖 AI solicitó enviar imagen: ${slug}`);
         await sendImageMsg(from, slug, undefined, wa_message_id);
@@ -5955,7 +6018,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       }
 
       // Los admins en Modo Dios nunca reciben la tarjeta del asesor (es flujo de cliente).
-      const needsAsesor = aiNeedsAsesor(cleanedAi) && !ctx.isAdmin;
+      const needsAsesor = aiNeedsAsesor(cleanedAi) && !ctx.isAdmin && ctx.cfgBot?.tarjeta_asesor !== false;
 
       if (needsAsesor) {
         await alertar('pide_asesor', `Se le pasó el contacto del asesor. Lo último que escribió: «${messageBody.replace(/\s+/g, ' ').slice(0, 200)}»`);

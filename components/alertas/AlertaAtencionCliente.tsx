@@ -7,6 +7,7 @@ import {
   Loader2, MessageCircle, Siren, UserRoundCheck, Wrench, X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { conEmojis } from '@/components/whatsapp/EmojiWhatsApp';
 import { useAppStore } from '@/lib/store';
 import { useSedeStore } from '@/lib/store/useSedeStore';
 import { getPermisos, hasPermiso, resolveRol } from '@/types';
@@ -132,7 +133,7 @@ export default function AlertaAtencionCliente() {
         <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4 text-[#16181d] dark:text-zinc-100 sm:px-6">
           <div className="rounded-2xl border-l-4 bg-zinc-50 p-3 dark:bg-zinc-800/60" style={{ borderColor: e.color }}>
             <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">Qué pasa</p>
-            <p className="mt-0.5 text-[15px] font-semibold leading-snug">{a.motivo}</p>
+            <p className="mt-0.5 text-[15px] font-semibold leading-snug">{conEmojis(a.motivo)}</p>
           </div>
           {a.sugerencia && (
             <div className="flex gap-2 rounded-2xl bg-zinc-50 p-3 dark:bg-zinc-800/60">
@@ -150,7 +151,7 @@ export default function AlertaAtencionCliente() {
                     <li key={i} className={cn('flex', entra ? 'justify-start' : 'justify-end')}>
                       <span className={cn('max-w-[85%] whitespace-pre-wrap break-words rounded-2xl px-3 py-1.5 text-[12.5px] leading-snug [overflow-wrap:anywhere]',
                         entra ? 'rounded-bl-sm bg-zinc-100 dark:bg-zinc-800' : 'rounded-br-sm bg-emerald-100 dark:bg-emerald-900/40')}>
-                        {m.body.length > 400 ? `${m.body.slice(0, 400)}…` : m.body}
+                        {conEmojis(m.body.length > 400 ? `${m.body.slice(0, 400)}…` : m.body)}
                         <span className="ml-2 text-[10px] text-zinc-500">{entra ? '' : m.es_ia ? 'bot · ' : 'asesor · '}{hora(m.created_at)}</span>
                       </span>
                     </li>

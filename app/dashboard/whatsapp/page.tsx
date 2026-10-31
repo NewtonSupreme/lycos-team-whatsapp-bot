@@ -1,5 +1,7 @@
 'use client';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import EmojiTexto, { conEmojis, SelectorEmojis } from '@/components/whatsapp/EmojiWhatsApp';
 import {
   MessageSquare, Send, Bot, User,
   Smile, CheckCheck, Check, X, RefreshCw, UserCheck, Wifi, WifiOff, Search, Clock,
@@ -263,7 +265,7 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
               {quotedMsg.tipo === 'saliente' ? 'Tú' : 'Cliente'}
             </div>
             <div className="text-[11px] text-[hsl(var(--wa-texto-suave))] line-clamp-2 italic">
-              {quotedMsg.body || (quotedMsg.media_type ? `[${quotedMsg.media_type}]` : 'Mensaje')}
+              {conEmojis(quotedMsg.body || (quotedMsg.media_type ? `[${quotedMsg.media_type}]` : 'Mensaje'))}
             </div>
           </div>
         )}
@@ -290,7 +292,7 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
         </div>
         {botImg.caption && (
           <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words mt-1" style={{ color: 'hsl(var(--wa-texto))', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
-            {botImg.caption}
+            {conEmojis(botImg.caption)}
           </p>
         )}
       </div>
@@ -304,7 +306,7 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
   const isTranscribedAudio = type === 'audio' && body?.includes('(Audio transcrito)');
 
   if (!type && !proxyUrl) {
-    return <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: 'hsl(var(--wa-texto))', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{body}</p>;
+    return <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: 'hsl(var(--wa-texto))', wordBreak: 'break-word', overflowWrap: 'anywhere' }}><EmojiTexto texto={body} /></p>;
   }
 
   const icons = {
@@ -327,7 +329,7 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
             {quotedMsg.tipo === 'saliente' ? 'Tú' : 'Cliente'}
           </div>
           <div className="text-[11px] text-[hsl(var(--wa-texto-suave))] line-clamp-2 italic">
-            {quotedMsg.body || (quotedMsg.media_type ? `[${quotedMsg.media_type}]` : 'Mensaje')}
+            {conEmojis(quotedMsg.body || (quotedMsg.media_type ? `[${quotedMsg.media_type}]` : 'Mensaje'))}
           </div>
         </div>
       )}
@@ -390,7 +392,7 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
 
           {extractMediaCaption(body) && (
             <p className="text-xs opacity-80 border-t border-[hsl(var(--wa-borde))] pt-1.5 mt-0.5 whitespace-pre-wrap break-words" style={{ color: 'hsl(var(--wa-texto))' }}>
-              {extractMediaCaption(body)}
+              {conEmojis(extractMediaCaption(body))}
             </p>
           )}
         </div>
@@ -474,6 +476,30 @@ export default function WhatsAppPage() {
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // En el teléfono la conversación abierta se monta directo en <body>: dentro de la página quedaba
+  // debajo de la cabecera y de la barra inferior (la animación de entrada de la página crea su
+  // propia capa y ningún z-index la saca de ahí), y se veía cortada arriba y abajo.
+  const [esMovil, setEsMovil] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)');
+    const f = () => setEsMovil(mq.matches); f();
+    mq.addEventListener('change', f); return () => mq.removeEventListener('change', f);
+  }, []);
+  // Con la conversación abierta en el teléfono, la página de atrás no se mueve.
+  useEffect(() => {
+    if (!(esMovil && showMobileChat)) return;
+    const antes = document.body.style.overflow; document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = antes; };
+  }, [esMovil, showMobileChat]);
+  /** Mete el emoji donde está el cursor (no al final). */
+  const insertarEmoji = (e: string) => {
+    const t = inputRef.current;
+    const a = t?.selectionStart ?? message.length; const b = t?.selectionEnd ?? a;
+    setMessage(message.slice(0, a) + e + message.slice(b));
+    requestAnimationFrame(() => { if (t) { t.focus(); t.setSelectionRange(a + e.length, a + e.length); } });
+  };
+  const envolverChat = (nodo: React.ReactNode) => (esMovil && showMobileChat && typeof document !== 'undefined' ? createPortal(nodo, document.body) : nodo);
+  const alCuerpo = (nodo: React.ReactNode) => (typeof document !== 'undefined' ? createPortal(nodo, document.body) : nodo);
   // Al enviar, la caja de texto vuelve a una línea.
   useEffect(() => { if (!message && inputRef.current) inputRef.current.style.height = ''; }, [message]);
   const selectedRef = useRef<RawConv | null>(null);
@@ -1545,7 +1571,7 @@ export default function WhatsAppPage() {
 
   return (
     <>
-    <div className="relative flex flex-col h-[calc(100dvh-12rem)] md:h-[calc(100dvh-7.5rem)] min-h-[480px]">
+    <div className="relative flex flex-col h-[calc(100dvh-9.5rem)] md:h-[calc(100dvh-7.5rem)] min-h-[480px]">
       <div className="flex flex-col flex-1 min-h-0 gap-3 transition-opacity duration-300">
       {/* Cabecera */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-0 justify-between shrink-0">
@@ -1558,10 +1584,10 @@ export default function WhatsAppPage() {
             className="h-11 w-11 shrink-0 rounded-[13px]"
           />
           <div className="min-w-0">
-            <h1 className="text-2xl font-bold leading-none" style={{ fontFamily: 'Syne, sans-serif' }}>
+            <h1 className="text-xl font-bold leading-none md:text-2xl" style={{ fontFamily: 'Syne, sans-serif' }}>
               WhatsApp
             </h1>
-            <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+            <p className="mt-1 hidden items-center gap-1.5 text-sm text-muted-foreground md:flex">
               Gestiona tus conversaciones, automatiza respuestas y convierte más clientes.
             </p>
           </div>
@@ -1745,14 +1771,14 @@ export default function WhatsAppPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium truncate" style={{ color: 'hsl(var(--wa-texto))' }}>{displayName(conv)}</span>
+                      <span className="text-sm font-medium truncate" style={{ color: 'hsl(var(--wa-texto))' }}>{conEmojis(displayName(conv), '1.1em')}</span>
                       <span className="text-[11px] flex-shrink-0 ml-2" style={{ color: 'hsl(var(--wa-texto-suave))' }}>
                         {conv.ultimo_mensaje_at ? formatRelativeTime(conv.ultimo_mensaje_at) : ''}
                       </span>
                     </div>
                     <div className="flex items-center justify-between gap-2 mt-0.5">
                       <p className="text-[12px] truncate min-w-0 flex-1" style={{ color: 'hsl(var(--wa-texto-suave))' }}>
-                        {conv.ultimo_mensaje ? conv.ultimo_mensaje.replace(/\s*\[env:(.*?)\]$/, '') : '...'}
+                        {conv.ultimo_mensaje ? conEmojis(conv.ultimo_mensaje.replace(/\s*\[env:(.*?)\]$/, ''), '1.1em') : '...'}
                       </p>
                       {/* Qué tiene pendiente este cliente, de un vistazo. Una
                           sola etiqueta, la más urgente: tres chips en una fila
@@ -1792,8 +1818,8 @@ export default function WhatsAppPage() {
         </div>
 
         {/* ── Right: chat window ── */}
-        <div
-          className={cn('flex-1 flex flex-col min-h-0', !showMobileChat ? 'hidden md:flex' : 'fixed inset-0 z-[70] md:static md:z-auto')}
+        {envolverChat(<div
+          className={cn('flex-1 flex flex-col min-h-0', !showMobileChat ? 'hidden md:flex' : 'fixed inset-0 z-[70] h-[100dvh] md:static md:z-auto md:h-auto')}
           style={{ background: 'hsl(var(--wa-fondo))', paddingTop: showMobileChat ? 'env(safe-area-inset-top)' : undefined, paddingBottom: showMobileChat ? 'env(safe-area-inset-bottom)' : undefined }}
         >
           {selected ? (
@@ -1848,7 +1874,7 @@ export default function WhatsAppPage() {
                     <UserAvatar conv={selected} className="w-9 h-9 flex-shrink-0 shadow-xl" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
-                        <p className="text-[14px] font-bold text-[hsl(var(--wa-texto))] leading-tight truncate">{displayName(selected)}</p>
+                        <p className="text-[14px] font-bold text-[hsl(var(--wa-texto))] leading-tight truncate">{conEmojis(displayName(selected), '1.1em')}</p>
                         <button onClick={startEditingName} className="p-1 hover:bg-[hsl(var(--wa-hover))] rounded-full transition-colors text-[hsl(var(--wa-texto-suave))] hover:text-emerald-500 flex-shrink-0">
                           <User className="w-3 h-3" />
                         </button>
@@ -2036,12 +2062,12 @@ export default function WhatsAppPage() {
                             {/* Reaction Picker Popover (Responsive Position) */}
                             {!isOptimistic && (
                               <div className={cn(
-                                "absolute -top-12 z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all flex items-center gap-1 p-1 rounded-full shadow-2xl border border-[hsl(var(--wa-borde))] scale-90 group-hover:scale-100 backdrop-blur-md",
+                                "absolute -top-12 z-50 max-md:hidden opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all flex items-center gap-1 p-1 rounded-full shadow-2xl border border-[hsl(var(--wa-borde))] scale-90 group-hover:scale-100 backdrop-blur-md",
                                 isOut ? "right-0" : "left-0"
                               )} style={{ background: 'rgba(32, 44, 51, 0.9)' }}>
                                 <div className="flex gap-1 pr-2 border-r border-[hsl(var(--wa-borde))] mr-1">
                                   {['❤️', '👍', '😂', '😮', '🙏'].map(emoji => (
-                                    <button key={emoji} onClick={() => handleReact(msg, emoji)} className="hover:scale-125 transition-transform p-0.5">{emoji}</button>
+                                    <button key={emoji} onClick={() => handleReact(msg, emoji)} className="hover:scale-125 transition-transform p-0.5">{conEmojis(emoji, '1.35em')}</button>
                                   ))}
                                 </div>
                                 <button onClick={() => copyToClipboard(cleanBody)} className="p-1.5 hover:bg-[hsl(var(--wa-hover))] rounded-full text-[hsl(var(--wa-texto-suave))] hover:text-white" title="Copiar">
@@ -2095,7 +2121,7 @@ export default function WhatsAppPage() {
                               </div>
                             </div>
                             {msg.reaccion && (
-                              <div className={cn("absolute -bottom-2 px-1.5 py-0.5 rounded-full text-xs shadow-md border border-[hsl(var(--wa-borde))]", isOut ? "left-0" : "right-0")} style={{ background: '#374045' }}>{msg.reaccion}</div>
+                              <div className={cn("absolute -bottom-2 px-1.5 py-0.5 rounded-full text-xs shadow-md border border-[hsl(var(--wa-borde))]", isOut ? "left-0" : "right-0")} style={{ background: '#374045' }}>{conEmojis(msg.reaccion, '1.1em')}</div>
                             )}
                           </div>
                         </div>
@@ -2108,6 +2134,11 @@ export default function WhatsAppPage() {
                 {/* Respuestas rápidas — a la vista, no escondidas tras un
                     botón: son para escribir menos, y si hay que buscarlas
                     primero dejan de ahorrar nada. El título dice qué son. */}
+                {showQuickReplies && (
+                  <div className="flex-shrink-0 px-3 pt-2" style={{ background: 'hsl(var(--wa-panel-alt))', borderTop: '1px solid hsl(var(--wa-borde))' }}>
+                    <SelectorEmojis onElegir={insertarEmoji} onCerrar={() => setShowQuickReplies(false)} />
+                  </div>
+                )}
                 <div
                   className="flex-shrink-0 px-3 pt-2 pb-1"
                   style={{ background: 'hsl(var(--wa-panel-alt))', borderTop: '1px solid hsl(var(--wa-borde))' }}
@@ -2146,7 +2177,7 @@ export default function WhatsAppPage() {
                           {replyingTo.tipo === 'saliente' ? 'Tú' : (selected?.datos_cliente?.nombre || selected?.telefono || 'Cliente')}
                         </div>
                         <div className="text-xs text-[hsl(var(--wa-texto-suave))] truncate">
-                          {replyingTo.body || (replyingTo.media_type ? `[${replyingTo.media_type}]` : 'Mensaje')}
+                          {conEmojis(replyingTo.body || (replyingTo.media_type ? `[${replyingTo.media_type}]` : 'Mensaje'))}
                         </div>
                       </div>
                       <button onClick={() => setReplyingTo(null)} className="p-1.5 rounded-full hover:bg-[hsl(var(--wa-hover))] text-[hsl(var(--wa-texto-suave))]">
@@ -2218,7 +2249,7 @@ export default function WhatsAppPage() {
 
                       {!isRecording && (
                         <>
-                          <button onClick={() => setShowQuickReplies(!showQuickReplies)} className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-[hsl(var(--wa-hover))] transition-colors flex-shrink-0">
+                          <button onClick={() => setShowQuickReplies(!showQuickReplies)} aria-label="Emojis" title="Emojis" className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-[hsl(var(--wa-hover))] transition-colors flex-shrink-0">
                             <Smile className="w-5 h-5" style={{ color: '#aebac1' }} />
                           </button>
                           
@@ -2326,7 +2357,7 @@ export default function WhatsAppPage() {
               <p className="text-sm" style={{ color: 'hsl(var(--wa-texto-suave))' }}>Selecciona una conversación para ver los mensajes en tiempo real</p>
             </div>
           )}
-        </div>
+        </div>)}
 
         {/* ── Audit View Overlay ── */}
         {viewMode === 'audit' && (
@@ -2375,7 +2406,7 @@ export default function WhatsAppPage() {
                          </button>
                        </div>
                        <div className="bg-black/20 p-3 rounded-lg border border-white/5 italic text-sm text-[hsl(var(--wa-texto))] whitespace-pre-wrap line-clamp-4">
-                         {msg.body}
+                         {conEmojis(msg.body)}
                        </div>
                        <div className="flex items-center justify-between mt-1">
                          <span className="text-[11px] text-[hsl(var(--wa-texto-suave))] truncate max-w-[150px]">De: {msg.from_number}</span>
@@ -2392,7 +2423,7 @@ export default function WhatsAppPage() {
       </div>
       {/* Edit Name Modal */}
       {isEditingName && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        alCuerpo(<div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl border border-[hsl(var(--wa-borde))] shadow-2xl p-6" style={{ background: 'hsl(var(--wa-panel-alt))' }}>
             <h3 className="text-lg font-bold mb-4" style={{ color: 'hsl(var(--wa-texto))' }}>Editar Contacto</h3>
             <div className="space-y-4">
@@ -2437,13 +2468,13 @@ export default function WhatsAppPage() {
               </button>
             </div>
           </div>
-        </div>
+        </div>)
       )}
     </div>
 
     {/* Native Image Preview Modal */}
     {previewImage && (
-      <div 
+      alCuerpo(<div 
         className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-4 md:p-12 animate-in fade-in duration-200 backdrop-blur-sm"
         onClick={() => setPreviewImage(null)}
       >
@@ -2461,7 +2492,7 @@ export default function WhatsAppPage() {
             onClick={(e) => e.stopPropagation()} 
           />
         </div>
-      </div>
+      </div>)
     )}
     </>
   );

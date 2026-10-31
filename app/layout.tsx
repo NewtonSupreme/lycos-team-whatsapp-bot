@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import LoadingScreen from '@/components/layout/LoadingScreen';
 import { ThemeProvider } from '@/components/providers/ThemeProvider';
@@ -8,6 +8,11 @@ import { AlertToastBridge } from '@/components/providers/AlertToastBridge';
 export const metadata: Metadata = {
   title: 'Lycos Team — Sistema de Gestión Automotriz',
   description: 'Plataforma SaaS completa para taller automotriz.',
+};
+
+// En el teléfono el teclado achica la página en vez de taparla: la caja de texto del chat queda visible.
+export const viewport: Viewport = {
+  width: 'device-width', initialScale: 1, viewportFit: 'cover', interactiveWidget: 'resizes-content',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -131,7 +131,7 @@ export default function ActivadorPush() {
 
   if (!user || oculto || estado === 'cargando' || estado === 'activo' || estado === 'sin_soporte') return null;
   return (
-    <div className="fixed inset-x-3 bottom-3 z-[150] mx-auto flex max-w-[560px] items-start gap-3 rounded-2xl border border-orange-300 bg-white p-3.5 shadow-2xl dark:border-orange-500/40 dark:bg-zinc-900 sm:bottom-5" role="status">
+    <div className="fixed inset-x-3 bottom-20 z-[60] lg:bottom-5 mx-auto flex max-w-[560px] items-start gap-3 rounded-2xl border border-orange-300 bg-white p-3.5 shadow-2xl dark:border-orange-500/40 dark:bg-zinc-900 sm:bottom-5" role="status">
       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-100 text-orange-600 dark:bg-orange-500/15">
         {estado === 'bloqueado' ? <BellOff className="h-5 w-5" /> : estado === 'ios_sin_instalar' ? <Smartphone className="h-5 w-5" /> : <BellRing className="h-5 w-5" />}
       </span>

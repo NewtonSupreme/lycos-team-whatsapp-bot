@@ -65,7 +65,10 @@ export default function TiraMetricas() {
   const [datos, setDatos] = useState<Respuesta | null>(null);
   // Arranca desplegada; si el usuario la plegó, se respeta.
   const [plegada, setPlegada] = useState(() => {
-    try { return localStorage.getItem(LLAVE_PLEGADO) === '1'; } catch { return false; }
+    try {
+      const g = localStorage.getItem(LLAVE_PLEGADO);
+      return g === null ? window.matchMedia('(max-width: 767px)').matches : g === '1';
+    } catch { return false; }
   });
 
   // La petición va dentro del efecto, con guarda de desmontaje: si se cambia

@@ -67,6 +67,7 @@ export const TABS_CONFIG = [
   { id: 'taller', label: 'Taller' },
   { id: 'sucursales', label: 'Sucursales' },
   { id: 'cuentas', label: 'Cuentas bancarias' },
+  { id: 'bot', label: 'Bot de WhatsApp' },
   { id: 'notificaciones', label: 'Notificaciones' },
   { id: 'integraciones', label: 'Integraciones' },
   { id: 'seguridad', label: 'Seguridad' },
