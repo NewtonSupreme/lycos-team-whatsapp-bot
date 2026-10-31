@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { descargarMediaWhatsApp, describirSticker, describirVideo } from '@/lib/whatsapp/multimedia';
 import { catalogoPreciosBot } from '@/lib/bot/catalogo-precios';
+import { abrirAlertaAtencion, detectarEmergencia, esTipoAtencion, TIPOS_ATENCION, type TipoAtencion } from '@/lib/whatsapp/alertas-atencion';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { getPermisos, hasPermiso, resolveRol, getRoleMeta, type Permisos } from '@/types';
 import { sendGlobalPushNotification } from '@/lib/push-helper';
@@ -2224,7 +2225,12 @@ ESTILO DE CONVERSACIÓN (MUY IMPORTANTE):
 - Responde lo que te preguntan y, si hace falta, haz UNA pregunta concreta para avanzar (año y motor del carro, su nivel de Cashea, qué día puede venir).
 - Si te mandan un sticker, contéstale con la intención que trae (gracias, ok, risa…) en pocas palabras, sin describirlo.
 - Si te mandan un video, usa lo que se ve y se oye para orientarlo (posible falla y el servicio que aplica) y ofrécele una revisión.
-- Si el cliente está molesto o tiene un problema con un trabajo ya hecho, discúlpate con sinceridad, entiende el problema y pásalo al asesor.`;
+- Si el cliente está molesto o tiene un problema con un trabajo ya hecho, discúlpate con sinceridad, entiende el problema y pásalo al asesor.
+
+AVISAR A UN ASESOR (el cliente NO ve esto): si ocurre uno de estos casos, agrega AL FINAL de tu respuesta la etiqueta [ATENCION: tipo | qué pasa, en una frase concreta con lo que dijo el cliente]. Tipos:
+  reclamo (molesto, reclama un trabajo, garantía) · emergencia (varado, accidente, no prende, grúa) · pide_asesor (quiere hablar con una persona) · negociacion (pide descuento, promo o precio especial) · venta_lista (confirma que viene, quiere comprar o agendar ya) · pago_reportado (dice que pagó o manda comprobante) · tramite (RCV, certificado médico) · consulta_tecnica (falla que necesita un mecánico para responder bien).
+  Ejemplo: [ATENCION: venta_lista | Viene mañana a las 9 a cambiar el silenciador del Neon y pagará en divisas]
+  Úsala solo cuando aplique de verdad; no en saludos ni preguntas normales de precio.`;
 
   let systemPrompt = `${knowledge}
 
@@ -3791,6 +3797,24 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       console.error('❌ Error en persistencia temprana:', e);
     }
 
+    // ── Alertas de atención para los asesores (nunca para el personal interno) ──
+    const alertar = async (tipo: TipoAtencion, motivo: string, sugerencia?: string | null) => {
+      if (ctx.isAdmin || !db) return;
+      try {
+        const quien = ctx.memoria?.nombre || waProfileName || from;
+        const r = await abrirAlertaAtencion(db as unknown as SupabaseClient, {
+          telefono: from, tipo, motivo, sugerencia, cliente: ctx.memoria?.nombre || waProfileName || null,
+          ultimoMensaje: messageBody, sedeId: ctx.sede_id || DEFAULT_SEDE_ID,
+        });
+        if (r.nueva) void sendGlobalPushNotification({ title: `🚨 ${TIPOS_ATENCION[tipo].titulo}`, body: `${quien}: ${motivo.slice(0, 100)}`, type: 'atencion-cliente', url: `/dashboard/whatsapp?tel=${from}`, tag: `atencion-${from}-${tipo}` });
+        console.log(`🚨 [${from}] Alerta de atención: ${tipo} — ${motivo.slice(0, 80)}`);
+      } catch (e) { console.error('alertar:', e); }
+    };
+    if (!ctx.isAdmin && detectarEmergencia(messageBody)) await alertar('emergencia', `Posible emergencia: «${messageBody.replace(/\s+/g, ' ').slice(0, 220)}»`);
+    if (!ctx.isAdmin && /\[Imagen enviada por el cliente[^\]]*(\[FACTURA\]|\[TICKET\]|comprobante|transferencia|pago m[oó]vil|referencia)/i.test(messageBody)) {
+      await alertar('pago_reportado', 'Envió una imagen que parece un comprobante de pago o una factura.');
+    }
+
     // 🛑 Silenciar bot si está en modo humano (Intervención manual) - unless they are an admin
     if (ctx.estado === 'humano' && !ctx.isAdmin) {
       console.log(`👤 [${from}] Modo Humano ACTIVO. El bot permanecerá en silencio.`);
@@ -4185,7 +4209,14 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       }
 
       // ── Process ALERTA_TRAMITE Tag ────────────────────────────────
+      for (const m of [...cleanedAi.matchAll(/\[ATENCION:\s*([a-z_]+)\s*(?:\|\s*([^\]|]+?))?(?:\|\s*([^\]]+?))?\s*\]/gi)]) {
+        const tipo = m[1].toLowerCase();
+        if (esTipoAtencion(tipo)) await alertar(tipo, (m[2] || '').trim() || `«${messageBody.slice(0, 200)}»`, (m[3] || '').trim() || null);
+      }
+      cleanedAi = cleanedAi.replace(/\[ATENCION:[^\]]*\]/gi, '').trim();
+
       if (cleanedAi.includes('[ALERTA_TRAMITE]')) {
+        await alertar('tramite', `Pide un trámite (RCV o certificado médico): «${messageBody.slice(0, 200)}»`);
         cleanedAi = cleanedAi.replace(/\[ALERTA_TRAMITE\]/gi, '').trim();
         const userName = ctx.memoria?.nombre || from;
         console.log(`🚨 [ALERTA TRAMITE] Solicitud de Certificado Medico o RCV de ${userName} (${from})`);
@@ -5906,6 +5937,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
       const needsAsesor = aiNeedsAsesor(cleanedAi) && !ctx.isAdmin;
 
       if (needsAsesor) {
+        await alertar('pide_asesor', `Se le pasó el contacto del asesor. Lo último que escribió: «${messageBody.replace(/\s+/g, ' ').slice(0, 200)}»`);
         const withoutPhone = cleanedAi
           .replace(/https?:\/\/wa\.me\/\S+/gi, '')
           .replace(/wa\.me\/\S+/gi, '')
@@ -5930,6 +5962,7 @@ export async function processCoreLogic(db: ReturnType<typeof getDb>, from: strin
     } else {
       // ── All immediate attempts failed — persist for cron retry ───────────────
       console.warn(`🚨 [${from}] Fallo total de IA. Guardando en cola de reintento...`);
+      await alertar('bot_no_pudo', `El bot no pudo responder (fallo de la IA). El cliente escribió: «${messageBody.replace(/\s+/g, ' ').slice(0, 200)}»`);
       try {
         if (db) {
           await db.from('mensajes_pendientes_ia').insert({

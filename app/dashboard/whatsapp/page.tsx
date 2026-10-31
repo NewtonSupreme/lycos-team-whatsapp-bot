@@ -289,7 +289,7 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
           </div>
         </div>
         {botImg.caption && (
-          <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words mt-1" style={{ color: 'hsl(var(--wa-texto))', wordBreak: 'break-word' }}>
+          <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words mt-1" style={{ color: 'hsl(var(--wa-texto))', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
             {botImg.caption}
           </p>
         )}
@@ -304,7 +304,7 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
   const isTranscribedAudio = type === 'audio' && body?.includes('(Audio transcrito)');
 
   if (!type && !proxyUrl) {
-    return <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: 'hsl(var(--wa-texto))', wordBreak: 'break-word' }}>{body}</p>;
+    return <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: 'hsl(var(--wa-texto))', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{body}</p>;
   }
 
   const icons = {
@@ -396,7 +396,7 @@ function MediaBubble({ msg, isOut, onImageClick, quotedMsg }: { msg: RawMsg; isO
         </div>
       )}
       {(type === 'image' || type === 'video' || type === 'sticker') && extractMediaCaption(body) && (
-        <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words mt-1" style={{ color: 'hsl(var(--wa-texto))', wordBreak: 'break-word' }}>
+        <p className="text-[13px] md:text-sm leading-relaxed whitespace-pre-wrap break-words mt-1" style={{ color: 'hsl(var(--wa-texto))', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
           {extractMediaCaption(body)}
         </p>
       )}
@@ -473,7 +473,9 @@ export default function WhatsAppPage() {
   const isHoldingRef = useRef(false);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Al enviar, la caja de texto vuelve a una línea.
+  useEffect(() => { if (!message && inputRef.current) inputRef.current.style.height = ''; }, [message]);
   const selectedRef = useRef<RawConv | null>(null);
   const msgsRef = useRef<RawMsg[]>([]);
   const realtimeConnectedRef = useRef(false);
@@ -825,6 +827,28 @@ export default function WhatsAppPage() {
         .then(() => loadConvs(showAllSedesRef.current));
     }
   };
+
+  // ── Abrir una conversación desde un enlace (?tel=…): las alertas de atención llevan aquí ──
+  const telPedido = useRef<string | null>(null);
+  useEffect(() => { telPedido.current = new URLSearchParams(window.location.search).get('tel'); }, []);
+  // Si ya se está en esta página, la alerta avisa por evento (el enlace no la recarga).
+  useEffect(() => {
+    const abrirTel = (ev: Event) => {
+      const t = String((ev as CustomEvent<string>).detail || '');
+      const c = convs.find(x => x.telefono === t);
+      if (c) void selectConv(c); else telPedido.current = t;
+    };
+    window.addEventListener('lycos:abrir-conversacion', abrirTel);
+    return () => window.removeEventListener('lycos:abrir-conversacion', abrirTel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- usa la lista vigente
+  }, [convs]);
+  useEffect(() => {
+    const t = telPedido.current;
+    if (!t || !convs.length) return;
+    const c = convs.find(x => x.telefono === t || x.telefono.replace(/\D/g, '').endsWith(t.replace(/\D/g, '').slice(-10)));
+    if (c) { telPedido.current = null; void selectConv(c); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- solo cuando llega la lista
+  }, [convs]);
 
   // ── Send message ──────────────────────────────────────────────
   const handleSend = async () => {
@@ -1769,8 +1793,8 @@ export default function WhatsAppPage() {
 
         {/* ── Right: chat window ── */}
         <div
-          className={cn('flex-1 flex flex-col min-h-0', !showMobileChat && 'hidden md:flex')}
-          style={{ background: 'hsl(var(--wa-fondo))' }}
+          className={cn('flex-1 flex flex-col min-h-0', !showMobileChat ? 'hidden md:flex' : 'fixed inset-0 z-[70] md:static md:z-auto')}
+          style={{ background: 'hsl(var(--wa-fondo))', paddingTop: showMobileChat ? 'env(safe-area-inset-top)' : undefined, paddingBottom: showMobileChat ? 'env(safe-area-inset-bottom)' : undefined }}
         >
           {selected ? (
             <div className="flex-1 flex overflow-hidden relative">
@@ -1845,7 +1869,7 @@ export default function WhatsAppPage() {
                   </div>
 
                   {/* Actions Row — always inline, scroll if needed */}
-                  <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
+                  <div className="flex w-full items-center gap-1.5 flex-nowrap justify-start overflow-x-auto [scrollbar-width:none] md:w-auto md:flex-shrink-0 md:flex-wrap md:justify-end md:overflow-visible">
                     {timeLeftStr && (
                       <div className={cn(
                         'flex items-center justify-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold flex-shrink-0',
@@ -2210,11 +2234,19 @@ export default function WhatsAppPage() {
                       )}
                       <input type="file" multiple ref={fileInputRef} onChange={handleFileChange} className="hidden" accept="image/*,video/*,.pdf,.doc,.docx" />
 
-                      <input
-                        ref={inputRef} value={message} onChange={e => setMessage(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                      <textarea
+                        ref={inputRef} value={message} rows={1}
+                        onChange={e => {
+                          setMessage(e.target.value);
+                          const t = e.target; t.style.height = 'auto'; t.style.height = `${Math.min(t.scrollHeight, 132)}px`;
+                        }}
+                        onKeyDown={e => {
+                          // En computadora Enter envía y Shift+Enter hace salto de línea; en el teléfono Enter es salto de línea.
+                          const tactil = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
+                          if (e.key === 'Enter' && !e.shiftKey && !tactil) { e.preventDefault(); handleSend(); }
+                        }}
                         placeholder={isWindowOpen ? (files.length > 0 ? (files.length === 1 ? 'Añade un comentario...' : 'El comentario irá con el primer archivo...') : 'Escribe un mensaje') : 'Ventana de 24h cerrada'}
-                        className={cn("flex-1 py-2 px-4 rounded-lg text-sm outline-none transition-all", isRecording && "opacity-0 pointer-events-none")}
+                        className={cn("flex-1 min-w-0 resize-none py-2 px-4 rounded-lg text-[15px] md:text-sm leading-snug outline-none transition-all max-h-[132px]", isRecording && "opacity-0 pointer-events-none")}
                         style={{ background: 'hsl(var(--wa-hover))', color: 'hsl(var(--wa-texto))', border: 'none' }}
                       />
                       
