@@ -622,7 +622,25 @@ export default function MetodoPagoPanel({
               className="mt-2 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-[#ffe0cb] accent-[#f97316]"
             />
 
-            <div className="mt-2.5 flex flex-wrap gap-1.5">
+            {/* El nivel del cliente en Cashea decide la inicial: 1 → 60 %, 2 → 50 %, 3 al 6 → 40 %. */}
+            <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-semibold text-[#5b616e]">Nivel:</span>
+              {([[1, 60], [2, 50], [3, 40], [4, 40], [5, 40], [6, 40]] as const).map(([nivel, p]) => (
+                <button
+                  key={nivel}
+                  onClick={() => cashea?.onPct(p)}
+                  title={`Nivel ${nivel}: inicial del ${p}%`}
+                  className={cn(
+                    'h-[24px] min-w-[28px] rounded-md px-2 text-[11px] font-bold transition-colors',
+                    p === cashea?.pct ? 'bg-[#f97316] text-white' : 'bg-[#fff1e7] text-[#c2410c] hover:bg-[#ffe0cb]',
+                  )}
+                >
+                  {nivel}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
               {PORCENTAJES.map(p => (
                 <button
                   key={p}
