@@ -57,6 +57,26 @@ export interface DiaUtilidad {
   cobradoUsd: number; pagadoUsd: number; nVentas: number;
 }
 
+/** Un costo cargado a un trabajo (repuesto, insumo, trabajo de terceros). */
+export interface CostoTrabajo { id: string; fecha: string; descripcion: string; categoria: string; usd: number; proveedor: string | null }
+
+/** Lo que dejó UN trabajo (una venta del período): lo cobrado sin IVA menos lo que costó. */
+export interface TrabajoUtilidad {
+  ventaId: string; servicioId: string | null; fecha: string;
+  cliente: string; placa: string | null; vehiculo: string | null;
+  categoria: string; categoriaEtiqueta: string;
+  venta: number; costo: number; utilidad: number; margen: number;
+  costos: CostoTrabajo[];
+  items: Array<{ descripcion: string; cantidad: number; total: number }>;
+}
+
+/** Por categoría (departamento): cuánto se vende, cuánto cuesta y cuánto deja. */
+export interface CategoriaUtilidad {
+  clave: string; etiqueta: string; ventas: number; costo: number; utilidad: number; margen: number; n: number; ticket: number;
+  /** Trabajos con utilidad negativa en esta categoría. */
+  enPerdida: number;
+}
+
 export interface EstadoResultados {
   desde: string; hasta: string; dias: number; tasaHoy: number; tasaHoyFecha: string | null;
   ventas: {
@@ -80,6 +100,11 @@ export interface EstadoResultados {
     porCuenta: Array<{ cuenta: string; nombre: string; moneda: 'Bs' | 'USD'; monto: number; usdDelDia: number; usdHoy: number }>;
   };
   porDia: DiaUtilidad[];
+  /** Cada venta del período con su costo. Σ costo de los trabajos + costoSinTrabajo = costoCarros.total. */
+  trabajos: TrabajoUtilidad[];
+  porCategoria: CategoriaUtilidad[];
+  /** Costo reconocido en el período que no es de ninguna venta del período (retoques de trabajos de antes, piezas sin venta). */
+  costoSinTrabajo: { total: number; n: number; costos: CostoTrabajo[] };
   avisos: string[];
 }
 
@@ -256,10 +281,18 @@ export async function analizarPeriodo(db: SupabaseClient, o: { desde: string; ha
     return usd;
   };
 
+  const trabajos = new Map<string, TrabajoUtilidad>();
   for (const v of d.ventas) {
     const f = iso(v.fecha); const total = n(v.total_ingresos);
     base += total; iva += ivaDe(v);
     const dd = departamento(v);
+    trabajos.set(s(v.id), {
+      ventaId: s(v.id), servicioId: v.servicio_id ? s(v.servicio_id) : null, fecha: f,
+      cliente: s(v.cliente).trim() || 'Sin nombre', placa: v.placa ? s(v.placa).toUpperCase() : null, vehiculo: v.vehiculo_info ? s(v.vehiculo_info) : null,
+      categoria: dd.clave, categoriaEtiqueta: dd.etiqueta, venta: total, costo: 0, utilidad: 0, margen: 0, costos: [],
+      items: (Array.isArray(v.desglose) ? (v.desglose as Fila[]) : []).filter(x => s(x?.descripcion).trim())
+        .map(x => ({ descripcion: s(x.descripcion).trim(), cantidad: n(x.cantidad) || 1, total: r2(n(x.total)) })),
+    });
     const l = dep.get(dd.clave) || { clave: dd.clave, etiqueta: dd.etiqueta, usd: 0, n: 0 };
     l.usd += total; l.n++; dep.set(dd.clave, l);
     const bins = cobradoDe(v);
@@ -286,26 +319,35 @@ export async function analizarPeriodo(db: SupabaseClient, o: { desde: string; ha
   const costoCat = new Map<string, Linea>(); const gastoCat = new Map<string, Linea>();
   let costo = 0, gastos = 0, pagados = 0, porPagar = 0, nCosto = 0, nGasto = 0;
   // ¿Cuándo cuenta el costo de cada pieza? El día de la venta de su carro (ver la cabecera).
-  const ventasDe = new Map<string, string[]>();
+  const ventasDe = new Map<string, Array<{ f: string; id: string }>>();
   for (const v of d.ventasPlacas) {
-    for (const k of [v.placa ? `p:${norm(v.placa)}` : '', v.servicio_id ? `s:${s(v.servicio_id)}` : ''].filter(Boolean)) (ventasDe.get(k) || ventasDe.set(k, []).get(k)!).push(iso(v.fecha));
+    for (const k of [v.placa ? `p:${norm(v.placa)}` : '', v.servicio_id ? `s:${s(v.servicio_id)}` : ''].filter(Boolean)) (ventasDe.get(k) || ventasDe.set(k, []).get(k)!).push({ f: iso(v.fecha), id: s(v.id) });
   }
-  for (const l of ventasDe.values()) l.sort();
-  const reconocer = (g: Fila): string | null => {
+  for (const l of ventasDe.values()) l.sort((a, b) => a.f.localeCompare(b.f));
+  /** Cuándo cuenta el costo (r: null = trabajo en proceso) y de qué venta es. */
+  const reconocer = (g: Fila): { r: string | null; venta: string | null } => {
     const f = iso(g.fecha);
     const claves = [g.servicio_id ? `s:${s(g.servicio_id)}` : '', g.placa ? `p:${norm(g.placa)}` : ''].filter(Boolean);
-    if (!claves.length) return f;
-    const fechas = claves.flatMap(k => ventasDe.get(k) || []).sort();
-    const despues = fechas.find(x => x >= f);
-    if (despues && diasEntre(f, despues) <= 120) return despues;
-    if (fechas.some(x => x < f && diasEntre(x, f) <= 45)) return f;
-    if (g.placa && d.placasAbiertas.has(norm(g.placa))) return null;
-    return f;
+    if (!claves.length) return { r: f, venta: null };
+    // Primero las ventas de su misma orden; luego las de la placa.
+    const lista = claves.flatMap(k => ventasDe.get(k) || []);
+    const ordenadas = [...lista].sort((a, b) => a.f.localeCompare(b.f));
+    const despues = ordenadas.find(x => x.f >= f);
+    if (despues && diasEntre(f, despues.f) <= 120) return { r: despues.f, venta: lista.find(x => x.f === despues.f)?.id || despues.id };
+    const antes = [...ordenadas].reverse().find(x => x.f < f && diasEntre(x.f, f) <= 45);
+    if (antes) return { r: f, venta: antes.id };
+    if (g.placa && d.placasAbiertas.has(norm(g.placa))) return { r: null, venta: null };
+    return { r: f, venta: null };
   };
+  const sinTrabajo = { total: 0, n: 0, costos: [] as CostoTrabajo[] };
+  const lineaCosto = (g: Fila, usd: number, cat: string): CostoTrabajo => ({
+    id: s(g.id), fecha: iso(g.fecha), categoria: cat, usd: r2(usd), proveedor: g.proveedor ? s(g.proveedor) : null,
+    descripcion: (Array.isArray(g.desglose) && (g.desglose as Fila[]).map(x => s(x?.descripcion)).filter(Boolean).join(', ')) || s(g.notas).replace(/\[[^\]]*\]/g, '').trim() || etiquetaCat(cat),
+  });
   let traido = 0;
   const wip = new Map<string, { placa: string; usd: number; n: number }>();
   for (const g of d.egresosCarros) {
-    const r = reconocer(g); const usd = egresoUsd(g); const f = iso(g.fecha);
+    const { r, venta: deVenta } = reconocer(g); const usd = egresoUsd(g); const f = iso(g.fecha);
     if (r === null) { if (f >= desde && f <= hasta) { const k = norm(g.placa) || '—'; const x = wip.get(k) || { placa: s(g.placa) || '—', usd: 0, n: 0 }; x.usd += usd; x.n++; wip.set(k, x); } continue; }
     if (r < desde || r > hasta) continue;
     const cat = s(g.categoria) || 'otro';
@@ -313,6 +355,9 @@ export async function analizarPeriodo(db: SupabaseClient, o: { desde: string; ha
     l.usd += usd; l.n++; costoCat.set(cat, l);
     costo += usd; nCosto++; dia(r).costo += usd;
     if (f < desde) traido += usd;
+    const t = deVenta ? trabajos.get(deVenta) : undefined;
+    if (t) { t.costo += usd; t.costos.push(lineaCosto(g, usd, cat)); }
+    else { sinTrabajo.total += usd; sinTrabajo.n++; sinTrabajo.costos.push(lineaCosto(g, usd, cat)); }
   }
 
   for (const e of d.egresos) {
@@ -342,6 +387,21 @@ export async function analizarPeriodo(db: SupabaseClient, o: { desde: string; ha
   const totalDelDia = r2(entradasUsdDelDiaBs + entradasUsdDirecto);
   const totalHoy = r2(entradasUsdHoyBs + entradasUsdDirecto);
 
+  const listaTrabajos = [...trabajos.values()].map(t => {
+    const venta = r2(t.venta); const costoT = r2(t.costo); const util = r2(venta - costoT);
+    return { ...t, venta, costo: costoT, utilidad: util, margen: venta > 0 ? r2((util / venta) * 100) : 0, costos: t.costos.sort((a, b) => b.usd - a.usd) };
+  }).sort((a, b) => b.fecha.localeCompare(a.fecha) || b.venta - a.venta);
+  const cats = new Map<string, CategoriaUtilidad>();
+  for (const t of listaTrabajos) {
+    const c = cats.get(t.categoria) || { clave: t.categoria, etiqueta: t.categoriaEtiqueta, ventas: 0, costo: 0, utilidad: 0, margen: 0, n: 0, ticket: 0, enPerdida: 0 };
+    c.ventas += t.venta; c.costo += t.costo; c.n++; if (t.utilidad < -0.009) c.enPerdida++;
+    cats.set(t.categoria, c);
+  }
+  const porCategoria = [...cats.values()].map(c => {
+    const ventas = r2(c.ventas); const costoC = r2(c.costo); const util = r2(ventas - costoC);
+    return { ...c, ventas, costo: costoC, utilidad: util, margen: ventas > 0 ? r2((util / ventas) * 100) : 0, ticket: c.n ? r2(ventas / c.n) : 0 };
+  }).sort((a, b) => b.utilidad - a.utilidad);
+
   const estado: EstadoResultados = {
     desde, hasta, dias, tasaHoy, tasaHoyFecha: tHoy ? iso(tHoy.fecha) : null,
     ventas: {
@@ -363,6 +423,9 @@ export async function analizarPeriodo(db: SupabaseClient, o: { desde: string; ha
       porCuenta: [...porCuenta.entries()].map(([id, x]) => ({ cuenta: id, nombre: NOMBRE_BIN.get(id as BankBin) || id, moneda: (MONEDA_BIN.get(id as BankBin) || 'USD') as 'Bs' | 'USD', monto: r2(x.monto), usdDelDia: r2(x.usdDelDia), usdHoy: r2(x.usdHoy) })).sort((a, b) => b.usdDelDia - a.usdDelDia),
     },
     porDia: listaDias,
+    trabajos: listaTrabajos,
+    porCategoria,
+    costoSinTrabajo: { total: r2(sinTrabajo.total), n: sinTrabajo.n, costos: sinTrabajo.costos.sort((a, b) => b.usd - a.usd) },
     avisos,
   };
 

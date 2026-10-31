@@ -321,13 +321,22 @@ export default function FichaVehiculoPage() {
     // Con un trabajo elegido los indicadores son de ESE trabajo: sumar todo el
     // historial del carro respondía a una pregunta que nadie hizo.
     const venta = partidasVista.reduce((s, p) => s + p.total_venta, 0);
-    const costo = partidasVista.reduce((s, p) => s + p.total_costo, 0);
     const porPagar = partidasVista.reduce((s, p) => s + p.saldo_proveedor, 0);
-    const utilidad = venta - costo;
-    const margen = venta > 0 ? Number(((utilidad / venta) * 100).toFixed(1)) : 0;
-    // Lo que se le cobra sale de la orden cuando hay una elegida: es el precio
-    // de verdad, incluidos los renglones que aún no tienen costo anotado.
-    const cobrado = servicio ? (servicio.totalItems || servicio.monto) : venta;
+    // La ganancia es lo que se le COBRA menos TODO lo que costó. Antes se restaba solo contra los
+    // renglones que ya tenían costo anotado: lo cobrado sin costo (mano de obra, servicios) quedaba
+    // fuera y la ganancia salía menor que la real.
+    const ordenes = servicio ? [servicio] : ficha.servicios.filter(sv => !/cancel|anul/i.test(String(sv.estado || '')));
+    const precioDe = (sv: typeof ordenes[number]) => sv.totalItems || sv.monto || 0;
+    const partidasCosto = servicio ? ficha.partidas.filter(p => p.servicio_id === servicio.id) : ficha.partidas;
+    const sueltasVenta = servicio ? 0 : ficha.partidas.filter(p => !p.servicio_id).reduce((t, p) => t + p.total_venta, 0);
+    const costoOrden = ordenes.reduce((t, sv) => t + sv.items.filter(it => !it.enFicha)
+      .reduce((u, it) => u + (Number(it.costo_unitario) || 0) * (Number(it.cantidad) || 1), 0), 0);
+    const sinCosto = ordenes.reduce((t, sv) => t + sv.items.filter(it => !it.enFicha && !(Number(it.costo_unitario) > 0) && !it.es_mano_obra
+      && !/mano de obra|instalaci|servicio|diagn|revisi|alineaci|balanceo|lavado|soldadura/i.test(String(it.descripcion || ''))).length, 0);
+    const cobrado = ordenes.reduce((t, sv) => t + precioDe(sv), 0) + sueltasVenta || venta;
+    const costo = partidasCosto.reduce((t, p) => t + p.total_costo, 0) + costoOrden;
+    const utilidad = cobrado - costo;
+    const margen = cobrado > 0 ? Number(((utilidad / cobrado) * 100).toFixed(1)) : 0;
 
     return [
       {
@@ -350,7 +359,8 @@ export default function FichaVehiculoPage() {
         icono: <TrendingDown className="h-[19px] w-[19px]" aria-hidden />,
       },
       {
-        label: 'Ganancia', valor: money(utilidad), pie: `${margen}% de margen`,
+        label: 'Ganancia', valor: money(utilidad),
+        pie: `${margen}% de margen${sinCosto ? ` · ${sinCosto} pieza(s) sin costo anotado` : ''}${costoOrden > 0 ? ` · incluye ${money(costoOrden)} de costo anotado en la orden` : ''}`,
         tinte: utilidad >= 0 ? 'bg-[#e8f7ee] text-[#16a34a]' : 'bg-[#fdeaea] text-[#dc2626]',
         icono: <TrendingUp className="h-[19px] w-[19px]" aria-hidden />,
       },

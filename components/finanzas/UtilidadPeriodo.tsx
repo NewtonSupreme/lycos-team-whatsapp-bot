@@ -9,7 +9,8 @@ import {
   AlertOctagon, AlertTriangle, ArrowDownRight, Banknote, ChevronDown, ChevronRight, Download, Info,
   Landmark, Loader2, RefreshCw, ShieldCheck, Sparkles, TrendingUp, Wallet,
 } from 'lucide-react';
-import { Chip, Panel } from '@/components/panel/Piezas';
+import { Chip, Panel, Pestanas } from '@/components/panel/Piezas';
+import { UtilidadPorCategoria, UtilidadPorTrabajo } from '@/components/finanzas/UtilidadDesglose';
 import { cn } from '@/lib/utils';
 import { useRefrescarAlCambiar } from '@/lib/use-refrescar';
 import type { Diagnostico, EstadoResultados, Hallazgo, Severidad } from '@/lib/utilidad/periodo';
@@ -76,6 +77,8 @@ export default function UtilidadPeriodo({ sede }: { sede?: string | null }) {
   const [filtro, setFiltro] = useState<'todos' | 'infla' | 'reduce' | 'caja'>('todos');
   const [abiertos, setAbiertos] = useState<Record<string, boolean>>({});
   const [generando, setGenerando] = useState(false);
+  const [vista, setVista] = useState<'resumen' | 'categorias' | 'trabajos'>('resumen');
+  const [categoria, setCategoria] = useState('');
 
   const cargar = useCallback(async () => {
     setCargando(true); setError(null);
@@ -163,6 +166,14 @@ export default function UtilidadPeriodo({ sede }: { sede?: string | null }) {
             <Kpi ic={<Banknote className="h-4 w-4" aria-hidden />} t="Neto de caja" v={usd(e.caja.netoCajaUsd)} p={`entró − gastos pagados · por pagar ${usd(e.caja.gastosPorPagarUsd)}`} tono={e.caja.netoCajaUsd < 0 ? 'text-red-600' : 'text-foreground'} />
           </div>
 
+          <Pestanas valor={vista} onCambio={setVista} opciones={[
+            { valor: 'resumen', label: 'Resumen y diagnóstico' },
+            { valor: 'categorias', label: `Por categoría (${e.porCategoria?.length || 0})` },
+            { valor: 'trabajos', label: `Por trabajo (${e.trabajos?.length || 0})` },
+          ]} />
+          {vista === 'categorias' && <UtilidadPorCategoria e={e} onVerCategoria={c => { setCategoria(c); setVista('trabajos'); }} />}
+          {vista === 'trabajos' && <UtilidadPorTrabajo e={e} categoria={categoria} onCategoria={setCategoria} />}
+          {vista === 'resumen' && (<>
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
             {/* Estado de resultados */}
             <Panel titulo="Estado de resultados" subtitulo="Lo ganado: ventas del período menos sus costos y gastos (fecha de cada registro)">
@@ -278,6 +289,7 @@ export default function UtilidadPeriodo({ sede }: { sede?: string | null }) {
             )}
           </Panel>
           {e.avisos.map(a => <p key={a} className="text-[11.5px] text-amber-700">{a}</p>)}
+          </>)}
         </>
       )}
     </div>
