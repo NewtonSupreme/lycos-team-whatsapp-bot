@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { descargarMediaWhatsApp, describirSticker, describirVideo } from '@/lib/whatsapp/multimedia';
 import { catalogoPreciosBot } from '@/lib/bot/catalogo-precios';
+import { catalogoServiciosBot } from '@/lib/bot/catalogo-servicios';
 import { abrirAlertaAtencion, detectarEmergencia, esTipoAtencion, TIPOS_ATENCION, type TipoAtencion } from '@/lib/whatsapp/alertas-atencion';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { getPermisos, hasPermiso, resolveRol, getRoleMeta, type Permisos } from '@/types';
@@ -1308,6 +1309,8 @@ interface ConversationContext {
   capabilitiesNote?: string;
   /** Precios vigentes de silenciadores y piezas, desde el inventario de la sede. */
   catalogoPrecios?: string;
+  /** Los trabajos que el taller hace de verdad (de las órdenes reales). */
+  catalogoServicios?: string;
 }
 
 async function loadConversationContext(
@@ -2150,8 +2153,11 @@ CAMBIOS SENSIBLES (precio/stock, eliminar producto, registrar venta): el sistema
     }
   } catch (e) { console.error('Error loading context for admin/client:', e); }
 
-  const catalogoPrecios = await catalogoPreciosBot(db as unknown as SupabaseClient, sede_id || DEFAULT_SEDE_ID).catch(() => '');
-  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado, isAdmin, adminName, sede_id, adminSedeId, botRol, botPermisos, capabilitiesNote, catalogoPrecios };
+  const [catalogoPrecios, catalogoServicios] = await Promise.all([
+    catalogoPreciosBot(db as unknown as SupabaseClient, sede_id || DEFAULT_SEDE_ID).catch(() => ''),
+    catalogoServiciosBot(db as unknown as SupabaseClient).catch(() => ''),
+  ]);
+  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado, isAdmin, adminName, sede_id, adminSedeId, botRol, botPermisos, capabilitiesNote, catalogoPrecios, catalogoServicios };
 }
 
 // ─── AI Response ───────────────────────────────────────────────────────────────
@@ -2238,6 +2244,7 @@ FECHA/HORA VENEZUELA: ${vzlaDateTime}
 HOY ES: ${dayName} ${vzlaDateStr}
 ${ratesCtx}
 ${ctx.catalogoPrecios || ''}
+${ctx.catalogoServicios || ''}
 SALUDO_APROPIADO: ${greeting} — USA ESTE SALUDO EXACTO al inicio cuando sea sesión nueva. NO uses otro.
 SESION: ${ctx.isNewSession ? `NUEVA — saluda con "${greeting}" + mensaje de bienvenida` : 'CONTINUA — ve al tema, sin repetir saludo ni bienvenida'}
 ${memoriaStr}
