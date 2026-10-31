@@ -1,4 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
+import { descargarMediaWhatsApp, describirSticker, describirVideo } from '@/lib/whatsapp/multimedia';
+import { catalogoPreciosBot } from '@/lib/bot/catalogo-precios';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { getPermisos, hasPermiso, resolveRol, getRoleMeta, type Permisos } from '@/types';
 import { sendGlobalPushNotification } from '@/lib/push-helper';
@@ -270,7 +272,7 @@ Sigue ESTRICTAMENTE estas reglas para dar precios al cliente:
 
 2) SERVICIOS EN 'PROMOCIÓN EN DIVISAS':
    - Aplica para: Escapes, Resonadores, Mecánica, Frenos, Catalizador, Electrónica, Estética, etc. (Todo lo que sea de la lista general o se mencione como promo).
-   - **EXCEPCIÓN CRÍTICA DE SILENCIADORES**: Para silenciadores, ignora cualquier precio de base de datos o cálculo automático, y aplica **ÚNICAMENTE** los 3 precios unificados detallados en LYCOS_KNOWLEDGE (Carro pequeño/sedán 4 cilindros: $80 a tasa BCV y promo en divisas 40$; Camioneta: $80 Promo Divisa y $120 a tasa BCV; Fabricación Especial: $100 Promo Divisa y $140 a tasa BCV). **REGLA DE EXPLICACIÓN**: Cuando un vehículo aplique para Fabricación Especial ($100), explícale al cliente de manera sumamente clara, atenta y profesional que la fabricación es diferente porque el recorrido de escape de su modelo es particular. Explícale que algunos vehículos requieren silenciadores y tuberías fabricados a medida de forma artesanal y especial debido a entradas/salidas dobles, tramos con curvas onduladas pronunciadas para esquivar el puente de suspensión, o espacio sumamente limitado bajo el chasis. Destaca que esto garantiza que la pieza acople perfectamente sin generar vibraciones, ruidos extraños o golpear con la carrocería, asegurando un flujo de gases óptimo y una durabilidad superior.
+   - **SILENCIADORES, RESONADORES, FLEXIBLES Y GOMAS**: usa ÚNICAMENTE la lista «PRECIOS VIGENTES» (sale del inventario del taller): DIVISA = precio promo; CONTADO EN BS = dólares a tasa BCV; CASHEA = contado + 16 % de IVA, con el desglose por nivel ya calculado. **Fabricación especial** = el precio de CLK60: explícale con claridad y respeto que su escape lleva curvas, entradas/salidas dobles o poco espacio bajo el chasis, por eso se fabrica a la medida, de forma artesanal, para que acople perfecto, sin vibraciones ni golpes y con buen flujo de gases.
    - PRECIO: Para otros servicios en promoción, debes mostrar los montos en dólares directamente. Da EXACTAMENTE el precio indicado en la base de datos o en tu conocimiento. ¡PROHIBIDO! NUNCA hagas cálculos matemáticos de conversión de tasas ni inventes precios.
    - REGLA DE ORO: ¡PROHIBIDO! NUNCA menciones "Binance", "P2P", "paralela", "externa", ni des el precio en bolívares (Bs.) bajo ninguna circunstancia.
    - AVISO DE PAGO: Aclara que el pago es a tasa BCV cuando vayas a arrojar el precio de forma natural y casual.
@@ -279,7 +281,8 @@ Sigue ESTRICTAMENTE estas reglas para dar precios al cliente:
    - BASE: Usa el "Precio a tasa BCV" exacto (el monto más alto). NUNCA uses la "Promoción en divisas" para Cashea.
    - IVA: Al precio base BCV, súmale el 16% de IVA para obtener el Total Cashea.
    - MONEDA: Presenta TODO el presupuesto (Total, Inicial y Cuotas) en dólares usando estrictamente el formato: **"$ [Monto] a tasa BCV"**. NUNCA digas "Bolívares" ni "Bs.".
-   - REGLA DE DESGLOSE: Si el cliente indica su nivel de Cashea, calcula y muestra:
+   - NIVELES: nivel 1 = 60 % de inicial; nivel 2 = 50 %; niveles 3, 4, 5 y 6 = 40 %. Si no sabes su nivel, pregúntaselo antes del desglose.
+   - REGLA DE DESGLOSE: para silenciadores y piezas de la lista «PRECIOS VIGENTES» copia EXACTO el desglose del nivel del cliente (ya está calculado). Para otros servicios: total = precio BCV × 1,16; inicial = total × % del nivel; 3 cuotas iguales del resto, cada 14 días.
      a) Inicial: [Monto] a tasa BCV (Se paga en la caja del taller).
      b) 3 Cuotas de: [Monto] a tasa BCV (Cada una, se pagan por la plataforma de Cashea).
 
@@ -416,19 +419,17 @@ SERVICIOS Y PRECIOS:
 SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gruesa. PROMOCIÓN EN DIVISAS con instalación:
 - REGLA DE PRESUPUESTO DE SISTEMA DE ESCAPE: **SOLO SE PROHIBE** dar presupuestos completos de "punta a punta" o tuberías exactas a medida por chat. Para estos casos, **INVÍTALO AL TALLER PARA UNA REVISIÓN GRATUITA**.
 - **REGLA DE PIEZAS INDIVIDUALES**: Para silenciadores, resonadores, colas, flexibles y Flowmaster, **SÍ DEBES DAR EL PRECIO DIRECTAMENTE** usando la lista de abajo. No lo mandes al taller sin antes darle el precio de la pieza que busca.
-- "Intermedio": significa resonador. Da el precio del resonador ($40 para pagos en divisas) y si es en Bs es a $55 a tasa BCV,  y menciona que si requiere tubería adicional, el metro sale en $35 (hierro) o $20 (a partir del segundo metro).
+- "Intermedio": significa resonador. Da el precio del resonador de la lista «PRECIOS VIGENTES» y menciona que si requiere tubería adicional, el metro sale en $35 (hierro) o $20 (a partir del segundo metro).
 - El Sistema de Escape Completo Incluye: Silenciador, Resonador, Tubería, Flexible, Bajante, gomas y Empacaduras. En este caso específico de sistema completo, debe venir al taller para el precio exacto.
 - Silenciadores PLANOS (Ej. Malibú) y MOFLES: NO TENEMOS DISPONIBILIDAD de planos ni de mofles. Solo vendemos silenciadores Redondos. Si el cliente pide mofles, discúlpate y ofrécele inmediatamente Silenciadores, Flowmaster o cualquier otro servicio del taller (Mecánica, Frenos, Alineación, etc.). PERO, hay carros que originalmente usan planos y sí tienen espacio para adaptar uno redondo, si tiene duda pídele vernos para revisión gratuita.
-- **PRECIOS DE SILENCIADORES SEGÚN MODELO Y VEHÍCULO** (Instalación y revisión incluida, ignora precios de la base de datos):
-    1) **Silenciadores CL27 y CL30 (Carros con motores pequeños que usan específicamente CL27 o CL30)**:
-       - **CL27**: **$40 en Promoción en Divisas** y **$55 a tasa BCV**.
-       - **CL30**: **$50 en Promoción en Divisas** y **$70 a tasa BCV**.
-       - *Regla de Imagen*: SIEMPRE que ofrezcas o hables de CL27 o CL30, incluye al final el tag **[IMAGE: cl30]** para enviar correctamente la imagen oficial "CL 30.jpg" (es la misma imagen para CL27 y CL30).
-    2) **Otros Carros 4 Cilindros / Sedanes (más grandes que un CL27 o CL30, que usan CL40 / CLH40 como Aveo, Corolla, Optra, Yaris, Gol, Neon, etc.)**:
-       - Precio: **$80 a tasa BCV** (precio único en Bs o Cashea).
-       - **¡IMPORTANTE SOBRE PROMOCIÓN EN DIVISA PARA ESTOS CARROS DE $80 BCV!**: Sí contamos con promoción en divisa en el taller para estos vehículos, pero actualmente no tienes cargado ese monto exacto en tu sistema. Por lo tanto, si el cliente con uno de estos carros pregunta por precio o promoción en divisa ("¿en cuánto queda en divisa?", "promo en dólares", etc.), **NO INVENTES NINGÚN PRECIO EN DIVISA**. Responde amablemente que sí contamos con promociones en divisas y envíalo directamente con el asesor diciendo: "Te envío el contacto de nuestro asesor para consultar las promociones en divisas 👇" para que el sistema le comparta automáticamente la tarjeta de contacto del asesor.
-    3) **Camionetas (SUVs / Pickups)**: **$80 en Promoción en Divisas** y **$120 a tasa BCV** (Este precio de $120 es el que se usa estrictamente como base para pagos por Cashea). Ejemplos: Fortuner, Hilux, Explorer, Blazer, Grand Vitara, Terios, etc.
-    4) **Fabricación Especial**: **$100 en Promoción en Divisas** y **$140 a tasa BCV** (Este precio de $140 es el que se usa estrictamente como base para pagos por Cashea). Aplica para vehículos con curvas complejas, salidas/entradas dobles, tubería ondulada, o espacio sumamente limitado (ej. Dodge Caliber, Ford EcoSport, Toyota Previa, Kia Sportage, Hyundai Tucson, Chevrolet Malibú, Jeep Compass, Jeep Cherokee, Mitsubishi Outlander, y SUVs compactas similares). **EXPLICACIÓN COMPLETA PARA EL CLIENTE**: Explícales con empatía y claridad que para su vehículo la fabricación es completamente diferente y personalizada. Esto se debe a que el diseño original de su escape requiere silenciadores con entradas o salidas dobles, o tramos de tuberías onduladas y con curvas pronunciadas para adaptarse perfectamente al espacio tan reducido debajo del chasis. Por ello, para garantizar que la pieza quede impecable, con el flujo de gases óptimo, y sin vibraciones ni golpes contra la carrocería, realizamos una fabricación y adaptación especial a la medida de forma artesanal que requiere mayor dedicación, insumos y precisión técnica.
+- **PRECIOS DE SILENCIADORES**: están en la lista «PRECIOS VIGENTES» que llega con cada conversación (sale del inventario del taller). Elige el modelo por el vehículo y su motor:
+    * CL27 / CL30: motores pequeños (hasta 1.3 L).
+    * CL40: 1.4 a 1.5 L.
+    * CLH40: sedanes y 4 cilindros de 1.6 a 3.7 L (Neon, Aveo, Corolla, Optra, Yaris, Gol, etc.).
+    * CL60: camionetas y motores desde 3.8 L (Fortuner, Hilux, Explorer, Blazer, Grand Vitara, Terios, etc.).
+    * CLK60 = FABRICACIÓN ESPECIAL: Dodge Caliber, Ford EcoSport, Toyota Previa, Kia Sportage, Hyundai Tucson, Chevrolet Malibú, Jeep Compass/Cherokee, Mitsubishi Outlander y SUVs compactas parecidas.
+    * Platanero / maracucha: CLCPC. Camiones: CLC60.
+    Si dudas del motor, pregúntale el año y el motor antes de dar el precio. Da SIEMPRE el precio en DIVISA (promo) y el de CONTADO EN BS a tasa BCV; Cashea solo si lo pide.
 - **REGLA DE IMAGEN SEGÚN CILINDRAJE Y MODELO (CRÍTICO)**: Cuando le des el precio o recomiendes un silenciador al cliente, incluye el tag [IMAGE: slug] correspondiente al final del mensaje:
     * Para CL27 o CL30 (motores hasta 1.3L) usa SIEMPRE **[IMAGE: cl30]** (envía la imagen oficial "CL 30.jpg" para ambos).
     * Para motores de 1.4L hasta 1.5L usa **[IMAGE: cl40]** (imagen "CL 40.jpg").
@@ -438,11 +439,11 @@ SILENCIADORES Y ESCAPE — Fabricación propia, redondos, lámina galvanizada gr
     * Para Camiones usa **[IMAGE: clc60]**.
     * **Para Fabricación Especial** (Dodge Caliber, EcoSport, Sportage, Tucson, Compass, Cherokee, etc.): NO existe una imagen única de fabricación especial. Envíale la imagen del silenciador acorde al cilindraje de su vehículo (por ejemplo **[IMAGE: clh40]** si es motor 4 cilindros o **[IMAGE: cl60]** si es V6) y explícale claramente que el silenciador es parecido al de la imagen según su cilindraje, pero que para su vehículo en particular se realiza una fabricación especial para adaptarlo perfectamente a su espacio y chasis.
 - **REGLA DE PRECIOS ALTERNATIVOS Y QUEJAS (CRÍTICO)**:
-    * Si el cliente pregunta por alternativas de precio, descuentos, rebajas, precios más económicos o se queja de las tarifas: Explícale cordialmente que **actualmente solo se están manejando estos tres precios unificados para todas nuestras sedes con el fin de simplificar y unificar las operaciones**.
+    * Si el cliente pregunta por alternativas de precio, descuentos, rebajas, precios más económicos o se queja de las tarifas: Explícale cordialmente que **actualmente se manejan estos precios unificados para todas nuestras sedes con el fin de simplificar y unificar las operaciones**.
     * Si el cliente insiste, muestra quejas del precio o solicita específicamente consultar promociones en divisas ("promos divisas"): **DEBES** responder de manera servicial y decir: "Te envío el contacto de nuestro asesor 👇" para que el sistema le comparta automáticamente su tarjeta de contacto del asesor (no intentes convencerlo tú, deja que el asesor humano lo atienda).
 
 
-- Resonador: $40 promo en divisa y $55 a tasa BCV
+- Resonador: ver «PRECIOS VIGENTES».
 - Flowmaster Serie 40: $140 (instalación incluida). **NOTA**: El flexible NO está incluido, se vende por separado si el vehículo lo requiere.
 - Flexibles doble malla: $40
 - Tubo silenciador/cola: Primer metro $35, metros adicionales $20/metro, soldadura $15, gomas $7
@@ -934,442 +935,293 @@ export async function GET(request: NextRequest) {
 }
 
 // ─── POST: Receive messages ────────────────────────────────────────────────────
+// El procesamiento sigue después de contestar a WhatsApp (ver POST): hasta 5 minutos.
+export const maxDuration = 300;
+
+/** Marca de un mensaje recién reclamado cuyo contenido (audio, imagen, video) aún se está leyendo. */
+const RECIBIENDO = '[Recibiendo…]';
+
 export async function POST(request: NextRequest) {
-  console.log('--- NUEVA PETICION WEBHOOK POST ---');
-  try {
-    const body = await request.json();
-    console.log('📬 Webhook Body:', JSON.stringify(body).substring(0, 500));
+  let body: any;
+  try { body = await request.json(); } catch { return NextResponse.json({ status: 'bad_json' }); }
+  if (body?.object !== 'whatsapp_business_account') return NextResponse.json({ status: 'ignored' });
+  const value = body.entry?.[0]?.changes?.[0]?.value;
 
-    // Legacy retry handler removed — now uses piggyback strategy
-
-    if (body.object !== 'whatsapp_business_account') {
-      return NextResponse.json({ status: 'ignored' });
-    }
-    const value = body.entry?.[0]?.changes?.[0]?.value;
-
-    // ─── Handle Status Updates (Sent, Delivered, Read) ────────────────────────
-    if (value?.statuses?.length) {
-      const db = getDb();
+  // ─── Estados de los mensajes enviados (enviado, entregado, leído, error) ────
+  if (value?.statuses?.length) {
+    const db = getDb();
+    if (db) {
       for (const status of value.statuses) {
-        const wa_message_id = status.id;
-        const newStatus = status.status; // 'sent', 'delivered', 'read', 'failed', 'deleted'
-
-        console.log(`📊 [Status Update] ${wa_message_id}: ${newStatus}`);
-
-        if (db) {
-          let internalStatus = 'enviado';
-          if (newStatus === 'delivered') internalStatus = 'entregado';
-          if (newStatus === 'read') internalStatus = 'leido';
-          if (newStatus === 'failed') internalStatus = 'error';
-
-          try {
-            await db.from('mensajes_whatsapp')
-              .update({ estado: internalStatus })
-              .eq('wa_message_id', wa_message_id);
-          } catch (e) {
-            console.error('❌ Error updating status:', e);
-          }
-        }
+        const s = status.status;
+        const estado = s === 'delivered' ? 'entregado' : s === 'read' ? 'leido' : s === 'failed' ? 'error' : 'enviado';
+        try { await db.from('mensajes_whatsapp').update({ estado }).eq('wa_message_id', status.id); } catch { /* noop */ }
       }
     }
+  }
+  if (!value?.messages?.length) return NextResponse.json({ status: value?.statuses?.length ? 'ok' : 'no_messages' });
 
-    const waProfileName = value?.contacts?.[0]?.profile?.name || '';
+  // Se contesta a WhatsApp YA y se trabaja después. Antes el webhook respondía cuando la IA
+  // terminaba (10–40 s); WhatsApp lo daba por perdido, reenviaba el aviso y el cliente
+  // recibía dos respuestas.
+  after(async () => {
+    try { await procesarEntrantes(value); } catch (e) { console.error('❌ procesarEntrantes:', e); }
+  });
+  return NextResponse.json({ status: 'ok' });
+}
 
-    if (!value?.messages?.length) {
-      return NextResponse.json({ status: value?.statuses?.length ? 'ok' : 'no_messages' });
+async function procesarEntrantes(value: any) {
+  const db = getDb();
+  if (!db) { console.error('❌ Database connection not available.'); return; }
+  const waProfileName = value?.contacts?.[0]?.profile?.name || '';
+  const porAtender = new Set<string>();
+
+  for (const message of value.messages as any[]) {
+    const from: string = message.from;
+    const wa_message_id: string = message.id;
+    if (!from || !wa_message_id) continue;
+    void markMessageAsRead(wa_message_id);
+
+    if (message.type === 'reaction') {
+      const targetWaId = message.reaction?.message_id;
+      if (targetWaId) {
+        try { await db.from('mensajes_whatsapp').update({ reaccion: message.reaction?.emoji || null }).eq('wa_message_id', targetWaId); } catch { /* noop */ }
+      }
+      continue;
     }
 
-    // ── Agrupamiento dentro del mismo lote del webhook ──────────────────────
-    // WhatsApp puede entregar imagen + audio en un MISMO payload. Como el loop
-    // procesa los mensajes secuencialmente, el debounce por BD no detecta al
-    // "hermano" que aún no se ha insertado. Precalculamos el último índice por
-    // remitente para responder UNA sola vez (con el último mensaje del lote).
-    const lastMsgIdxByFrom: Record<string, number> = {};
-    (value.messages as any[]).forEach((m: any, idx: number) => { if (m?.from) lastMsgIdxByFrom[m.from] = idx; });
+    // ── Reclamar el mensaje: el índice único de wa_message_id hace que un reenvío
+    // del mismo aviso (o dos ejecuciones a la vez) no lo procese dos veces.
+    let sedeId = DEFAULT_SEDE_ID;
+    try {
+      const { data: c } = await db.from('conversaciones').select('sede_id').eq('telefono', from).maybeSingle();
+      if (c?.sede_id) sedeId = c.sede_id;
+    } catch { /* noop */ }
+    let filaId: string | null = null;
+    const { data: reclamo, error: errReclamo } = await db.from('mensajes_whatsapp').insert({
+      from_number: from, to_number: 'system', body: RECIBIENDO, tipo: 'entrante', wa_message_id, sede_id: sedeId,
+    }).select('id').single();
+    if (errReclamo) {
+      if (errReclamo.code === '23505') { console.log(`⏭️ Dup (${wa_message_id}) — ya se recibió`); continue; }
+      console.error('❌ No se pudo reclamar el mensaje:', errReclamo.message);
+    } else filaId = reclamo?.id || null;
 
-    // ── Global bot activation check ─────────────────────────────────────────
-    let botGlobalActivo = true;
-    const globalDb = getDb();
-    if (globalDb) {
-      try {
-        const { data: configData } = await globalDb.from('configuracion_sistema')
-          .select('valor')
-          .eq('clave', 'ia_bot')
-          .single();
-        if (configData && configData.valor) {
-          botGlobalActivo = configData.valor.bot_whatsapp_global_activo !== false;
-        }
-      } catch (e) {
-        console.error('Error leyendo configuracion global del bot:', e);
-      }
+    // ── Leer el contenido (texto, audio transcrito, imagen/video/sticker descritos…)
+    let contenido: { body: string; mediaId: string | null; mediaType: string | null };
+    try { contenido = await extraerContenido(message, from, db); }
+    catch (e) { console.error('❌ extraerContenido:', e); contenido = { body: `[${message.type || 'Mensaje'}]`, mediaId: null, mediaType: null }; }
+    const messageBody = contenido.body || `[Mensaje de tipo ${message.type || 'desconocido'}]`;
+    console.log(`📩 [${from}]: ${messageBody.substring(0, 80)}`);
+
+    let guardadoId = filaId;
+    if (filaId) {
+      await db.from('mensajes_whatsapp').update({ body: messageBody, media_url: contenido.mediaId, media_type: contenido.mediaType }).eq('id', filaId);
+    } else {
+      const { data: ins } = await db.from('mensajes_whatsapp').insert({
+        from_number: from, to_number: 'system', body: messageBody, tipo: 'entrante', wa_message_id,
+        media_url: contenido.mediaId, media_type: contenido.mediaType, sede_id: sedeId,
+      }).select('id').single();
+      guardadoId = ins?.id || null;
     }
 
-    for (let __msgIdx = 0; __msgIdx < value.messages.length; __msgIdx++) {
-      const message = value.messages[__msgIdx];
-      const from: string = message.from;
-      const wa_message_id: string = message.id;
-      const hasLaterInPayload = (lastMsgIdxByFrom[from] ?? __msgIdx) > __msgIdx;
+    // ── Aviso en el sistema y push
+    const t = message.type;
+    const pushTitle = t === 'image' ? `🖼️ ${from} envió una imagen` : t === 'video' ? `🎥 ${from} envió un video` : t === 'audio' ? `🎤 ${from} envió un audio` : `📱 Nuevo mensaje de ${from}`;
+    const pushBody = t === 'image' ? 'El cliente envió una foto' : t === 'video' ? 'El cliente envió un video' : t === 'audio' ? 'Nota de voz recibida' : messageBody.slice(0, 100);
+    const pushType = t === 'image' ? 'whatsapp-image' : t === 'video' ? 'whatsapp-video' : t === 'audio' ? 'whatsapp-audio' : 'whatsapp-message';
+    try {
+      await db.from('notificaciones').insert({ sede_id: sedeId, tipo: 'info', titulo: pushTitle, mensaje: pushBody, entidad_tipo: 'whatsapp', entidad_id: guardadoId, leida: false });
+      void sendGlobalPushNotification({ title: pushTitle, body: pushBody, type: pushType, url: '/dashboard/whatsapp', tag: 'whatsapp' });
+    } catch (ne) { console.error('Error insertando notificacion', ne); }
 
-      // ── Mark as read immediately ───────────────────────────────────────────
-      void markMessageAsRead(wa_message_id);
-      const db = getDb();
-      if (!db) {
-        console.error('❌ Database connection not available.');
-        continue;
-      }
+    porAtender.add(from);
+  }
 
-      // Deduplication
-      if (db && wa_message_id) {
-        try {
-          const { data: rows } = await db
-            .from('mensajes_whatsapp').select('id').eq('wa_message_id', wa_message_id).limit(1);
-          if (rows && rows.length > 0) { console.log(`⏭️ Dup (${wa_message_id})`); continue; }
-        } catch { /* ok */ }
-      }
+  if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) { console.warn('⚠️ Missing WHATSAPP_TOKEN or PHONE_ID. Cannot respond.'); return; }
+  for (const from of porAtender) {
+    try { await atenderConversacion(db, from, waProfileName); } catch (e) { console.error(`❌ atenderConversacion ${from}:`, e); }
+  }
+}
 
-      if (message.type === 'reaction') {
-        const targetWaId = message.reaction?.message_id;
-        const emoji = message.reaction?.emoji;
-        console.log(`❤️ [${from}] Reacción recibida: ${emoji} para ${targetWaId}`);
-        if (targetWaId && db) {
-          try {
-            await db.from('mensajes_whatsapp')
-              .update({ reaccion: emoji || null })
-              .eq('wa_message_id', targetWaId);
-          } catch (e) {
-            console.error('Error actualizando reacción entrante:', e);
-          }
-        }
-        continue; // No hay texto que procesar
-      }
+/** Texto que el bot entiende de cada tipo de mensaje de WhatsApp. */
+async function extraerContenido(message: any, from: string, db: any): Promise<{ body: string; mediaId: string | null; mediaType: string | null }> {
+  const t = message.type;
+  if (t === 'text') return { body: message.text?.body || '', mediaId: null, mediaType: null };
+  if (t === 'button') return { body: message.button?.text || message.button?.payload || '[Botón]', mediaId: null, mediaType: null };
+  if (t === 'interactive') {
+    const it = message.interactive;
+    if (it?.type === 'button_reply') {
+      (global as any).__last_button_id = it.button_reply.id;
+      return { body: it.button_reply.title, mediaId: null, mediaType: null };
+    }
+    if (it?.type === 'list_reply') return { body: it.list_reply.title, mediaId: null, mediaType: null };
+    return { body: '[Interactivo]', mediaId: null, mediaType: null };
+  }
+  if (t === 'location') {
+    const loc = message.location;
+    return { body: `[Cliente compartió ubicación: ${loc?.latitude}, ${loc?.longitude}${loc?.name ? ` · ${loc.name}` : ''}${loc?.address ? ` · ${loc.address}` : ''}]`, mediaId: null, mediaType: null };
+  }
+  if (t === 'contacts') {
+    const c = (message.contacts || [])[0];
+    const nombre = c?.name?.formatted_name || 'contacto';
+    const tel = c?.phones?.[0]?.phone || c?.phones?.[0]?.wa_id || '';
+    return { body: `[Compartió un contacto: ${nombre}${tel ? ` ${tel}` : ''}]`, mediaId: null, mediaType: null };
+  }
 
-      let messageBody = '';
-      let currentMediaId: string | null = null;
-      let currentMediaType: string | null = null;
+  const esAdmin = await checkIsBotAdmin(from, db, ADMIN_PHONES);
+  const quien = esAdmin ? 'administrador' : 'cliente';
 
-      if (message.type === 'text') {
-        messageBody = message.text.body;
-      } else if (message.type === 'sticker') {
-        currentMediaId = message.sticker?.id || null;
-        currentMediaType = 'sticker';
-        console.log(`🖼️ [${from}] Recibido sticker: ${currentMediaId}`);
-        messageBody = '[Sticker]';
-      } else if (message.type === 'video') {
-        currentMediaId = message.video?.id || null;
-        currentMediaType = 'video';
-        const caption = message.video?.caption || '';
-        console.log(`🎥 [${from}] Recibido video: ${currentMediaId}`);
-        messageBody = caption || '[Video]';
-      } else if (message.type === 'document') {
-        currentMediaId = message.document?.id || null;
-        currentMediaType = 'document';
-        const filename = message.document?.filename || 'Documento';
-        console.log(`📄 [${from}] Recibido documento: ${filename}`);
-        messageBody = `[Documento: ${filename}]`;
-      } else if (message.type === 'interactive') {
-        const interactive = message.interactive;
-        if (interactive.type === 'button_reply') {
-          messageBody = interactive.button_reply.title;
-          // Guardar el ID del botón en la memoria para procesarlo después
-          const buttonId = interactive.button_reply.id;
-          console.log(`🔘 [${from}] Botón presionado: ${messageBody} (${buttonId})`);
+  if (t === 'image') {
+    const id = message.image?.id || null; const cap = message.image?.caption || '';
+    const capStr = cap ? ` - Mensaje del ${quien} adjunto: "${cap}"` : '';
+    const m = id && WHATSAPP_TOKEN ? await descargarMediaWhatsApp(id, WHATSAPP_TOKEN, { timeoutMs: 20000 }) : null;
+    const d = m ? await describeImage(m.base64, m.mime, esAdmin) : null;
+    return { body: d ? `[Imagen enviada por el ${quien}. Descripción automática (analízala y respondele en base a esto): ${d}]${capStr}` : `[El ${quien} envió una imagen]${capStr}`, mediaId: id, mediaType: 'image' };
+  }
+  if (t === 'audio') {
+    const id = message.audio?.id || null;
+    const m = id && WHATSAPP_TOKEN ? await descargarMediaWhatsApp(id, WHATSAPP_TOKEN, { timeoutMs: 20000 }) : null;
+    const tr = m ? await transcribeAudio(m.base64, m.mime || 'audio/ogg', esAdmin) : null;
+    return { body: tr ? `${tr} (Audio transcrito)` : `[El ${quien} envió un audio, pero no se pudo transcribir]`, mediaId: id, mediaType: 'audio' };
+  }
+  if (t === 'video') {
+    const id = message.video?.id || null; const cap = message.video?.caption || '';
+    const m = id && WHATSAPP_TOKEN ? await descargarMediaWhatsApp(id, WHATSAPP_TOKEN, { timeoutMs: 45000 }) : null;
+    const d = m ? await describirVideo(GEMINI_API_KEY, GEMINI_MODELS, m, cap, esAdmin) : null;
+    const capStr = cap ? ` - Mensaje del ${quien} adjunto: "${cap}"` : '';
+    return { body: d ? `[Video enviado por el ${quien}. Lo que se ve y se oye (analízalo y respóndele en base a esto): ${d}]${capStr}` : `[El ${quien} envió un video que no se pudo analizar]${capStr}`, mediaId: id, mediaType: 'video' };
+  }
+  if (t === 'sticker') {
+    const id = message.sticker?.id || null;
+    const m = id && WHATSAPP_TOKEN ? await descargarMediaWhatsApp(id, WHATSAPP_TOKEN, { timeoutMs: 12000 }) : null;
+    const d = m ? await describirSticker(GEMINI_API_KEY, GEMINI_MODELS, m) : null;
+    return { body: d ? `[${d} Respóndele de forma natural y breve según esa intención; no describas el sticker.]` : '[Sticker]', mediaId: id, mediaType: 'sticker' };
+  }
+  if (t === 'document') {
+    const id = message.document?.id || null; const fn = message.document?.filename || 'Documento'; const cap = message.document?.caption || '';
+    const mime = String(message.document?.mime_type || '');
+    let d: string | null = null;
+    if (id && WHATSAPP_TOKEN && (mime.startsWith('image/') || mime === 'application/pdf' || mime.startsWith('video/'))) {
+      const m = await descargarMediaWhatsApp(id, WHATSAPP_TOKEN, { timeoutMs: 30000, maxBytes: 18 * 1024 * 1024 });
+      if (m) d = mime.startsWith('video/') ? await describirVideo(GEMINI_API_KEY, GEMINI_MODELS, m, cap, esAdmin) : await describeImage(m.base64, mime, esAdmin);
+    }
+    return { body: `[Documento: ${fn}]${d ? ` Contenido: ${d}` : ''}${cap ? ` - Mensaje adjunto: "${cap}"` : ''}`, mediaId: id, mediaType: 'document' };
+  }
+  return { body: `[Mensaje de tipo ${t || 'desconocido'} que WhatsApp no deja leer]`, mediaId: null, mediaType: null };
+}
 
-          // Guardar button_id en memoria temporal para procesarlo en processCoreLogic
-          (global as any).__last_button_id = buttonId;
-        } else if (interactive.type === 'list_reply') {
-          messageBody = interactive.list_reply.title;
-          console.log(`📜 [${from}] Lista seleccionada: ${messageBody} (${interactive.list_reply.id})`);
-        } else {
-          messageBody = '[Interactivo]';
-        }
-      } else if (message.type === 'image') {
-        const imageId = message.image?.id;
-        currentMediaId = imageId || null;
-        currentMediaType = 'image';
-        const rawCaption = message.image?.caption || '';
-        if (imageId && WHATSAPP_TOKEN) {
-          try {
-            const mediaUrlResp = await fetch(`https://graph.facebook.com/v21.0/${imageId}`, {
-              headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
-            });
-            if (mediaUrlResp.ok) {
-              const mediaData = await mediaUrlResp.json();
-              if (mediaData.url) {
-                const mediaResp = await fetch(mediaData.url, {
-                  headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
-                });
-                if (mediaResp.ok) {
-                  const arrayBuffer = await mediaResp.arrayBuffer();
-                  const base64Data = Buffer.from(arrayBuffer).toString('base64');
-                  const mimeType = mediaData.mime_type || 'image/jpeg';
+// ─── Turnos: una conversación, una respuesta a la vez, con todo lo que el cliente escribió ───
 
-                  const phone = from.replace(/[^0-9]/g, '');
-                  let isSenderAdmin = await checkIsBotAdmin(from, db, ADMIN_PHONES);
+/** Desde cuándo hay mensajes del cliente sin contestar. */
+async function corteAtendido(db: any, phone: string): Promise<string> {
+  const { data: c } = await db.from('conversaciones').select('atendido_hasta').eq('telefono', phone).maybeSingle();
+  if (c?.atendido_hasta) return c.atendido_hasta;
+  // Sin marca todavía: lo posterior a la última respuesta, como mucho de los últimos 15 minutos.
+  const { data: s } = await db.from('mensajes_whatsapp').select('created_at').eq('to_number', phone).eq('tipo', 'saliente')
+    .order('created_at', { ascending: false }).limit(1);
+  const quince = new Date(Date.now() - 15 * 60000).toISOString();
+  const ult = s?.[0]?.created_at as string | undefined;
+  return ult && ult > quince ? ult : quince;
+}
 
-                  const description = await describeImage(base64Data, mimeType, isSenderAdmin);
-                  const senderLabel = isSenderAdmin ? 'administrador' : 'cliente';
-                  const captionStr = rawCaption ? ` - Mensaje del ${senderLabel} adjunto: "${rawCaption}"` : '';
+async function entrantesDesde(db: any, phone: string, corte: string): Promise<Array<{ body: string; wa_message_id: string | null; created_at: string }>> {
+  const { data } = await db.from('mensajes_whatsapp').select('body, wa_message_id, created_at')
+    .eq('from_number', phone).eq('tipo', 'entrante').is('deleted_at', null).gt('created_at', corte)
+    .order('created_at', { ascending: true }).limit(15);
+  return data || [];
+}
 
-                  if (description) {
-                    messageBody = `[Imagen enviada por el ${senderLabel}. Descripción automática (analízala y respondele en base a esto): ${description}]${captionStr}`;
-                    console.log(`🖼️ Imagen descrita de [${from}] (${senderLabel}): ${description.substring(0, 50)}...`);
-                  } else {
-                    messageBody = `[El ${senderLabel} envió una imagen]${captionStr}`;
-                  }
-                } else {
-                  console.error('Error descargando imagen de WhatsApp');
-                  messageBody = `[El cliente envió una imagen]${rawCaption ? ' - Mensaje adjunto: "' + rawCaption + '"' : ''}`;
-                }
-              } else {
-                messageBody = `[El cliente envió una imagen]${rawCaption ? ' - Mensaje adjunto: "' + rawCaption + '"' : ''}`;
-              }
-            } else {
-              console.error('Error obteniendo URL de la imagen', await mediaUrlResp.text());
-              messageBody = `[El cliente envió una imagen]${rawCaption ? ' - Mensaje adjunto: "' + rawCaption + '"' : ''}`;
-            }
-          } catch (e) {
-            console.error('Excepción al procesar imagen:', e);
-            messageBody = `[El cliente envió una imagen]${rawCaption ? ' - Mensaje adjunto: "' + rawCaption + '"' : ''}`;
-          }
-        } else {
-          messageBody = `[El cliente envió una imagen]${rawCaption ? ' - Mensaje adjunto: "' + rawCaption + '"' : ''}`;
-        }
-      } else if (message.type === 'audio') {
-        const audioId = message.audio?.id;
-        currentMediaId = audioId || null;
-        currentMediaType = 'audio';
-        if (audioId && WHATSAPP_TOKEN) {
-          try {
-            const mediaCtrl = new AbortController();
-            const mediaTimeout = setTimeout(() => mediaCtrl.abort(), 4000);
+async function tomarTurno(db: any, phone: string): Promise<boolean> {
+  const ahora = new Date().toISOString();
+  const vencido = new Date(Date.now() - 120000).toISOString();
+  // Que la fila exista (cliente nuevo) sin pisar nada de una que ya existe.
+  await db.from('conversaciones').upsert({ telefono: phone, sede_id: DEFAULT_SEDE_ID }, { onConflict: 'telefono', ignoreDuplicates: true });
+  // UPDATE condicional = atómico: solo una ejecución lo logra.
+  const { data } = await db.from('conversaciones').update({ procesando_desde: ahora, is_processing: true })
+    .eq('telefono', phone).or(`procesando_desde.is.null,procesando_desde.lt.${vencido}`).select('telefono');
+  return !!data?.length;
+}
 
-            const mediaUrlResp = await fetch(`https://graph.facebook.com/v21.0/${audioId}`, {
-              signal: mediaCtrl.signal,
-              headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
-            });
-            clearTimeout(mediaTimeout);
-            if (mediaUrlResp.ok) {
-              const mediaData = await mediaUrlResp.json();
-              if (mediaData.url) {
-                const dlCtrl = new AbortController();
-                const dlTimeout = setTimeout(() => dlCtrl.abort(), 5000);
+async function soltarTurno(db: any, phone: string) {
+  await db.from('conversaciones').update({ procesando_desde: null, is_processing: false }).eq('telefono', phone);
+}
 
-                const mediaResp = await fetch(mediaData.url, {
-                  signal: dlCtrl.signal,
-                  headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
-                });
-                clearTimeout(dlTimeout);
+async function atenderConversacion(db: any, from: string, waProfileName: string) {
+  const phone = from.replace(/[^0-9]/g, '');
 
-                if (mediaResp.ok) {
-                  const arrayBuffer = await mediaResp.arrayBuffer();
-                  const base64Data = Buffer.from(arrayBuffer).toString('base64');
-                  const mimeType = mediaData.mime_type || 'audio/ogg';
+  // ¿Bot apagado o conversación en manos de una persona?
+  let botGlobalActivo = true;
+  try {
+    const { data: cfg } = await db.from('configuracion_sistema').select('valor').eq('clave', 'ia_bot').single();
+    if (cfg?.valor) botGlobalActivo = cfg.valor.bot_whatsapp_global_activo !== false;
+  } catch { /* noop */ }
+  const esAdmin = await checkIsBotAdmin(from, db, ADMIN_PHONES);
+  const { data: conv } = await db.from('conversaciones').select('estado, mensajes_sin_leer').eq('telefono', phone).maybeSingle();
+  if (!botGlobalActivo || (conv?.estado === 'humano' && !esAdmin)) {
+    const corte = await corteAtendido(db, phone);
+    const nuevos = await entrantesDesde(db, phone, corte);
+    const ultimo = nuevos[nuevos.length - 1];
+    await db.from('conversaciones').update({
+      ultimo_mensaje: String(ultimo?.body || '').substring(0, 200), ultimo_mensaje_at: new Date().toISOString(),
+      mensajes_sin_leer: (conv?.mensajes_sin_leer ?? 0) + Math.max(1, nuevos.length),
+      atendido_hasta: ultimo?.created_at || undefined,
+    }).eq('telefono', phone);
+    void sendGlobalPushNotification({
+      title: '🆘 Respuesta manual requerida', body: `${from}: ${String(ultimo?.body || '').slice(0, 80)}`,
+      type: 'whatsapp-human', url: '/dashboard/whatsapp', tag: 'whatsapp-human',
+    });
+    return;
+  }
 
-                  const isSenderAdminAudio = await checkIsBotAdmin(from, db, ADMIN_PHONES);
-                  const transcript = await transcribeAudio(base64Data, mimeType, isSenderAdminAudio);
-                  if (transcript) {
-                    messageBody = `${transcript} (Audio transcrito)`;
-                    console.log(`🎙️ Audio transcrito de [${from}]: ${transcript.substring(0, 50)}...`);
-                  } else {
-                    messageBody = '[Cliente envió audio, pero no se pudo transcribir]';
-                  }
-                } else {
-                  console.error('Error descargando audio de WhatsApp');
-                  messageBody = '[Cliente envió audio]';
-                }
-              } else {
-                messageBody = '[Cliente envió audio]';
-              }
-            } else {
-              console.error('Error obteniendo URL del audio', await mediaUrlResp.text());
-              messageBody = '[Cliente envió audio]';
-            }
-          } catch (e: any) {
-            if (e?.name === 'AbortError') {
-              console.error('⏱️ Timeout descargando audio de WhatsApp');
-            } else {
-              console.error('Excepción al procesar audio:', e);
-            }
-            messageBody = '[Cliente envió audio]';
-          }
-        } else {
-          messageBody = '[Cliente envió audio]';
-        }
-      } else if (message.type === 'location') {
-        const loc = message.location;
-        messageBody = `[Cliente compartió ubicación: ${loc?.latitude}, ${loc?.longitude}]`;
-      }
-      if (!messageBody) continue;
-      console.log(`📩 [${from}]: ${messageBody.substring(0, 80)}`);
+  // Ventana para juntar lo que el cliente escribe seguido («hola» + «precio de…»).
+  await delay(esAdmin ? 4000 : 2500);
 
-      // Save incoming (blocking to capture exact time)
-      let insertedTimestamp = new Date().toISOString();
-      let effectiveSedeId = DEFAULT_SEDE_ID;
-      if (db) {
-        // Look up existing sede_id for this conversation
-        try {
-          const { data: existingConv } = await db.from('conversaciones')
-            .select('sede_id')
-            .eq('telefono', from)
-            .maybeSingle();
-          if (existingConv?.sede_id) {
-            effectiveSedeId = existingConv.sede_id;
-            console.log(`🏢 Sede detectada para ${from}: ${effectiveSedeId}`);
-          }
-        } catch (e) {
-          console.error('Error buscando sede_id:', e);
-        }
+  for (let vuelta = 0; vuelta < 3; vuelta++) {
+    if (await tomarTurno(db, phone)) {
+      try { await atenderPendientes(db, phone, waProfileName); } finally { await soltarTurno(db, phone); }
+      // ¿Llegó algo justo mientras se soltaba el turno? Se atiende; si no, listo.
+      const quedan = await entrantesDesde(db, phone, await corteAtendido(db, phone));
+      if (!quedan.length) return;
+      continue;
+    }
+    // Otro está contestando esta conversación: verá también este mensaje. Se espera por si acaso.
+    const hasta = Date.now() + 90000;
+    let libre = false;
+    while (Date.now() < hasta) {
+      await delay(2500);
+      const quedan = await entrantesDesde(db, phone, await corteAtendido(db, phone));
+      if (!quedan.length) return; // ya se contestó
+      const { data: c } = await db.from('conversaciones').select('procesando_desde').eq('telefono', phone).maybeSingle();
+      if (!c?.procesando_desde || Date.parse(c.procesando_desde) < Date.now() - 120000) { libre = true; break; }
+    }
+    if (!libre) return;
+  }
+}
 
-        try {
-          const { data, error } = await db.from('mensajes_whatsapp').insert({
-            from_number: from,
-            to_number: 'system',
-            body: messageBody,
-            tipo: 'entrante',
-            wa_message_id,
-            media_url: currentMediaId,
-            media_type: currentMediaType,
-            sede_id: effectiveSedeId
-          }).select('id, created_at').single();
+/** Contesta TODOS los mensajes pendientes, juntos, y repite si llegan más mientras piensa. */
+async function atenderPendientes(db: any, phone: string, waProfileName: string) {
+  for (let vuelta = 0; vuelta < 4; vuelta++) {
+    const corte = await corteAtendido(db, phone);
+    let lote = await entrantesDesde(db, phone, corte);
+    // Audios, fotos y videos que todavía se están leyendo: se esperan (hasta ~25 s).
+    for (let i = 0; i < 16 && lote.some(m => m.body === RECIBIENDO); i++) {
+      await delay(1500);
+      lote = await entrantesDesde(db, phone, corte);
+    }
+    const listos: typeof lote = [];
+    for (const m of lote) { if (m.body === RECIBIENDO) break; listos.push(m); }
+    if (!listos.length) return;
 
-          if (error) {
-            console.error('❌ Error Supabase al insertar mensaje:', error.message, error.details, error.hint);
-          }
-          if (data?.created_at) insertedTimestamp = data.created_at;
+    const cuerpo = listos.length === 1 ? listos[0].body : listos.map(m => m.body).join('\n');
+    const ultimo = listos[listos.length - 1];
+    try {
+      await db.from('mensajes_pendientes_ia').update({ status: 'completed', error_log: 'Supersedido por nuevo mensaje.' })
+        .eq('from_number', phone).eq('status', 'pending');
+    } catch { /* no crítico */ }
 
-          // ── Push notification: new WhatsApp message ──────────────────────
-          const isImage = message.type === 'image';
-          const isVideo = message.type === 'video';
-          const isAudio = message.type === 'audio';
-          let pushTitle = `📱 Nuevo mensaje de ${from}`;
-          let pushBody = messageBody.slice(0, 100);
-          let pushType = 'whatsapp-message';
-          if (isImage) { pushTitle = `🖼️ ${from} envió una imagen`; pushBody = 'El cliente envió una foto'; pushType = 'whatsapp-image'; }
-          else if (isVideo) { pushTitle = `🎥 ${from} envió un video`; pushBody = 'El cliente envió un video'; pushType = 'whatsapp-video'; }
-          else if (isAudio) { pushTitle = `🎤 ${from} envió un audio`; pushBody = 'Nota de voz recibida'; pushType = 'whatsapp-audio'; }
-          
-          // Guardar notificación en BD para historial y disparar push global
-          try {
-            const { data: notifData } = await db.from('notificaciones').insert({
-              sede_id: effectiveSedeId,
-              tipo: 'info',
-              titulo: pushTitle,
-              mensaje: pushBody,
-              entidad_tipo: 'whatsapp',
-              entidad_id: data?.id || null,
-              leida: false
-            }).select('id').single();
-            
-            void sendGlobalPushNotification({ title: pushTitle, body: pushBody, type: pushType, url: '/dashboard/whatsapp', tag: 'whatsapp' });
-          } catch (ne) { console.error('Error insertando notificacion', ne); }
-        } catch (e) { console.error('Error guardando entrante:', e); }
-
-        // ── Agrupar imagen + audio enviados juntos en el MISMO lote ──────────
-        // Si hay un mensaje posterior del mismo remitente en este payload, ya quedó
-        // guardado en BD (descripción de imagen / transcripción de audio). Omitimos
-        // la respuesta IA aquí para que la maneje el último mensaje del grupo con el
-        // contexto COMPLETO (imagen + audio juntos).
-        if (hasLaterInPayload) {
-          console.log(`⏩ [${from}] Mensaje ${wa_message_id} agrupado en el lote — se omite respuesta IA (la dará el último del grupo).`);
-          continue;
-        }
-
-        // Debounce to group multiple images or chopped messages.
-        // Los administradores (por lista o por permisos de Modo Dios en BD) suelen
-        // enviar imagen + audio en mensajes separados con segundos de diferencia.
-        // Les damos una ventana real incluso en Vercel para que el segundo mensaje
-        // llegue antes de procesar el primero y se combinen en una sola respuesta.
-        const isVercel = process.env.VERCEL === '1';
-        const isSenderAdminQuick = await checkIsBotAdmin(from, db, ADMIN_PHONES);
-        const delayMs = isVercel ? (isSenderAdminQuick ? 3500 : 1200) : 4000;
-        console.log(`⏳ [${from}] Waiting ${delayMs}ms for potential grouping... (admin=${isSenderAdminQuick})`);
-        await delay(delayMs);
-        try {
-          const { data: newer } = await db.from('mensajes_whatsapp')
-            .select('id')
-            .eq('from_number', from)
-            .eq('tipo', 'entrante')
-            .gt('created_at', insertedTimestamp)
-            .limit(1);
-          if (newer && newer.length > 0) {
-            console.log(`⏩ [${from}] Ignorando respuesta IA de ${wa_message_id} porque hay mensajes más recientes.`);
-            continue; // Skip AI response, letting the newer message handle it
-          }
-        } catch (e) { console.error('Error consultando mensajes recientes:', e); }
-
-        // ─── Human takeover & Concurrent processing check ─────────────────
-        try {
-          const { data: convData } = await db.from('conversaciones')
-            .select('estado, is_processing')
-            .eq('telefono', from)
-            .limit(1)
-            .single();
-
-          if (convData?.is_processing) {
-            console.log(`⏳ [${from}] Bot ya está procesando otro mensaje. Saltando para evitar bloqueos.`);
-            continue;
-          }
-
-          // Check if sender is admin to bypass human takeover check
-          const phoneClean = from.replace(/[^0-9]/g, '');
-          let isSenderAdmin = await checkIsBotAdmin(from, db, ADMIN_PHONES);
-
-          const isBotDisabledForThisUser = !botGlobalActivo || (convData?.estado === 'humano' && !isSenderAdmin);
-
-          if (isBotDisabledForThisUser) {
-            const motivo = !botGlobalActivo ? 'Bot Desactivado Globalmente' : 'Conversación en control humano';
-            console.log(`👤 [${from}] ${motivo} — bot silenciado.`);
-            // Update last message in CRM so admin sees it, incrementing unread count properly
-            const { data: convUnread } = await db.from('conversaciones').select('mensajes_sin_leer').eq('telefono', from).maybeSingle();
-            const currentUnread = (convUnread?.mensajes_sin_leer ?? 0) + 1;
-            await db.from('conversaciones').update({
-              ultimo_mensaje: messageBody.substring(0, 200),
-              ultimo_mensaje_at: new Date().toISOString(),
-              mensajes_sin_leer: currentUnread,
-            }).eq('telefono', from);
-            // Extra push: human mode means you MUST respond manually
-            void sendGlobalPushNotification({
-              title: `🆘 Respuesta manual requerida`,
-              body: `${from}: ${messageBody.slice(0, 80)}`,
-              type: 'whatsapp-human',
-              url: '/dashboard/whatsapp',
-              tag: 'whatsapp-human',
-            });
-            continue; // Skip AI response
-          }
-        } catch { /* no conversation row yet — proceed with bot */ }
-      }
-
-      if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) {
-        console.warn('⚠️ Missing WHATSAPP_TOKEN or PHONE_ID. Cannot respond.');
-        continue;
-      }
-
-      console.log(`🤖 [${from}] Entering processCoreLogic...`);
-      const phone = from.replace(/[^0-9]/g, ''); // Normalize
-      // Update is_processing to true
-      await db.from('conversaciones').update({ is_processing: true }).eq('telefono', phone);
-
-      // Mark any OLD pending messages from THIS user as superseded
-      try {
-        await db.from('mensajes_pendientes_ia')
-          .update({ status: 'completed', error_log: 'Supersedido por nuevo mensaje.' })
-          .eq('from_number', phone)
-          .eq('status', 'pending');
-      } catch { /* non-critical */ }
-
-      try {
-        await processCoreLogic(db, phone, messageBody, wa_message_id, waProfileName);
-      } finally {
-        await db.from('conversaciones').update({ is_processing: false }).eq('telefono', phone);
-      }
-      console.log(`✅ [${phone}] processCoreLogic finished.`);
-    } // end for loop
-
-    return NextResponse.json({ status: 'ok' });
-  } catch (error) {
-    console.error('❌ Webhook error:', error);
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
+    console.log(`🤖 [${phone}] Turno ${vuelta + 1}: ${listos.length} mensaje(s) juntos.`);
+    await processCoreLogic(db, phone, cuerpo, ultimo.wa_message_id, waProfileName, { loteDesde: listos[0].created_at });
+    await db.from('conversaciones').update({ atendido_hasta: ultimo.created_at, procesando_desde: new Date().toISOString() }).eq('telefono', phone);
+    await delay(1200);
   }
 }
 
@@ -1453,12 +1305,15 @@ interface ConversationContext {
   botRol?: string;
   botPermisos?: Permisos;
   capabilitiesNote?: string;
+  /** Precios vigentes de silenciadores y piezas, desde el inventario de la sede. */
+  catalogoPrecios?: string;
 }
 
 async function loadConversationContext(
   db: ReturnType<typeof getDb>,
   from: string,
-  currentMessage: string
+  currentMessage: string,
+  opciones: { loteDesde?: string } = {}
 ): Promise<ConversationContext> {
   let historia: { role: string; parts: { text: string }[] }[] = [];
   let memoria: Memoria = {};
@@ -1587,13 +1442,18 @@ CAMBIOS SENSIBLES (precio/stock, eliminar producto, registrar venta): el sistema
         filteredMsgs = msgs.filter(m => new Date(m.created_at) > tenMinutesAgo).slice(0, 4);
       }
 
+      // Los mensajes del turno van juntos como el mensaje actual: no se repiten en el historial
+      // (si no, la IA los veía dos veces y contestaba dos veces lo mismo).
+      const delTurno = (m: { tipo: string; created_at: string; body: string }) => m.tipo === 'entrante'
+        && (opciones.loteDesde ? m.created_at >= opciones.loteDesde : m.body === currentMessage);
       const filtered = filteredMsgs
-        .filter(m => !(m.body === currentMessage && m.tipo === 'entrante'))
+        .filter(m => !delTurno(m))
         .slice(0, 48).reverse();
       historia = filtered.map(m => ({ role: m.tipo === 'entrante' ? 'user' : 'model', parts: [{ text: m.body }] }));
 
       if (!isAdmin) {
-        const latest = msgs[0];
+        // La sesión es nueva según el último mensaje ANTERIOR a este turno (el actual siempre es de hoy).
+        const latest = msgs.find(m => !delTurno(m));
         if (latest?.created_at) {
           // Session is NEW if last message was on a DIFFERENT calendar day in Venezuela
           const lastMsgDate = new Date(latest.created_at);
@@ -2289,7 +2149,8 @@ CAMBIOS SENSIBLES (precio/stock, eliminar producto, registrar venta): el sistema
     }
   } catch (e) { console.error('Error loading context for admin/client:', e); }
 
-  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado, isAdmin, adminName, sede_id, adminSedeId, botRol, botPermisos, capabilitiesNote };
+  const catalogoPrecios = await catalogoPreciosBot(db as unknown as SupabaseClient, sede_id || DEFAULT_SEDE_ID).catch(() => '');
+  return { historia, memoria, citasInfo, inventarioInfo, isNewSession, agendaOcupada, historialTecnico, estado, isAdmin, adminName, sede_id, adminSedeId, botRol, botPermisos, capabilitiesNote, catalogoPrecios };
 }
 
 // ─── AI Response ───────────────────────────────────────────────────────────────
@@ -2351,14 +2212,26 @@ async function getAIResponse(
     ? `- EXTENSIÓN: Puedes usar las líneas necesarias para reportes de inventario o KPIs.
 - FORMATO: Usa negritas (*texto*) y monospace (\`texto\`) para resaltar nombres y cantidades en los reportes.
 - ESPACIADO: Deja siempre una línea en blanco entre productos en tus listas.`
-    : `- BREVEDAD: Tus respuestas NO DEBEN EXCEDER las 3 líneas. Sé extremadamente directo.
+    : `- BREVEDAD: Tus respuestas NO DEBEN EXCEDER las 3 líneas (un desglose de Cashea o una lista de precios puede ocupar más). Sé directo.
 - NUNCA uses asteriscos (*) en tus respuestas. Texto plano siempre. Listas con - o numeradas.`;
+
+  const estilo = `
+ESTILO DE CONVERSACIÓN (MUY IMPORTANTE):
+- El usuario puede escribir VARIOS mensajes seguidos; te llegan juntos, uno por línea. Contesta TODO en UNA sola respuesta, sin repetir lo mismo dos veces.
+- Habla como una persona del taller por WhatsApp: natural, cercana y educada. Adapta el tono al cliente (si es formal, formal; si es relajado, relajado) y usa su nombre solo de vez en cuando.
+- NO repitas saludos, bienvenidas ni presentaciones si la conversación ya empezó. NO repitas datos que ya diste en los últimos mensajes (ubicación, horario, beneficios, precios) salvo que te los vuelvan a pedir.
+- Varía cómo empiezas las respuestas: no empieces siempre con «¡Perfecto!», «¡Excelente!» o «Entiendo».
+- Responde lo que te preguntan y, si hace falta, haz UNA pregunta concreta para avanzar (año y motor del carro, su nivel de Cashea, qué día puede venir).
+- Si te mandan un sticker, contéstale con la intención que trae (gracias, ok, risa…) en pocas palabras, sin describirlo.
+- Si te mandan un video, usa lo que se ve y se oye para orientarlo (posible falla y el servicio que aplica) y ofrécele una revisión.
+- Si el cliente está molesto o tiene un problema con un trabajo ya hecho, discúlpate con sinceridad, entiende el problema y pásalo al asesor.`;
 
   let systemPrompt = `${knowledge}
 
 FECHA/HORA VENEZUELA: ${vzlaDateTime}
 HOY ES: ${dayName} ${vzlaDateStr}
 ${ratesCtx}
+${ctx.catalogoPrecios || ''}
 SALUDO_APROPIADO: ${greeting} — USA ESTE SALUDO EXACTO al inicio cuando sea sesión nueva. NO uses otro.
 SESION: ${ctx.isNewSession ? `NUEVA — saluda con "${greeting}" + mensaje de bienvenida` : 'CONTINUA — ve al tema, sin repetir saludo ni bienvenida'}
 ${memoriaStr}
@@ -2366,6 +2239,7 @@ ${ctx.citasInfo}
 ${ctx.historialTecnico || ''}
 ${ctx.inventarioInfo}
 ${ctx.agendaOcupada}
+${estilo}
 
 ⚠️ REGLA CRITICA DE FECHAS — LEE CON ATENCION:
 La fecha de HOY es ${vzlaDateStr} (${dayName}). Esta es la UNICA referencia válida para calcular fechas.
@@ -3103,7 +2977,7 @@ async function updateConversation(db: ReturnType<typeof getDb>, from: string, la
     } catch (e) { }
   }
 
-  void (async () => {
+  await (async () => {
     try {
       // Look up existing sede_id to avoid overwriting it with default
       let effectiveSedeId = DEFAULT_SEDE_ID;
@@ -3844,13 +3718,15 @@ async function sendContactCard(to: string, phone: string, displayName: string): 
 
 // ─── Intent Detection ──────────────────────────────────────────────────────────
 function isLocationRequest(lower: string): boolean {
-  const locKeywords = [
-    'ubicacion', 'ubicación', 'donde est', 'dónde est', 'donde quedan', 'dónde quedan',
-    'ubica', 'ubican', 'dirección', 'direccion', 'llegar', 'ubicado', 'gps', 'mapa',
-    'como llegar', 'cómo llegar', 'y la de san antonio', 'y la de carrizal', 'y la de caracas',
-    'y la del cementerio', 'donde queda la de', 'donde es la de'
-  ];
-  return locKeywords.some(k => lower.includes(k));
+  // Frases de ubicación, no palabras sueltas: «¿será que le llegaron?» o «donde está mi carro»
+  // disparaban el mapa, el video y la tarjeta del taller en medio de otra conversación.
+  const t = lower.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (/\b(ubicacion|direccion|gps|mapa)\b/.test(t)) return true;
+  if (/\b(como|por donde) (les? )?(llego|llegar|se llega|hago para llegar)\b/.test(t)) return true;
+  if (/\bpara llegar\b/.test(t)) return true;
+  if (/\bdonde (estan|queda[n]?|se encuentran|se ubican|es el taller|esta el taller|estan ubicados)\b/.test(t)) return true;
+  if (/\b(estan ubicados|me pasas? la ubicacion|ubicanos|donde los consigo)\b/.test(t)) return true;
+  return ['y la de san antonio', 'y la de carrizal', 'y la de caracas', 'y la del cementerio', 'donde queda la de', 'donde es la de'].some(k => t.includes(k));
 }
 function isCertRequest(lower: string): boolean {
   const certKeywords = ['certificado medico', 'certificado médico', 'cert medico', 'cert médico', 'certificado med'];
@@ -3882,11 +3758,11 @@ async function findSedeIdByName(db: any, name: string): Promise<string | null> {
 function delay(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
 
 
-export async function processCoreLogic(db: ReturnType<typeof getDb>, from: string, messageBody: string, wa_message_id: string | null, waProfileName?: string) {
+export async function processCoreLogic(db: ReturnType<typeof getDb>, from: string, messageBody: string, wa_message_id: string | null, waProfileName?: string, opciones: { loteDesde?: string } = {}) {
   try {
     // Load context + exchange rates in parallel
     const [ctx, rates] = await Promise.all([
-      loadConversationContext(db, from, messageBody),
+      loadConversationContext(db, from, messageBody, opciones),
       fetchExchangeRates(),
     ]);
 
