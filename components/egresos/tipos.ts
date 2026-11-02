@@ -48,7 +48,9 @@ export interface EgresoFila {
  * Antes un lavado mandado a hacer para un carro caía en «Servicios (luz,
  * agua…)», y el reporte sumaba la luz del mes con los trabajos de terceros.
  */
-export type GrupoEgreso = 'carros' | 'taller';
+// 'neutro' = ni costo del carro ni gasto del taller: es dinero que se mueve o se devuelve, no se
+// consume (compra/venta de divisas, devolución a un cliente). No resta a la utilidad.
+export type GrupoEgreso = 'carros' | 'taller' | 'neutro';
 
 export const CATEGORIAS_EGRESO: { id: string; label: string; grupo: GrupoEgreso }[] = [
   { id: 'repuestos', label: 'Repuestos', grupo: 'carros' },
@@ -61,6 +63,9 @@ export const CATEGORIAS_EGRESO: { id: string; label: string; grupo: GrupoEgreso 
   { id: 'transporte', label: 'Transporte (gasolina, fletes, motorizado)', grupo: 'taller' },
   { id: 'impuestos', label: 'Impuestos y permisos', grupo: 'taller' },
   { id: 'otro', label: 'Otro gasto', grupo: 'taller' },
+  // No son gastos: no restan a la utilidad (sí se ven en el flujo de caja del banco).
+  { id: 'divisas', label: 'Compra / venta de divisas (no es gasto)', grupo: 'neutro' },
+  { id: 'devolucion', label: 'Devolución / reverso a un cliente (no es gasto)', grupo: 'neutro' },
 ];
 
 /** El grupo de un gasto: si va contra un carro o es del taller. */

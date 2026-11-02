@@ -363,9 +363,13 @@ export async function analizarPeriodo(db: SupabaseClient, o: { desde: string; ha
   for (const e of d.egresos) {
     const usd = egresoUsd(e); const f = iso(e.fecha); const cat = s(e.categoria) || 'otro';
     if (s(e.moneda || 'USD').toUpperCase() !== 'USD' && !(n(e.tasa_cambio) > 0)) sinTasa.push({ tabla: 'egresos', id: s(e.id), fecha: f, descripcion: s(e.proveedor || e.cliente || 'Gasto'), usd: 0, detalle: 'Gasto en Bs sin tasa: queda fuera del total' });
-    const enCarros = grupoDe({ categoria: cat, placa: e.placa as string | null, vehiculo_id: e.vehiculo_id as string | null }) === 'carros';
+    const grupo = grupoDe({ categoria: cat, placa: e.placa as string | null, vehiculo_id: e.vehiculo_id as string | null });
+    // «neutro» = compra de divisas o devolución a un cliente: no es gasto ni costo, no resta a la
+    // utilidad (ni a la caja de gastos: una devolución revierte un ingreso, y una compra de divisas
+    // solo mueve dinero entre cuentas).
+    if (grupo === 'neutro') continue;
     // Los costos de carros ya se contaron arriba, en su fecha de reconocimiento; aquí solo la caja.
-    if (!enCarros) {
+    if (grupo !== 'carros') {
       const l = gastoCat.get(cat) || { clave: cat, etiqueta: etiquetaCat(cat), usd: 0, n: 0 };
       l.usd += usd; l.n++; gastoCat.set(cat, l);
       gastos += usd; nGasto++; dia(f).gastos += usd;

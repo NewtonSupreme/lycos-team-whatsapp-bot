@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowLeftRight, ChevronDown, ChevronRight, Download, History, Loader2, Plus, RefreshCw, Scale, ShieldCheck, SlidersHorizontal, Wallet } from 'lucide-react';
+import { AlertTriangle, ArrowLeftRight, Coins, ChevronDown, ChevronRight, Download, History, Loader2, Plus, RefreshCw, Scale, ShieldCheck, SlidersHorizontal, Wallet } from 'lucide-react';
 import { Chip, Panel } from '@/components/panel/Piezas';
 import ModalTraspasoConciliacion from '@/components/finanzas/ModalTraspasoConciliacion';
 import { ModalAnular, ModalArqueo, ModalMovimiento, ModalSaldoInicial, type CuentaVista } from '@/components/finanzas/ModalesFlujoCaja';
@@ -43,7 +43,7 @@ export default function FlujoCaja({ sede }: { sede?: string | null }) {
   const [soloMov, setSoloMov] = useState(true);
   const [abiertos, setAbiertos] = useState<Record<string, boolean>>({});
   const [verHistorial, setVerHistorial] = useState(false);
-  const [modal, setModal] = useState<null | 'saldo' | 'movimiento' | 'arqueo' | 'traspaso'>(null);
+  const [modal, setModal] = useState<null | 'saldo' | 'movimiento' | 'arqueo' | 'traspaso' | 'divisas'>(null);
   const [anular, setAnular] = useState<{ id: string; concepto: string; monto: number } | null>(null);
   const [generando, setGenerando] = useState(false);
 
@@ -138,6 +138,7 @@ export default function FlujoCaja({ sede }: { sede?: string | null }) {
               <button type="button" onClick={() => setModal('saldo')} className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border px-3 text-[12.5px] font-bold hover:border-primary"><SlidersHorizontal className="h-4 w-4" aria-hidden /> Saldo inicial</button>
               <button type="button" onClick={() => setModal('movimiento')} className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-primary px-3 text-[12.5px] font-bold text-primary-foreground hover:opacity-90"><Plus className="h-4 w-4" aria-hidden /> Registrar movimiento</button>
               <button type="button" onClick={() => setModal('traspaso')} className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border px-3 text-[12.5px] font-bold hover:border-primary"><ArrowLeftRight className="h-4 w-4" aria-hidden /> Traspaso</button>
+              <button type="button" onClick={() => setModal('divisas')} className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border px-3 text-[12.5px] font-bold hover:border-primary"><Coins className="h-4 w-4" aria-hidden /> Compra de divisas</button>
               <button type="button" onClick={() => setModal('arqueo')} className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border px-3 text-[12.5px] font-bold hover:border-primary"><Scale className="h-4 w-4" aria-hidden /> Verificar saldo</button>
               <button type="button" onClick={descargarPdf} disabled={!flujo || generando} className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-xl bg-foreground px-3 text-[12.5px] font-bold text-background hover:opacity-90 disabled:opacity-50">
                 {generando ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Download className="h-4 w-4" aria-hidden />} PDF
@@ -276,7 +277,7 @@ export default function FlujoCaja({ sede }: { sede?: string | null }) {
       <ModalMovimiento abierto={modal === 'movimiento'} onCerrar={() => setModal(null)} cuenta={cuenta} onListo={listo} />
       <ModalArqueo abierto={modal === 'arqueo'} onCerrar={() => setModal(null)} cuenta={cuenta} onListo={listo} />
       <ModalAnular abierto={!!anular} onCerrar={() => setAnular(null)} movimiento={anular} onListo={listo} />
-      <ModalTraspasoConciliacion abierto={modal === 'traspaso'} onCerrar={() => setModal(null)} movimiento={null} banco="bnc" onCompletado={listo} />
+      <ModalTraspasoConciliacion abierto={modal === 'traspaso' || modal === 'divisas'} onCerrar={() => setModal(null)} movimiento={null} banco="bnc" modoDivisas={modal === 'divisas'} onCompletado={listo} />
     </div>
   );
 }

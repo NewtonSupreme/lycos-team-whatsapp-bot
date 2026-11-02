@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { ArrowLeftRight, Check, Loader2, X } from 'lucide-react';
+import { ArrowLeftRight, Check, Loader2 } from 'lucide-react';
 import ModalBase from '@/components/ui/modales/ModalBase';
 import type { MovimientoBanco, BancoConciliable } from '@/lib/conciliacion/leer-estado';
 
@@ -20,6 +20,8 @@ interface Props {
   movimiento: MovimientoBanco | null;
   banco: BancoConciliable;
   onCompletado: () => void;
+  /** Abre directo en modo «compra/venta de divisas» (Bs ↔ $). */
+  modoDivisas?: boolean;
 }
 
 export default function ModalTraspasoConciliacion({
@@ -28,6 +30,7 @@ export default function ModalTraspasoConciliacion({
   movimiento,
   banco,
   onCompletado,
+  modoDivisas = false,
 }: Props) {
   const [cuentas, setCuentas] = useState<CuentaFinanciera[]>([]);
   const [cargandoCuentas, setCargandoCuentas] = useState(false);
@@ -37,8 +40,17 @@ export default function ModalTraspasoConciliacion({
   const [origenId, setOrigenId] = useState('');
   const [destinoId, setDestinoId] = useState('');
   const [monto, setMonto] = useState('');
+  const [montoDestino, setMontoDestino] = useState('');
   const [fecha, setFecha] = useState('');
   const [motivo, setMotivo] = useState('');
+
+  const cOrigen = cuentas.find(c => c.id === origenId);
+  const cDestino = cuentas.find(c => c.id === destinoId);
+  // Cruce de monedas = compra/venta de divisas: entra distinto de lo que sale, y hay una tasa.
+  const cruceMonedas = !!cOrigen && !!cDestino && cOrigen.moneda !== cDestino.moneda;
+  const tasaImplicita = cruceMonedas && Number(monto) > 0 && Number(montoDestino) > 0
+    ? (cOrigen!.moneda === 'VES' ? Number(monto) / Number(montoDestino) : Number(montoDestino) / Number(monto))
+    : 0;
 
   // Cargar cuentas disponibles
   useEffect(() => {
@@ -49,6 +61,13 @@ export default function ModalTraspasoConciliacion({
       .then(data => {
         if (data.cuentas) {
           setCuentas(data.cuentas);
+          // Compra de divisas: por defecto de un banco en Bs a la caja en dólares.
+          if (modoDivisas && !movimiento) {
+            const bsBanco = data.cuentas.find((c: CuentaFinanciera) => c.moneda === 'VES' && c.tipo === 'banco');
+            const efUsd = data.cuentas.find((c: CuentaFinanciera) => c.bin === 'dolares') || data.cuentas.find((c: CuentaFinanciera) => c.moneda === 'USD');
+            if (bsBanco) setOrigenId(bsBanco.id);
+            if (efUsd) setDestinoId(efUsd.id);
+          }
           // Pre-seleccionar cuenta de origen basada en el banco
           if (movimiento) {
             const esEgreso = movimiento.monto < 0;
@@ -74,7 +93,7 @@ export default function ModalTraspasoConciliacion({
       })
       .catch(() => setError('No se pudieron cargar las cuentas financieras.'))
       .finally(() => setCargandoCuentas(false));
-  }, [abierto, banco, movimiento]);
+  }, [abierto, banco, movimiento, modoDivisas]);
 
   // Inicializar campos según movimiento
   useEffect(() => {
@@ -86,10 +105,11 @@ export default function ModalTraspasoConciliacion({
     } else {
       setMonto('');
       setFecha(new Date().toISOString().slice(0, 10));
-      setMotivo('Traspaso interno entre cuentas');
+      setMotivo(modoDivisas ? 'Compra de divisas' : 'Traspaso interno entre cuentas');
       setError(null);
     }
-  }, [movimiento, abierto]);
+    setMontoDestino('');
+  }, [movimiento, abierto, modoDivisas]);
 
   const guardar = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,7 +123,13 @@ export default function ModalTraspasoConciliacion({
     }
     const valMonto = Number(monto);
     if (!valMonto || valMonto <= 0) {
-      setError('El monto debe ser mayor a cero.');
+      setError('El monto que sale debe ser mayor a cero.');
+      return;
+    }
+    // En cruce de monedas hace falta cuánto ENTRA (en la otra moneda).
+    const valDestino = cruceMonedas ? Number(montoDestino) : valMonto;
+    if (cruceMonedas && (!valDestino || valDestino <= 0)) {
+      setError(`Indica cuánto entra en ${cDestino?.moneda === 'USD' ? 'dólares' : cDestino?.moneda}.`);
       return;
     }
 
@@ -117,7 +143,8 @@ export default function ModalTraspasoConciliacion({
           origen_id: origenId,
           destino_id: destinoId,
           monto: valMonto,
-          monto_destino: valMonto,
+          monto_destino: valDestino,
+          tasa: cruceMonedas && tasaImplicita > 0 ? Math.round(tasaImplicita * 10000) / 10000 : null,
           fecha,
           motivo,
         }),
@@ -138,8 +165,8 @@ export default function ModalTraspasoConciliacion({
     <ModalBase
       abierto={abierto}
       onCerrar={onCerrar}
-      titulo="Traspaso entre Cuentas"
-      subtitulo="Registrar movimiento de fondos entre cuentas del taller"
+      titulo={cruceMonedas || modoDivisas ? 'Compra / venta de divisas' : 'Traspaso entre Cuentas'}
+      subtitulo={cruceMonedas || modoDivisas ? 'Cambiar bolívares por dólares (o al revés): sale de una cuenta y entra en la otra, no es un gasto' : 'Registrar movimiento de fondos entre cuentas del taller'}
       icono={<ArrowLeftRight className="h-5 w-5" />}
       tinteIcono="bg-primary/10 text-primary"
       ancho="md"
@@ -201,10 +228,10 @@ export default function ModalTraspasoConciliacion({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className={`grid grid-cols-1 gap-3 ${cruceMonedas ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
               <div>
                 <label className="block text-[11.5px] font-bold text-muted-foreground uppercase tracking-wider mb-1">
-                  Monto a Transferir
+                  {cruceMonedas ? `Sale (${cOrigen?.moneda})` : 'Monto a Transferir'}
                 </label>
                 <input
                   type="number"
@@ -216,6 +243,23 @@ export default function ModalTraspasoConciliacion({
                   required
                 />
               </div>
+
+              {cruceMonedas && (
+                <div>
+                  <label className="block text-[11.5px] font-bold text-muted-foreground uppercase tracking-wider mb-1">
+                    Entra ({cDestino?.moneda})
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={montoDestino}
+                    onChange={e => setMontoDestino(e.target.value)}
+                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-foreground font-semibold tabular-nums focus:border-primary focus:outline-none"
+                    placeholder="0.00"
+                    required
+                  />
+                </div>
+              )}
 
               <div>
                 <label className="block text-[11.5px] font-bold text-muted-foreground uppercase tracking-wider mb-1">
@@ -230,6 +274,14 @@ export default function ModalTraspasoConciliacion({
                 />
               </div>
             </div>
+
+            {cruceMonedas && (
+              <div className="rounded-xl border border-primary/20 bg-primary/[0.04] p-2.5 text-[12px] text-foreground/85">
+                {tasaImplicita > 0
+                  ? <>Tasa de la operación: <strong className="tabular-nums">{tasaImplicita.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} Bs/$</strong>. Sale de {cOrigen?.nombre} y entra en {cDestino?.nombre}. No cuenta como gasto.</>
+                  : <>Escribe cuánto sale y cuánto entra: el sistema calcula la tasa. No cuenta como gasto, solo mueve dinero entre cuentas.</>}
+              </div>
+            )}
 
             <div>
               <label className="block text-[11.5px] font-bold text-muted-foreground uppercase tracking-wider mb-1">
