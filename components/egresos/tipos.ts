@@ -66,6 +66,8 @@ export const CATEGORIAS_EGRESO: { id: string; label: string; grupo: GrupoEgreso 
   // No son gastos: no restan a la utilidad (sí se ven en el flujo de caja del banco).
   { id: 'divisas', label: 'Compra / venta de divisas (no es gasto)', grupo: 'neutro' },
   { id: 'devolucion', label: 'Devolución / reverso a un cliente (no es gasto)', grupo: 'neutro' },
+  // Costo cargado dos veces (mismo repuesto por dos caminos): se marca así para que no cuente doble.
+  { id: 'duplicado', label: 'Costo duplicado (no cuenta — ya está en otro renglón)', grupo: 'neutro' },
 ];
 
 /** El grupo de un gasto: si va contra un carro o es del taller. */
