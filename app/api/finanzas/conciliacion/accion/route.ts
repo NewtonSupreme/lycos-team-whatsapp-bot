@@ -7,6 +7,7 @@ import type { JustificacionConciliacion } from '@/lib/conciliacion/motor';
 import { anotarAccion, cambiarCuenta, corregirMonto, tasaDelDia } from '@/lib/conciliacion/acciones';
 import { BANK_METHODS } from '@/lib/reporte/ventas-mapping';
 import { crearFacturaServidor } from '@/lib/facturas/servidor';
+import { buscarCandidatosConciliacion, conciliarOrdenExistente, conciliarVentaExistente, type MovParaConciliar } from '@/lib/conciliacion/conciliar-existente';
 
 const hoyCaracas = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Caracas' });
 const sinTildes = (t: unknown) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -94,6 +95,65 @@ export async function POST(req: NextRequest) {
       }
       await anotarAccion(auth.db, { ...ctx, accion: 'reabrir', resuelto: false, motivo: 'Se quitó la justificación: el caso vuelve a estar pendiente.' });
       return NextResponse.json({ ok: true });
+    }
+
+    // ── 2b. BUSCAR LA ORDEN/VENTA QUE YA EXISTE PARA ESTE COBRO ─────────────
+    // Antes de crear nada: ¿el pago ya está en el sistema? Devuelve las coincidencias para
+    // conciliar la existente en vez de duplicarla.
+    if (accion === 'buscar_candidatos') {
+      const enDolares = Boolean(body.enDolares) || body.cuenta === 'cashea';
+      let usd = Number(body.usd) || 0;
+      const montoBanco = Math.round(Number(body.monto || 0) * 100) / 100;
+      if (!enDolares && !usd && montoBanco > 0) {
+        const t = await tasaDelDia(auth.db, String(body.fecha || hoyCaracas()));
+        if (t?.tasa) usd = Math.round((montoBanco / t.tasa) * 100) / 100;
+      }
+      const mov: MovParaConciliar = {
+        fecha: String(body.fecha || hoyCaracas()).slice(0, 10), montoBanco, cuenta: String(body.cuenta || 'bnc'),
+        referencia: body.referencia || null, cliente: body.cliente || null, placa: body.placa || null, enDolares, usd,
+      };
+      const candidatos = await buscarCandidatosConciliacion(auth.db, auth.effectiveSede(body.sede ?? null), mov);
+      return NextResponse.json({ ok: true, candidatos, usd });
+    }
+
+    // ── 2c. CONCILIAR CON LA ORDEN/VENTA EXISTENTE (sin crear duplicados) ───
+    if (accion === 'conciliar_existente') {
+      const objetivo = body.objetivo === 'orden' ? 'orden' : 'venta';
+      const enDolares = Boolean(body.enDolares) || body.cuenta === 'cashea';
+      const montoBanco = Math.round(Number(body.monto || 0) * 100) / 100;
+      let usd = Number(body.usd) || 0; let tasa = Number(body.tasa) || 0;
+      if (!enDolares && (!usd || !tasa)) {
+        const t = await tasaDelDia(auth.db, String(body.fecha || hoyCaracas()));
+        if (t?.tasa) { tasa = tasa || t.tasa; usd = usd || Math.round((montoBanco / t.tasa) * 100) / 100; }
+      }
+      const mov: MovParaConciliar = {
+        fecha: String(body.fecha || hoyCaracas()).slice(0, 10), montoBanco, cuenta: String(body.cuenta || 'bnc'),
+        referencia: body.referencia || null, cliente: body.cliente || null, placa: body.placa || null, enDolares, usd,
+      };
+      const conIva = Boolean(body.conIva);
+      let registroId: string | null = null; let cliente = ''; let base = 0; const tabla = 'ventas_dia';
+      if (objetivo === 'venta') {
+        const r = await conciliarVentaExistente(auth.db, mov, String(body.id || ''));
+        if (!r.ok) return NextResponse.json({ error: r.error }, { status: 409 });
+        registroId = String(body.id); cliente = r.cliente; base = r.usd;
+      } else {
+        const r = await conciliarOrdenExistente(auth.db, mov, String(body.id || ''), { usuario: ctx.usuario, sede: auth.effectiveSede(body.sede ?? null), conIva, tasa });
+        if (!r.ok) return NextResponse.json({ error: r.error }, { status: 409 });
+        registroId = r.ventaId; cliente = r.cliente; base = r.baseUsd;
+      }
+      // Marcar el movimiento del banco como conciliado (igual que una justificación/enlace).
+      if (ctx.movimientoHash) {
+        const ahora = new Date().toISOString();
+        const { data: conf } = await auth.db.from('configuracion').select('id, valor').eq('clave', 'conciliacion_justificaciones').is('sede_id', null).maybeSingle();
+        const list = Array.isArray(conf?.valor) ? [...conf.valor] : [];
+        list.push({ id: crypto.randomUUID(), movimientoHash: ctx.movimientoHash, tipo: 'ingreso', motivo: `Conciliado con ${objetivo === 'orden' ? 'la orden existente' : 'la venta existente'} de ${cliente}`, fecha: mov.fecha, monto: montoBanco, usuario: ctx.usuario, createdAt: ahora });
+        if (conf?.id) await auth.db.from('configuracion').update({ valor: list, updated_at: ahora }).eq('id', conf.id);
+        else await auth.db.from('configuracion').insert({ clave: 'conciliacion_justificaciones', valor: list, sede_id: null, updated_at: ahora });
+      }
+      await logActivityServer(auth.db, { usuario: ctx.usuario, modulo: 'Finanzas', accion: 'Concilió un cobro con la orden existente', detalles: `${cliente} · $${base.toFixed(2)} · ${objetivo} · Ref ${mov.referencia || 'N/A'}`, referencia_tabla: tabla, referencia_id: registroId, sede_id: ctx.sedeId });
+      await anotarAccion(auth.db, { ...ctx, caso: 'sin_registrar', accion: 'conciliar_existente', fecha: mov.fecha, monto: montoBanco, referencia: mov.referencia || ctx.referencia,
+        despues: { cliente, usd: base, cuenta: mov.cuenta, objetivo }, tabla: 'ventas_dia', registroId });
+      return NextResponse.json({ ok: true, resumen: { cliente, fecha: mov.fecha, ingresoUsd: base, pagadoUsd: usd || base, conIva, cuenta: mov.cuenta, montoBanco, ventaId: registroId, objetivo } });
     }
 
     // ── 3. REGISTRAR SERVICIO / VENTA DIRECTO DESDE CONCILIACIÓN ────────────

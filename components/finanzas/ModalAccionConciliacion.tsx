@@ -1,12 +1,17 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Check, Clock, Loader2, Receipt, Scale, Tag, Wrench } from 'lucide-react';
+import { Check, Clock, Link2, Loader2, Receipt, Scale, Tag, Wrench } from 'lucide-react';
 import ModalBase from '@/components/ui/modales/ModalBase';
 import type { MovimientoBanco, BancoConciliable } from '@/lib/conciliacion/leer-estado';
 import type { AsientoSistema } from '@/lib/conciliacion/motor';
 import { CATEGORIAS_VENTA } from '@/lib/categorias';
 import { CATEGORIAS_EGRESO } from '@/components/egresos/tipos';
+
+interface Candidato {
+  tipo: 'venta' | 'orden'; id: string; fecha: string; cliente: string; placa: string | null; vehiculo: string | null;
+  usd: number; enCuenta: number; referencia: string | null; estado: string; puntaje: number; razones: string[]; efecto: string; aviso: string | null;
+}
 
 interface Props {
   abierto: boolean;
@@ -31,9 +36,13 @@ export default function ModalAccionConciliacion({
   sistema = null,
   corridaId = null,
 }: Props) {
-  const [modo, setModo] = useState<'servicio' | 'abono' | 'egreso' | 'justificar' | 'corregir' | 'seguimiento'>('justificar');
+  const [modo, setModo] = useState<'existente' | 'servicio' | 'abono' | 'egreso' | 'justificar' | 'corregir' | 'seguimiento'>('justificar');
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Órdenes/ventas que ya existen para este cobro: se concilian en vez de crear una nueva.
+  const [candidatos, setCandidatos] = useState<Candidato[] | null>(null);
+  const [buscando, setBuscando] = useState(false);
+  const [conciliando, setConciliando] = useState<string | null>(null);
   // Lo que se registró (para que nadie lo vuelva a registrar a mano) y el aviso si ya existía.
   const [conIva, setConIva] = useState(false);
   const [duplicada, setDuplicada] = useState<{ id: string; fecha: string; cliente: string; total: number; creadoPor?: string } | null>(null);
@@ -103,11 +112,41 @@ export default function ModalAccionConciliacion({
     setConfirmaDolares(false);
 
     // Modo inicial
-    if (tipo === 'ingreso') setModo('servicio');
+    if (tipo === 'ingreso') { setModo('existente'); setCandidatos(null); }
     else if (tipo === 'egreso') setModo('egreso');
     else if (sistema && (sistema.tabla === 'ventas_dia' || sistema.tabla === 'egresos') && !sistema.enDolares) setModo('corregir');
     else setModo('justificar');
   }, [abierto, movimiento, tipo, banco, sistema]);
+
+  // Busca la orden/venta que ya existe para este cobro, para no duplicarla.
+  useEffect(() => {
+    if (!abierto || !movimiento || tipo !== 'ingreso' || modo !== 'existente' || candidatos !== null) return;
+    setBuscando(true);
+    const h = `${movimiento.fecha}_${movimiento.referencia}_${movimiento.monto}`;
+    fetch('/api/finanzas/conciliacion/accion', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accion: 'buscar_candidatos', movimientoHash: h, banco, cuenta, monto: Math.abs(movimiento.monto), fecha: movimiento.fecha, referencia: movimiento.referencia, cliente, placa, enDolares: banco === 'cashea' }),
+    }).then(r => r.json()).then(d => setCandidatos(d.candidatos || [])).catch(() => setCandidatos([])).finally(() => setBuscando(false));
+  }, [abierto, movimiento, tipo, modo, candidatos, banco, cuenta, cliente, placa]);
+
+  const conciliarExistente = async (c: Candidato) => {
+    if (!movimiento) return;
+    setConciliando(c.tipo + c.id); setError(null);
+    try {
+      const res = await fetch('/api/finanzas/conciliacion/accion', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accion: 'conciliar_existente', movimientoHash: `${movimiento.fecha}_${movimiento.referencia}_${movimiento.monto}`,
+          objetivo: c.tipo === 'orden' ? 'orden' : 'venta', id: c.id, cuenta, monto: Math.abs(movimiento.monto), fecha,
+          referencia, cliente, placa, enDolares: banco === 'cashea', conIva, banco, corridaId, caso: 'sin_registrar', refMovimiento: movimiento.referencia || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'No se pudo conciliar.');
+      if (data.resumen) { setExito(data.resumen); return; }
+      onCompletado(); onCerrar();
+    } catch (err) { setError((err as Error).message); } finally { setConciliando(null); }
+  };
 
   if (!movimiento) return null;
 
@@ -299,10 +338,17 @@ export default function ModalAccionConciliacion({
             <>
               <button
                 type="button"
+                onClick={() => setModo('existente')}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-bold text-[12px] transition-colors ${modo === 'existente' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
+              >
+                <Link2 className="h-3.5 w-3.5" /> Conciliar lo que ya existe{candidatos && candidatos.length ? ` (${candidatos.length})` : ''}
+              </button>
+              <button
+                type="button"
                 onClick={() => setModo('servicio')}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-bold text-[12px] transition-colors ${modo === 'servicio' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
               >
-                <Wrench className="h-3.5 w-3.5" /> Registrar Servicio / Venta
+                <Wrench className="h-3.5 w-3.5" /> Registrar nueva (no existe)
               </button>
               <button
                 type="button"
@@ -349,12 +395,55 @@ export default function ModalAccionConciliacion({
           </button>
         </div>
 
-        <form onSubmit={ejecutarAccion} className="space-y-4">
+        {/* MODO 0: CONCILIAR LA ORDEN/VENTA QUE YA EXISTE */}
+        {modo === 'existente' && tipo === 'ingreso' && (
+          <div className="space-y-3">
+            <p className="text-[12px] text-muted-foreground">
+              Busco la <strong>orden o venta que ya está en el sistema</strong> para este pago. Al conciliar se le pega la referencia del banco a esa misma (no se crea una nueva). Usa «Registrar nueva» solo si de verdad no aparece.
+            </p>
+            {buscando && <p className="flex items-center gap-2 py-6 text-[13px] text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Buscando la orden existente…</p>}
+            {!buscando && candidatos && candidatos.length === 0 && (
+              <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-[12.5px] text-amber-900 dark:text-amber-200">
+                <p className="font-bold">No encontré ninguna orden ni venta que cuadre con este pago.</p>
+                <p className="mt-1">Si la venta no está registrada aún, usa <strong>«Registrar nueva»</strong>; si no es un cobro de venta, usa <strong>«Justificar»</strong>.</p>
+              </div>
+            )}
+            {!buscando && candidatos && candidatos.map(c => (
+              <div key={c.tipo + c.id} className={`rounded-xl border p-3 ${c.puntaje >= 70 ? 'border-emerald-500/40 bg-emerald-500/[0.06]' : 'border-border bg-muted/20'}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-1.5 text-[13px] font-black text-foreground">
+                      <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-bold ${c.tipo === 'orden' ? 'bg-sky-500/15 text-sky-600' : 'bg-violet-500/15 text-violet-600'}`}>{c.tipo === 'orden' ? 'ORDEN' : 'VENTA'}</span>
+                      {c.cliente}{c.placa ? ` · ${c.placa}` : ''}
+                    </p>
+                    <p className="text-[11.5px] text-muted-foreground">{c.fecha.split('-').reverse().join('/')} · ${c.usd.toFixed(2)}{c.vehiculo ? ` · ${c.vehiculo}` : ''}{c.referencia ? ` · ref ${c.referencia}` : ''}</p>
+                    <p className="mt-0.5 text-[11px] text-foreground/70">{c.razones.join(' · ')}</p>
+                    {c.aviso && <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">⚠ {c.aviso}</p>}
+                  </div>
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ${c.puntaje >= 70 ? 'bg-emerald-500/15 text-emerald-600' : 'bg-muted text-muted-foreground'}`}>{c.puntaje}%</span>
+                </div>
+                {c.tipo === 'orden' && (
+                  <label className="mt-2 flex items-start gap-2 text-[11.5px] text-foreground/80">
+                    <input type="checkbox" checked={conIva} onChange={e => setConIva(e.target.checked)} className="mt-0.5" />
+                    <span>El pago incluye el IVA (16%): el ingreso de la venta será la base sin IVA.</span>
+                  </label>
+                )}
+                <button type="button" disabled={!!conciliando} onClick={() => conciliarExistente(c)}
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12px] font-bold text-primary-foreground hover:opacity-90 disabled:opacity-50">
+                  {conciliando === c.tipo + c.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />} {c.efecto}
+                </button>
+              </div>
+            ))}
+            {error && <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-2.5 text-[12px] text-red-600">{error}</div>}
+          </div>
+        )}
+
+        <form onSubmit={ejecutarAccion} className={`space-y-4 ${modo === 'existente' ? 'hidden' : ''}`}>
           {/* MODO 1: REGISTRAR SERVICIO */}
           {modo === 'servicio' && (
             <div className="space-y-3">
               <p className="text-[12px] text-muted-foreground">
-                Crea la orden de servicio y su asiento contable completo en el sistema, etiquetado como <strong>Conciliado</strong> y disponible en el módulo de servicios.
+                Usa esto SOLO si el pago no corresponde a ninguna orden ni venta ya registrada (revisa primero «Conciliar lo que ya existe»). Crea una orden y su venta <strong>nuevas</strong>, etiquetadas como <strong>Conciliado</strong>.
               </p>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
