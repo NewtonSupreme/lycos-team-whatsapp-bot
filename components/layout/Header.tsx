@@ -13,6 +13,7 @@ import { useSedeStore } from '@/lib/store/useSedeStore';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Building2 } from 'lucide-react';
 import { getRoleMeta } from '@/types';
+import { BotonSuspensionMaster } from '@/components/suspension';
 
 // ── Helpers ──────────────────────────────────────────────────
 function urlBase64ToUint8Array(base64String: string) {
@@ -200,8 +201,9 @@ export default function Header() {
         </div>
       )}
 
-      {/* Theme Toggle & Notifications */}
-      <div className="flex items-center gap-1">
+      {/* Theme Toggle, Botón de Suspensión & Notifications */}
+      <div className="flex items-center gap-1.5 sm:gap-2">
+        <BotonSuspensionMaster />
         <ThemeToggle />
 
         <div className="relative">

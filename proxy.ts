@@ -14,6 +14,7 @@ const API_PUBLICA = [
   "/api/whatsapp/cron",
   "/api/rates",
   "/api/tasas",
+  "/api/sistema/suspension",
 ];
 
 export function proxy(request: NextRequest) {

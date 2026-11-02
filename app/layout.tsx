@@ -4,6 +4,7 @@ import LoadingScreen from '@/components/layout/LoadingScreen';
 import { ThemeProvider } from '@/components/providers/ThemeProvider';
 import { Toaster } from '@/components/ui/sonner';
 import { AlertToastBridge } from '@/components/providers/AlertToastBridge';
+import { PantallaNegraBloqueo } from '@/components/suspension';
 
 export const metadata: Metadata = {
   title: 'Lycos Team — Sistema de Gestión Automotriz',
@@ -43,6 +44,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           disableTransitionOnChange
         >
           <LoadingScreen />
+          <PantallaNegraBloqueo />
           {children}
           <Toaster />
           <AlertToastBridge />

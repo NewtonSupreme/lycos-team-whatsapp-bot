@@ -3,6 +3,7 @@ import { descargarMediaWhatsApp, describirSticker, describirVideo } from '@/lib/
 import { catalogoPreciosBot } from '@/lib/bot/catalogo-precios';
 import { catalogoServiciosBot } from '@/lib/bot/catalogo-servicios';
 import { CONFIG_BOT_DEFECTO, dentroDeHorario, leerConfigBot, textoBienvenida, type ConfigBot } from '@/lib/bot/config';
+import { estaSistemaSuspendido } from '@/lib/suspension/service';
 import { abrirAlertaAtencion, detectarEmergencia, esTipoAtencion, TIPOS_ATENCION, type TipoAtencion } from '@/lib/whatsapp/alertas-atencion';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { getPermisos, hasPermiso, resolveRol, getRoleMeta, type Permisos } from '@/types';
@@ -997,6 +998,12 @@ export async function POST(request: NextRequest) {
 }
 
 async function procesarEntrantes(value: any) {
+  // Verificación del Kill Switch / Suspensión General del Sistema
+  if (await estaSistemaSuspendido()) {
+    console.warn('🛑 [KILL SWITCH ACTIVO] El sistema ha sido suspendido por el administrador. Se descarta procesamiento de mensajes de WhatsApp.');
+    return;
+  }
+
   const db = getDb();
   if (!db) { console.error('❌ Database connection not available.'); return; }
   const waProfileName = value?.contacts?.[0]?.profile?.name || '';

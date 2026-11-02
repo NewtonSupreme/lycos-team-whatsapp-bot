@@ -8,6 +8,7 @@ import { cookies } from 'next/headers';
 import { leerSesion } from '@/lib/session-token';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { getPermisos, hasPermiso, resolveRol, rolConAcceso, type Permisos, type CrudPermiso } from '@/types';
+import { estaSistemaSuspendido, esUsuarioAdministradorMaster } from '@/lib/suspension';
 
 export interface SessionUser {
   id: string;
@@ -105,6 +106,18 @@ export async function authorize(
   };
 
   if (!user) return { ok: false, status: 401, error: 'No autenticado.', db, effectiveSede, can };
+  if (!esUsuarioAdministradorMaster(user) && (await estaSistemaSuspendido())) {
+    return {
+      ok: false,
+      status: 503,
+      error: 'El sistema ha sido temporalmente suspendido por el administrador central (Leandro).',
+
+      user,
+      db,
+      effectiveSede,
+      can,
+    };
+  }
   if (!can(modulo, accion)) {
     return { ok: false, status: 403, error: 'No tienes permiso para esta acción.', user, db, effectiveSede, can };
   }
